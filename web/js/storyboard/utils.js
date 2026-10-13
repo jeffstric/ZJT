@@ -2,11 +2,23 @@
  * Storyboard Utility Functions
  */
 
-/** IndexTTS 情感向量维度标签（与 web/js/pages/audio_generate.js 一致） */
+/** IndexTTS 情感向量维度标签（与 web/js/pages/audio_generate.js 一致；zh 兜底，展示用 getEmoVecLabel） */
 export const EMO_VEC_LABELS = ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'];
 export const EMO_VEC_DIM = 8;
 export const EMO_VEC_MAX_SUM = 1.5;
 export const EMO_VEC_MAX_EACH = 1.5;
+/** 情感维度 i18n 键（顺序与 EMO_VEC_LABELS 对应） */
+const EMO_VEC_I18N_KEYS = ['emo_dim_joy', 'emo_dim_anger', 'emo_dim_sadness', 'emo_dim_fear', 'emo_dim_disgust', 'emo_dim_low', 'emo_dim_surprise', 'emo_dim_calm'];
+
+/**
+ * 情感维度标签（运行时翻译）。
+ * 顶层常量在模块加载时求值，无法随语言切换更新，展示一律走这里。
+ */
+export function getEmoVecLabel(index) {
+    const i = Number(index);
+    if (!Number.isInteger(i) || i < 0 || i >= EMO_VEC_LABELS.length) return '';
+    return t(EMO_VEC_I18N_KEYS[i], EMO_VEC_LABELS[i]);
+}
 /** 各维度配色（对白情感摘要点阵使用，顺序与 EMO_VEC_LABELS 对应） */
 export const EMO_VEC_COLORS = ['#f59e0b', '#ef4444', '#3b82f6', '#8b5cf6', '#10b981', '#94a3b8', '#ec4899', '#14b8a6'];
 
@@ -52,7 +64,7 @@ export function getEmoVecActiveDims(raw) {
     const list = parseEmoVec(raw);
     const dims = [];
     list.forEach((v, i) => {
-        if (v > 0.001) dims.push({ index: i, label: EMO_VEC_LABELS[i], value: v });
+        if (v > 0.001) dims.push({ index: i, label: getEmoVecLabel(i), value: v });
     });
     return dims;
 }
@@ -80,7 +92,7 @@ export function formatEmoVecSummary(raw) {
     const list = parseEmoVec(raw);
     const parts = [];
     list.forEach((v, i) => {
-        if (v > 0.001) parts.push(`${EMO_VEC_LABELS[i]} ${v.toFixed(2)}`);
+        if (v > 0.001) parts.push(`${getEmoVecLabel(i)} ${v.toFixed(2)}`);
     });
     return parts.length ? parts.join(' · ') : '未设置';
 }
@@ -198,10 +210,13 @@ export function getStatusText(status) {
 
 /**
  * i18n 便捷函数
+ * 键未命中时 ZJTi18n.t 返回键名本身，此处回落到中文兜底 fallback，
+ * 保证语言包缺失词条时界面不露出英文键名。
  */
 export function t(key, fallback) {
     if (window.ZJTi18n && window.ZJTi18n.t) {
-        return window.ZJTi18n.t(key, fallback);
+        const translated = window.ZJTi18n.t(key);
+        if (translated !== key) return translated;
     }
     return fallback || key;
 }

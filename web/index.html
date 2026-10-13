@@ -24,7 +24,7 @@
   <link rel="stylesheet" href="/css/index.css" />
   <link rel="stylesheet" href="/css/model_catalog.css" />
   <link rel="stylesheet" href="/css/announcement_center.css?v=__VERSION__" />
-  <link rel="stylesheet" href="/css/subscription.css?v=f7164" />
+  <link rel="stylesheet" href="/css/subscription.css?v=20260929a" />
 
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -120,7 +120,7 @@
               </div>
             </div>
             <div class="user-info-wrapper">
-              <span class="user-phone clickable" @click="openInviteModal" :title="$t('invite_code')">{{ maskedPhone }}</span>
+              <span class="user-phone clickable" @click="openInviteModal" :title="maskedPhone">{{ displayName }}</span>
               <div class="computing-power-display">
                 <template v-if="checkinStatus.checkin_enabled">
                   <button class="checkin-badge" v-if="!checkinStatus.checked_in_today" @click="performCheckin" :disabled="checkinLoading" :title="$t('check_in_tip')">
@@ -412,6 +412,12 @@
                 <p v-if="cliMediaPrefRowError[slot.key]" class="cli-media-pref-row-error">
                   {{ cliMediaPrefRowError[slot.key] }}
                 </p>
+                <p
+                  v-if="cliMediaPrefInvalidValue[slot.key]"
+                  class="cli-media-pref-row-warning"
+                >
+                  ⚠ 当前生效的模型「{{ cliMediaPrefInvalidValue[slot.key].model_name || ('任务 #' + cliMediaPrefInvalidValue[slot.key].task_id) }}」暂不可用（驱动未配置或已停用），下拉显示的是推荐替代，实际仍以保存值为准；请重新选择保存以生效
+                </p>
               </div>
             </div>
           </template>
@@ -456,6 +462,9 @@
 
         <!-- Tab Switcher -->
         <div class="modal-tabs">
+          <button class="modal-tab" :class="{active: userSettingsTab === 'profile'}" @click="switchToProfileTab">
+            个人资料
+          </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'preferences'}" @click="userSettingsTab = 'preferences'">
             服务商偏好
           </button>
@@ -467,8 +476,34 @@
           </button>
         </div>
 
-        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults'" style="padding: 40px; text-align: center; color: var(--muted);">
+        <div v-if="userSettingsLoading && userSettingsTab !== 'creationDefaults' && userSettingsTab !== 'profile'" style="padding: 40px; text-align: center; color: var(--muted);">
           加载中...
+        </div>
+
+        <!-- 个人资料 Tab：昵称（留空保存=重新随机分配） -->
+        <div v-else-if="userSettingsTab === 'profile'" style="padding: 16px;">
+          <div class="status danger" v-if="profileError" style="margin-bottom: 12px;">{{ profileError }}</div>
+          <div class="status success" v-if="profileSuccess" style="margin-bottom: 12px;">{{ profileSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">个人资料</h4>
+          <div class="settings-item">
+            <label class="label" for="profile-nickname-input">昵称</label>
+            <input
+              id="profile-nickname-input"
+              class="input"
+              type="text"
+              v-model="nicknameInput"
+              maxlength="30"
+              placeholder="留空保存将随机分配一个昵称"
+              :disabled="profileSaving"
+            >
+            <p style="font-size: 12px; color: var(--muted); margin-top: 4px;">
+              {{ nicknameInput.length }}/30；不填则使用系统随机昵称
+            </p>
+          </div>
+          <button class="btn" style="margin-top: 12px;" @click="saveNickname" :disabled="profileSaving">
+            {{ profileSaving ? '保存中...' : '保存昵称' }}
+          </button>
         </div>
 
         <!-- 创作默认偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
@@ -1092,6 +1127,7 @@
                 渠道（邀请）佣金按好友购买的档位固定发放（好友实付 → 你的单笔佣金）：<br/>
                 <template v-if="commissionTierText.subscription">订阅：{{ commissionTierText.subscription }}<br/></template>
                 <template v-if="commissionTierText.recharge">直充：{{ commissionTierText.recharge }}<br/></template>
+                入门版首次优惠 18.8 元的那一期没有渠道佣金；从第 2 期 ¥29.9 起按上方「订阅入门版」金额发放。<br/>
                 月付订阅的佣金自产生起满 30 天后方可提现。
               </div>
             </div>
@@ -1158,7 +1194,7 @@
     
     <!-- Recharge Computing Power Modal -->
     <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
-      <div class="modal" style="position: relative; max-width: 600px;">
+      <div class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;">
         <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">充值中心</div>
 
@@ -1174,9 +1210,25 @@
             <p class="package-intro-text">会员订阅</p>
             <p class="package-intro-subtext">选择适合您的月度创作套餐，自动续费可随时取消</p>
           </div>
-          <div class="package-intro" v-if="subscriptionStatus && subscriptionStatus.status === 'terminated'">
+          <div class="package-intro package-intro-warning" v-if="subscriptionStatus && subscriptionStatus.status === 'terminated' && subscriptionStatus.sign_not_effective">
+            <p class="package-intro-text">本月会员已付费，算力权益保留至 {{ formatDateStr(subscriptionStatus.current_period_end) }}</p>
+            <p class="package-intro-subtext">您尚未开通「每月自动续费」，到期后订阅优惠将中断；重新开通订阅即可持续享受会员优惠</p>
+          </div>
+          <div class="package-intro" v-else-if="subscriptionStatus && subscriptionStatus.status === 'terminated'">
             <p class="package-intro-text">您已取消订阅，当期权益保留至 {{ formatDateStr(subscriptionStatus.current_period_end) }}</p>
-            <p class="package-intro-subtext">重新订阅立即生效并重新计算周期；解约后重新订阅视为新订阅，可再次享受首订赠送</p>
+            <p class="package-intro-subtext">重新订阅立即生效并重新计算周期；入门版首次开通首月 ¥18.8 并多 40 算力，已订阅过的用户按 ¥29.9、不再加赠。其他档首订加赠同样仅限首次订阅</p>
+          </div>
+
+          <!-- 签约进行中提示（独立显示，不阻塞下方套餐列表：后端支持重新发起并自动作废旧签约） -->
+          <div class="sub-status-card" v-if="subscriptionStatus && subscriptionStatus.status === 'signing'" style="margin-bottom: 16px;">
+            <div class="sub-status-title">
+              <div class="sub-status-plan-name">签约进行中</div>
+              <span class="sub-status-badge inactive">处理中</span>
+            </div>
+            <p class="sub-status-note">您有一笔订阅签约正在处理（完成支付并确认开通自动续费后生效）。您也可以直接选择下方套餐重新发起，之前的未完成签约将自动作废。</p>
+            <div style="margin-top: 12px;">
+              <button class="btn secondary" @click="refreshSubscriptionStatus">刷新状态</button>
+            </div>
           </div>
 
           <div v-if="subscriptionPlansLoading" style="text-align: center; padding: 40px;">
@@ -1231,7 +1283,8 @@
                     <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
                   </div>
                   <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
-                  <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
+                  <div class="sub-plan-mult" v-if="planMultipleText(plan)">{{ planMultipleText(plan) }}</div>
+                  <div class="sub-plan-save" v-if="planExtraVsRecharge(plan, false) > 0">🔥 比直接购买多约 {{ planExtraVsRecharge(plan, false) }} 算力</div>
                 </div>
               </div>
 
@@ -1285,45 +1338,64 @@
             </div>
           </template>
 
-          <!-- 签约进行中提示 -->
-          <template v-else-if="subscriptionStatus && subscriptionStatus.status === 'signing'">
-            <div class="sub-status-card">
-              <div class="sub-status-title">
-                <div class="sub-status-plan-name">签约进行中</div>
-                <span class="sub-status-badge inactive">处理中</span>
-              </div>
-              <p class="sub-status-note">您有一笔订阅签约正在处理（完成支付并确认开通自动续费后生效）。若长时间未完成，约 2 小时后可重新发起。</p>
-              <div style="margin-top: 12px;">
-                <button class="btn secondary" @click="refreshSubscriptionStatus">刷新状态</button>
-              </div>
-            </div>
-          </template>
-
           <!-- 套餐选择 + 支付 -->
           <template v-else>
-            <div class="sub-plans-grid">
+            <div class="sub-plans-grid" :class="{ 'sub-intro-show': introDealActive }" :data-intro-phase="introDealPhase">
               <div
                 v-for="plan in subscriptionPlans"
                 :key="plan.plan_id"
                 class="sub-plan-card"
-                :class="{ selected: selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id }"
+                :class="[introCardClass(plan), { selected: selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id }]"
                 @click="selectSubPlan(plan)"
               >
                 <div v-if="selectedSubPlan && selectedSubPlan.plan_id === plan.plan_id" class="sub-plan-selected-tag">✓ 已选择</div>
                 <div class="sub-plan-name">{{ plan.name }}</div>
                 <div class="sub-plan-tagline">{{ planTagline(plan) }}</div>
-                <div class="sub-plan-price">
-                  <span class="symbol">¥</span><span class="amount">{{ plan.price }}</span><span class="unit">/月</span>
+                <div class="sub-plan-price" v-if="planShowsIntroPrice(plan) && introDealPhase === 'price'">
+                  <span class="symbol">¥</span><span class="amount sub-intro-old">{{ plan.price }}</span><span class="unit">/月</span>
                 </div>
-                <div class="sub-plan-power">⚡ {{ plan.computing_power }} 算力/期</div>
-                <div class="sub-plan-mult">{{ planMultipleText(plan) }}</div>
-                <div v-if="plan.first_period_bonus" class="sub-plan-bonus">首期加赠 {{ plan.first_period_bonus }}</div>
+                <div class="sub-plan-price" v-else-if="planShowsIntroPrice(plan) && (introDealPhase === 'slash' || introDealPhase === 'power')">
+                  <span class="symbol">¥</span><span class="amount sub-intro-new">{{ plan.first_period_price }}</span><span class="unit">/月</span>
+                  <span class="sub-intro-stamp">降了 ¥{{ introPriceCut(plan) }}</span>
+                </div>
+                <div class="sub-plan-price" v-else>
+                  <span class="symbol">¥</span><span class="amount">{{ planShowsIntroPrice(plan) ? plan.first_period_price : plan.price }}</span><span class="unit">/月</span>
+                  <span v-if="planShowsIntroPrice(plan)" class="sub-plan-renew">之后 ¥{{ plan.price }}/月</span>
+                </div>
+                <div class="sub-plan-power" v-if="planShowsIntroPrice(plan) && (introDealPhase === 'price' || introDealPhase === 'slash')">
+                  ⚡ {{ plan.computing_power }} 算力
+                </div>
+                <div class="sub-plan-power" v-else-if="planShowsIntroPrice(plan) && introDealPhase === 'power'">
+                  ⚡ <span class="sub-intro-power-num">{{ subPlanHeadlinePower(plan, true) }}</span> 算力<span class="sub-plan-power-first">· 首期</span>
+                  <span class="sub-intro-plus">+{{ plan.first_period_bonus }}</span>
+                  <span class="sub-plan-power-sub">之后每期 {{ plan.computing_power }} 算力</span>
+                </div>
+                <div class="sub-plan-power" v-else>
+                  ⚡ {{ subPlanHeadlinePower(plan, subFirstBonusEligible) }} 算力<span v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-power-first">· 首期</span>
+                  <span v-if="plan.first_period_bonus && subFirstBonusEligible" class="sub-plan-power-sub">之后每期 {{ plan.computing_power }} 算力</span>
+                </div>
+                <div class="sub-plan-mult" v-if="planMultipleText(plan)">{{ planMultipleText(plan) }}</div>
+                <div class="sub-plan-save" v-if="planExtraVsRecharge(plan, subFirstBonusEligible) > 0">🔥 比直接购买多约 {{ planExtraVsRecharge(plan, subFirstBonusEligible) }} 算力</div>
               </div>
             </div>
 
             <!-- 支付面板 -->
             <div class="sub-payment-panel" v-if="selectedSubPlan">
               <div class="sub-qr-section">
+                <!-- 首订加赠用户：引导动画提醒在微信支付页打开「每月自动续费」开关，否则加赠不发放；
+                     置于二维码上方，小屏用户点支付后无需下滚即可看到 -->
+                <template v-if="subQrCode && selectedSubPlan.first_period_bonus && subFirstBonusEligible">
+                  <div class="sub-rg">
+                    <div class="sub-rg-title">扫码后，在微信支付页打开此开关</div>
+                    <div class="sub-rg-row">
+                      <span class="sub-rg-label">开通智剧通{{ selectedSubPlan.name }}每月自动续费</span>
+                      <span class="sub-rg-switch"><i class="sub-rg-thumb"></i></span>
+                      <span class="sub-rg-finger">👆</span>
+                    </div>
+                    <div class="sub-rg-badge">⚡ 首期多送 {{ selectedSubPlan.first_period_bonus }} 算力</div>
+                  </div>
+                  <div class="sub-rg-note">不开通自动续费，首期仅到账 {{ selectedSubPlan.computing_power }} 算力</div>
+                </template>
                 <div class="sub-qr-box" :class="{ 'has-qr': subQrCode }">
                   <div v-if="subPaymentLoading" style="display:flex; flex-direction:column; align-items:center; gap:8px; color:#64748b; font-size:12px;">
                     <div class="loading-spinner"></div>
@@ -1335,7 +1407,7 @@
                     勾选协议并点击右侧<br/>「微信支付」生成二维码
                   </div>
                 </div>
-                <div v-if="subQrCode" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
+                <div v-if="subQrCode && !(selectedSubPlan.first_period_bonus && subFirstBonusEligible)" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
               </div>
 
               <div class="sub-info-section">
@@ -1347,8 +1419,8 @@
 
                 <div class="sub-amount-row">
                   <span class="symbol">¥</span>
-                  <span class="value">{{ selectedSubPlan.price }}</span>
-                  <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力<span v-if="selectedSubPlan.first_period_bonus">，首期加赠 {{ selectedSubPlan.first_period_bonus }}</span></span>
+                  <span class="value">{{ planShowsIntroPrice(selectedSubPlan) ? selectedSubPlan.first_period_price : selectedSubPlan.price }}</span>
+                  <span class="per-month">/月<span v-if="planShowsIntroPrice(selectedSubPlan)"> · 首月优惠，之后 ¥{{ selectedSubPlan.price }}/月 · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible"> · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else> · 每期 {{ selectedSubPlan.computing_power }} 算力</span></span>
                 </div>
 
                 <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
@@ -1565,22 +1637,28 @@
   <script src="/js/vendor/vue-router.global.prod.js"></script>
   <script src="/js/vendor/axios.min.js"></script>
   <script src="/js/task_config.js"></script>
+  <script src="/js/escape.js"></script>
+  <script src="/js/tiff_support.js"></script>
+  <!-- 火山TTS音色库：共享API + Vue选择器组件（audio_generate 声音页使用） -->
+  <script src="/js/voice_library_api.js?v=20261012a"></script>
+  <script src="/js/components/voice_picker.js?v=20261013a"></script>
   <script src="/js/model_catalog.js?v=__VERSION__"></script>
   <!-- 工具函数 -->
-  <script src="/js/pages/_utils.js"></script>
+  <script src="/js/download_attachment.js?v=__VERSION__"></script>
+  <script src="/js/pages/_utils.js?v=__VERSION__"></script>
   <!-- 页面组件 -->
   <script src="/js/pages/list_page.js"></script>
-  <script src="/js/pages/digital_human.js"></script>
-  <script src="/js/pages/audio_generate.js"></script>
-  <script src="/js/pages/video_enhance.js"></script>
+  <script src="/js/pages/digital_human.js?v=__VERSION__"></script>
+  <script src="/js/pages/audio_generate.js?v=20261013b"></script>
+  <script src="/js/pages/video_enhance.js?v=__VERSION__"></script>
   <script src="/js/pages/image_edit.js?v=__VERSION__"></script>
-  <script src="/js/pages/text_to_image.js"></script>
+  <script src="/js/pages/text_to_image.js?v=__VERSION__"></script>
   <script src="/js/pages/image_to_video.js?v=__VERSION__"></script>
   <script src="/js/pages/ai_video_gen.js?v=__VERSION__"></script>
-  <script src="/js/pages/ai_script_gen.js"></script>
+  <script src="/js/pages/ai_script_gen.js?v=__VERSION__"></script>
   <script src="/js/pages/skill_config.js"></script>
   <!-- App 组件、路由配置 -->
-  <script src="/js/index_app.js?v=f7164"></script>
+  <script src="/js/index_app.js?v=20260922a"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行
@@ -1593,6 +1671,11 @@
   ZJTi18n.init(['common', 'index', 'video_workflow', 'marketing_agent']).then(() => {
     // 初始化完成后创建 Vue 应用
     const app = Vue.createApp(App);
+
+    // 声音页音色库选择器（火山TTS快速合成）
+    if (window.VoicePicker) {
+      app.component('voice-picker', window.VoicePicker);
+    }
 
     // 任务事件时间线弹窗（全局复用，避免在各历史组件重复实现）
     app.component('timeline-modal', {

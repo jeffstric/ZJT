@@ -26,6 +26,28 @@
         };
         const escapeHtmlAttr = window.escapeHtmlAttr;
 
+        /**
+         * ask_user 选项兼容归一化：后端理论上只下发字符串数组，但模型偶尔会返回
+         * {"label": ..., "description": ...} 等对象，直接渲染会变成 [object Object]
+         * （2026-09-26 事故）。这里统一提取可展示文案；取不到时返回空串，由调用方跳过。
+         * @param {*} option 后端 options 数组中的单个元素
+         * @returns {string}
+         */
+        const normalizeAskOption = function (option) {
+            if (typeof option === 'string') return option.trim();
+            if (option && typeof option === 'object') {
+                const keys = ['label', 'option', 'text', 'value', 'name', 'title', 'content'];
+                for (let i = 0; i < keys.length; i++) {
+                    const value = option[keys[i]];
+                    if (typeof value === 'string' && value.trim()) return value.trim();
+                    if (typeof value === 'number' && isFinite(value)) return String(value);
+                }
+                return '';
+            }
+            if (typeof option === 'number' && isFinite(option)) return String(option);
+            return '';
+        };
+
         // 角度常量类 - 统一管理多角度图片的角度定义
         const AngleKey = {
             RIGHT_90: 'right',
@@ -72,6 +94,24 @@
         const LLMVendor = {};
         // 供应商图标映射（从 /api/vendors 动态加载）
         const vendorIcons = {};
+        // 供应商短名映射（模型选择器徽标/闭合态后缀用；未知供应商回退 vendor_name 原文）
+        const VENDOR_SHORT_LABELS = {
+            volcengine: '火山',
+            glmcn: '智谱',
+            aliyun: '阿里',
+            deepseek: 'DeepSeek',
+            claude: 'Claude',
+            agnes: 'Agnes',
+            mimo: 'MiMo',
+            ollama: 'Ollama',
+            vllm: 'vLLM',
+            zjt_api: 'ZJT',
+            jiekou: '接口',
+        };
+        function getVendorShortLabel(vendorName) {
+            const key = String(vendorName || '').toLowerCase();
+            return VENDOR_SHORT_LABELS[key] || vendorName || '';
+        }
         let llmModelCatalog = null;
         let imageModelCatalog = null;
 
@@ -518,7 +558,9 @@
                             if (options.length > 0) {
                                 vHtml += `<div class="verification-options">`;
                                 options.forEach(opt => {
-                                    vHtml += `<span class="option-btn">${escapeHtml(opt)}</span>`;
+                                    const optionText = normalizeAskOption(opt);
+                                    if (!optionText) return;
+                                    vHtml += `<span class="option-btn">${escapeHtml(optionText)}</span>`;
                                 });
                                 vHtml += `</div>`;
                             }
@@ -703,7 +745,9 @@
                     },
                     body: JSON.stringify({
                         system_prompt: systemPrompt,
-                        user_id: USER_ID,
+                        // 会话归属以登录身份为准（服务端按 token 校验），不回传 URL user_id：
+                        // 链接里的 user_id 可能是他人的（2026-10-12 课堂事故），回传会触发
+                        // user_mismatch 403，导致无法自愈建会话。
                         world_id: WORLD_ID,
                         auth_token: AUTH_TOKEN,
                         session_type: 1
@@ -754,6 +798,52 @@
                 }
             } catch (error) {
                 showError((window.t ? window.t('error_create_session_failed', {error: error.message}) : '创建会话失败: ' + error.message));
+            }
+        }
+
+        // 会话失效自愈：创建任务返回 404（会话不存在/非本人会话，例如页面链接带了他人的
+        // user_id 导致复用了别人的会话、或会话已被清理）时，丢弃旧会话、新建会话并重发当前消息。
+        // 只允许 sendMessage 的 404 分支进入；重试请求带 skipSessionRecovery，最多自愈一次。
+        async function recoverBrokenSession(message, isSystemMessage) {
+            hideTypingIndicator();
+            hideToolCalls();
+            updateStatus(window.t ? window.t('status_session_recreating') : '会话不可用，正在新建会话...');
+            console.warn('[会话自愈] 创建任务返回 404，丢弃不可用会话并重建:', sessionId);
+            sessionId = null;
+            try {
+                await createSession();
+            } catch (error) {
+                console.error('[会话自愈] 新建会话失败:', error);
+            }
+            if (!sessionId) {
+                // 重建失败：把消息放回输入框（系统触发的 customMessage 无输入框可回填），交还用户
+                isProcessing = false;
+                const sendBtn = document.getElementById('send-btn');
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
+                if (!isSystemMessage) {
+                    const input = document.getElementById('message-input');
+                    if (input && !input.value.trim()) {
+                        input.value = message;
+                        syncSendBtnLayout();
+                    }
+                }
+                showError(window.t ? window.t('error_session_recreate_failed') : '会话重建失败，消息已放回输入框，请稍后重试');
+                return;
+            }
+            // 移除刚才失败尝试的用户气泡，重发时重新入列，避免气泡重复
+            removeLastUserBubble();
+            isProcessing = false;
+            await sendMessage(message, isSystemMessage, { skipSessionRecovery: true });
+        }
+
+        function removeLastUserBubble() {
+            const messagesDiv = document.getElementById('chat-messages');
+            const bubbles = messagesDiv.querySelectorAll('.message.user-message');
+            if (bubbles.length > 0) {
+                bubbles[bubbles.length - 1].remove();
             }
         }
 
@@ -1292,7 +1382,8 @@
             }, 400);
         }
 
-        async function sendMessage(customMessage = null, isSystemMessage = false) {
+        // recoveryOptions.skipSessionRecovery：会话自愈重发的请求不再二次自愈，防止递归
+        async function sendMessage(customMessage = null, isSystemMessage = false, recoveryOptions = null) {
             console.log('sendMessage called, isProcessing:', isProcessing, 'pendingVerificationId:', pendingVerificationId);
 
             // Disable send button immediately to prevent multiple clicks
@@ -1481,6 +1572,13 @@
                         isProcessing = false;
                         const sendBtn = document.getElementById('send-btn');
                         if (sendBtn) { sendBtn.disabled = false; sendBtn.classList.remove('sending'); }
+                        return;
+                    }
+                    // 会话不可用（404：会话不存在或非本人会话——例如复用了他人会话、会话已被清理）：
+                    // 自愈一次，新建会话并原样重发当前消息；重试请求不再自愈，避免循环
+                    if (taskResponse.status === 404 && !(recoveryOptions && recoveryOptions.skipSessionRecovery)) {
+                        clearTimeout(timeoutId); // 本次请求已结束，防止旧的超时定时器稍后误报
+                        await recoverBrokenSession(message, isSystemMessage);
                         return;
                     }
                     // 其他错误
@@ -1993,7 +2091,10 @@
                 html += `<p class="verification-click-hint">${escapeHtml(window.t ? window.t('verification_click_hint') : '请点击下方选项作答')}</p>`;
                 html += `<div class="verification-options">`;
                 verification.options.forEach((option, index) => {
-                    const escapedOption = escapeHtml(option);
+                    const optionText = normalizeAskOption(option);
+                    // 归一化后为空（模型返回了无法识别的结构）时跳过，避免出现空白/[object Object]按钮
+                    if (!optionText) return;
+                    const escapedOption = escapeHtml(optionText);
                     html += `<button type="button" class="option-btn" data-option-index="${index}">`;
                     html += `${escapedOption}</button>`;
                 });
@@ -2033,14 +2134,17 @@
                         // fromInput=false：不清理输入框草稿
                         const index = target.dataset.optionIndex;
                         const option = verification.options[index];
-                        if (option) {
-                            console.log('[VERIFICATION] 用户选择选项:', option);
+                        // 提交归一化后的文案而非原始元素：options 若为对象，原样提交会把
+                        // 整个对象存进会话记录（[object Object] 事故的一部分）
+                        const optionText = option ? normalizeAskOption(option) : '';
+                        if (optionText) {
+                            console.log('[VERIFICATION] 用户选择选项:', optionText);
                             // 提交中禁用按钮，避免重复点击
                             if (sendBtn) {
                                 sendBtn.disabled = true;
                                 sendBtn.classList.add('sending');
                             }
-                            submitVerificationAnswer(option, { fromInput: false }).finally(() => {
+                            submitVerificationAnswer(optionText, { fromInput: false }).finally(() => {
                                 // 失败仍 pending：恢复以便重试；成功保持 sending 等 AI 继续
                                 if (pendingVerificationId) {
                                     restoreSendButtonIdle();
@@ -2487,7 +2591,8 @@
                         extraGroup.label = '换供应商';
                         extraRoutes.forEach((route) => {
                             const option = createModelOption(route);
-                            option.textContent = `${route.name || route.model_name}（${route.vendor_name}）`;
+                            // 供应商不内嵌文本，由自定义菜单按 dataset.vendorName 统一渲染徽标
+                            option.textContent = route.name || route.model_name;
                             extraGroup.appendChild(option);
                         });
                         selector.appendChild(extraGroup);
@@ -2678,7 +2783,10 @@
             if (!selectedOption) return;
 
             const conciseName = selectedOption.dataset.conciseName || selectedOption.value || selectedOption.textContent;
-            display.textContent = conciseName;
+            // 闭合态带上供应商短后缀（如「glm-5.3-flash · 智谱」）；display 有
+            // ellipsis，超长自动截断，不会撑破选择器宽度
+            const vendorLabel = getVendorShortLabel(selectedOption.dataset.vendorName);
+            display.textContent = vendorLabel ? `${conciseName} · ${vendorLabel}` : conciseName;
             display.style.color = '';
         }
 
@@ -2757,10 +2865,24 @@
             item.className = 'custom-model-select-option';
             const baseText = option.textContent || option.value;
             const isDefault = isOptionWorldDefault(selector, option);
-            item.textContent = isDefault
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'model-option-name';
+            nameSpan.textContent = isDefault
                 ? `${baseText}（${tOr('default_badge', '默认')}）`
                 : baseText;
-            item.title = baseText;
+            item.appendChild(nameSpan);
+            // 供应商标识：统一由 dataset.vendorName 驱动渲染 pill 徽标，
+            // 选项文本内不再内嵌供应商名（避免与徽标重复）
+            const vendorLabel = getVendorShortLabel(option.dataset.vendorName);
+            if (vendorLabel) {
+                const badge = document.createElement('span');
+                badge.className = 'model-vendor-badge';
+                badge.textContent = vendorLabel;
+                item.appendChild(badge);
+                item.title = `${baseText} · ${vendorLabel}`;
+            } else {
+                item.title = baseText;
+            }
             item.disabled = option.disabled;
             if (option.selected) {
                 item.classList.add('selected');
@@ -3075,7 +3197,13 @@
 
             const selectedOption = selector.options[selector.selectedIndex];
             const vendorName = selectedOption?.dataset?.vendorName || '';
-            const isDoubao = vendorName === 'volcengine' || (selectedOption?.value || '').startsWith('doubao');
+            const modelValue = (selectedOption?.value || '').toLowerCase();
+            // effort 档位选择：volcengine（doubao 系）与 glmcn（GLM 系）均支持，
+            // GLM 的 thinking_effort 由后端 GLM_REASONING_EFFORT_MAP 映射
+            const isDoubao = vendorName === 'volcengine'
+                || vendorName === 'glmcn'
+                || modelValue.startsWith('doubao')
+                || modelValue.startsWith('glm-');
 
             // 只在开关打开且是 Doubao 模型时显示 effort 选择
             effortSelect.style.display = (toggle.checked && isDoubao) ? 'inline-block' : 'none';
@@ -3213,7 +3341,10 @@
             const selectedOption = selector.options[selector.selectedIndex];
             if (!selectedOption) return;
 
-            display.textContent = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            const conciseName = selectedOption.dataset.conciseName || selectedOption.textContent || selectedOption.value;
+            // 闭合态带上供应商短后缀（与 LLM 模型选择器口径一致）
+            const vendorLabel = getVendorShortLabel(selectedOption.dataset.vendorName);
+            display.textContent = vendorLabel ? `${conciseName} · ${vendorLabel}` : conciseName;
             display.style.color = '';
         }
 
@@ -5837,6 +5968,7 @@
                     }
 
                     const task = result.task;
+                    const angles = task.angles || [];
                     const generatedImages = task.generated_images || [];
                     const currentIndex = task.current_angle_index;
 
@@ -5844,10 +5976,10 @@
                         if (currentIndex !== undefined && currentIndex < angles.length) {
                             const currentAngle = angles[currentIndex];
                             if (currentAngle) {
-                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex}/${angles.length})`;
+                                statusSpan.textContent = `正在生成 ${currentAngle.label}... (${currentIndex + 1}/${angles.length})`;
                             }
                         } else {
-                            statusSpan.textContent = `处理中... (${currentIndex}/${angles.length})`;
+                            statusSpan.textContent = `处理中... (${currentIndex + 1}/${angles.length})`;
                         }
                     } else if (task.status === 2) {  // COMPLETED
                         clearInterval(multiAnglePollInterval);
@@ -8061,8 +8193,16 @@
             modal.classList.remove('show');
         }
 
-        // 打开算力充值弹窗
+        // 打开算力充值弹窗（与首页相同：算力直付 + 月度订阅）
         async function handleRechargeClick() {
+            if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+                await window.RechargeCenter.open({
+                    onPaid: function () {
+                        if (typeof loadComputingPower === 'function') loadComputingPower();
+                    }
+                });
+                return;
+            }
             // 检查是否本地模式
             try {
                 const response = await fetch('/api/system/server-config');
@@ -8461,8 +8601,6 @@
         }
         
         function showModeSelection() {
-            submitToDatabase().catch(e => console.warn('预提交失败:', e));
-
             let modal = document.getElementById('mode-selection-modal');
             if (!modal) {
                 modal = document.createElement('div');
@@ -8510,12 +8648,6 @@
         }
 
         async function goToStoryboard() {
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-
             const assetsStatus = await checkAssetsComplete();
             const hasProblems = !assetsStatus.hasScript || assetsStatus.missingAssets.length > 0;
             if (hasProblems) {
@@ -8570,14 +8702,7 @@
                 console.log('当前世界ID:', window.currentWorldId);
             }
             
-            // 先提交当前数据
-            try {
-                await submitToDatabase();
-            } catch (e) {
-                console.error('提交数据失败:', e);
-            }
-            
-            // 检查资产完成状态
+            // 检查资产完成状态（不在跳转时提交暂存，避免协作者把未确认的数据写入共享库）
             const assetsStatus = await checkAssetsComplete();
             
             // 如果有问题（没有剧本或资产缺失图片），弹出确认提示

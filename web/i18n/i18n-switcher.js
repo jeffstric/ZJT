@@ -94,7 +94,7 @@ window.ZJTi18nSwitcher = (() => {
     const dropdown = container.querySelector('.language-dropdown');
     dropdown.classList.remove('show');
 
-    await i18n.setLocale(locale, ['common', 'video_workflow', 'index', 'marketing_agent', 'admin', 'workflow_list']);
+    await i18n.setLocale(locale, ['common', 'video_workflow', 'index', 'marketing_agent', 'admin', 'workflow_list', 'storyboard']);
 
     // 重新扫描所有 data-i18n 属性
     if (window.ZJTi18nDOM) {

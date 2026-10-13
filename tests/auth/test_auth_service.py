@@ -25,6 +25,10 @@ class MockUsersModel:
         return 0
 
     @staticmethod
+    def get_active_count():
+        return 0
+
+    @staticmethod
     def get_by_phone(phone):
         return None
 
@@ -35,6 +39,11 @@ class MockUsersModel:
     @staticmethod
     def generate_unique_invite_code():
         return 'TEST001'
+
+    @staticmethod
+    def generate_unique_nickname():
+        # 注册链路会为用户自动分配随机趣味默认昵称（model/users.py）
+        return '机智的熊猫'
 
 
 class MockLoginLogModel:
@@ -95,9 +104,10 @@ class TestAuthServiceComputingPower(DatabaseTestCase):
         """测试普通用户获得默认50算力"""
         from perseids_server.services.auth_service import AuthService
 
-        # 模拟第二个用户注册（非首个用户）
+        # 模拟第二个用户注册（非首个用户；激活数为 0 以通过激活配额校验）
         mock_users_model = MagicMock()
         mock_users_model.get_total_count.return_value = 1  # 已有1个用户
+        mock_users_model.get_active_count.return_value = 0
         mock_users_model.get_by_phone.return_value = None
         mock_users_model.generate_unique_invite_code.return_value = 'USER001'
         mock_execute_insert = MagicMock(return_value=1000)
@@ -138,6 +148,7 @@ class TestAuthServiceComputingPower(DatabaseTestCase):
         admin_id = 100  # 模拟的邀请人ID
         mock_users_model = MagicMock()
         mock_users_model.get_total_count.return_value = 1  # 已有1个用户
+        mock_users_model.get_active_count.return_value = 0
         mock_users_model.get_by_phone.return_value = None
         mock_users_model.get_by_invite_code.return_value = MagicMock(id=admin_id)
         mock_users_model.generate_unique_invite_code.return_value = 'USER002'

@@ -1,7 +1,7 @@
 """
 Script Model - Database operations for script table
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert
 import logging
 
@@ -160,7 +160,38 @@ class ScriptModel:
         except Exception as e:
             logger.error(f"Failed to list scripts for world {world_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def list_for_folders(world_ids: List[int]) -> List[Dict[str, Any]]:
+        """已入库剧本的文件夹字段。按 world_id 查询，不按 user_id 过滤，不读取正文。"""
+        normalized: List[int] = []
+        seen = set()
+        for raw in world_ids or []:
+            try:
+                world_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if world_id in seen:
+                continue
+            seen.add(world_id)
+            normalized.append(world_id)
+        if not normalized:
+            return []
+
+        placeholders = ",".join(["%s"] * len(normalized))
+        sql = f"""
+            SELECT id, world_id, title, episode_number, update_time, create_time
+            FROM script
+            WHERE world_id IN ({placeholders})
+            ORDER BY world_id ASC, episode_number ASC, id ASC
+        """
+        try:
+            results = execute_query(sql, tuple(normalized), fetch_all=True)
+            return list(results) if results else []
+        except Exception as e:
+            logger.error(f"Failed to list scripts for folders, worlds={normalized}: {e}")
+            raise
+
     @staticmethod
     def list_by_user(
         user_id: int,

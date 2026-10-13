@@ -80,4 +80,37 @@ assert.equal(
   'collapsed details should keep preference values'
 );
 
+// [输出语言要求] 多行指令块也应整块折叠，details 中提取语言名
+const outputLanguageBlock = [
+  '',
+  '[输出语言要求]',
+  '用户指定本次生成素材的输出语言为：English。请遵守：',
+  '1. 生成的图片/视频素材中呈现给观众的所有文字（海报文案、店招、字幕、包装、招牌等）必须使用English',
+  '2. 视频口播旁白、数字人播报文案必须使用English',
+  '6. PM 委托专家智能体时，必须在 task_description 中明确传达本输出语言要求'
+].join('\n');
+const langDisplay = dedupe.formatAgentUserMessageForDisplay(
+  '帮我做一张海报' + outputLanguageBlock
+);
+assert.equal(
+  langDisplay.includes('[输出语言要求]'),
+  false,
+  'output language marker should be hidden from main bubble'
+);
+assert.equal(
+  langDisplay.includes('必须使用English'),
+  false,
+  'output language instruction body should be fully folded'
+);
+assert.equal(
+  langDisplay.includes('<strong>输出语言要求</strong> English</div>'),
+  true,
+  'collapsed details should extract the language name'
+);
+assert.equal(
+  langDisplay.includes('帮我做一张海报'),
+  true,
+  'original user question should remain visible'
+);
+
 console.log('agent_message_dedupe tests passed');

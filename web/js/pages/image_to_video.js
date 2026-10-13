@@ -353,6 +353,23 @@
         if (Array.isArray(ref)) return ref;
         try { return JSON.parse(ref); } catch(e) { return []; }
       },
+      parseAudioPaths(raw) {
+        if (!raw) return [];
+        if (Array.isArray(raw)) {
+          return raw.map((item) => String(item || '').trim()).filter(Boolean);
+        }
+        const text = String(raw).trim();
+        if (!text) return [];
+        if (text[0] === '[') {
+          try {
+            const parsed = JSON.parse(text);
+            if (Array.isArray(parsed)) {
+              return parsed.map((item) => String(item || '').trim()).filter(Boolean);
+            }
+          } catch (e) { /* 非 JSON 时按逗号分隔 */ }
+        }
+        return text.split(',').map((item) => item.trim()).filter(Boolean);
+      },
       async fetchComputingPowerConfig() {
         try {
           const response = await axios.get('/api/computing-power-config');
@@ -1047,8 +1064,7 @@
         }
       },
       
-      downloadVideo(url, index, isEnhanced = false) {
-        // Check if WeChat browser
+      async downloadVideo(url, index, isEnhanced = false) {
         if (this.$root.isWechatBrowser()) {
           this.$root.showWechatGuideModal = true;
           return;
@@ -1062,15 +1078,12 @@
                        now.getMinutes().toString().padStart(2, '0');
         const prefix = isEnhanced ? 'image_to_video_enhanced' : 'image_to_video';
         const filename = `${prefix}_${dateStr}_${timeStr}_${index + 1}.mp4`;
-        const downloadUrl = buildDownloadUrl(url, filename);
-  
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = filename;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        try {
+          await downloadWithAuth(url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
+        }
       },
       
       async fetchHistory(append = false) {
@@ -1217,7 +1230,7 @@
           <!-- 首尾帧/主图片上传 -->
           <div class="field">
             <label class="label">{{ filesLabel }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onFile" />
             <div class="muted" v-if="videoModel === 'sora2'" style="margin-top:6px; color: #fca5a5;">⚠️ {{ $t('sora2_warning_images') || '注意：请勿上传真人图片' }}</div>
             <div class="muted" style="margin-top:6px; color: var(--muted);">{{ filesHint }}</div>
             <div v-if="imageMediaItems.length > 0" style="margin-top: 10px;">
@@ -1293,7 +1306,7 @@
           <!-- 参考图上传（仅 first_last_with_ref 模式显示） -->
           <div class="field" v-if="imageMode === 'first_last_with_ref'">
             <label class="label">{{ $t('reference_images_label') || '上传参考图 (0-3张，用于风格参考)' }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onReferenceFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onReferenceFile" />
             <div class="muted" style="margin-top:6px; color: var(--muted);">{{ $t('reference_images_desc') || '参考图用于控制视频风格，可选' }}</div>
             <div v-if="referenceFiles.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -1505,6 +1518,15 @@
                         <a :href="img" target="_blank" class="btn secondary" style="font-size: 12px; padding: 4px 12px; text-decoration: none;">{{ $t('view_original') || '查看原图' }}</a>
                       </div>
                     </template>
+                  </div>
+                </div>
+                <div v-if="parseAudioPaths(item.audio_path).length" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">
+                  <div style="font-size: 12px; color: var(--muted); margin-bottom: 8px;">{{ $t('reference_audio_label') || '参考音频' }}:</div>
+                  <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <div v-for="(audio, aidx) in parseAudioPaths(item.audio_path)" :key="'audio-' + aidx">
+                      <div style="font-size: 12px; color: var(--muted); margin-bottom: 4px;">{{ $t('audio') || '音频' }} {{ aidx + 1 }}</div>
+                      <audio :src="audio" controls preload="metadata" style="width: 100%; max-width: 420px; height: 36px;"></audio>
+                    </div>
                   </div>
                 </div>
                 <div v-if="item.video_path" style="margin-top: 12px; padding: 12px; background: #0f1620; border-radius: 8px; border: 1px solid var(--border);">

@@ -158,18 +158,22 @@ def _strict_validate(
 def _cell_is_placeholder(cell_arr: np.ndarray) -> bool:
     """判断一个 cell 区域是否为纯色占位格（纯黑/纯白）。
 
-    用灰度中位数判定，而非标准差：占位格内常穿有白色分割线，导致 std 偏高（实测可达
-    40+），但中位数不受占比小的分割线像素影响（纯黑占位格 median≈0）。真实场景内容
-    即便偏暗也因有明暗对比，median 普遍 >20。
+    双条件判定（中位数 + 极暗/极亮像素占比）：纯黑占位格即便穿有白色分割线、角标，
+    极暗像素占比实测仍 >0.97；纯白占位格极亮像素占比实测约 0.84。暗色调真实场景
+    （夜景插画、暗驾驶舱）虽有大量近黑像素，但月亮/灯光/反射面会把极暗占比压到
+    0.5 以下。只看中位数会把这类暗场景 cell 误判成占位格，进而放行占位格旁路，
+    把一整张连续单图当宫格拆碎（线上事故：夜景插画单图过旁路被切 4 块）。
     """
     if cell_arr.size == 0:
         return False
     gray = cell_arr.mean(axis=2) if cell_arr.ndim == 3 else cell_arr
     median = float(np.median(gray))
     if median <= GridConfig.VALIDATION_PLACEHOLDER_DARK_MAX:
-        return True
+        dark_ratio = float((gray <= GridConfig.VALIDATION_PLACEHOLDER_DARK_MAX).mean())
+        return dark_ratio >= GridConfig.VALIDATION_PLACEHOLDER_DARK_RATIO_MIN
     if median >= GridConfig.VALIDATION_PLACEHOLDER_BRIGHT_MIN:
-        return True
+        bright_ratio = float((gray >= GridConfig.VALIDATION_PLACEHOLDER_BRIGHT_MIN).mean())
+        return bright_ratio >= GridConfig.VALIDATION_PLACEHOLDER_BRIGHT_RATIO_MIN
     return False
 
 

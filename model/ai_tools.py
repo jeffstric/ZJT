@@ -302,6 +302,14 @@ class AIToolsModel:
                         default=True
                     )
                     if face_mask_enabled:
+                        from config.constant import FaceMaskPromptConstants
+                        from task.pipeline_drivers import resolve_face_mask_reference_whitelist
+                        # 参考图遮盖白名单：仅角色参考图需要人脸处理，道具/场景/画风图跳过；
+                        # 白名单缺失（老调用方）时保持旧行为：全部参考图建遮盖步骤
+                        reference_whitelist = resolve_face_mask_reference_whitelist(
+                            extra_config,
+                            key=FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY,
+                        )
                         if video_path:
                             video_paths = [v.strip() for v in video_path.split(",") if v.strip()]
                             for single_video_path in video_paths:
@@ -353,6 +361,8 @@ class AIToolsModel:
                                 ]
 
                         for idx, single_image_path in enumerate(reference_image_paths):
+                            if reference_whitelist is not None and single_image_path not in reference_whitelist:
+                                continue
                             PipelineStepModel.create_in_transaction(
                                 conn,
                                 ai_tool_id=ai_tool_id,
@@ -374,7 +384,7 @@ class AIToolsModel:
 
                     created_step_count = step_order
 
-                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。
+                # 创建 MiniMax H3 提示词优化步骤（图生视频 I2VA/FL2VA、参考生视频 Ref2VA、首帧参考 KFRef）。
                 # build_h3_prompt_optimize_step_configs 为纯函数式（只读属性 + 查 config），
                 # 事务内不发起 HTTP/IO，符合 transaction() 短事务约束。
                 import types

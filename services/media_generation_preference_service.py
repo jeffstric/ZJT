@@ -12,6 +12,7 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
 )
+from config.model_catalog import ModelScene, get_scene_reco, match_canonical
 from config.unified_config import ImageMode, TaskCategory, UnifiedConfigRegistry
 from model.user_preferences import (
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
@@ -344,8 +345,32 @@ class MediaGenerationPreferenceService:
             {"task_id": config.id},
         )
 
+    # 媒体槽位 → 模型目录场景（config/model_catalog.py 性价比/效果双档）
+    SLOT_SCENES = {
+        (MediaGenerationType.IMAGE, MediaGenerationMode.TEXT_TO_IMAGE): ModelScene.IMAGE_TEXT_TO_IMAGE,
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_EDIT): ModelScene.IMAGE_IMAGE_EDIT,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.TEXT_TO_VIDEO): ModelScene.VIDEO_TEXT_TO_VIDEO,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.IMAGE_TO_VIDEO): ModelScene.VIDEO_IMAGE_TO_VIDEO,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.REFERENCE_TO_VIDEO): ModelScene.VIDEO_REFERENCE_TO_VIDEO,
+    }
+
+    @staticmethod
+    def _canonical_of(config: Any) -> str:
+        return str(
+            getattr(config, 'short_key', None)
+            or getattr(config, 'key', None)
+            or ''
+        ).strip()
+
     @classmethod
     def default_model(cls, media_type: str, mode: str):
+        """无持久化偏好时的默认模型：目录性价比档优先，回退 sort_order 第一。
+
+        口径与前端 pickRememberedTaskId（web/js/storyboard/state.js，track='value'
+        优先）对齐。若仍按 sort_order 第一取默认，会在偏好首次初始化时把
+        LTX2.3（图生视频 sort 最小项）固化为持久偏好，短路前端性价比档兜底
+        （59009cf3）。目录场景无配置/无命中时保持历史排序行为。
+        """
         category = {
             MediaGenerationMode.TEXT_TO_IMAGE: TaskCategory.TEXT_TO_IMAGE,
             MediaGenerationMode.IMAGE_EDIT: TaskCategory.IMAGE_EDIT,
@@ -357,9 +382,23 @@ class MediaGenerationPreferenceService:
             UnifiedConfigRegistry.get_by_category(category),
             key=lambda config: (config.sort_order, config.id),
         )
-        for config in candidates:
+        # 默认模型必须驱动可用（如 Vidu Token 未配置则跳过）：曾 storyboard_cli 参考视频
+        # 无偏好时默认解析为 vidu_q2（sort 并列取最小 id），该模型在此环境永远跑不通，
+        # 导致提交扣费后 worker 才失败退款。与模型列表接口 get_driver_availability 同口径；
+        # 可用性读取失败时不过滤（与列表接口「读取失败列表不过滤」行为一致）。
+        availability = None
+        try:
+            from task.visual_drivers.driver_factory import VideoDriverFactory
+            # 驱动未注册（单测/脚本等非 server 进程）时不可用性字典会把所有模型
+            # 误判为不可用，此时退化为不过滤，保持原行为
+            if VideoDriverFactory._registered_drivers:
+                availability = VideoDriverFactory.get_driver_availability()
+        except Exception:
+            availability = None
+
+        def _usable(config) -> bool:
             if not config.enabled or config.hidden:
-                continue
+                return False
             try:
                 cls.validate_model(
                     config.id,
@@ -371,9 +410,34 @@ class MediaGenerationPreferenceService:
                         else None
                     ),
                 )
-                return config
             except MediaGenerationPreferenceError:
+                return False
+            if availability is not None and not VideoDriverFactory.is_task_available(
+                config.id, availability
+            ):
+                return False
+            return True
+
+        value_config = cls._value_track_model(media_type, mode, candidates, _usable)
+        if value_config is not None:
+            return value_config
+        for config in candidates:
+            if _usable(config):
+                return config
+        return None
+
+    @classmethod
+    def _value_track_model(cls, media_type: str, mode: str, candidates, usable):
+        """按目录性价比档（value）解析模型；场景无配置或无命中返回 None。"""
+        scene = cls.SLOT_SCENES.get((media_type, mode))
+        reco = get_scene_reco(scene) if scene else None
+        if reco is None:
+            return None
+        for config in candidates:
+            if not usable(config):
                 continue
+            if match_canonical(cls._canonical_of(config), reco.value.canonical):
+                return config
         return None
 
     @classmethod

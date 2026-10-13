@@ -45,6 +45,34 @@ USER_TEXT = (
     "只返回描述文字本身。"
 )
 
+# 提示词反推用途：输出可直接用于文生图复现该图片的中文提示词
+# （视频工作流「提示词反推节点」使用，反推结果填入新建图片节点的提示词）
+IMAGE_PROMPT_SYSTEM_PROMPT = (
+    "你是 AI 绘画提示词专家，负责看图反推出可直接用于文生图复现该图片的中文提示词。"
+    "只返回一段提示词文字，不要 JSON、Markdown、标题、序号或任何解释。"
+    "\n"
+    "要求：\n"
+    "1) 按优先级覆盖：画面主体（人物/物体及其外貌、服饰、姿态、动作）→ 环境/场景 → "
+    "艺术风格与媒介（如写实摄影、3D 渲染、水彩、动漫）→ 构图与镜头（特写/全景/"
+    "俯视等，仅在明显时写）→ 光线与色调 → 画质关键词。\n"
+    "2) 使用逗号分隔的关键词/短语组合，总长 60~150 字，一段话。\n"
+    "3) 不写「图中可见」「这张图」「提示词」等措辞，不逐像素描述，不描述文字水印。"
+    "\n"
+    "4) 若画面含文字内容且为主体（海报/招牌），将文字内容用引号保留在提示词中。"
+)
+
+IMAGE_PROMPT_USER_TEXT = (
+    "请看这张图片，反推出用于文生图复现它的中文提示词。只返回提示词本身。"
+)
+
+# purpose → (system_prompt, user_text)；未知 purpose 回落全景描述（存量行为）
+_PURPOSE_PROMPTS = {
+    "panorama": (SYSTEM_PROMPT, USER_TEXT),
+    "image_prompt": (IMAGE_PROMPT_SYSTEM_PROMPT, IMAGE_PROMPT_USER_TEXT),
+}
+
+DEFAULT_PURPOSE = "panorama"
+
 
 def _clean_description(content: str) -> str:
     """容错清洗模型回复：去代码块包裹/引号/首尾空白，截断到上限。"""
@@ -70,13 +98,19 @@ async def describe_image(
     model: Optional[str] = None,
     vendor_id: Optional[int] = None,
     model_id: Optional[int] = None,
+    purpose: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """任意图片 → VL 生成场景描述。
+    """任意图片 → VL 生成描述提示词。
 
     user_id 用于本站图片的用户目录隔离（与 env_fit 加固版语义一致）；
     远程 http(s) URL 不受目录限制（allow_remote=True 时由调用方自行权衡）。
+    purpose 选择业务提示词：'panorama'（360 全景场景描述，默认，存量行为）/
+    'image_prompt'（文生图提示词反推）；未知值回落默认。
     返回 {success, description?, model?, vendor_id?, error?}。
     """
+    system_prompt, user_text = _PURPOSE_PROMPTS.get(
+        str(purpose or DEFAULT_PURPOSE), _PURPOSE_PROMPTS[DEFAULT_PURPOSE]
+    )
     if not image_url or not str(image_url).strip():
         return {"success": False, "error": "缺少图片 url"}
 
@@ -118,8 +152,8 @@ async def describe_image(
     try:
         ok, content, err = await asyncio.wait_for(
             call_vl(
-                SYSTEM_PROMPT,
-                USER_TEXT,
+                system_prompt,
+                user_text,
                 data_url,
                 model=use_model,
                 llm_timeout=IMAGE_DESCRIBE_LLM_TIMEOUT,

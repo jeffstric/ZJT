@@ -286,6 +286,10 @@ body {
     color: var(--admin-success);
 }
 
+.stat-card-value.danger {
+    color: var(--admin-danger);
+}
+
 .stat-card-actions {
     margin-top: 8px;
 }
@@ -1108,6 +1112,33 @@ body {
 
 .account-cell {
     min-width: 180px;
+}
+
+/* 账号列下方的昵称小字 */
+.account-nickname {
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+/* 用户备注列：超长截断，悬浮显示全文（title） */
+.remark-cell {
+    max-width: 160px;
+}
+
+.remark-cell .remark-text {
+    display: inline-block;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: middle;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.remark-cell .remark-empty {
+    color: var(--admin-text-muted);
 }
 
 .account-type {

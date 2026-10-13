@@ -406,7 +406,7 @@
         return /micromessenger/.test(ua);
       },
       
-      downloadImage(url, index) {
+      async downloadImage(url, index) {
         const now = new Date();
         const dateStr = now.getFullYear().toString() +
                        (now.getMonth() + 1).toString().padStart(2, '0') +
@@ -414,24 +414,16 @@
         const timeStr = now.getHours().toString().padStart(2, '0') +
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `image_${dateStr}_${timeStr}_${index + 1}.png`;
-        const downloadUrl = buildDownloadUrl(url, filename);
-        
-        // 微信浏览器中直接打开图片，用户可以长按保存
-        if (this.isWechatBrowser()) {
-          window.open(downloadUrl, '_blank');
-          // 提示用户如何保存
-          setTimeout(() => {
-            alert('请长按图片，然后选择“保存图片”');
-          }, 500);
-        } else {
-          // 非微信浏览器使用标准下载方式
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = filename;
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+        try {
+          await downloadWithAuth(url, filename);
+          if (this.isWechatBrowser()) {
+            setTimeout(() => {
+              alert('请长按图片，然后选择“保存图片”');
+            }, 500);
+          }
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
         }
       },
       
@@ -662,7 +654,7 @@
         <div class="form">
           <div class="field">
             <label class="label">{{ $t('upload_image_max') }}</label>
-            <input class="input" type="file" accept="image/*" multiple @change="onFile" />
+            <input class="input" type="file" accept="image/*,.tif,.tiff" multiple @change="onFile" />
             <div v-if="files.length > 0" style="margin-top: 10px;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                 <div style="font-size: 13px; color: var(--muted);">{{ $t('selected_images') }} {{ files.length }}/5 {{ $t('upload_image_tips') }}</div>

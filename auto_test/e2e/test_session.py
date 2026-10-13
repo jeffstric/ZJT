@@ -40,9 +40,13 @@ class TestSession:
         except Exception:
             pass
 
-    def test_session_list(self, api_client, test_session_id):
-        """获取会话列表"""
-        resp = api_client.get("/api/sessions", timeout=15)
+    def test_session_list(self, api_client, test_session_id, user_id):
+        """获取会话列表（须登录且 user_id 与登录身份一致，2026-10-12 鉴权收紧）"""
+        resp = api_client.get(
+            "/api/sessions",
+            params={"user_id": str(user_id)},
+            timeout=15,
+        )
         assert resp.status_code == 200, f"获取会话列表失败: {resp.status_code}"
         data = resp.json()
         # 响应可能是列表或包含列表的字典

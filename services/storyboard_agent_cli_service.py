@@ -21,6 +21,15 @@ from config.constant import (
     MediaGenerationType,
 )
 from config.unified_config import SceneVideoType, UnifiedConfigRegistry
+from services.storyboard_frame_mention import (
+    FrameMentionError,
+    H3_KEYFRAME_REF_MAX_IMAGES,
+    h3_keyframe_ref_task_id,
+    prepare_frame_mentions,
+    prompt_has_frame_mention,
+    should_use_h3_keyframe_ref,
+    url_key,
+)
 from model.ai_tools import AIToolsModel
 from model.character import CharacterModel
 from model.location import LocationModel
@@ -38,10 +47,13 @@ from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_reference_note,
     build_storyboard_reference_items,
+    collect_character_voice_references,
     extract_storyboard_reference_names,
     reference_urls,
 )
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
@@ -63,6 +75,8 @@ VALID_VIDEO_MODES = {"text_to_video", "image_to_video"}
 # 对齐 marketing_agent 与驱动层 ImageMode，驱动支持的第三种 first_last_with_ref 仅手动对话用，批量不开放。
 VALID_VIDEO_IMAGE_MODES = {"first_last_frame", "multi_reference", "first_last_with_ref"}
 VALID_ASSET_TYPES = {"first_frame", "last_frame", "video"}
+# generate_video 的首尾帧 URL：缺省表示用分镜已选资产，传入（含空字符串）表示调用方显式指定。
+_FRAME_URL_UNSET = object()
 IMAGE_ASSET_TYPES = {"first_frame", "last_frame"}
 
 logger = logging.getLogger(__name__)
@@ -235,6 +249,49 @@ def _extract_reference_urls(item: Any) -> List[str]:
             elif isinstance(ref, dict):
                 urls.append(ref.get("url") or ref.get("image_url") or ref.get("path"))
     return _dedupe(urls)
+
+
+def _align_legend_items(
+    urls: Sequence[str],
+    items: Sequence[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """调用方自带 image_urls 时，按 URL 把图例贴回同一顺序。对不上的位置记为参考图。"""
+    by_key: Dict[str, Dict[str, Any]] = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        key = url_key(item.get("url"))
+        if key and key not in by_key:
+            by_key[key] = item
+    aligned: List[Dict[str, Any]] = []
+    for url in urls:
+        found = by_key.get(url_key(url))
+        if found:
+            packed = dict(found)
+            packed["url"] = url
+            aligned.append(packed)
+        else:
+            aligned.append({
+                "type": "参考图",
+                "source_type": "reference",
+                "name": "",
+                "label": "参考图",
+                "url": url,
+            })
+    return aligned
+
+
+def _peek_snapshot_task_id(generation_snapshots: Dict[str, Dict[str, Any]]) -> Optional[int]:
+    """批次已经锁了模型时，点名首尾帧要按那个模型决定是否改交混合任务。"""
+    for key in ("video.reference_to_video", "video.image_to_video"):
+        slot = generation_snapshots.get(key) or {}
+        task_id = slot.get("task_id") if isinstance(slot, dict) else None
+        if task_id not in (None, ""):
+            try:
+                return int(task_id)
+            except (TypeError, ValueError):
+                continue
+    return None
 
 
 def _public_upload_url(url: Any) -> str:
@@ -941,6 +998,8 @@ class StoryboardAgentCliService:
         preference_surface: str = MediaGenerationSurface.STORYBOARD_CLI,
         resolution: Optional[str] = None,
         enable_face_mask: bool = False,
+        frame_first_url: Any = _FRAME_URL_UNSET,
+        frame_last_url: Any = _FRAME_URL_UNSET,
     ) -> Dict[str, Any]:
         if mode not in VALID_VIDEO_MODES:
             raise StoryboardCliError("invalid_mode", f"invalid video mode: {mode}")
@@ -1030,12 +1089,33 @@ class StoryboardAgentCliService:
         if image_urls:
             resolved_urls = [part.strip() for part in str(image_urls).split(",") if part.strip()]
             _, legend_items = self._collect_video_reference_bundle(context, image_mode)
+            legend_items = _align_legend_items(resolved_urls, legend_items)
         else:
             resolved_urls, legend_items = self._collect_video_reference_bundle(
                 context, image_mode, extra_urls=extra_urls,
             )
 
+        use_kfr = False
+        if image_mode == "multi_reference" and prompt_has_frame_mention(prompt_text):
+            known_task_id = task_type
+            if known_task_id in (None, "") and generation_snapshots:
+                known_task_id = _peek_snapshot_task_id(generation_snapshots)
+            try:
+                prompt_text, resolved_urls, legend_items, use_kfr = self.apply_collected_frame_mentions(
+                    prompt=prompt_text,
+                    urls=resolved_urls,
+                    items=legend_items,
+                    image_mode=image_mode,
+                    context=context,
+                    task_id=known_task_id,
+                    frame_first_url=frame_first_url,
+                    frame_last_url=frame_last_url,
+                )
+            except StoryboardCliError:
+                raise
+
         # 全能参考无任何图时回退文生视频（对齐工作流分镜节点）；首尾帧仍要求至少一张图。
+        # 点名了首尾帧但图不存在时，上面已经拒绝提交，不会落到文生视频。
         if mode == "image_to_video" and not resolved_urls:
             if image_mode in ("multi_reference", "first_last_with_ref"):
                 mode = "text_to_video"
@@ -1093,6 +1173,39 @@ class StoryboardAgentCliService:
                     f'批次快照未锁定视频模式 {actual_media_mode}',
                 )
             task_type = int(generation_snapshot['task_id'])
+
+        # 混合模型是隐藏任务，不能写进用户偏好。快照先按下拉里的参考模型解析，
+        # 这里只改本次提交的 task_id。image_mode 仍是 multi_reference。
+        if use_kfr and mode == "image_to_video":
+            task_type = h3_keyframe_ref_task_id()
+            if isinstance(generation_snapshot, dict):
+                generation_snapshot = dict(generation_snapshot)
+                generation_snapshot["task_id"] = task_type
+                kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
+                if kfr_config is not None:
+                    generation_snapshot["model_key"] = kfr_config.key
+                    generation_snapshot["model_name"] = kfr_config.name
+
+        # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
+        # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
+        # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
+        # KFRef 混合模型无对白镜头（原文无引号台词）不注入，同单发生成路径口径。
+        if mode == "image_to_video" and not (
+            task_type == h3_keyframe_ref_task_id()
+            and not has_quoted_dialogue(prompt_text)
+        ):
+            _config = UnifiedConfigRegistry.get_by_id(int(task_type))
+            _voice_items, _ = collect_character_voice_references(
+                supports_voice_input=bool(getattr(_config, 'supports_voice_input', False)),
+                characters=context.get('characters'),
+                image_mode=image_mode,
+                existing_audio_urls=audio_urls,
+            )
+            if _voice_items:
+                merged = [url for url in str(audio_urls or '').split(',') if url.strip()]
+                merged.extend(item['url'] for item in _voice_items)
+                audio_urls = ','.join(merged)
+                prompt_text = append_voice_reference_note(prompt_text, _voice_items)
 
         from script_writer_core.mcp_tool import scoped_video_preferences
         with scoped_video_preferences(generation_snapshot):
@@ -4262,6 +4375,73 @@ class StoryboardAgentCliService:
                 exc,
             )
             return False
+
+    def _selected_frame_url(self, context: Dict[str, Any], asset_type: str) -> str:
+        selected = context.get("selected_assets") or {}
+        asset = selected.get(asset_type) or {}
+        if not isinstance(asset, dict):
+            return ""
+        return _public_upload_url(asset.get("result_url"))
+
+    def apply_collected_frame_mentions(
+        self,
+        *,
+        prompt: str,
+        urls: Sequence[str],
+        items: Sequence[Dict[str, Any]],
+        image_mode: str,
+        context: Optional[Dict[str, Any]] = None,
+        task_id: Optional[int] = None,
+        frame_first_url: Any = _FRAME_URL_UNSET,
+        frame_last_url: Any = _FRAME_URL_UNSET,
+    ) -> Tuple[str, List[str], List[Dict[str, Any]], bool]:
+        """全能参考下按 @首帧图 / @尾帧图 重排参考图。
+
+        返回 (prompt, urls, items, use_kfr)。缺图时抛 StoryboardCliError，调用方不得建任务。
+        frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；传入空字符串表示界面上没有这张图。
+        """
+        context = context or {}
+        if frame_first_url is _FRAME_URL_UNSET:
+            first_url = self._selected_frame_url(context, "first_frame")
+        else:
+            first_url = _public_upload_url(frame_first_url)
+        if frame_last_url is _FRAME_URL_UNSET:
+            last_url = self._selected_frame_url(context, "last_frame")
+        else:
+            last_url = _public_upload_url(frame_last_url)
+
+        config = None
+        if task_id not in (None, ""):
+            try:
+                config = UnifiedConfigRegistry.get_by_id(int(task_id))
+            except (TypeError, ValueError):
+                config = None
+        model_keys = []
+        if config is not None:
+            model_keys = [getattr(config, "key", ""), getattr(config, "short_key", "")]
+        use_kfr = should_use_h3_keyframe_ref(image_mode, prompt, *model_keys)
+        max_images = None
+        if use_kfr:
+            max_images = H3_KEYFRAME_REF_MAX_IMAGES
+        elif config is not None:
+            try:
+                parsed = int(getattr(config, "max_multi_ref_images", 0) or 0)
+            except (TypeError, ValueError):
+                parsed = 0
+            max_images = parsed or None
+        try:
+            rewritten, next_urls, next_items = prepare_frame_mentions(
+                prompt,
+                urls,
+                items,
+                image_mode=image_mode,
+                first_url=first_url,
+                last_url=last_url,
+                max_images=max_images,
+            )
+        except FrameMentionError as exc:
+            raise StoryboardCliError(exc.code, exc.message) from exc
+        return rewritten, next_urls, next_items, use_kfr
 
     def _collect_video_reference_bundle(
         self,

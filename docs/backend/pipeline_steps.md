@@ -98,11 +98,17 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 ### h3_prompt_optimize（MiniMax H3 提示词优化）
 
-用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）/ `TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO`（37）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA / Ref2VA 结构。
+用于 `param_prepare` 阶段，在 `TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO`（34）/ `TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO`（37）/ `TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO`（50）正式提交 RunningHub 前，把用户原文改写成官方 I2VA / FL2VA / Ref2VA / KFRef 结构。
 
-**触发条件**：任务类型为 MiniMax H3 图生视频（34）或参考生视频（37）+ `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 有可用输入（34 需至少一张首帧；37 需至少一项参考资产：参考图/参考视频/参考音频）。社区版同样执行。数字人 H3 不走此步。
+**触发条件**：任务类型为 MiniMax H3 图生视频（34）、参考生视频（37）或首帧参考混合（50）+ `pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 有可用输入（34 需至少一张首帧；37 需至少一项参考资产：参考图/参考视频/参考音频；50 需至少一张参考图或一条参考音频）。社区版同样执行。数字人 H3 不走此步。
 
-**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA；参考生视频（多参考资产）→ Ref2VA（官方 ref-en.txt 六段结构：`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`，步骤参数带 `ref_counts` 参考资产计数，供指令声明 `<picture_N>`/`<video_N>`/`<audio_N>` 与输入资产的顺序对应关系）。
+**变体**：仅首帧 → I2VA；另有尾帧 → FL2VA；参考生视频（多参考资产）→ Ref2VA（官方 ref-en.txt 六段结构：`subject_definitions` / `summary` / `retention_analysis` / `detailed_description` / `overall_soundscape` / `non_diegetic_music`，步骤参数带 `ref_counts` 参考资产计数，供指令声明 `<picture_N>`/`<video_N>`/`<audio_N>` 与输入资产的顺序对应关系）。首帧参考混合（50）→ KFRef，单独使用 `task/pipeline_drivers/prompts/minimax_h3_kfref_en.txt`，不复用 Ref2VA 六段模板。步骤参数另带 `keyframe_slots`，以及可选 `image_prompt_note`（生成分镜图所用提示词，截断上限 `H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS=600`；分镜直连路径写入 `extra_config.image_prompt_note`，批量/画布链路暂不携带时优化自动降级用原文+图例锚定）。指令按真实槽位要求大模型逐字写出起始句 `<Picture N> is the EXACT starting key frame at 0.00 seconds.` 和结束句 `<Picture N> is the EXACT ending key frame at {时长} seconds (ref_imageN).`。时长取任务 `duration`，两位小数；同时有首尾帧时结束句是 Picture 3 / `ref_image3`。只有首帧时不要求结束句，只有尾帧时不要求起始句。Picture 2 在同时有首尾帧时仍只是参考。有结束关键帧时，指令另外要求镜头从首帧走到尾帧：原文的「固定运镜」和起始姿势不能写到结尾，结尾景别只由尾帧图决定。参考音频最多 2 路：节点 157 是 `<Audio 1>`，节点 188 是 `<Audio 2>`；没有对应音频时 `fieldValue` 为字符串 `None`；超过 2 路的音频由驱动丢弃。
+
+**KFRef 输出协议与台词语义判断**（仅 KFRef；I2VA/FL2VA/Ref2VA 仍为纯文本输出）：指令是条件式的——代码只提供确定事实（图片槽位、可用参考音频路数、时长），有无台词由优化 LLM 语义判断（能识别无引号台词、排除引号店名/标语），并按三种情形自选句式：有台词且有 N 路音频 → 每路写一个**绑定句** `<Audio N> is the voice-timbre reference for <画面描述> (S1): ...lip-sync pacing...`；有台词但 0 路 → 不写任何 `<Audio N>`，台词进 `<d>` 由模型自动配音；无台词 → 不写任何 `<Audio N>`，只描述环境音。类型前缀基础为图槽事实（`keyframe completion` / `reference generation`），仅当写了绑定句才追加 ` + audio reference`。LLM 输出格式为首行 JSON 头 `{"has_dialogue": true|false}` + 空行 + 原样正文（正文不进 JSON，避免长文本转义失败），`parse_h3_optimize_kfref_output` 代码强校验（dict、布尔型 has_dialogue、正文非空），格式非法即重试，两次失败回退原文。标记判 `false` 时校验动态开 `forbid_audio_refs`：优化结果出现任何 `<audio` 即失败重试。标记存入 `extra_config.h3_prompt_optimize.has_dialogue`（回退原文时为 null），KFRef 驱动提交时优先读标记决定是否上传音频，无标记（旧任务/优化禁用）回退 `has_quoted_dialogue` 正则兜底——注入侧仍用正则（提交时等不了 LLM），其误判由驱动读标记纠正。
+
+**说话人绑定规则**（多人对话音色不串）：台词说话人按发声顺序分配稳定 ID (S1)/(S2)，音频绑定句与台词处用同一「画面描述 + (S1)」双标注；锚定优先级为该角色的参考图（`in <Picture 2>`）> 外观特征 + 画面位置（位置词必须与外观绑定用）；角色名对视频模型没有画面意义，禁止作为唯一锚，必须展开为可唯一定位的画面描述（原料优先级：`image_prompt_note` 的站位/外观 > 镜头原文描写 > 图例）。
+
+校验只看这些原句是否原样出现，代码不把句子拼接进结果；两次都没写对则回退原文。50 不能落入 FL2VA，否则两张参考图会被写成首尾帧。I2VA、FL2VA、Ref2VA 的模板和校验不变。
 
 **原子创建（无竞态）**：H3 入口（`server.py` / `api/storyboard.py`）判定 `needs_h3_atomic_param_prepare` 为真时，走 `AIToolsModel.create_with_pipeline_steps`，`ai_tool` 与 `h3_prompt_optimize` 步骤在同一事务内创建，避免调度器在两者之间抢先提交未优化任务。若事务内最终未产出任何步骤（如无首帧），则就地回退 `PENDING`。普通（非 H3 / 非 Seedance）图生视频直接以 `PENDING` 创建，不进流水线、零额外耗时。
 
@@ -113,7 +119,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 4. 原文写入 `extra_config.original_prompt`（只写一次）和 `extra_config.h3_prompt_optimize`
 5. `ai_tool.prompt` 替换为优化结果，H3 驱动提交 RunningHub
 
-**对话保真（防中文台词被译成英文）**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言，语言标签按实际语言写（`[Chinese]`/`[Japanese]`/`[Korean]` 等），严禁翻译。三层约束：① system prompt 明确豁免对话/歌词/屏幕文字；② 两个模板补中文对话正反例（正例 `<d>[Chinese] 原来是这样！</d>`，反例禁止译成 `<d>[English] So that's how it is!</d>`）；③ 原文存在"引号包裹的 CJK 片段"时，user message 追加条件式点名指令——点名列出片段，"若是台词/歌词/可见文字则逐字保留，若是动作/氛围/术语等描述性用法则正常转写"，语义判断交给 LLM，不做任何代码级校验拦截。纯英文/无引号/无 CJK 的原文不追加，行为不变。
+**对话保真（防中文台词被译成英文）**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言，语言标签按实际语言写（`[Chinese]`/`[Japanese]`/`[Korean]` 等），严禁翻译。三层约束：① system prompt 明确豁免对话/歌词/屏幕文字；② 两个模板补中文对话正反例（正例 `<d>[Chinese] 原来是这样！</d>`，反例禁止译成 `<d>[English] So that's how it is!</d>`）；③ 原文存在"引号包裹的 CJK 片段"时，user message 追加条件式点名指令——点名列出片段，"若是台词/歌词/可见文字则逐字保留，若是动作/氛围/术语等描述性用法则正常转写"，语义判断交给 LLM，不做任何代码级校验拦截。
+
+**对白反幻觉（防 LLM 虚构台词）**：与上条对偶——原文**没有**引号台词时，user message 追加禁止虚构提示：只有原文明确写出的话语才能进入 `<d>`，严禁编造对白/歌词或"角色开口说话"的行为；音色参考仅约束开口时的音色，不代表必须说话，无台词则输出不得出现 `<d>` 标签。两个模板的详细描述规范同步写明该规则。背景：线上事故 ai_tools 231（2026-09-20），原文仅写"音频1是李卫国的音色样本，角色说话时请保持相同音色"，Ref2VA 模板 few-shot 示例（音色参考+角色说台词）诱导 deepseek-v4-flash 编造 `<d>[Chinese] 早上好，新的一天开始了。</d>` 并提交上游，成片角色凭空开口。
 
 **模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ JIEKOU 在线模型 `gemini-3.5-flash`（最终兜底；2026-08 剧本拆分默认模型切 `deepseek-v4-flash` 后与 ② 重复，故独立为在线模型）。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
 
@@ -149,6 +157,12 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 用于 `param_prepare` 阶段，在 Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 的图生视频任务提交前，对 `image_path` 和 `reference_images` 中的人脸绘制红色矩形网格。
 
 **触发条件**：Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5 任务类型 + 用户勾选 `enable_face_mask=true` + 商业版（非社区版）+ `pipeline.seedance_face_mask_enabled=true` + 有 `image_path` 或 `reference_images` 输入
+
+**参考图遮盖白名单（仅遮角色参考图）**：参考生视频的 `reference_images` 混合角色/场景/道具/画风/用户上传图，人脸遮盖只对**角色参考图**有意义——道具/场景图被遮盖会白白消耗 RunningHub 配额，且图上误检出的"人脸"（玩偶、海报人像）被打黑框后，还原句会让模型凭空还原。提交方在 `ai_tools.extra_config` 写入 `face_mask_reference_urls`（键常量 `FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY`，URL 数组），`create_with_pipeline_steps` 与 `_build_seedance_param_prepare_steps` 只为白名单内的参考图建 `image_face_mask` 步骤（跳过项的 `params.index` 保持原始下标，保证 `apply_results` 回写对位）；`image_path`（首尾帧）不受白名单影响，始终全量遮盖。键缺失时保持旧行为（全部参考图遮盖）；空列表表示明确声明没有参考图需要遮盖。
+
+写入方：
+- storyboard `generate-video`（`api/storyboard.py`）：从 `_collect_video_reference_bundle` 返回的 `legend_items` 取 `source_type == 'character'` 的 URL 注入；
+- `/api/ai-app-run-image`（`server.py`）：接收 form 字段 `face_mask_reference_urls`（逗号分隔），由 video_workflow 前端在收集参考图时传入（分镜组/分镜节点按角色收集循环、图生视频节点按连线来源 `fromNode.type === 'character'`）。
 
 **配置开关**：`pipeline.seedance_face_mask_enabled`，默认 `true`，是 Seedance 人脸遮盖前置处理的**总开关**（管理员级），同时控制图片（`image_face_mask`）和视频（`face_mask`）两种遮盖步骤。关闭后图片和视频的遮盖步骤均不创建，任务走普通生成流程。其上还有两层用户/版本级门：用户级 `enable_face_mask`（前端「是否处理人脸」勾选，默认不勾选，**opt-in**）与版本级 `NOT Edition.is_community()`（社区版禁止），三者同时满足才会创建步骤（见上文「用户开关与版本门」）。
 

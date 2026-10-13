@@ -1,8 +1,10 @@
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_reference_note,
     build_reference_legend,
     build_storyboard_reference_items,
+    collect_character_voice_references,
     remove_storyboard_visual_suffix,
 )
 
@@ -316,3 +318,99 @@ def test_storyboard_image_skill_requires_reference_legend_and_prompt_matched_ass
         assert "参考图说明" in content
         assert "edit_image.prompt" in content
         assert "不要加入未出现在当前画面提示词或视频提示词中的角色/道具参考图" in content
+
+
+# ── 角色音色参考注入（supports_voice_input 门控）─────────────────────────────
+
+VOICE_CHARACTERS = [
+    {"name": "林悦", "default_voice": "/upload/character/voice/linyue.wav"},
+    {"name": "张三", "default_voice": "/upload/character/voice/zhangsan.wav"},
+    {"name": "无音色角色", "default_voice": ""},
+    {"name": "王五", "default_voice": "/upload/character/voice/wangwu.wav"},
+]
+
+
+def test_voice_references_collected_when_model_supports():
+    items, note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=VOICE_CHARACTERS,
+        image_mode="multi_reference",
+    )
+
+    # 截断到 MAX_VOICE_REFERENCE_AUDIOS=2，无音色角色跳过
+    assert [item["name"] for item in items] == ["林悦", "张三"]
+    assert note == (
+        "参考音频说明：音频1是角色：林悦的音色样本，"
+        "音频2是角色：张三的音色样本，角色说话时请保持相同音色。"
+    )
+
+
+def test_voice_references_skipped_for_unsupported_model_or_mode():
+    assert collect_character_voice_references(
+        supports_voice_input=False,
+        characters=VOICE_CHARACTERS,
+        image_mode="multi_reference",
+    ) == ([], "")
+    assert collect_character_voice_references(
+        supports_voice_input=True,
+        characters=VOICE_CHARACTERS,
+        image_mode="first_last_frame",
+    ) == ([], "")
+    assert collect_character_voice_references(
+        supports_voice_input=True,
+        characters=VOICE_CHARACTERS,
+        image_mode="first_last_with_ref",
+    ) == ([], "")
+
+
+def test_voice_references_dedupe_against_existing_audio_and_offset_index():
+    items, note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=VOICE_CHARACTERS,
+        image_mode="multi_reference",
+        existing_audio_urls="http://x/voice.wav, /upload/character/voice/linyue.wav",
+    )
+
+    # 与用户已携带音频同 URL 的角色音色去重；序号对齐最终合并列表位置（2 条已有 → 从 3 起）
+    assert [item["url"] for item in items] == [
+        "/upload/character/voice/zhangsan.wav",
+        "/upload/character/voice/wangwu.wav",
+    ]
+    assert "音频3是角色：张三的音色样本" in note
+    assert "音频4是角色：王五的音色样本" in note
+
+
+def test_append_voice_reference_note_is_idempotent():
+    _, note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=VOICE_CHARACTERS[:1],
+        image_mode="multi_reference",
+    )
+    prompt = append_voice_reference_note("镜头内容", [{"name": "林悦", "url": "u"}])
+    assert prompt.endswith(note)
+    assert append_voice_reference_note(prompt, [{"name": "林悦", "url": "u"}]) == prompt
+
+
+def test_voice_reference_capability_flag_wired_on_expected_models_only():
+    from config.unified_config import UnifiedConfigRegistry
+
+    expected = {
+        "minimax_h3_r2v",
+        "minimax_h3_kfr",
+        "seedance_2_0_fast",
+        "seedance_2_0",
+        "seedance_2_0_mini",
+        "seedance_2_5",
+    }
+    enabled = {
+        config.short_key or config.key
+        for config in UnifiedConfigRegistry.get_all()
+        if getattr(config, "supports_voice_input", False)
+    }
+    assert enabled == expected
+
+    # 前端下发同步携带能力位
+    grok = next(
+        config for config in UnifiedConfigRegistry.get_all() if "grok" in config.key
+    )
+    assert grok.to_frontend_dict()["supports_voice_input"] is False

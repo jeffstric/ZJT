@@ -6,8 +6,26 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional
 from perseids_server.client import make_perseids_request
+from config.unified_config import (
+    LLM_ARREARS_BREAKER_ENABLED,
+    LLM_ARREARS_BREAKER_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class InsufficientPowerForLLMCallError(Exception):
+    """用户算力余额低于熔断阈值，拒绝发起本次 LLM 调用
+
+    token 计费是后付费（task/token_task.py），余额可被长任务扣穿为负。
+    该异常在调用发生前抛出，用于把欠费损失限制在单次在途调用。
+    """
+    def __init__(self, computing_power: int, threshold: int):
+        self.computing_power = computing_power
+        self.threshold = threshold
+        super().__init__(
+            f"算力不足（当前余额: {computing_power}），已阻止本次 LLM 调用，请充值后重试"
+        )
 
 
 class BaseLLMClient(ABC):
@@ -92,6 +110,54 @@ class BaseLLMClient(ABC):
             Response 对象（包含 choices 和 usage）
         """
         pass
+
+    def _enforce_arrears_breaker(
+        self,
+        auth_token: Optional[str],
+        vendor_id: Optional[int],
+        model_id: Optional[int],
+        agent_id: Optional[str] = None,
+    ):
+        """欠费熔断：付费 LLM 调用前检查用户算力余额，低于阈值抛出熔断异常。
+
+        - 仅对 auth_token 与 vendor_id/model_id 齐备的调用生效（无 token /
+          不计费的调用不拦截）
+        - 余额服务异常时放行（fail-open），与 Agent 循环检查的兜底策略一致，
+          避免余额服务故障阻塞所有任务
+        - 阈值 LLM_ARREARS_BREAKER_THRESHOLD=1：余额 >=1 才允许发起调用，
+          在途的那一次调用仍可能把余额扣成小额负数，属后付费的预期范围
+        """
+        if not LLM_ARREARS_BREAKER_ENABLED:
+            return
+        # 无 auth_token 或缺少计费要素（vendor/model）的调用不产生 token_log，不拦截
+        if not auth_token or not vendor_id or not model_id:
+            return
+        try:
+            headers = {'Authorization': f'Bearer {auth_token}'}
+            success, message, response_data = make_perseids_request(
+                endpoint='user/check_computing_power',
+                method='GET',
+                headers=headers,
+            )
+            if not success:
+                logger.warning(
+                    "欠费熔断检查未成功(放行): %s, vendor=%s model=%s agent=%s",
+                    message, vendor_id, model_id, agent_id,
+                )
+                return
+            balance = response_data.get('computing_power', 0) if isinstance(response_data, dict) else 0
+            if balance is None:
+                balance = 0
+            if balance < LLM_ARREARS_BREAKER_THRESHOLD:
+                logger.warning(
+                    "欠费熔断触发: balance=%s threshold=%s vendor=%s model=%s agent=%s",
+                    balance, LLM_ARREARS_BREAKER_THRESHOLD, vendor_id, model_id, agent_id,
+                )
+                raise InsufficientPowerForLLMCallError(balance, LLM_ARREARS_BREAKER_THRESHOLD)
+        except InsufficientPowerForLLMCallError:
+            raise
+        except Exception as e:
+            logger.warning("欠费熔断检查异常(放行): %s, agent=%s", e, agent_id)
 
     def _log_request_context(self, llm_logger: logging.Logger, agent_id: Optional[str] = None, agent_scope: Optional[str] = None):
         """记录 Agent 请求上下文信息（公共日志逻辑）"""

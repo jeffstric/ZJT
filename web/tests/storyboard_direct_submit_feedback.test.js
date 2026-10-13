@@ -38,11 +38,11 @@ describe('storyboard direct submit feedback (toast + optimistic candidate)', () 
         expect(videoBody).toContain("'对口型视频已提交，右侧候选区生成中'");
         expect(videoBody).toContain("'已按参考图提交视频，右侧候选区生成中'");
         expect(videoBody).toContain("'视频生成任务已提交，右侧候选区生成中'");
-        expect(imageBody).toContain("showToast('生图任务已提交，右侧候选区生成中', 'info')");
+        expect(imageBody).toContain("t('msg_image_submitted_generating', '生图任务已提交，右侧候选区生成中')");
     });
 
     it('keeps the running-scene re-submit toast guard', () => {
-        const guard = 'showToast(\'当前分镜有任务正在处理中，请稍候\', \'info\')';
+        const guard = "t('msg_scene_task_busy', '当前分镜有任务正在处理中，请稍候')";
         expect(videoBody).toContain(guard);
         expect(imageBody).toContain(guard);
     });

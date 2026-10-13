@@ -137,6 +137,26 @@ affected = 0（版本竞争失败，并发写已抢先）同样按 HTTP 409 拒�
    被标记，落库后同样使其他会话基线过期，且刷新后会重复纠正。
    **区分原则：值与服务端等价的回填（splitModel 回写）不落库、由延迟基线
    吸收；值与服务端不同的纠正（分辨率纠正）必须 markDirty 落库。**
+4. **错误字段写读不一致 + 漏网还原点**（第二轮回归实测，wf3 往返 diff 14→4、
+   wf6 3→2、wf7 5→0）：
+   - poll 的任务失败分支（`pollWorkflowNodeStatus`）曾把失败原因写入
+     `data.error`——该字段**没有任何渲染或还原消费点**（"只写不读"的死字段），
+     还原后必然丢失，产生幽灵修改。修复：poll 改写 `lastError`（唯一被渲染、
+     被还原渲染、被持久化的错误字段），`updateNodeErrorDisplay` 的 DOM 提示
+     保留不变；
+   - `createVideoNodeWithData` 补 `error` 严格还原（`!== undefined`），存量
+     数据中已写入的 error 不再丢失、不再漂移；
+   - `createImageToVideoNodeWithData` 的 `lastError || ''` 改严格判断
+     （`createImageToVideoNode` 初始 data 不含该字段，与 video 同理）；
+   - video 节点 `loadedmetadata` 的 `duration` 元数据回填是**非确定性幽灵
+     修改**（视频加载成败/时序不同，各会话产出不同 body），回填后
+     `markDirty()` 尽快落库收敛。duration 的消费点全部带 `|| 10/5` 兜底，
+     `undefined` 与 `0` 行为一致，无 NaN 风险。
+   - **遗留（评估后不修）**：script 节点 `totalDurationMultiplier`、顶层
+     `groups/nextGroupId`、image_to_video `duration || 15`、`scriptData`
+     序列化瘦身（`buildSlimScriptData`）均属**确定性一次性迁移**——落库一次
+     即稳定，两会话同时落库内容相同、服务端同内容兜底可放行；强行保持
+     "缺 key"会让 serialize 的固定结构变成条件省略，维护成本高于收益。
 
 **新增节点类型 / 还原逻辑时必须自检往返一致**：打开页面 → Network 无任何
 PUT（3 分钟内）→ `autoSaveState.isConfirmedBody(id, buildAutoSaveBody())`
@@ -225,10 +245,40 @@ JSON body，正是为了避免改变 body 使基线永不命中。beforeunload �
 - **恢复快照重放也走 CAS**：快照 meta 记录写入时的 `baseHash`，重放携带
   `X-Base-Hash`；冲突说明服务端已有更新版本 → 放弃重放并清除快照（避免
   兜底机制覆盖他人内容）。无 `baseHash` 的存量快照维持强制重放兼容。
-- **门命中分支的清理**：尽力 `abortInFlight()`（防御层，非正确性依据）+
+- **门命中分支的清理**：只 abort 尚未 `fetch` 的请求；已经发出的不中止。
   `WorkflowRecovery.discardOwnSnapshot()` 清除本页此前失败/被取代发送的
   残留快照（仅本页 writerId，不碰其他标签页），防止下次会话重放复活
   已撤销的内容。
+
+### 同页单飞与写 id（误报 409）
+
+同一页的轮询（约 60 秒）、三分钟定时器和 1.5 秒防抖可能在上一笔 PUT
+还没返回时再发一笔。两笔读到同一个 `X-Base-Hash`，第一笔先落库，第二笔
+正文已经不同（例如补上了 `duration`），服务端就回 409。缩放和点时间轴
+本身不改哈希；它们只是让去重门放行，把这种重叠暴露出来。
+
+`autoSaveWorkflow` / `saveWorkflow` 在请求已经 `fetch` 之后不再 `abort`：
+
+- 还停在写 IndexedDB、尚未 `fetch`：可以 abort，换最新正文。
+- 已经发出：不发第二笔，只记补发。这一笔成功、自愈或失败后，若期间又有
+  修改，再发一次最新正文。
+- 发出后 120 秒仍无响应：只释放单飞槽位，不 abort。原请求晚到的成功
+  不得 `setConfirmedBody`（否则哈希被滚回去），晚到的 409 不得弹冲突框。
+  释放后立刻再发最新正文。
+- 关页 keepalive 不进这个队列，仍按原来的 `planUnloadSend` 决定是否中止
+  普通 fetch 并升级。
+
+每一笔普通 PUT 带 `X-Write-Id`（8–64 位字母数字或连字符）。服务端把
+合法值写入 `video_workflow.last_write_id`（迁移 `no_144`）。这一列不参与
+内容哈希。缺省或非法的头在真正写入时把该列清成 NULL。
+
+409 回传当前行的 `content_hash` 和 `last_write_id`（赢家，不是这次被拒的请求）。
+本页还认这个 id，且这次冲突还没自愈过：不弹框，只把基线哈希滚到返回值，
+再发一次最新正文，CAS 仍然生效。id 是别人的、空的、旧服务端没回这个字段，
+或者同一次冲突里已经自愈过：照旧弹冲突框，禁止用新哈希再试一次去覆盖别人。
+旁路 PUT（切世界、画风继承、画风弹窗、用本地版本强制覆盖）也带写 id，
+但不进入单飞队列；强制覆盖仍不带 `X-Base-Hash`。恢复快照记下 `writeId`，
+重放时原样带回。重放自己的 409 仍放弃，不弹保存冲突框。
 
 ## 效果
 
@@ -243,10 +293,15 @@ JSON body，正是为了避免改变 body 使基线永不命中。beforeunload �
   与关页决策兼容、`setConfirmedBody` 同步 lastSeen 等用例；
 - `web/tests/auto_save_unload.test.js`：`discardOwnSnapshot`（本页清除/他页
   不动/无快照）、`baseHash` 持久化等，复用 fake IndexedDB；
+- `web/tests/auto_save_single_flight.test.js`：已发出不 abort、未发出才 abort、
+  超时释放不 abort、迟到成功/409 忽略、本页写 id 只自愈一次、空 id 不消耗
+  自愈次数；
 - `tests/crud/test_video_workflow_content_hash.py`：`compute_content_hash`
   纯函数用例（dict/str 一致、key 序不敏感、任一内容字段变化即变、
-  None/损坏 JSON 健壮、viewport 不参与）+ `content_hashes_for_cas`
-  （同内容/仅视口 incoming==current，内容变化则不等）。
+  None/损坏 JSON 健壮、viewport 不参与、`last_write_id` 不参与）+
+  `content_hashes_for_cas`（同内容/仅视口 incoming==current，内容变化则不等）；
+- `auto_test/e2e/test_workflow.py`：409 回传赢家 `last_write_id`；不带写 id
+  的强制写把该列清掉。
 
 ## 后续优化（未包含在本改动）
 

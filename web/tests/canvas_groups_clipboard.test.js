@@ -248,6 +248,65 @@ describe('canvas_groups 编组与成员归属', () => {
     expect(state.nextGroupId).toBe(2);
   });
 
+  it('空分组可拉宽拉高，放进节点后仍保持手动尺寸', () => {
+    state.zoom = 1;
+    const group = createEmptyGroup({ x: 100, y: 120 });
+    expect(group.userSized).toBe(true);
+    expect(group.w).toBe(400);
+    expect(group.h).toBe(300);
+
+    const handle = canvasHost.querySelector('.node-group-resize[data-handle="se"]');
+    expect(handle).not.toBeNull();
+    handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: 80, clientY: 50 }));
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: 80, clientY: 50 }));
+
+    expect(group.w).toBe(480);
+    expect(group.h).toBe(350);
+    expect(group.x).toBe(100);
+    expect(group.y).toBe(120);
+    const el = canvasHost.querySelector('.node-group[data-group-id="' + group.id + '"]');
+    expect(el.style.width).toBe('480px');
+    expect(el.style.height).toBe('350px');
+
+    addNode(1, 'image', 120, 150, 300, 200);
+    updateNodeGroupMembership(1);
+    expect(group.nodeIds).toEqual([1]);
+    expect(group.w).toBe(480);
+    expect(group.h).toBe(350);
+  });
+
+  it('分组拉伸有最小宽高，左边和上边会带动位置', () => {
+    state.zoom = 1;
+    const group = createEmptyGroup({ x: 200, y: 200 });
+    const west = canvasHost.querySelector('.node-group-resize[data-handle="w"]');
+    west.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: -40, clientY: 0 }));
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: -40, clientY: 0 }));
+    expect(group.x).toBe(160);
+    expect(group.w).toBe(440);
+    expect(group.h).toBe(300);
+
+    const north = canvasHost.querySelector('.node-group-resize[data-handle="n"]');
+    north.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 0, clientY: 0, button: 0 }));
+    window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: 0, clientY: 10000 }));
+    window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: 0, clientY: 10000 }));
+    expect(group.h).toBe(96);
+    expect(group.y).toBe(200 + 300 - 96);
+  });
+
+  it('手动尺寸在重载后保留，不再按成员重算', () => {
+    addNode(1, 'image', 100, 100, 300, 200);
+    restoreGroups([
+      { id: 7, title: '手拉', x: 40, y: 90, w: 500, h: 400, userSized: true, nodeIds: [1] }
+    ], 8);
+    const group = findGroupById(7);
+    expect(group.userSized).toBe(true);
+    expect(group.w).toBe(500);
+    expect(group.h).toBe(400);
+    expect(group.x).toBe(40);
+  });
+
   it('组选中与节点选中互斥', () => {
     addNode(1, 'image', 100, 100);
     addNode(2, 'text', 500, 100);

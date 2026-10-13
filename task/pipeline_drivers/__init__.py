@@ -8,7 +8,10 @@ from typing import Optional, List, Dict, Any
 
 from model import PipelineStepType, PipelineStepModel, PipelineStage, AIToolsModel
 from config.config_util import get_dynamic_config_value
-from config.constant import H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+from config.constant import (
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+)
 from config.unified_config import (
     UnifiedConfigRegistry,
     get_implementation_id,
@@ -23,9 +26,45 @@ from .image_face_mask_driver import ImageFaceMaskPipelineDriver
 from .implementation_retry_driver import ImplementationRetryPipelineDriver
 from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 from .h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
-from .h3_prompt_optimize_util import resolve_h3_prompt_variant, resolve_h3_reference_asset_counts
+from .h3_prompt_optimize_util import (
+    assign_h3_keyframe_ref_pictures,
+    parse_extra_config,
+    resolve_h3_prompt_variant,
+    resolve_h3_reference_asset_counts,
+    split_media_paths,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_face_mask_reference_whitelist(
+    extra_config: Any,
+    key: Optional[str] = None,
+) -> Optional[set]:
+    """从 ai_tools.extra_config 解析「允许参与人脸遮盖的参考图 URL 白名单」。
+
+    参考生视频的参考图混合角色/场景/道具/画风等类型，人脸遮盖只对角色参考图
+    有意义；提交方把角色参考图 URL 列表写入 extra_config[key]。
+
+    返回语义：
+    - 键存在且为列表 → URL 集合（可能为空集：明确声明没有参考图需要遮盖）
+    - 键不存在 / extra_config 非法 → None（调用方保持旧行为：全部参考图遮盖）
+    """
+    from config.constant import FaceMaskPromptConstants
+    if key is None:
+        key = FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY
+    if not extra_config:
+        return None
+    try:
+        parsed = json.loads(extra_config) if isinstance(extra_config, str) else extra_config
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict) or key not in parsed:
+        return None
+    value = parsed.get(key)
+    if not isinstance(value, list):
+        return None
+    return {str(item).strip() for item in value if str(item or '').strip()}
 
 # 驱动注册表
 _DRIVER_MAP = {
@@ -44,10 +83,11 @@ class PipelineDriverFactory:
     _SEEDANCE_FACE_MASK_KEYS = SEEDANCE_FACE_MASK_DRIVER_KEYS
 
     # 走 H3 提示词优化（param_prepare）的任务 DriverKey：
-    # 图生视频（I2VA/FL2VA）+ 参考生视频（Ref2VA）
+    # 图生视频（I2VA/FL2VA）+ 参考生视频（Ref2VA）+ 首帧参考混合（KFRef）
     _H3_PROMPT_OPTIMIZE_KEYS = {
         DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO,
         DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+        DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO,
     }
 
     @staticmethod
@@ -136,6 +176,12 @@ class PipelineDriverFactory:
         if not face_mask_enabled:
             return step_configs
 
+        from config.constant import FaceMaskPromptConstants
+        reference_whitelist = resolve_face_mask_reference_whitelist(
+            getattr(ai_tool, 'extra_config', None),
+            key=FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY,
+        )
+
         for video_path in cls._split_paths(getattr(ai_tool, 'video_path', None)):
             step_configs.append({
                 'step_type': PipelineStepType.FACE_MASK,
@@ -154,7 +200,12 @@ class PipelineDriverFactory:
                 'target': image_path,
             })
 
+        whitelist_hits = 0
         for idx, image_path in enumerate(cls._get_reference_images(ai_tool)):
+            # 参考图遮盖白名单：仅角色参考图需要人脸处理；白名单缺失时保持旧行为（全量遮盖）
+            if reference_whitelist is not None and image_path not in reference_whitelist:
+                continue
+            whitelist_hits += 1
             step_configs.append({
                 'step_type': PipelineStepType.IMAGE_FACE_MASK,
                 'params': {
@@ -165,16 +216,30 @@ class PipelineDriverFactory:
                 'target': image_path,
             })
 
+        # 白名单非空但零命中：两侧 URL 写法不一致（host/编码/尾斜杠）时全部
+        # 参考图会静默跳过遮盖，真人脸素材将以未遮盖状态提交网关——必须可见
+        if reference_whitelist and whitelist_hits == 0:
+            references = cls._get_reference_images(ai_tool)
+            logger.warning(
+                "[face-mask] 参考图白名单非空但零命中，参考图均未做人脸遮盖。"
+                "ai_tool_id=%s 白名单(%d)=%s 参考图(%d)=%s",
+                getattr(ai_tool, 'id', None),
+                len(reference_whitelist),
+                sorted(reference_whitelist)[:5],
+                len(references),
+                list(references)[:5],
+            )
+
         return step_configs
 
     @classmethod
     def is_h3_prompt_optimize_key(cls, task_key: Optional[str]) -> bool:
-        """UnifiedTaskConfig.key 是否走 H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
+        """UnifiedTaskConfig.key 是否走 H3 提示词优化（I2VA/FL2VA、Ref2VA、KFRef）。"""
         return bool(task_key) and task_key in cls._H3_PROMPT_OPTIMIZE_KEYS
 
     @classmethod
     def is_h3_prompt_optimize_type(cls, ai_tool_type: int) -> bool:
-        """任务类型是否走 MiniMax H3 提示词优化（图生视频 I2VA/FL2VA、参考生视频 Ref2VA）。"""
+        """任务类型是否走 MiniMax H3 提示词优化（I2VA/FL2VA、Ref2VA、KFRef）。"""
         task_config = UnifiedConfigRegistry.get_by_id(ai_tool_type)
         return bool(task_config and cls.is_h3_prompt_optimize_key(task_config.key))
 
@@ -213,9 +278,22 @@ class PipelineDriverFactory:
             "original_prompt": original,
             "duration": duration,
         }
-        if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
-            # 参考资产计数，供 Ref2VA 指令声明 <picture_N>/<video_N>/<audio_N> 对应关系
+        if variant in (H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, H3_PROMPT_OPTIMIZE_VARIANT_KF_REF):
+            # 参考资产计数。Ref2VA 用来声明 <picture_N>/<video_N>/<audio_N>；
+            # KFRef 用来决定 summary 前缀里要不要写 audio reference。
             params["ref_counts"] = resolve_h3_reference_asset_counts(ai_tool)
+        if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
+            # 槽位按提交原文里的「图N是首帧/尾帧」计算。此时 prompt 还没被优化改写。
+            params["keyframe_slots"] = assign_h3_keyframe_ref_pictures(
+                split_media_paths(getattr(ai_tool, "reference_images", None)),
+                original,
+            )
+            # 分镜画面构成（生成分镜图所用提示词）：说话人绑定句的外观/站位原料。
+            # 提交方写入 extra_config.image_prompt_note（分镜直连路径）；批量/画布
+            # 链路暂不携带，优化指令自动降级用原文+图例锚定。
+            _note = str(parse_extra_config(ai_tool).get("image_prompt_note") or "").strip()
+            if _note:
+                params["image_prompt_note"] = _note
         if chat_model:
             params["chat_model"] = str(chat_model)
         if chat_vendor_id:

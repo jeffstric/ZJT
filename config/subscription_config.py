@@ -11,10 +11,16 @@
   - 解约：V2 API /papay/deletecontract，或用户在微信侧自助解约（回调同步）。
 
 套餐与赠送规则来源：《智剧通算力定价_新价目方案.html》（2026-09-09）
-  - 每档一个微信协议模板（共 4 个：智剧通-入门版/标准版/专业版/旗舰版），固定金额按月扣费；
-  - computing_power 为用户实际到账（尾数统一为 8 的口径，与文档"抽成后"一致，所有用户统一）；
-  - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
-  - first_period_bonus 仅每份新签约的首期发放（解约后重新订阅视为新订阅，可再次享受）。
+  - 每档一个微信协议模板。标准版/专业版/旗舰版为固定金额；入门版模板 224144 同时支持
+    首期优惠价与后续标准价，新签约一律用该模板（已在约的旧合约仍用库里的 223101 续费）。
+  - price 是续费价，也是「已有成功签约」用户再开通时的首期价。
+    first_period_price 仅入门版：没有历史成功签约时，支付中签约按这个价扣首期。
+  - computing_power 为每期常规到账（尾数统一为 8 的口径，与文档"抽成后"一致，所有用户统一）；
+  - first_period_bonus 为首订加赠，仅在「签约成功」后发放：用户只付款但签约未生效（订阅被关闭）
+    时不加赠；且仅限用户首份「成功签约」合约的首期发放一次（只付款未签约的历史合约不消耗资格，
+    之后签约成功仍可享受；已有历史成功签约的重新订阅不再享受）。加赠不走渠道抽佣。
+  - 2026-09-22：入门版首订加赠由 200 改为 40；首次开通首期 18.8 元，第 2 期起仍 29.9 元。
+    18.8 的首月渠道不分佣；第 2 期起以及再订的 29.9 仍按入门版档位 4.28 元结算。
 """
 from typing import Dict, List, Optional
 
@@ -22,18 +28,21 @@ from typing import Dict, List, Optional
 # plan_id: 本地套餐ID（subscription_orders.subscription_plan_id / 合约表关联用）
 # computing_power: 每周期（30天）常规到账算力（不抽成口径）
 # granted_after_commission: 邀请抽成后参考值（仅展示，实际以 commission/settle 计算为准）
-# first_period_bonus: 首次订阅加送算力（仅首期，随首月一并发放）
-# template_id: 该档位对应的微信商户平台「委托代扣协议模板」ID（⚠️ 待填，共 4 个模板）
+# first_period_price: 首期优惠价（元）。仅无历史成功签约时用于支付中签约；缺省则首期也按 price
+# first_period_bonus: 首次订阅加送算力（仅签约成功后发放；仅首份成功签约合约的首期一次，随首月一并发放）
+# template_id: 该档位对应的微信商户平台「委托代扣协议模板」ID
+# price: 续费价（元）；入门版再订用户的首期也按这个价
 # badge: 前端角标（可选）
 MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
     {
         "plan_id": 101,
         "name": "入门版",
         "price": 29.9,
+        "first_period_price": 18.8,
         "computing_power": 328,
         "granted_after_commission": 328,
-        "first_period_bonus": 100,
-        "template_id": "223101",   # 模板1：智剧通-入门版 ¥29.9/期（2026-09-10 审核通过）
+        "first_period_bonus": 40,
+        "template_id": "224144",   # 首期优惠 18.8 / 后续 29.9（新签约一律用此模板）
         "badge": None,
     },
     {
@@ -42,7 +51,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "price": 59.9,
         "computing_power": 808,
         "granted_after_commission": 808,
-        "first_period_bonus": 200,
+        "first_period_bonus": 400,
         "template_id": "223102",   # 模板2：智剧通-标准版 ¥59.9/期（2026-09-10 审核通过）
         "badge": None,
     },
@@ -52,7 +61,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "price": 129.0,
         "computing_power": 2148,
         "granted_after_commission": 2148,
-        "first_period_bonus": 300,
+        "first_period_bonus": 600,
         "template_id": "223103",   # 模板3：智剧通-专业版 ¥129/期（2026-09-10 审核通过）
         "badge": None,
     },
@@ -62,7 +71,7 @@ MONTHLY_SUBSCRIPTION_PLANS: List[Dict] = [
         "price": 299.0,
         "computing_power": 5598,
         "granted_after_commission": 5598,
-        "first_period_bonus": 500,
+        "first_period_bonus": 1000,
         "template_id": "223104",   # 模板4：智剧通-旗舰版 ¥299/期（2026-09-10 审核通过）
         "badge": None,
     },

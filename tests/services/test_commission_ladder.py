@@ -13,7 +13,19 @@ from decimal import Decimal
 
 import pytest
 
-from enterprise.services import commission_service as cs
+# enterprise/ 被 .gitignore，社区 CI 不检出该包。
+# 模块级 ImportError 会被 unittest 记为 ERROR（_FailedTest）而非 skip，必须在导入处吞掉。
+try:
+    from enterprise.services import commission_service as cs
+    _HAS_ENTERPRISE_COMMISSION = True
+except (ModuleNotFoundError, ImportError):
+    cs = None
+    _HAS_ENTERPRISE_COMMISSION = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_ENTERPRISE_COMMISSION,
+    reason="enterprise.services.commission_service 未打包（社区 CI 不检出 enterprise/）",
+)
 
 
 class _FakeLog:
@@ -76,7 +88,7 @@ class TestSettleLadder:
         assert row["granted_computing_power"] == 808
 
     def test_direct_trial_invited_fixed_values(self, commission_env):
-        """直充体验包（1）：用户到账 = 88；渠道现金 = 1.46（体验包参与抽佣）"""
+        """直充算力包（1）：用户到账 = 88；渠道现金 = 1.46（算力包参与抽佣）"""
         cs, calls = commission_env
         r = cs.CommissionService.settle(
             invitee_id=2, order_id="R_x", transaction_id="T2",

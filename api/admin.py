@@ -29,6 +29,8 @@ from config.constant import (
     DRIVER_IMPLEMENTATION_MAPPING,
     GEMINI_URL_FORMATS,
     ChannelLevel,
+    UserStatus,
+    REMARK_MAX_LEN,
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
@@ -139,9 +141,18 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
     admin = await require_admin(auth_token)
     
     try:
-        total_users = UsersModel.get_total_count()
-        active_workflows_3d = VideoWorkflowModel.count_active_recent_days(days=3)
-        
+        # 同步 pymysql 查询走 to_thread，避免阻塞事件循环（web 接口红线）
+        total_users, active_users, active_workflows_3d = await asyncio.gather(
+            asyncio.to_thread(UsersModel.get_total_count),
+            asyncio.to_thread(UsersModel.get_active_count),
+            asyncio.to_thread(VideoWorkflowModel.count_active_recent_days, days=3),
+        )
+
+        # 激活用户数上限（None=不限）：社区版为常量；商业版由注入的
+        # Provider 按许可证 edition 分档（许可证不可用回落社区口径）。
+        from services.registration_quota import get_max_active_users
+        max_active_users = get_max_active_users()
+
         from task.runninghub_key_pool import is_available as is_runninghub_key_pool_available
         from services.branding import is_available as is_branding_available
         enterprise_status = _get_enterprise_admin_status()
@@ -149,6 +160,8 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
             "code": 0,
             "data": {
                 "total_users": total_users,
+                "active_users": active_users,
+                "max_active_users": max_active_users,
                 "active_workflows_3d": active_workflows_3d,
                 # UI 的运行模式必须以 Enterprise 是否完整注册为准；静态目录存在
                 # 不能代表 PyArmor 和注册流程可用。
@@ -494,11 +507,13 @@ async def admin_get_user(
             raise HTTPException(status_code=404, detail="用户不存在")
         
         user_dict = user.to_dict()
-        
+        # 管理员备注不进 to_dict（防用户侧泄漏），仅在 admin 详情路径附加
+        user_dict['remark'] = user.remark
+
         # 添加算力信息
         power = ComputingPowerModel.get_by_user_id(user_id)
         user_dict['computing_power'] = power.computing_power if power else 0
-        
+
         return {
             "code": 0,
             "data": user_dict
@@ -507,6 +522,45 @@ async def admin_get_user(
         raise
     except Exception as e:
         logger.error(f"Failed to get user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateUserRemarkRequest(BaseModel):
+    remark: str
+
+
+@router.put("/users/{user_id}/remark")
+async def admin_update_user_remark(
+    user_id: int = Path(...),
+    request: UpdateUserRemarkRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员设置用户备注（仅后台可见，用户侧接口不返回该字段）。传空串清除备注。"""
+    admin = await require_admin(auth_token)
+    remark = ((request.remark or '') if request is not None else '').strip()
+    if len(remark) > REMARK_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"备注不能超过 {REMARK_MAX_LEN} 个字符")
+
+    try:
+        target = await asyncio.to_thread(UsersModel.get_by_id, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="目标用户不存在")
+
+        await asyncio.to_thread(UsersModel.update_remark, user_id, remark)
+        logger.info(f"[Admin] 用户备注变更: user={user_id} by admin={admin.id}")
+        return {
+            "code": 0,
+            "data": {
+                "target_user_id": user_id,
+                "remark": remark,
+            },
+        }
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update remark for user {user_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -521,28 +575,49 @@ async def admin_update_user_status(
     auth_token: str = Header(None, alias="Authorization")
 ):
     """
-    管理员更新用户状态（0-禁用, 1-正常）
-    禁用用户时会自动删除其所有 token，强制登出
+    管理员更新用户状态（0-禁用, 1-正常, 2-待审核）
+    禁用/待审核用户时会自动删除其所有 token，强制登出
+    将用户置为正常（审核通过/重新启用）时校验激活用户数配额
+    管理员不能将自己置为禁用或待审核（会失去重新登录入口）
     """
     admin = await require_admin(auth_token)
-    
-    # 禁止管理员禁用自己
-    if user_id == admin.id and request.status == 0:
-        raise HTTPException(status_code=400, detail="不能禁用自己")
-    
+
+    if request.status not in (UserStatus.DISABLED, UserStatus.NORMAL, UserStatus.PENDING):
+        raise HTTPException(status_code=400, detail="无效的用户状态值（仅允许 0-禁用, 1-正常, 2-待审核）")
+
+    # 禁止管理员禁用自己或将自己设为待审核（登录拒绝 status!=1 的账号，
+    # 置为禁用/待审核后将失去重新登录入口）
+    if user_id == admin.id and request.status in (UserStatus.DISABLED, UserStatus.PENDING):
+        raise HTTPException(status_code=400, detail="不能禁用自己或将自己设为待审核")
+
     try:
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        
+
+        # 激活用户数配额：用户从不活跃状态（禁用/待审核）转为正常时校验
+        # （禁用用户不计入配额，管理员可通过禁用释放名额）
+        if request.status == UserStatus.NORMAL and user.status != UserStatus.NORMAL:
+            from services.registration_quota import check_allowed
+            active_count = await asyncio.to_thread(UsersModel.get_active_count)
+            allowed, quota_msg = check_allowed(active_count)
+            if not allowed:
+                logger.warning(
+                    "用户 %s 启用被拒绝（激活用户数配额限制）- 当前激活数: %s",
+                    user_id,
+                    active_count,
+                )
+                raise HTTPException(status_code=400, detail=quota_msg)
+
         # 更新用户状态
-        UsersModel.update_status(user_id, request.status)
-        
-        # 如果是禁用操作，删除该用户的所有 token（强制登出）
-        if request.status == 0:
+        await asyncio.to_thread(UsersModel.update_status, user_id, request.status)
+
+        # 禁用/待审核都吊销全部 token 强制登出：两者均不计入激活配额，
+        # 保留 token 会出现"不占名额但仍可调用接口"的口径漏洞
+        if request.status in (UserStatus.DISABLED, UserStatus.PENDING):
             try:
-                UserTokensModel.delete_by_user_id(user_id)
-                logger.info(f"Deleted all tokens for disabled user {user_id}")
+                await asyncio.to_thread(UserTokensModel.delete_by_user_id, user_id)
+                logger.info(f"Deleted all tokens for user {user_id} (status={request.status})")
             except Exception as e:
                 logger.error(f"Failed to delete tokens for user {user_id}: {e}")
                 # 不影响主流程，继续执行

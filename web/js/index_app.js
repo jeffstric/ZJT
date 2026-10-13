@@ -130,8 +130,12 @@
       subQrCode: '',
       subNativeCodeUrl: '',
       subOrderId: '',
+      _subPayTimer: null,   // Native 扫码支付轮询定时器（支付成功自动提示用）
       subCancelling: false,
       subStatusPolling: false,         // 订阅状态轻量轮询进行中（支付/签约确认后状态翻转即停）
+      introDealPhase: '',       // '' | price | slash | power | done；入门版首期优惠动画
+      _introDealTimer: null,
+      _introDealGen: 0,
       wechatOpenid: '',
       userIp: '',
       nativeCodeUrl: '',
@@ -144,6 +148,8 @@
       adminSwitchSuccess: '',
       isAdminMode: false,
       userRole: '',
+      // 用户昵称（/api/user/role 带出；空=未取到，顶栏回退打码账号）
+      nickname: '',
       // 模式选择相关
       showModeSelectModal: false,
       creationMode: '',
@@ -171,7 +177,12 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'preferences' | 'creationDefaults' | 'apitoken'
+      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken'
+      // 个人资料（昵称）编辑
+      nicknameInput: '',
+      profileSaving: false,
+      profileError: '',
+      profileSuccess: '',
       // 用户偏好数据
       userPreferences: {},
       userPreferenceLocks: {},
@@ -225,6 +236,9 @@
       cliMediaPrefSaving: {},
       cliMediaPrefSaved: {},
       cliMediaPrefRowError: {},
+      // 已保存生效值不在当前可用模型列表（驱动未配置/被停用）时的警示：
+      // 下拉会回退展示推荐模型，但该回退值并未保存，必须提示用户重新选择
+      cliMediaPrefInvalidValue: {},
       cliMediaPrefModelsLoaded: false,
       _cliMediaPrefModelsCache: null,
       _cliMediaPrefSuccessTimer: null,
@@ -467,6 +481,39 @@
           recharge: fmt(tiers.recharge, ''),
         };
       },
+      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
+      // ⚠️ 必须留在 computed：模板以属性方式引用（upgradePlans.length / v-for="plan in upgradePlans"），
+      // 放 methods 时引用得到函数对象，.length 为形参个数恒为 0（falsy），升级区块永不渲染
+      upgradePlans() {
+        const status = this.subscriptionStatus;
+        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
+        const currentPlanId = status.plan && status.plan.plan_id;
+        if (!currentPlanId) return [];
+        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
+      },
+
+      // 当前选中的套餐是否为升级单（高于当前生效套餐）
+      isUpgradeMode() {
+        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
+        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
+      },
+
+      // 首订加赠资格（后端按"无历史成功签约合约"判定）：false 时套餐卡片/支付面板不展示「首期订阅加赠」
+      subFirstBonusEligible() {
+        const status = this.subscriptionStatus;
+        return !status || status.first_bonus_eligible !== false;
+      },
+
+      // 入门版首期动画进行中（价格砸下 / 算力 +40），用来压暗其他档
+      introDealActive() {
+        return this.introDealPhase === 'price' || this.introDealPhase === 'slash' || this.introDealPhase === 'power';
+      },
+
+      // 顶栏主显示名：昵称优先，未取到昵称时回退打码账号
+      displayName() {
+        return this.nickname || this.maskedPhone;
+      },
+
       maskedPhone() {
         // 邮箱用户显示掩码后的邮箱
         if (!this.userPhone && this.userEmail) {
@@ -652,14 +699,23 @@
 
       applyCliMediaPrefProfiles(profiles) {
         const selected = {};
+        const invalid = {};
         for (const group of this.cliMediaPrefGroups) {
           for (const slot of group.slots) {
             const profile = profiles?.[slot.key] || {};
             const models = this.cliMediaPrefModels[slot.key] || [];
             let taskId = profile.task_id;
+            let invalidValue = null;
             if (taskId != null && taskId !== '') {
               const exists = models.some((m) => String(m.task_id) === String(taskId));
               if (!exists && models.length) {
+                // 存储的生效值已不在可用列表（如 vidu_q2 驱动未配置被模型列表过滤）：
+                // 下拉回退展示目录默认/首个可用模型，但该回退值并未保存——
+                // 不回写、只警示，避免「显示 37 实际生效 19」的静默错位
+                invalidValue = {
+                  task_id: taskId,
+                  model_name: profile.model_name || '',
+                };
                 const catalogHit = window.ModelCatalog
                   ? window.ModelCatalog.findTaskByTrack(models, slot.key, null, 'value')
                   : null;
@@ -674,10 +730,12 @@
               taskId = '';
             }
             selected[slot.key] = taskId === '' || taskId == null ? '' : String(taskId);
+            invalid[slot.key] = invalidValue;
           }
         }
         this.cliMediaPrefProfiles = profiles || {};
         this.cliMediaPrefSelected = selected;
+        this.cliMediaPrefInvalidValue = invalid;
       },
 
       async ensureCliMediaPreferencesLoaded() {
@@ -761,6 +819,7 @@
         }
         this.applyCliMediaPrefProfiles(response.data.profiles || {});
         this.cliMediaPrefRowError = {};
+        this.cliMediaPrefInvalidValue = {};
         this.cliMediaPrefSaved = {};
       },
 
@@ -775,6 +834,7 @@
           localStorage.removeItem('cli_media_pref_world_id');
           this.cliMediaPrefProfiles = {};
           this.cliMediaPrefSelected = {};
+          this.cliMediaPrefInvalidValue = {};
           return;
         }
         this.cliMediaPrefLoading = true;
@@ -802,6 +862,7 @@
         };
         this.cliMediaPrefSaving = { ...this.cliMediaPrefSaving, [slot.key]: true };
         this.cliMediaPrefRowError = { ...this.cliMediaPrefRowError, [slot.key]: '' };
+        this.cliMediaPrefInvalidValue = { ...this.cliMediaPrefInvalidValue, [slot.key]: null };
         this.cliMediaPrefSaved = { ...this.cliMediaPrefSaved, [slot.key]: false };
         try {
           const response = await axios.put(
@@ -969,6 +1030,7 @@
         const code = error?.response?.data?.error_code;
         const isAuthFail = (typeof detail === 'string' && detail.includes('无效或已过期的认证信息'))
           || code === 'invalid_auth_token'
+          || code === 'missing_auth_token'
           || code === 'TOKEN_EXPIRED';
         if (isAuthFail) {
           // 清除本地存储的认证信息（含作废 Bearer，避免压过仍有效的 cookie）
@@ -1366,6 +1428,7 @@
             this.userEmail = '';
             this.computingPower = null;
             this.userRole = '';
+            this.nickname = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
             localStorage.removeItem('token');
@@ -1385,6 +1448,7 @@
             this.userEmail = '';
             this.computingPower = null;
             this.userRole = '';
+            this.nickname = '';
             this.inviteCode = '';
             localStorage.removeItem('auth_token');
             localStorage.removeItem('token');
@@ -1424,6 +1488,8 @@
         this.showUserSettingsModalFlag = true;
         this.userSettingsError = '';
         this.userSettingsSuccess = '';
+        this.profileError = '';
+        this.profileSuccess = '';
         this.userSettingsTab = 'preferences';
         this.apiTokenNewToken = '';
         this.apiTokenError = '';
@@ -2261,10 +2327,49 @@
           });
           if (response.data.code === 0) {
             this.userRole = response.data.data.role || '';
+            this.nickname = response.data.data.nickname || '';
           }
         } catch (error) {
           console.error('Fetch user role error:', error);
           this.userRole = '';
+        }
+      },
+
+      // ==================== 个人资料（昵称）方法 ====================
+
+      switchToProfileTab() {
+        this.userSettingsTab = 'profile';
+        this.profileError = '';
+        this.profileSuccess = '';
+        // 回填当前昵称；未设置时留空，提示语已说明留空=随机分配
+        this.nicknameInput = this.nickname || '';
+      },
+
+      async saveNickname() {
+        this.profileSaving = true;
+        this.profileError = '';
+        this.profileSuccess = '';
+        try {
+          const response = await axios.put('/api/user/nickname', {
+            nickname: this.nicknameInput.trim()
+          }, {
+            headers: {
+              'Authorization': `Bearer ${this.authToken}`
+            }
+          });
+          if (response.data.code === 0) {
+            this.nickname = response.data.data.nickname || '';
+            this.nicknameInput = this.nickname;
+            this.profileSuccess = '昵称已保存';
+          } else {
+            this.profileError = response.data.message || '保存失败，请重试';
+          }
+        } catch (error) {
+          console.error('Save nickname error:', error);
+          const detail = error?.response?.data?.detail || error?.response?.data?.message;
+          this.profileError = detail || '保存失败，请重试';
+        } finally {
+          this.profileSaving = false;
         }
       },
       
@@ -3014,6 +3119,9 @@
 
       switchRechargeTab(tab) {
         this.rechargeTab = tab;
+        if (tab === 'subscription') {
+          this.maybePlayIntroDeal();
+        }
       },
 
       formatDateStr(isoStr) {
@@ -3046,6 +3154,7 @@
           this.handleAuthError(error);
         } finally {
           this.subscriptionPlansLoading = false;
+          this.maybePlayIntroDeal();
         }
       },
 
@@ -3131,6 +3240,66 @@
         }
       },
 
+      _clearIntroDealTimer() {
+        if (this._introDealTimer) {
+          clearTimeout(this._introDealTimer);
+          this._introDealTimer = null;
+        }
+        this._introDealGen += 1;
+      },
+
+      // 有入门版首期优惠资格时，打开月度订阅播一次：29.9 砸到 18.8，328 再 +40。
+      // 关掉弹窗再开再播；刷新订阅状态不调用这里。
+      maybePlayIntroDeal() {
+        this._clearIntroDealTimer();
+        this.introDealPhase = '';
+        if (!this.showRechargePowerModal || this.rechargeTab !== 'subscription') return;
+        if (this.subscriptionPlansLoading) return;
+        const status = this.subscriptionStatus;
+        const managing = status && status.subscribed && (status.status === 'active' || status.status === 'upgrading');
+        if (managing || !this.subFirstBonusEligible) return;
+        const intro = (this.subscriptionPlans || []).find(p => p && p.first_period_price != null && p.first_period_bonus);
+        if (!intro) return;
+        const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reduceMotion) {
+          this.introDealPhase = 'done';
+          return;
+        }
+        const gen = this._introDealGen;
+        const step = (phase, delay, next) => {
+          this._introDealTimer = setTimeout(() => {
+            if (this._introDealGen !== gen) return;
+            this.introDealPhase = phase;
+            if (next) next();
+          }, delay);
+        };
+        this.introDealPhase = 'price';
+        step('slash', 700, () => step('power', 800, () => step('done', 900, null)));
+      },
+
+      planShowsIntroPrice(plan) {
+        return !!(plan && plan.first_period_price != null && this.subFirstBonusEligible);
+      },
+
+      introPriceCut(plan) {
+        const diff = (Number(plan && plan.price) || 0) - (Number(plan && plan.first_period_price) || 0);
+        return Math.round(diff * 10) / 10;
+      },
+
+      introCardClass(plan) {
+        if (!this.planShowsIntroPrice(plan)) {
+          return { 'sub-intro-dim': this.introDealActive };
+        }
+        return {
+          'sub-intro-card': true,
+          'sub-intro-play': this.introDealActive,
+          'sub-intro-price': this.introDealPhase === 'price',
+          'sub-intro-slash': this.introDealPhase === 'slash',
+          'sub-intro-power': this.introDealPhase === 'power',
+          'sub-intro-done': this.introDealPhase === 'done',
+        };
+      },
+
       planTagline(plan) {
         // 档位定位词：按算力升序赋予（数据驱动，套餐变化自适应）
         const lines = ['日常使用', '效率升级', '专业创作', '全能尊享'];
@@ -3140,28 +3309,45 @@
       },
 
       planMultipleText(plan) {
-        // 相对最低档的算力倍数（Kimi 式直观标注）
+        // 相对最低档的算力倍数（Kimi 式直观标注）；最低档本身不展示（返回空串）
         const powers = (this.subscriptionPlans || []).map(p => Number(p.computing_power) || 0).filter(x => x > 0);
         if (!powers.length) return '';
         const base = Math.min.apply(null, powers);
-        if (!base || !plan.computing_power || plan.computing_power <= base) return '基础档';
+        if (!base || !plan.computing_power || plan.computing_power <= base) return '';
         const m = Math.round((plan.computing_power / base) * 10) / 10;
         return '≈ 基础档 ' + m + ' 倍算力';
       },
 
-      // 生效中/升级中可升级的更高套餐（无需退订，低→高）
-      upgradePlans() {
-        const status = this.subscriptionStatus;
-        if (!status || !['active', 'upgrading'].includes(status.status)) return [];
-        const currentPlanId = status.plan && status.plan.plan_id;
-        if (!currentPlanId) return [];
-        return (this.subscriptionPlans || []).filter(p => Number(p.plan_id) > Number(currentPlanId));
+      // 「直接购买算力」参考单价（算力/元）：取价格最低的常规算力包（与充值 Tab 展示口径一致，
+      // granted_computing_power 优先；排除 1 元以下促销包如首充福利）。无有效套餐时返回 0。
+      rechargeReferenceRate() {
+        const pkgs = (this.rechargePackages || []).filter(p => {
+          const price = Number(p.price) || 0;
+          const power = Number(p.granted_computing_power || p.computing_power) || 0;
+          return price >= 1 && power > 0;
+        });
+        if (!pkgs.length) return 0;
+        const ref = pkgs.reduce((a, b) => (Number(a.price) <= Number(b.price) ? a : b));
+        return (Number(ref.granted_computing_power || ref.computing_power) || 0) / (Number(ref.price) || 1);
       },
 
-      // 当前选中的套餐是否为升级单（高于当前生效套餐）
-      isUpgradeMode() {
-        const currentPlanId = this.subscriptionStatus && this.subscriptionStatus.plan && this.subscriptionStatus.plan.plan_id;
-        return !!(this.selectedSubPlan && currentPlanId && Number(this.selectedSubPlan.plan_id) > Number(currentPlanId));
+      // 套餐首屏算力：首订加赠并入首期展示（withBonus=true 且套餐配置加赠时 = 每期到账 + 加赠）
+      subPlanHeadlinePower(plan, withBonus) {
+        const base = Number(plan && plan.computing_power) || 0;
+        const bonus = withBonus ? (Number(plan && plan.first_period_bonus) || 0) : 0;
+        return base + bonus;
+      },
+
+      // 相对「同样金额直接购买算力」多出的算力；参考单价缺失时返回 null（不展示），不为正返回 0
+      planExtraVsRecharge(plan, withBonus) {
+        const rate = this.rechargeReferenceRate();
+        if (!rate || !plan) return null;
+        const price = this.planShowsIntroPrice(plan)
+          ? Number(plan.first_period_price)
+          : (Number(plan.price) || 0);
+        const direct = Math.round(price * rate);
+        const extra = this.subPlanHeadlinePower(plan, withBonus) - direct;
+        return extra > 0 ? extra : 0;
       },
 
       selectSubPlan(plan) {
@@ -3175,6 +3361,7 @@
       },
 
       backToSubPlanSelection() {
+        this.stopSubPayPolling();
         this.selectedSubPlan = null;
         this.subQrCode = '';
         this.subNativeCodeUrl = '';
@@ -3182,13 +3369,46 @@
         this.subOrderId = '';
       },
 
+      // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
+      startSubPayPolling() {
+        this.stopSubPayPolling();
+        this._subPayTimer = setInterval(async () => {
+          // 弹窗关闭或订单已重置（返回/重新发起）时自动停止
+          if (!this.subOrderId || !this.showRechargePowerModal) {
+            this.stopSubPayPolling();
+            return;
+          }
+          try {
+            const resp = await axios.get('/api/subscription/order-status', {
+              params: { order_id: this.subOrderId, user_id: this.userId, auth_token: this.authToken }
+            });
+            if (resp.data && resp.data.success && resp.data.paid) {
+              this.stopSubPayPolling();
+              this.subOrderId = '';
+              const isUpgrade = this.lastOrderIsUpgrade;
+              alert(isUpgrade
+                ? '支付成功！套餐升级已生效，新套餐算力稍后到账'
+                : '支付成功！订阅已生效，算力稍后到账');
+              this.refreshSubscriptionStatus();
+              this.selectedSubPlan = null;
+              setTimeout(() => { this.fetchComputingPower(); }, 2000);
+            }
+          } catch (e) {
+            // 单次轮询失败（网络抖动/登录过期）不打断，下一轮继续
+          }
+        }, 3000);
+      },
+
+      stopSubPayPolling() {
+        if (this._subPayTimer) {
+          clearInterval(this._subPayTimer);
+          this._subPayTimer = null;
+        }
+      },
+
       showSubscriptionAgreement() {
-        alert('自动续费服务协议（摘要）：\n\n' +
-          '1. 订阅周期为 30 天，每期发放对应档位算力，到期前自动扣费续期。\n' +
-          '2. 首次订阅赠送算力仅首期发放一次；解约后重新订阅视为新订阅，可再次享受。\n' +
-          '3. 扣款前微信将向您下发预扣费通知，扣费当日及次日为等待期，期间可随时取消。\n' +
-          '4. 您可随时在本页取消订阅，取消后当期权益保留至周期结束，之后不再扣费。\n' +
-          '5. 也可在微信「服务-钱包-支付设置-自动续费」中管理或解约。');
+        // 独立协议页（含首订加赠/持续订阅规则），见 web/auto_renewal_agreement.html
+        window.open('/auto_renewal_agreement.html', '_blank');
       },
 
       async createSubscriptionOrder() {
@@ -3208,6 +3428,7 @@
         this.subPaymentError = '';
         this.subQrCode = '';
         this.subNativeCodeUrl = '';
+        this.stopSubPayPolling();
 
         const isWechat = this.isWechatBrowser();
         if (!this.userIp) {
@@ -3227,7 +3448,11 @@
             requestData.openid = this.wechatOpenid;
           }
 
-          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData);
+          // require_permission 只认 Authorization 头 / ?auth_token=，不读 body；
+          // 浏览器认证 cookie 可能已过期，必须显式带头，否则 401（missing_auth_token）
+          const response = await axios.post('/api/subscription/wechat-sign-pay', requestData, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
           if (response.data.success) {
             this.subOrderId = response.data.order_id;
             this.lastOrderIsUpgrade = !!response.data.upgrade;
@@ -3244,6 +3469,8 @@
               } else {
                 this.subNativeCodeUrl = codeUrl;
                 this.subQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+                // Native 扫码：轮询订单状态，支付成功自动提示（JSAPI 走 WeixinJSBridge 回调，无需轮询）
+                this.startSubPayPolling();
               }
             }
           } else {
@@ -3251,7 +3478,10 @@
           }
         } catch (error) {
           console.error('Error creating subscription order:', error);
-          this.subPaymentError = error?.response?.data?.detail || '创建订阅订单失败，请重试';
+          // 401 由全局响应拦截器统一处理（识别 missing_auth_token 后弹登录框）
+          if (error?.response?.status === 401) return;
+          const errData = error?.response?.data || {};
+          this.subPaymentError = errData.detail || errData.error || errData.message || '创建订阅订单失败，请重试';
         } finally {
           this.subPaymentLoading = false;
         }
@@ -3300,6 +3530,8 @@
           const response = await axios.post('/api/subscription/cancel', {
             user_id: parseInt(this.userId, 10),
             auth_token: this.authToken
+          }, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
           });
           if (response.data.success) {
             alert('订阅已取消');
@@ -3310,7 +3542,9 @@
           }
         } catch (error) {
           console.error('Error cancelling subscription:', error);
-          alert(error?.response?.data?.detail || '取消订阅失败，请稍后重试');
+          if (error?.response?.status === 401) return;
+          const errData = error?.response?.data || {};
+          alert(errData.detail || errData.error || errData.message || '取消订阅失败，请稍后重试');
         } finally {
           this.subCancelling = false;
         }
@@ -3435,6 +3669,9 @@
       },
       
       closeRechargeModal() {
+        this.stopSubPayPolling();
+        this._clearIntroDealTimer();
+        this.introDealPhase = '';
         this.showRechargePowerModal = false;
         this.stopSubStatusPolling();
         this.selectedPackage = null;

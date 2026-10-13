@@ -95,12 +95,20 @@
 
 视频工具同根因（marketing_agent / storyboard 视频生成 401）：`enterprise/tools/video_tools.py` 的 `generate_text_to_video` → `POST /api/ai-app-run`、`image_to_video` → `POST /api/ai-app-run-image`，同样只把 `auth_token` 放 form 字段，已补 Bearer 头。
 
+场景多角度同根因（2026-10-08）：`task/location_multi_angle_task.py` 调度器回环 `POST /api/image-edit` 只把任务快照 `auth_token` 放 form 字段，`require_permission` 返回 `Authorization is required`。每个角度重试 3 次后被跳过，终态变成「所有角度生成失败，共完成 0/N 个」。已补 `Authorization: Bearer` 头（快照为空不加头，不走 query）。
+
+故事板导出下载（2026-10-08）：`<a href="/api/download">` 带不上 `Authorization`，中间件用 HttpOnly cookie 填头。管理端切换用户只改 `localStorage`，cookie 里的旧 token 失效后下载返回 `invalid_auth_token`，其余接口仍 200。故事板改为 `fetch /api/download?format=json`（Bearer 头，URL 不带登录 token），CDN 重签名地址放在 JSON 的 `redirect_url`，再由浏览器跳到该 CDN 地址下载。未带 `format=json` 的 302 / 本地文件 / 外部代理保持原样。工作流视频/语音/图片下载、营销页放大图，以及首页独立工具页（文生图、图片编辑、图生视频、视频生成、剧本生视频、数字人、语音、视频增强）的下载按钮，都走同一约定（`web/js/download_attachment.js`）。`<video>` / `<audio>` 播放仍用 `proxyDownloadUrl` 的 302，媒体标签带不上自定义头。
+`format=json` 的外链降级（2026-10-09）：`format=json` 只对 CDN URL 返回 `redirect_url`；非 CDN 外链（小红书图床、任务缓存失败回退的厂商原始 URL 等）无法签名时不再 400，直接落到代理流式下载（200 + 文件流），前端 `downloadWithAuth` 对非 JSON 响应按 blob 保存——外链下载不因统一改造从"能下"变"必败"（回归见 `tests/api/test_download_format_json.py::test_format_json_non_cdn_falls_back_to_proxy_stream`）。
+
+> 注（2026-09-16 落地确认）：上文对 video_tools 的修补实际从未提交进 enterprise 仓库（当时仅改了 `script_writer_core/mcp_tool.py` 4 处），storyboard 智能体批量/单场视频生成因此持续 401（`require_permission` 只认 Authorization 头 / query，form 字段不过鉴权）。本次已真正补上两处 `httpx.post` 的 `Authorization: Bearer` 头（token 为空不加头），并同步加 `trust_env=False` 防代理环境变量劫持内部回环；回归见 `tests/agents/test_video_tools_resolution.py::test_*_sends_bearer_header`。
+
 ## 五、发布与兼容注意
 
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。
 2. 外部 storyboard-agent CLI/skill 不受影响：其 `/api/agent-auth/exchange` 换取的 auth_token 同存于 `user_tokens` 表，可被装饰器解析；其调用的端点不在本次改动范围。
 3. **遗留清单**（审计同族但未点名，装饰器未覆盖，仍为零鉴权或弱鉴权，后续迭代处理）：
-   - `PUT /session/{id}/title`、`GET /api/sessions`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
+   - 注：`GET /api/sessions` 已挂 `require_permission("script_session:view")` 并加 `check_claimed_user_id`（2026-10-12，含无 user_id 调试路径仅限管理员；`SessionCreateRequest.user_id` 同步改为可省略，省略时以登录身份为准，见 `docs/backend/incidents/2026-10-12-script-writer-cross-user-session-404.md`）；
+   - `PUT /session/{id}/title`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
    - `export-world`、`world-upload-token`、`import-world-from-cloud`、`recharge/*` 等端点未挂装饰器（部分靠 body/query 自报 user_id）；
    - 注：`upload-agent-image` / `upload-agent-audio` / `upload-agent-video` 已挂 `require_permission`（2026-09-15 确认）；前端 6 处裸 `fetch`（`marketing_agent.js` 5 处 + `marketing_inspiration.js` 1 处，原先仅把 `auth_token` 放 FormData）已补 `Authorization: Bearer` 头，否则上传 401 → `checkAuthResponse` 整页跳登录（e2e `test_marketing_agent_image_upload` 失败根因）；
    - 注：`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files` 文件系列已在 58e459fb 挂 `require_permission`（含 GET/POST/PATCH），前端缺头问题已按上文补齐；
@@ -110,5 +118,6 @@
 
 - `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助。
 - `tests/api/test_script_writer_auth.py`：verify_auth_token 新语义（空 token 拒绝、属主不符拒绝、DB 故障 502）。
+- `tests/api/test_sessions_endpoint_auth.py`：`GET /api/sessions` 鉴权收紧（未登录 401、user_id 不一致 403、本人 200、调试路径仅管理员、SessionCreateRequest.user_id 可省略）。
 - e2e（`auto_test/e2e/conftest.py`）自带标准 `Authorization: Bearer`，兼容。
 - e2e `test_auth.py::test_logout_success`（2026-09-15 修正）：单会话策略下 `test_login_success` 的次账号登录会顶掉 session 级 `secondary_auth_token`，故登出用例改为用例内新登录拿 fresh token 再登出。

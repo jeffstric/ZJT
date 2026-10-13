@@ -36,6 +36,10 @@
 
   // 64KiB 以下留安全余量（与 node_base.js 关页保存逻辑共用）
   const KEEPALIVE_BODY_MAX_BYTES = 59000;
+  // 已发出的保存不再因新内容被 abort。超过此时长仍无响应，只释放单飞槽位，
+  // 让后面的保存继续；原 fetch 不取消，写 id 仍留在未确认集合里。
+  const AUTO_SAVE_INFLIGHT_TIMEOUT_MS = 120000;
+  const OWN_WRITE_ID_LIMIT = 32;
 
   /**
    * 创建自动保存状态机实例（页面用单例；测试可独立实例）。
@@ -64,6 +68,152 @@
     // （重新打满带宽）。熔断后自动保存静默跳过，保持 dirty + 恢复快照
     // 兜底，等用户刷新解决冲突；成功保存（setConfirmedBody）/reset 解除。
     let conflictBlockRecord = null;
+
+    // 本页发出、尚未被「不是自己」的 409 放弃的写 id。上限内丢掉最早的。
+    let ownWriteIds = [];
+    // 已发出的请求还在飞时，后来的保存只记这个标记，不再发第二笔。
+    let resaveNeeded = false;
+    // 同一 sentVersion 的补发只取一次，避免成功路径被调用两次时连发。
+    let followUpConsumedVersion = null;
+    // 同一次冲突只自愈一次。setConfirmedBody / confirmSkipped 后清掉。
+    let selfHealArmed = false;
+
+    function createWriteId(){
+      if(typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'){
+        return crypto.randomUUID();
+      }
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    }
+
+    function rememberWriteId(writeId){
+      if(!writeId) return;
+      const id = String(writeId);
+      const existing = ownWriteIds.indexOf(id);
+      if(existing !== -1) ownWriteIds.splice(existing, 1);
+      ownWriteIds.push(id);
+      while(ownWriteIds.length > OWN_WRITE_ID_LIMIT) ownWriteIds.shift();
+    }
+
+    function ownsWriteId(writeId){
+      return !!writeId && ownWriteIds.indexOf(String(writeId)) !== -1;
+    }
+
+    /** 旁路 PUT 登记一个写 id，供随后的 409 认出是本页。 */
+    function issueWriteId(){
+      const writeId = createWriteId();
+      rememberWriteId(writeId);
+      return writeId;
+    }
+
+    function hasStartedInFlight(){
+      const entry = saveState.inFlight;
+      return !!(entry && entry.requestStarted && !entry.released);
+    }
+
+    function noteResaveNeeded(){
+      resaveNeeded = true;
+    }
+
+    /**
+     * 准备发 PUT。
+     * - 请求已在网上：不 abort，只记 resaveNeeded，返回 coalesce。
+     * - 请求还停在写 IndexedDB：abort 后换新的一笔。
+     * - 没有在途：开始新的一笔。
+     */
+    function beginOrCoalesce(controller){
+      const entry = saveState.inFlight;
+      if(entry && entry.requestStarted && !entry.released){
+        resaveNeeded = true;
+        return { action: 'coalesce' };
+      }
+      if(entry && entry.controller && typeof entry.controller.abort === 'function'){
+        try { entry.controller.abort(); } catch(e) {}
+      }
+      const writeId = createWriteId();
+      rememberWriteId(writeId);
+      saveState.inFlight = {
+        controller: controller || null,
+        sentVersion: saveState.version,
+        keepalive: false,
+        requestStarted: false,
+        released: false,
+        writeId: writeId
+      };
+      return { action: 'send', sentVersion: saveState.version, writeId: writeId };
+    }
+
+    /** 当前槽位上的这一笔（超时释放或被新 beginSend 换掉的不算）。 */
+    function isCurrentSend(sentVersion){
+      const entry = saveState.inFlight;
+      return !!(entry && entry.sentVersion === sentVersion && !entry.released);
+    }
+
+    /**
+     * 超时：移出单飞槽位，不 abort。调用方应再发最新正文。
+     * 写 id 仍在未确认集合里，随后 409 可以认出是本页。
+     */
+    function releaseForTimeout(sentVersion){
+      const entry = saveState.inFlight;
+      if(!entry || entry.sentVersion !== sentVersion || !entry.requestStarted || entry.released){
+        return null;
+      }
+      entry.released = true;
+      saveState.inFlight = null;
+      resaveNeeded = false;
+      return { writeId: entry.writeId, resave: true };
+    }
+
+    /** 当前笔结束后，是否还要按最新正文再发一笔。同一版本只返回一次 true。 */
+    function takeFollowUp(sentVersion){
+      if(followUpConsumedVersion === sentVersion) return false;
+      const follow = resaveNeeded || saveState.version > sentVersion;
+      resaveNeeded = false;
+      if(follow) followUpConsumedVersion = sentVersion;
+      return follow;
+    }
+
+    /**
+     * 409 的赢家是谁。
+     * self：本页未确认写 id，且这次冲突还没自愈过。
+     * foreign：别人的、空的、或已经自愈过一次。
+     */
+    function classifyConflict(lastWriteId){
+      if(!ownsWriteId(lastWriteId) || selfHealArmed) return 'foreign';
+      selfHealArmed = true;
+      return 'self';
+    }
+
+    /**
+     * 当前槽位上的 PUT 结果该怎么处理。调用方只按 action 滚基线或弹框。
+     * - ignore：超时释放或被换掉之后才回来。不得滚基线，也不得记冲突。
+     * - confirm：成功。调用方 setConfirmedBody。
+     * - self-heal：409 的赢家是本页未确认写 id，且这次冲突还没自愈过。
+     *   调用方只滚动哈希，再发一次最新正文，不弹框。
+     * - conflict：别人的、空的、缺哈希、或已经自愈过一次。
+     * - fail：其它错误。
+     */
+    function interpretSaveResponse(sentVersion, code, contentHash, lastWriteId){
+      if(!isCurrentSend(sentVersion)) return { action: 'ignore' };
+      if(code === 0) return { action: 'confirm' };
+      if(code === 409){
+        if(contentHash && classifyConflict(lastWriteId) === 'self'){
+          return { action: 'self-heal' };
+        }
+        return { action: 'conflict' };
+      }
+      return { action: 'fail' };
+    }
+
+    /** 旁路 PUT 登记写 id 并写进请求头。不参与单飞队列。 */
+    function attachWriteId(headers){
+      const target = headers || {};
+      target['X-Write-Id'] = issueWriteId();
+      return target;
+    }
 
     // 一次用户操作/状态变更 → 一个待确认版本
     function markDirty(){
@@ -194,6 +344,26 @@
       // 旁路 PUT / 加载期自写滚基线时往往不会再 noteServerHash。
       // lastSeen 若仍停在旧值，去重门第二条件立刻失效，下一拍全量 PUT。
       if(serverHash) noteServerHash(workflowId, serverHash);
+      selfHealArmed = false;
+    }
+
+    /**
+     * 只滚动已确认哈希，不改基线 body。
+     * 自愈时服务器上是本页上一笔旧正文，本地最新正文还没写上去；
+     * 若把最新正文写成基线 body，去重门会误跳过补发。
+     */
+    function setConfirmedHash(workflowId, serverHash){
+      if(!serverHash) return;
+      noteServerHash(workflowId, serverHash);
+      if(confirmedBodyRecord && confirmedBodyRecord.workflowId === String(workflowId)){
+        confirmedBodyRecord.serverHash = String(serverHash);
+        return;
+      }
+      confirmedBodyRecord = {
+        workflowId: String(workflowId),
+        body: null,
+        serverHash: String(serverHash)
+      };
     }
 
     /**
@@ -278,6 +448,7 @@
       if(saveState.version > saveState.confirmedVersion){
         saveState.confirmedVersion = saveState.version;
       }
+      selfHealArmed = false;
     }
 
     function reset(){
@@ -287,6 +458,10 @@
       confirmedBodyRecord = null;
       lastSeenServerHashRecord = null;
       conflictBlockRecord = null;
+      ownWriteIds = [];
+      resaveNeeded = false;
+      followUpConsumedVersion = null;
+      selfHealArmed = false;
     }
 
     return {
@@ -306,7 +481,19 @@
       noteConflict: noteConflict,
       isConflictBlocked: isConflictBlocked,
       confirmSkipped: confirmSkipped,
-      reset: reset
+      reset: reset,
+      issueWriteId: issueWriteId,
+      hasStartedInFlight: hasStartedInFlight,
+      noteResaveNeeded: noteResaveNeeded,
+      beginOrCoalesce: beginOrCoalesce,
+      isCurrentSend: isCurrentSend,
+      releaseForTimeout: releaseForTimeout,
+      takeFollowUp: takeFollowUp,
+      classifyConflict: classifyConflict,
+      interpretSaveResponse: interpretSaveResponse,
+      attachWriteId: attachWriteId,
+      ownsWriteId: ownsWriteId,
+      setConfirmedHash: setConfirmedHash
     };
   }
 
@@ -492,6 +679,7 @@
       workflowId: normalizeRecoveryIdentity(m.workflowId),
       userId: normalizeRecoveryIdentity(m.userId),
       baseHash: normalizeRecoveryIdentity(m.baseHash),
+      writeId: normalizeRecoveryIdentity(m.writeId),
       snapshotId: m.snapshotId ? String(m.snapshotId) : null,
       writerId: m.writerId ? String(m.writerId) : null,
       writerSequence: normalizeFiniteNumber(m.writerSequence),
@@ -753,9 +941,15 @@
   root.createAutoSaveState = createAutoSaveState;
   root.WorkflowRecovery = WorkflowRecovery;
   root.KEEPALIVE_BODY_MAX_BYTES = KEEPALIVE_BODY_MAX_BYTES;
+  root.AUTO_SAVE_INFLIGHT_TIMEOUT_MS = AUTO_SAVE_INFLIGHT_TIMEOUT_MS;
 })(typeof window !== 'undefined' ? window : globalThis);
 
 // Node.js 环境（Vitest）：导出供测试使用，不影响浏览器全局变量
 if (typeof module !== 'undefined') {
-  module.exports = { createAutoSaveState, WorkflowRecovery, KEEPALIVE_BODY_MAX_BYTES };
+  module.exports = {
+    createAutoSaveState,
+    WorkflowRecovery,
+    KEEPALIVE_BODY_MAX_BYTES,
+    AUTO_SAVE_INFLIGHT_TIMEOUT_MS
+  };
 }

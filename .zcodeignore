@@ -1,0 +1,103 @@
+config_*.yml
+!config_*.base.yml
+__pycache__/
+server_output/
+upload/*
+!auto_test/*.json
+auto_test/test_todo_list.json
+logs/*
+scheduler.lock
+data/mysql
+# 用户生成模块属于持久数据，不参与核心代码同步更新。
+/data/user_modules/
+# 运行时数据（mysql/user_modules/runtime 日志等）与本地临时产物不入库
+/data/
+.tmp_pytest/
+.tmp_e2e/
+workflows/
+# 根目录调试截图（web/ 等目录下的静态图片不受影响）
+/*.png
+*.exe
+*.dll
+script_writer_core/logs
+files/script_writer/*
+files/tmp/*
+docs/superpowers/*
+bin
+build/*
+test-results.xml
+uv.lock
+dist/*
+*.zip
+*.spec
+enterprise/
+enterprise/pyarmor_runtime_*/
+.claude/settings.local.json
+.claude/skills/lark*
+.agents/skills/lark*
+*.spec
+scripts/build_enterprise.py
+*.lock
+
+# 部署脚本不入库
+/deploy/
+
+# Node modules
+node_modules/
+
+# 前端测试报告（CI artifacts）
+frontend-test-results.xml
+
+# Playwright
+.playwright-mcp/
+playwright-report/
+test-results/
+console-errors.txt
+
+# E2E tests
+tests/e2e/
+playwright.config.js
+
+auto_test/test_assets/*
+auto_test/samples/*
+
+# AI 编码助手临时产物（备份、密钥/许可证测试数据、会话缓存等），
+# 含 CommercialLicenseConstants 等企业源码副本，不得提交。
+.codex/
+.codex_*
+.zcode/
+.mcp.json
+data/runtime/
+
+# CI 镜像层缓存（GitLab cache 解压目录，勿提交）
+docker-image-cache/
+docs/backend/wechat_monthly_subscription.md
+auto_test/e2e/.e2e_run.lock
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

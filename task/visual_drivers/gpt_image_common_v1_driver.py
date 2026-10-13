@@ -91,6 +91,9 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         self._api_key = get_dynamic_config_value("api_aggregator", site_id, "api_key", default="")
         self._base_url = get_dynamic_config_value("api_aggregator", site_id, "base_url", default="")
         self._site_name = get_dynamic_config_value("api_aggregator", site_id, "name", default=site_id)
+        # sync_request_timeout 为纯秒语义（可能 ×2 放大），跳过 coerce 的
+        # ≥1000 毫秒启发式，防大秒值被误除 1000（#8）
+        self._skip_timeout_coerce = True
         self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300) * 2
 
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)

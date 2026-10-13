@@ -389,6 +389,22 @@ auth (无依赖)
 
 注意：CAS 内容哈希只覆盖 `workflow_data`/`style`/`style_reference_image`/`default_world_id`/`workflow_ratio`（`name` 与 `viewport` 不参与），测试中推进哈希需用参与哈希的字段。
 
+## 近期功能 e2e 覆盖补充（2026-10，develop_e2e_1010）
+
+针对 `af58e2fa..ab7a42fe`（246 提交）新增功能补齐的端到端用例（共 33 个 P1，20+7+5+7+4）：
+
+| 功能 | 覆盖位置 | 说明 |
+|------|----------|------|
+| 月度订阅 API（微信委托代扣） | `test_subscription_api.py`（10 个 P1） | 套餐列表 4 档 101-104 + 登录态真实订阅状态；`/status`、`/order-status` 未登录/无效 token 401；`/cancel` 无效 token 401；`/wechat-sign-pay` 空 token 400、无效 token 401。真实签约/支付/解约依赖外部微信平台不覆盖（与 `/api/recharge/wechat-pay` 同理）。**e2e 发现产品 bug**：`/wechat-sign-pay` 缺 `except HTTPException: raise`，空 token 400 / V2 密钥缺失 503 被 `except Exception` 吞成 500，已按 `/order-status` 同模式修复（api/subscription.py） |
+| 昵称修改（NICKNAME_MAX_LEN=30） | `test_user_api.py`（4 个 P1） | 未登录/无效 token 401；设置后经 `/api/user/role` 回读；空串重置随机默认昵称（非空）；超 30 字符 400；用例结束恢复原昵称 |
+| 视频去水印提交校验 | `test_video_watermark_remove.py`（7 个 P1） | 未登录/无效 token 401；Form `user_id` 与登录身份不符 400；时长 4-10 秒之外 400；帧率 1-120 之外 400；无媒体 400；提示词超 2000 字符 400。真实提交依赖外部 RunningHub 不覆盖 |
+| 管理员渠道推广等级 / 用户备注 | `test_admin_api.py`（admin_api_021~027，7 个 P1） | 等级 0/1/2 设置回读（level=2 才 `commission_enabled`）、非法等级/缺 body 400、用户不存在 404、非管理员 403；备注设置/回读/空白串清除/超 500 字符 400/用户不存在 404/非管理员 403，且用户侧 `/api/user/role` 不返回 remark（防泄漏） |
+| 世界 Word 文档导出 | `test_script_writer_api.py`（sw_api_exp_001~005，5 个 P1） | 未登录 401；他人 token + 主账号 user_id 403（属主断言）；非数值 world_id 400（user_id 需合法以先过属主校验）；空世界 404；有文件的世界 200 + `download_url` + `.docx` 文件名（best-effort 遍历，无则 skip） |
+
+注意：外部算力平台 `check_computing_power` 拒收本地 token（401 fail-closed），但 `get_user_id_by_auth_token` 可解析本地 token——订阅 `/plans` 带本地 token 走真实状态分支（`first_bonus_eligible` 为真实值），fail-closed（防"展示加赠、实收无加赠"）分支仅在本测试环境 token 被外部拒收时可触发，不在 e2e 断言范围。
+
+注意：`test_script_writer_api`（字母序在 `test_auth` 之后）需要"他人有效 token"时**不得复用 session 级 `secondary_auth_token`**——`test_auth` 的副账号真实登录/登出已按单会话策略（`delete_by_user_id`）将其顶掉，直接复用会 401（全量首跑即踩中）。该用例改为用例内副账号 fresh 登录（同 `test_auth.py::test_logout_success` 模式）；`test_auth` 注释"之后无用例再依赖旧的次账号 token"的约定新增用例必须遵守。
+
 ## e2e 全量失败排查记录（2026-09-15）
 
 一次 `python -m pytest auto_test/e2e -v` 大面积失败（401 跳登录页 / 502）的根因与修复：
@@ -405,6 +421,39 @@ auth (无依赖)
 经验：e2e 期间**不要手动登录**测试账号（单会话策略会顶掉 pytest 持有的 token）；401 跳登录页先区分"token 真失效"与"前端漏带 Authorization 头"（headless 复现 + 抓 4xx 响应即可定位）。
 
 不建议 e2e 覆盖（依赖外部服务/真实触发条件，本测试环境不可达）：内容审核违规原文透出（4db4491c）、TTS 语速滑杆（93224407）、MiniMax H3 文生视频驱动（c28003b2）、小米 MiMo 供应商（432f9cb5）——相关行为由 `tests/` 单测与前端 vitest 覆盖。
+
+## 订阅 UI 用例在本地环境批量超时的排查（2026-09-22）
+
+`test_subscription_ui.py`（develop 新增，10 个 P2）在全量跑中全部失败，统一卡在
+`_open_subscription_tab` 点击「算力充值」按钮超时。两层根因叠加：
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 「算力充值」按钮不存在（click 超时 30s） | index 页 `isLoggedIn` 要求 `authToken && (userPhone \|\| userEmail)`（`web/js/index_app.js` computed）；`browser_context` fixture 只注入 `auth_token`/`user_id`，缺 `phone` → 顶栏渲染未登录态（只有「登录」按钮），已登录 UI 全部不渲染。真实 UI 登录经 `persistBrowserAuth` 必写 `phone`，注入不完整是模拟失真 | `conftest.py::browser_context` 补注入 `localStorage.phone`（取 test_config 主账号手机号；与 `admin_browser_page` 既有做法一致） |
+| 按钮可见后弹窗仍不打开 | 本地部署 `is_local=true`（`config_prod.yml`），`handleRechargeClick` 对本地环境只 `alert` 提示、不打开充值弹窗 | `test_subscription_ui.py::_mock_subscription_api` 补 mock `GET /api/system/server-config` 返回 `is_local=false`，使用例在本地/生产环境行为一致 |
+
+经验：**index.html（index_app.js）是唯一把 `phone` 当作登录态判据的页面**，其他页面（script_writer / marketing_agent / video_workflow / admin）只校验 token。新增依赖 index 顶栏「已登录 UI」的 e2e 用例前，先确认 `browser_context` 注入的 localStorage 与真实登录双写一致。
+
+## 两个 e2e 并发运行互顶 token 的排查（2026-09-22）
+
+全量跑出现 25 个失败（test_admin_api 12、test_marketing_agent 7、
+test_workflow_list 3 等），统一表现为 token 401 / 前端跳登录页，但各模块
+**单独跑全部通过**（如 `pytest test_admin_api.py` → 19 passed）。
+
+根因：排查时误启动**两个全量 pytest 并发运行**（11:25:21 与 11:25:48 各跑
+约 19 分钟，时间窗完全重叠）。登录接口是单会话策略（`auth_service.py`
+`delete_by_user_id`），两边 session 登录互顶主账号 token；各自的
+`live_auth` 探活 401 后自愈重登，又顶掉对方 → 401→重登死循环持续到运行
+结束（服务器日志可见全程每 1~3 秒一次主账号登录）。业务代码无问题。
+
+修复（`auto_test/e2e/conftest.py`）：
+
+| 防护 | 说明 |
+|------|------|
+| e2e 单跑锁（`pytest_sessionstart` 钩子） | 启动时写 `.e2e_run.lock`（pid/时间/主机）；检测到另一**存活**进程持有 <45 分钟的有效锁立即 `pytest.exit` 并提示，避免污染对方运行。退出时按 pid 校验后清理；超 45 分钟视为残留锁直接接管。锁文件已加入 `.gitignore` |
+| `_LiveAuth` 重登熔断 | 60 秒内重登 >=3 次判定为"被并发登录持续顶号"，放弃自愈并打印排查提示，让后续用例如实 401 暴露问题，而不是制造更多登录互相顶号 |
+
+经验：**同一时刻只允许一个 e2e 全量运行**；复跑前先确认上一轮已退出（查锁文件 `auto_test/e2e/.e2e_run.lock` 或进程列表）。"大面积 401 但单模块全过"是并发顶号的典型特征。
 
 ## 两种测试方案对比
 

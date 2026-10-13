@@ -79,6 +79,8 @@ She lifts her head and says with sudden realization: <d>[Chinese] 原来是这�
 
 Never translate Chinese dialogue into English — writing `<d>[English] So that's how it is!</d>` for the line above is wrong.
 
+Only lines that are written in the source prompt may appear inside `<d>`. If the source prompt contains no spoken or sung lines, write no `<d>` spans at all — never invent a line on a character's behalf, no matter how natural it would sound in the scene.
+
 On-screen text stays in English double quotes, untranslated.
 
 ## 5. Examples

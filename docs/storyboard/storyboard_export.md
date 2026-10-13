@@ -95,7 +95,7 @@
 ### 字幕硬烧（整片）
 
 - 模块：`services/storyboard_subtitle.py`（独立于导出编排）
-- Body：`include_subtitles`（固定 `true`，前端不再暴露开关）
+- Body：`include_subtitles`（跟随预览控制条「字幕」勾选，勾选才硬烧，所见即所得）
 - 时间轴：与有选中配音的对白串行一致；`text` + `audio duration`（库字段或 ffprobe）
 - 版式：底部居中，最多 **3 行**，左右约 86% 宽，不占满屏
 - 超长：折行后按 3 行分页，在对白时间窗内 **字数加权轮播**；时长不够则末页 `…`
@@ -131,7 +131,7 @@ header 右侧两个按钮，**无中间弹窗**，点击即触发：
 
 | 按钮 | action | 行为 |
 |------|--------|------|
-| 一键转视频 | `export-full` | 提交异步 job → 轮询 → 完成后附件下载 mp4（固定烧录字幕） |
+| 一键转视频 | `export-full` | 提交异步 job → 轮询 → 完成后附件下载 mp4（按预览「字幕」勾选决定是否烧录字幕） |
 | 导出素材包 | `export-scenes` | 同步打包 → 完成后附件下载 zip |
 
 ### 附件下载（防弹窗拦截 / 防破坏七牛签名）
@@ -141,11 +141,12 @@ header 右侧两个按钮，**无中间弹窗**，点击即触发：
 - 直接给七牛私有桶已签名 URL 拼 `?attname=` 会破坏签名（七牛 401/400）。
 
 **方案**：`web/js/storyboard/download.js::downloadAsAttachment(url, filename)`
-- 构造同源 URL `/api/download?url=<已签名CDN>&filename=<name>`
-- 动态 `<a>` **不设 `target`** + `a.click()`：浏览器识别 `Content-Disposition: attachment` 后原地下载，不开新 tab、不触发弹窗拦截
-- 后端 `server.py:/api/download`（`server.py:548-563`）检测到 CDN 域名 → `CDNUtil.get_signed_download_url(url, attname)` 重新签名（attname 参与新签名）→ **302 重定向到七牛**，浏览器直连 CDN 拉流，**本站零带宽消耗**
+- `fetch /api/download?url=<已签名CDN>&filename=<name>&format=json`，请求头带 `Authorization: Bearer <localStorage.auth_token>`。不把登录 token 放进 URL，也不再用 `<a href>` 跳转该接口（跳转带不上头，只能靠 HttpOnly cookie；cookie 与 localStorage 脱节时会 401 `invalid_auth_token`）
+- 鉴权通过后接口返回 `{"success": true, "redirect_url": "<带 attname 的 CDN 签名 URL>"}`，前端 `window.location.assign(redirect_url)`。CDN 的 `Content-Disposition: attachment` 让浏览器原地下载，不开新 tab、不把文件读进 JS
+- 未带 `format=json` 时行为不变：CDN 仍 **302** 到七牛，本地 `/upload/cache/` 与外部 URL 代理也不改。`format=json` 签不出地址时返回 400 JSON，不把大文件拉进这次 fetch
+- 401 且 `error_code=invalid_auth_token` 时走 `api.js` 的 `handleAuthError`：清理本地凭证并跳登录
 
-> 注：未采用 `web/js/pages/_utils.js::buildDownloadUrl`，因后者对 http URL 直接前端拼 `?attname=`，会破坏私有桶签名；storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
+> 注：独立工具页原先用 `web/js/pages/_utils.js::buildDownloadUrl` 给 http URL 直接拼 `?attname=`，会破坏私有桶签名，并且 `<a href>` 带不上 `Authorization`。这些下载已改为 `downloadWithAuth`。storyboard 的 download_url 是带 `e`+`token` 的私有桶签名 URL（见 `services/storyboard_export_service.py::upload_local_file_to_cdn`），必须走后端重签名。
 
 ## 依赖
 

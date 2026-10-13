@@ -350,8 +350,7 @@
         }
       },
       
-      downloadVideo(url, index) {
-        // Check if WeChat browser
+      async downloadVideo(url, index) {
         if (this.$root.isWechatBrowser()) {
           this.$root.showWechatGuideModal = true;
           return;
@@ -364,22 +363,19 @@
         const timeStr = now.getHours().toString().padStart(2, '0') + 
                        now.getMinutes().toString().padStart(2, '0');
         const filename = `ai_video_gen_${dateStr}_${timeStr}_${index + 1}.mp4`;
-        const downloadUrl = buildDownloadUrl(url, filename);
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = filename;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        try {
+          await downloadWithAuth(url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
+        }
       },
-      downloadHistoryResult(item) {
+      async downloadHistoryResult(item) {
         if (!item.result_url) {
           alert('暂无可下载的结果');
           return;
         }
         
-        // Check if WeChat browser
         if (this.$root.isWechatBrowser()) {
           this.$root.showWechatGuideModal = true;
           return;
@@ -393,14 +389,12 @@
                         now.getMinutes().toString().padStart(2, '0');
         const prefix = item.type === 5 ? 'ai_video_enhance' : 'ai_video_gen';
         const filename = `${prefix}_${dateStr}_${timeStr}.mp4`;
-        const downloadUrl = buildDownloadUrl(item.result_url, filename);
-        const link = document.createElement('a');
-        link.href = downloadUrl;
-        link.download = filename;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        try {
+          await downloadWithAuth(item.result_url, filename);
+        } catch (e) {
+          if (e && e.status === 401) return;
+          alert((e && e.message) || '下载失败');
+        }
       },
       async enhanceVideo(item, index) {
         console.log('enhanceVideo called with:', { item, index, enhancingVideos: this.enhancingVideos });

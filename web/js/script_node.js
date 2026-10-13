@@ -5,11 +5,12 @@
     // 剧本自述标注总时长（最高优先级口径）：与后端 llm/script_parser.py
     // extract_script_declared_duration_seconds 同规则（修改时三处同步）——
     // 「时长/预计时长/总时长/成片时长/片长/预计」关键词 + N秒/N分钟/N s/N min，
-    // 或括号包裹的纯时长标注（30秒）/(1.5分钟)；取第一个有效匹配
+    // 或括号包裹的纯时长标注（30秒）/(1.5分钟)；数字前后允许「约/大约/大概/近」
+    // 「左右/上下」近似修饰（片长：约3分钟 / 总时长45秒左右）；取第一个有效匹配
     const DECLARED_DURATION_MIN_SECONDS = 5;
     const DECLARED_DURATION_MAX_SECONDS = 10800;
-    const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)/gi;
-    const DECLARED_DURATION_PAREN_RE = /[（(]\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)\s*[）)]/gi;
+    const DECLARED_DURATION_KEYWORD_RE = /(?:预计时长|总时长|成片时长|片长|时长|预计)\s*[:：]?\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?/gi;
+    const DECLARED_DURATION_PAREN_RE = /[（(]\s*(?:约|大约|大概|近)?\s*(\d+(?:\.\d+)?)\s*(分钟|分鐘|minutes?|mins?|秒鐘|秒钟|秒|s)(?:左右|上下)?\s*[）)]/gi;
     const DECLARED_DURATION_MINUTE_UNITS = ['分钟', '分鐘', 'minute', 'minutes', 'min', 'mins'];
 
     // 提取剧本自述的预计总时长（秒），无标注/超出有效区间返回 null
@@ -372,7 +373,7 @@
               <div class="gen-meta script-grid-only-status" style="display:none; margin-top: 6px;"></div>
             </div>
             <div class="field field-always-visible">
-              <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 8px; width: 100%; padding: 18px 0;" data-i18n="script_split_grid_btn"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>${window.t ? window.t('script_split_grid_btn') : '拆分幕 + 宫格生图'}</button>
+              <button class="gen-btn gen-btn-green script-split-grid-btn" type="button" style="border-radius: 8px; width: 100%; padding: 18px 0;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg><span class="script-split-grid-btn-label" data-i18n="script_split_grid_btn">${window.t ? window.t('script_split_grid_btn') : '拆分幕 + 宫格生图'}</span></button>
               <div class="gen-meta script-grid-status" style="display:none; margin-top: 6px;"></div>
             </div>
             <div class="field field-always-visible">
@@ -503,7 +504,8 @@
               firstVideoModelValue = tasks[0].value || tasks[0].short_key || tasks[0].key;
             }
             if (window.ModelCatalog) {
-              const valueHit = window.ModelCatalog.findTaskByTrack(tasks, 'video.image_to_video', null, 'value');
+              const scriptCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+              const valueHit = window.ModelCatalog.findTaskByTrack(tasks, 'video.image_to_video', scriptCatalog, 'value');
               if (valueHit && (valueHit.value || valueHit.short_key)) {
                 firstVideoModelValue = valueHit.value || valueHit.short_key;
               }
@@ -790,8 +792,11 @@
         const vendorName = (option.dataset.vendorName || '').toLowerCase();
         const modelValue = (option.value || '').toLowerCase();
         const textValue = (option.textContent || '').toLowerCase();
-        // 与 script_writer.updateThinkingEffortVisibility / storyboard isDoubaoEffort 一致
+        // 与 script_writer.updateThinkingEffortVisibility / storyboard isDoubaoEffort 一致：
+        // volcengine（doubao 系）与 glmcn（GLM 系）均支持 effort 档位选择
         return vendorName === 'volcengine'
+          || vendorName === 'glmcn'
+          || modelValue.startsWith('glm-')
           || modelValue.startsWith('doubao')
           || modelValue.includes('doubao')
           || textValue.includes('doubao')
@@ -1353,6 +1358,58 @@
         }
       });
 
+      // ===== paused 态 UI：继续拆分 / 放弃并重新拆分（两个拆分按钮共用） =====
+      // paused 时按钮文案改为「继续拆分」：同配置重复提交会被后端幂等命中
+      // （create_or_get_active），并从持久化检查点自动恢复，不重跑已完成分段。
+      // 「放弃并重新拆分」：先取消旧任务并等待其终态（active_key 唯一索引
+      // 在终态时才释放），再重新触发原按钮的完整拆分流程（全新任务、重新计费）。
+      function markSplitPausedUi(statusTargetEl) {
+        window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn, splitGridBtn, true);
+        if (statusTargetEl) {
+          window.ScriptSplitTask.attachResplitButton(statusTargetEl, () => resplitFromPaused(statusTargetEl));
+        }
+      }
+
+      function clearSplitPausedUi() {
+        window.ScriptSplitTask.applyPausedSplitButtonUI(splitBtn, splitGridBtn, false);
+        window.ScriptSplitTask.removeResplitButton(statusEl);
+        window.ScriptSplitTask.removeResplitButton(gridStatusEl);
+      }
+
+      async function resplitFromPaused(statusTargetEl) {
+        const oldTaskId = node.data.splitTaskId;
+        if (!oldTaskId) return;
+        const confirmed = await showConfirmModal(
+          window.ScriptSplitTask.tt('script_resplit_confirm', '将放弃当前已暂停的拆分任务并从头重新拆分：已拆好的分段不会保留，重新拆分会重新消耗算力。确认继续？'),
+          { title: window.ScriptSplitTask.tt('script_resplit_btn', '放弃并重新拆分') }
+        );
+        if (!confirmed) return;
+        splitBtn.disabled = true;
+        splitGridBtn.disabled = true;
+        window.ScriptSplitTask.removeResplitButton(statusEl);
+        window.ScriptSplitTask.removeResplitButton(gridStatusEl);
+        try {
+          await window.ScriptSplitTask.cancelAndWaitTerminal(oldTaskId, {
+            onStatus: () => setStatusEl(statusTargetEl, window.ScriptSplitTask.tt('script_resplit_cancelling', '正在取消原任务，请稍候…'), '#666'),
+          });
+        } catch (error) {
+          setStatusEl(statusTargetEl, window.ScriptSplitTask.tt('script_resplit_cancel_failed', '取消原任务失败') + ': ' + (error.message || ''), '#dc2626');
+          splitBtn.disabled = false;
+          splitGridBtn.disabled = false;
+          return;
+        }
+        node.data.splitTaskId = null;
+        // 旧任务已终态，重新触发原按钮的完整流程（守卫 + 提交 + 轮询）。
+        // 复用拆分模式：原任务走哪个按钮，重新拆分就走哪个。
+        splitBtn.disabled = false;
+        splitGridBtn.disabled = false;
+        if (node.data.splitTaskMode === 'split_and_generate_grid') {
+          splitGridBtn.click();
+        } else {
+          splitBtn.click();
+        }
+      }
+
       splitBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
 
@@ -1384,6 +1441,7 @@
 
         splitBtn.disabled = true;
         splitGridBtn.disabled = true;
+        clearSplitPausedUi();
         statusEl.style.display = 'block';
         setStatusEl(statusEl, '正在调用LLM解析剧本...', '#666');
 
@@ -1400,6 +1458,7 @@
           window.ScriptSplitTask.pollScriptSplitTask(taskId, {
             onUpdate: (status) => {
               setStatusEl(statusEl, status.message || '拆分中…', '#666');
+              clearSplitPausedUi();
             },
             onComplete: async (parsedData) => {
               try {
@@ -1410,19 +1469,22 @@
                 console.error('应用拆分结果失败:', e);
                 setStatusEl(statusEl, '应用结果失败: ' + (e.message || ''), '#dc2626');
               } finally {
+                clearSplitPausedUi();
                 splitBtn.disabled = false;
                 splitGridBtn.disabled = false;
               }
             },
             onPaused: (status) => {
-              // paused / waiting_auth：显示继续按钮，不自动重启用
+              // paused / waiting_auth：按钮改「继续拆分」并挂「放弃并重新拆分」，不自动重试
               setStatusEl(statusEl, status.error_message || status.message || '任务暂停，等待处理', '#d97706');
+              markSplitPausedUi(statusEl);
               splitBtn.disabled = false;
               splitGridBtn.disabled = false;
             },
             onError: (error) => {
               console.error('剧本拆分失败:', error);
               setStatusEl(statusEl, '拆分失败: ' + (error.message || '未知错误'), '#dc2626');
+              clearSplitPausedUi();
               showToast(window.t ? window.t('script_parse_error') : '剧本解析失败', 'error');
               splitBtn.disabled = false;
               splitGridBtn.disabled = false;
@@ -1537,6 +1599,7 @@
         if(typeof setParamGroupOpen === 'function') setParamGroupOpen('gridVideo', true);
         splitGridBtn.disabled = true;
         splitBtn.disabled = true;
+        clearSplitPausedUi();
 
         console.log('[宫格生图] 按钮被点击');
         
@@ -1786,6 +1849,8 @@
                     gridImageNode.data.isSplit = true;
                     gridImageNode.data.status = 'pending';
                     gridImageNode.title = gridImageNode.data.name;
+                    // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                    if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                     
                     const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                     if(nodeEl) {
@@ -1910,6 +1975,7 @@
             onUpdate: (status) => {
               gridStatusEl.style.color = '#666';
               gridStatusEl.textContent = status.message || '拆分中…';
+              clearSplitPausedUi();
             },
             onComplete: async (parsedData) => {
               if (node.data.splitTaskPostActionStarted) {
@@ -1926,6 +1992,7 @@
                 gridStatusEl.textContent = '失败: ' + (e.message || '未知错误');
                 showToast('宫格生图失败: ' + (e.message || '未知错误'), 'error');
               } finally {
+                clearSplitPausedUi();
                 splitGridBtn.disabled = false;
                 splitBtn.disabled = false;
               }
@@ -1933,12 +2000,14 @@
             onPaused: (status) => {
               gridStatusEl.style.color = '#d97706';
               gridStatusEl.textContent = status.error_message || status.message || '任务暂停，等待处理';
+              markSplitPausedUi(gridStatusEl);
               splitGridBtn.disabled = false;
               splitBtn.disabled = false;
             },
             onError: (error) => {
               gridStatusEl.style.color = '#dc2626';
               gridStatusEl.textContent = '失败: ' + (error.message || '未知错误');
+              clearSplitPausedUi();
               showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
               splitGridBtn.disabled = false;
               splitBtn.disabled = false;
@@ -2216,6 +2285,8 @@
                 gridImageNode.data.isSplit = true;
                 gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
+                // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                 
                 const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                 if(nodeEl) {
@@ -2657,6 +2728,8 @@
                 gridImageNode.data.isSplit = true;
                 gridImageNode.data.status = 'pending';
                 gridImageNode.title = gridImageNode.data.name;
+                // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+                if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
                 
                 const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
                 if(nodeEl) {

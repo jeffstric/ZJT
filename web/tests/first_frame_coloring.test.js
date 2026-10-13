@@ -1,7 +1,7 @@
 /**
- * 故事板分镜首帧涂色适配层单测
+ * 故事板分镜首帧涂鸦编辑适配层单测
  */
-import { describe, expect, it, beforeEach, vi } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
 // 最小 state stub（first_frame_coloring 依赖）
 vi.mock('../js/storyboard/state.js', () => {
@@ -39,14 +39,25 @@ vi.mock('../js/storyboard/candidate_selection_state.js', () => ({
   },
 }));
 
+vi.mock('../js/storyboard/ui_regions.js', () => ({
+  Region: {
+    PREVIEW: 'preview',
+    CANDIDATES: 'candidates',
+    TIMELINE_LIST: 'timeline_list',
+    AGENT_PANEL: 'agent_panel',
+  },
+}));
+
 const {
   canColorFirstFrame,
   getColorFirstFrameBlockMessage,
-  dataUrlToBlob,
   applyColoredAssetToScene,
+  openFirstFrameColoring,
 } = await import('../js/storyboard/first_frame_coloring.js');
 const stateMod = await import('../js/storyboard/state.js');
 const state = stateMod.default;
+const api = await import('../js/storyboard/api.js');
+const utils = await import('../js/storyboard/utils.js');
 
 describe('canColorFirstFrame', () => {
   it('无分镜不允许', () => {
@@ -100,24 +111,8 @@ describe('canColorFirstFrame', () => {
 
 describe('getColorFirstFrameBlockMessage', () => {
   it('playing / no_image 有可读文案', () => {
-    expect(getColorFirstFrameBlockMessage('playing')).toMatch(/播放|涂色/);
+    expect(getColorFirstFrameBlockMessage('playing')).toMatch(/播放|编辑/);
     expect(getColorFirstFrameBlockMessage('no_image')).toMatch(/分镜图|生成/);
-  });
-});
-
-describe('dataUrlToBlob', () => {
-  it('解析 PNG dataURL', () => {
-    // 1x1 透明 PNG
-    const dataUrl =
-      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-    const blob = dataUrlToBlob(dataUrl);
-    expect(blob).toBeInstanceOf(Blob);
-    expect(blob.type).toBe('image/png');
-    expect(blob.size).toBeGreaterThan(0);
-  });
-
-  it('非法 dataURL 抛错', () => {
-    expect(() => dataUrlToBlob('not-a-data-url')).toThrow();
   });
 });
 
@@ -150,5 +145,70 @@ describe('applyColoredAssetToScene', () => {
     const images = state.sceneCandidates[9].images;
     expect(images[0]).toMatchObject({ id: 42, url: 'https://colored.png', selected: true });
     expect(images.find(i => i.id === 1)?.selected).toBe(false);
+  });
+});
+
+describe('openFirstFrameColoring', () => {
+  beforeEach(() => {
+    state.scenes = [
+      {
+        id: 9,
+        firstFrameUrl: '/files/a.png',
+        previewAssetType: 'first_frame',
+        selectedFirstFrameId: 1,
+      },
+    ];
+    state.currentSceneId = 9;
+    state.sceneCandidates = {};
+    state.isPlaying = false;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    delete window.imageDoodleEditor;
+  });
+
+  it('打开涂鸦编辑器，确认后上传并写回场景', async () => {
+    const openMock = vi.fn(async (url, opts) => {
+      expect(url).toBe('/files/a.png'); // 同源地址不走代理
+      expect(opts.context).toEqual({ type: 'storyboard_scene', sceneId: 9, assetId: 1 });
+      await opts.onComplete({ blob: new Blob(['x'], { type: 'image/png' }), context: opts.context });
+    });
+    window.imageDoodleEditor = { open: openMock };
+    api.uploadSceneAsset.mockResolvedValue({ success: true, asset_id: 42, result_url: '/files/colored.png' });
+    const rerender = vi.fn();
+
+    await openFirstFrameColoring(rerender);
+
+    expect(openMock).toHaveBeenCalledTimes(1);
+    expect(api.uploadSceneAsset).toHaveBeenCalledWith(
+      9,
+      expect.any(File),
+      expect.objectContaining({ assetType: 'first_frame', setSelected: true }),
+    );
+    const scene = state.scenes[0];
+    expect(scene.firstFrameUrl).toBe('/files/colored.png');
+    expect(scene.selectedFirstFrameId).toBe(42);
+    expect(state.sceneCandidates[9].images[0]).toMatchObject({ id: 42, label: '涂鸦', selected: true });
+    expect(rerender).toHaveBeenCalled();
+  });
+
+  it('跨域底图转同源代理地址', async () => {
+    state.scenes[0].firstFrameUrl = 'https://cdn.example.com/a.png';
+    const openMock = vi.fn();
+    window.imageDoodleEditor = { open: openMock };
+
+    await openFirstFrameColoring(vi.fn());
+
+    expect(openMock).toHaveBeenCalledWith(
+      `/api/proxy-image?url=${encodeURIComponent('https://cdn.example.com/a.png')}`,
+      expect.objectContaining({ context: expect.any(Object) }),
+    );
+  });
+
+  it('编辑器未加载时提示错误且不打开', async () => {
+    await openFirstFrameColoring(vi.fn());
+    expect(utils.showToast).toHaveBeenCalledWith('涂鸦编辑器未加载', 'error');
+    expect(api.uploadSceneAsset).not.toHaveBeenCalled();
   });
 });

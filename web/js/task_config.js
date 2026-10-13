@@ -146,10 +146,11 @@
    * @param {string} category 分类名称
    * @returns {Array} 任务配置列表
    */
-  function getTasksByCategory(category) {
+  function getTasksByCategory(category, options) {
+    const includeHidden = !!(options && options.includeHidden);
     const tasks = getAllTasks();
     return tasks.filter(t =>
-      !t.hidden &&
+      (includeHidden || !t.hidden) &&
       (t.category === category ||
        (t.categories && t.categories.includes(category)))
     );
@@ -388,6 +389,8 @@
         supports_last_frame: task.supports_last_frame !== false,  // 默认为 true
         // 是否支持参考音频和视频
         supports_ref_audio_video: task.supports_ref_audio_video === true,
+        // 是否支持角色音色参考输入（参考生自动注入角色默认音色）
+        supports_voice_input: task.supports_voice_input === true,
         // 是否走人脸遮盖预处理（seedance 2.0 系列），前端据此显隐「是否处理人脸」选项
         needs_face_mask: task.needs_face_mask === true,
         // 是否允许营销视频克隆（单一事实来源：后端 VIDEO_CLONE_DRIVER_KEYS）
@@ -420,8 +423,8 @@
    * @param {string} category 分类名称
    * @returns {Array<number>} 任务类型ID列表
    */
-  function getTaskTypeIdsByCategory(category) {
-    const tasks = getTasksByCategory(category);
+  function getTaskTypeIdsByCategory(category, options) {
+    const tasks = getTasksByCategory(category, options);
     return tasks.map(t => t.id);
   }
 
@@ -437,14 +440,16 @@
       task_type_name_map[task.id] = task.name;
     });
 
+    // 历史记录要包含隐藏任务。下拉框仍走 getTasksByCategory / getModelOptionsForCategory，继续排除 hidden。
+    const historyOptions = { includeHidden: true };
     return {
-      image_edit_types: getTaskTypeIdsByCategory('image_edit'),
-      image_to_video_types: getTaskTypeIdsByCategory('image_to_video'),
-      text_to_video_types: getTaskTypeIdsByCategory('text_to_video'),
-      text_to_image_types: getTaskTypeIdsByCategory('text_to_image'),
-      visual_enhance_types: getTaskTypeIdsByCategory('visual_enhance'),
-      audio_types: getTaskTypeIdsByCategory('audio'),
-      digital_human_types: getTaskTypeIdsByCategory('digital_human'),
+      image_edit_types: getTaskTypeIdsByCategory('image_edit', historyOptions),
+      image_to_video_types: getTaskTypeIdsByCategory('image_to_video', historyOptions),
+      text_to_video_types: getTaskTypeIdsByCategory('text_to_video', historyOptions),
+      text_to_image_types: getTaskTypeIdsByCategory('text_to_image', historyOptions),
+      visual_enhance_types: getTaskTypeIdsByCategory('visual_enhance', historyOptions),
+      audio_types: getTaskTypeIdsByCategory('audio', historyOptions),
+      digital_human_types: getTaskTypeIdsByCategory('digital_human', historyOptions),
       task_type_name_map: task_type_name_map  // 添加任务类型名称映射
     };
   }
@@ -516,6 +521,15 @@
    */
   function getCategories() {
     return taskConfigCache?.categories || {};
+  }
+
+  /**
+   * 获取场景模型目录（含性价比/效果双档推荐，后端已合并管理员热更新）
+   * 结构：{ 'video.image_to_video': { tracks: { value: {canonical,...}, quality: {...} } }, ... }
+   * 供 ModelCatalog.findTaskByTrack 等按真实目录解析默认档位，避免回退前端 FALLBACK 副本
+   */
+  function getCatalog() {
+    return taskConfigCache?.catalog || null;
   }
 
   /**
@@ -610,6 +624,7 @@
     isDriverAvailable,
     filterAvailableModelOptions,
     getCategories,
+    getCatalog,
     getProviders
   };
 

@@ -53,7 +53,8 @@ from config.constant import (
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
-    RECHARGE_PACKAGES, 
+    RECHARGE_PACKAGES,
+    Commission,
     VIDEO_MODEL_DURATION_OPTIONS,
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
@@ -81,12 +82,14 @@ from config.constant import (
     ASSET_MUTATION_DB_TIMEOUT,
     ASSET_STAGING_IO_TIMEOUT,
     BrandingConstants,
+    MediaUploadSafetyConstants,
     SMART_INSERT_SHOT_TIMEOUT,
     SMART_INSERT_SHOT_DEFAULT_MODEL,
     ScriptSplitConstants,
     DS_ENV_FIT_DEFAULT_GROUND,
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
+    FaceMaskPromptConstants,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -124,6 +127,7 @@ from utils.resource_access import (
 )
 from utils.media_upload import (
     UploadValidationError,
+    convert_tiff_file_to_png,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -141,10 +145,26 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
-from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
+from services.video_frame_extract_service import (
+    FrameExtractError,
+    extract_first_frame,
+    extract_frame_at,
+    extract_keyframe_candidates,
+    extract_last_frame,
+    probe_stream_duration,
+)
+from services.video_script_extract_service import (
+    create_extract_task,
+    get_extract_task,
+)
+from config.constant import (
+    VideoScriptExtractConstants,
+    MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+)
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
+from api.user import apply_nickname_change
 
 # 向后兼容别名（已有代码可直接使用 _前缀 名称）
 _get_user_id_from_header = get_user_id_from_header
@@ -531,6 +551,10 @@ app.include_router(system_router)
 from api.media import router as media_router
 app.include_router(media_router)
 
+# 火山引擎（豆包语音）TTS 快速合成 + 音色库（见 docs/audio/volcengine_tts.md）
+from api.tts import router as tts_router
+app.include_router(tts_router)
+
 from api.marketing_publications import router as marketing_publications_router
 app.include_router(marketing_publications_router)
 
@@ -855,6 +879,11 @@ async def get_config_by_key(
     })
 
 
+def _wants_download_json(response_format: Optional[str]) -> bool:
+    """format=json：CDN 重签名后返回 JSON，供前端用 Authorization 头取地址。"""
+    return (response_format or "").strip().lower() == "json"
+
+
 def _extract_filename_from_url(url: str) -> Optional[str]:
     """从 URL 路径中提取文件名，若无法提取则返回 None（由调用方决定降级逻辑）"""
     url_path = urlparse(url).path
@@ -904,13 +933,19 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
 async def download_image(
     request: Request,
     url: str = Query(..., description="Media URL to download"),
-    filename: str = Query(None, description="Custom filename")
+    filename: str = Query(None, description="Custom filename"),
+    response_format: Optional[str] = Query(
+        None,
+        alias="format",
+        description="json 时 CDN 重签名返回 redirect_url，不 302",
+    ),
 ):
     """
     媒体文件下载接口，支持三种模式：
     1. 本地路径 /upload/cache/ → FileResponse 直接返回
-    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）
-    3. 其他外部 URL → 代理下载 StreamingResponse
+    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）；format=json 时改为返回签名 URL
+    3. 其他外部 URL → 代理下载 StreamingResponse（format=json 同样降级走代理，
+       前端对非 JSON 响应按 blob 处理，避免外链下载从"能下"变"必败"）
     """
     try:
         # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
@@ -953,6 +988,11 @@ async def download_image(
             if filename:
                 signed_url = CDNUtil.get_signed_download_url(url, attname=filename)
                 if signed_url:
+                    if _wants_download_json(response_format):
+                        return JSONResponse({
+                            "success": True,
+                            "redirect_url": signed_url,
+                        })
                     logger.info(f"[download] CDN 签名重定向: filename={filename}, signed_url={signed_url[:150]}")
                     return RedirectResponse(url=signed_url, status_code=302)
                 else:
@@ -961,6 +1001,8 @@ async def download_image(
                 logger.warning(f"[download] CDN URL但无法提取文件名，降级到代理下载: url={url[:100]}")
 
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
+        # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
+        # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.get(url)
             response.raise_for_status()
@@ -1154,7 +1196,7 @@ def _generate_thumbnail_safe(source_path: str, thumb_path: str, size: int):
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
         img.thumbnail((size, size), Image.LANCZOS)
-        img.save(tmp_path, 'JPEG', quality=75)
+        img.save(tmp_path, 'JPEG', quality=85)
 
         # 原子重命名（如果目标已存在，说明其他进程已生成成功）
         os.rename(tmp_path, thumb_path)
@@ -1192,6 +1234,9 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
 
     安全校验：扩展名白名单 + 魔数校验 + 分块大小上限（防伪造扩展名落盘
     可执行文档与超大文件打满磁盘），由 utils/media_upload.py 统一实现。
+
+    TIFF 归一化：tif/tiff 落盘后立即转 PNG 并删除原文件（浏览器 <img>
+    不解码 TIFF，/upload/ 目录不得残留 tif），对外 URL 恒为 png。
     """
     date_str = datetime.now().strftime("%Y%m%d")
     temp_dir = get_upload_temp_dir(date_str)
@@ -1202,7 +1247,12 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     file_path = os.path.join(temp_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
-    return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, info.filename, host=SERVER_HOST)
+    saved_name = info.filename
+    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
+        file_path = convert_tiff_file_to_png(file_path)
+        saved_name = os.path.basename(file_path)
+
+    return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, saved_name, host=SERVER_HOST)
 
 def _get_request_host(request: Request) -> str:
     """
@@ -1238,6 +1288,13 @@ def _save_user_asset(
     file_path = os.path.join(asset_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
+    # TIFF 归一化：转 PNG 后再注册 CDN mapping / 构建对外 URL，
+    # /upload/ 目录不得残留 tif 文件
+    saved_name = info.filename
+    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
+        file_path = convert_tiff_file_to_png(file_path)
+        saved_name = os.path.basename(file_path)
+
     # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
     # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
     # frp 隧道全量吐出（打满 ECS 出带宽）。注册后 cdn_redirect_middleware 会
@@ -1251,7 +1308,7 @@ def _save_user_asset(
     )
 
     host = (base_host or SERVER_HOST).rstrip("/")
-    return build_upload_url(category, str(user_id), info.filename, host=host)
+    return build_upload_url(category, str(user_id), saved_name, host=host)
 
 
 def _normalize_origin(origin: Optional[str]) -> Optional[str]:
@@ -1426,16 +1483,60 @@ def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
         return audio_path
 
 
+async def _download_audio_url_to_tmp(audio_url: str) -> str:
+    """
+    下载音频 URL 到本地临时目录并返回本地路径。
+
+    用于 ref_audio_url 为本服务产出的音频（如音色库预置样例 /voice_presets/*、
+    火山 TTS 结果）等场景：IndexTTS 远端服务无法访问本服务的 localhost 地址，
+    须先落盘为本地文件，由 upload_reference 上传文件内容。
+
+    Returns:
+        下载后的本地文件路径
+
+    Raises:
+        HTTPException: 下载失败或文件过大
+    """
+    audio_dir = FilePathConstants.get_tts_audio_dir(APP_DIR)
+    os.makedirs(audio_dir, exist_ok=True)
+    parsed = urlparse(audio_url)
+    ext = os.path.splitext(parsed.path)[1].lower() or ".mp3"
+    local_path = os.path.join(audio_dir, f"ref_dl_{uuid.uuid4().hex[:8]}{ext}")
+
+    def _download():
+        with httpx.stream("GET", audio_url, timeout=60, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in resp.iter_bytes(65536):
+                    f.write(chunk)
+
+    try:
+        await asyncio.to_thread(_download)
+    except httpx.HTTPStatusError as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {e.response.status_code}")
+    except Exception as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {str(e)}")
+
+    if os.path.getsize(local_path) > 20 * 1024 * 1024:
+        os.remove(local_path)
+        raise HTTPException(status_code=400, detail="参考音频文件不能超过 20MB")
+    return local_path
+
+
 async def _download_and_extract_audio_from_video(video_url: str) -> str:
     """
     Download video from URL, validate size and duration, extract audio, and clean up.
-    
+
     Args:
         video_url: URL of the video to download
-        
+
     Returns:
         Path to extracted audio file
-        
+
     Raises:
         HTTPException: If video is too large, too long, or processing fails
     """
@@ -2417,6 +2518,7 @@ async def ai_app_run_image(
     media_references: Optional[str] = Form(None, description="JSON array of media references for @ mention resolution"),
     resolution: Optional[str] = Form(None, description="视频分辨率，如 720P、1080P（可选）"),
     enable_face_mask: bool = Form(False, description="是否启用人脸遮盖预处理（仅 Seedance 2.0 系列商业版生效，默认关闭）"),
+    face_mask_reference_urls: Optional[str] = Form(None, description="允许人脸遮盖的参考图 URL 白名单（逗号分隔，仅角色参考图；未传则全部参考图遮盖）"),
     generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
 ):
     """
@@ -2579,6 +2681,13 @@ async def ai_app_run_image(
         user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
 
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+        # 人脸遮盖白名单：参考生视频的参考图混合角色/场景/道具，人脸遮盖只对
+        # 角色参考图有意义；前端（video_workflow 分镜组/分镜/图生视频节点）收集
+        # 参考图时已知类型，把角色图 URL 传入。未传时保持旧行为（全部参考图遮盖）。
+        if enable_face_mask and face_mask_reference_urls:
+            whitelist_urls = [u.strip() for u in face_mask_reference_urls.split(',') if u.strip()]
+            if whitelist_urls:
+                base_extra_config[FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY] = whitelist_urls
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
         # 支持自动处理人脸的网关：用户勾选处理人脸时注入 human_review=true，
@@ -2834,32 +2943,67 @@ async def ai_app_run_image(
 @app.get('/api/user/role')
 async def get_user_role(auth_token: str = Header(None, alias="Authorization")):
     """
-    获取用户角色
+    获取用户角色（顺带返回昵称，供前台顶栏展示）
     """
     try:
         if not auth_token:
             return {"code": -1, "message": "未提供认证信息"}
-        
+
         if auth_token.startswith("Bearer "):
             auth_token = auth_token[7:]
-        
-        user_id = UserTokensModel.get_user_id_by_token(auth_token)
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
         if not user_id:
             return {"code": -1, "message": "无效或已过期的认证信息"}
-        
-        user = UsersModel.get_by_id(user_id)
+
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             return {"code": -1, "message": "用户不存在"}
-        
+
         return {
             "code": 0,
             "data": {
-                "role": user.role
+                "role": user.role,
+                "nickname": user.nickname,
+                "display_name": user.nickname or f"用户{user.id}",
             }
         }
     except Exception as e:
         logger.error(f'获取用户角色失败: {str(e)}')
         return {"code": -1, "message": "服务器错误"}
+
+
+@app.put('/api/user/nickname')
+async def update_user_nickname(
+    nickname_request: dict,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户昵称；空串=清除并重新分配随机趣味默认昵称。
+
+    与 /api/user/role 同样直接定义在 server.py：enterprise 模块 load 失败时
+    api/user.py 的 router 不会挂载（见下方回退逻辑被 load 内部吞异常绕过），
+    业务逻辑复用 api.user.apply_nickname_change 保证行为一致。
+    """
+    try:
+        if not auth_token:
+            raise HTTPException(status_code=401, detail="需要登录")
+        if auth_token.startswith("Bearer "):
+            auth_token = auth_token[7:]
+
+        user_id = await asyncio.to_thread(UserTokensModel.get_user_id_by_token, auth_token)
+        if not user_id:
+            raise HTTPException(status_code=401, detail="无效或已过期的认证信息")
+
+        nickname = ''
+        if isinstance(nickname_request, dict):
+            nickname = nickname_request.get('nickname') or ''
+        data = await asyncio.to_thread(apply_nickname_change, user_id, nickname)
+        return {"code": 0, "data": data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'更新用户昵称失败: {str(e)}')
+        raise HTTPException(status_code=500, detail="服务器错误")
 
 
 @app.get('/api/user/computing_power')
@@ -3565,7 +3709,7 @@ async def register(request: RegisterRequest):
                 extra_data={'code': verify_code, 'invite_code': invite_code},
                 email=email
             )
-            
+
             if success:
                 logger.info(
                     "邮箱用户注册成功 - 邮箱: %s",
@@ -3807,8 +3951,7 @@ class ResetPasswordRequest(BaseModel):
     new_password: str
 
 @app.post('/api/auth/reset_password')
-@require_permission("user:reset_password")
-async def reset_password(request: Request, reset_request: ResetPasswordRequest):
+async def reset_password(reset_request: ResetPasswordRequest):
     """
     重置密码（支持手机号和邮箱）
     """
@@ -4486,6 +4629,148 @@ async def video_enhance(
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
 
 
+@app.post("/api/video-watermark-remove")
+@require_permission("video:watermark_remove")
+async def video_watermark_remove(
+    request: Request,
+    video: UploadFile = File(None, description="需要去水印的视频文件"),
+    video_url: str = Form(None, description="视频地址（与文件二选一，同时提供时使用文件）"),
+    duration_seconds: int = Form(5, description="视频时长（秒），仅支持 4-10，与 MiniMax H3 720P 算力表一致"),
+    fps: int = Form(24, description="帧率，1-120，默认 24"),
+    prompt: str = Form("", description="可选提示词，留空使用默认去水印提示词"),
+    user_id: int = Form(None, description="User ID，传入时必须与登录用户一致"),
+    auth_token: str = Form(None, description="Authentication token"),
+):
+    """
+    提交视频去水印任务。只落库并入队，RunningHub 上传与提交由驱动在调度进程完成。
+    """
+    from task.visual_drivers.video_watermark_runninghub_v1_driver import (
+        DEFAULT_PROMPT,
+        MAX_FPS,
+        MAX_PROMPT_CHARS,
+        MIN_FPS,
+    )
+
+    try:
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_WATERMARK_REMOVE)
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频去水印任务未配置")
+        if duration_seconds not in (task_config.supported_durations or []):
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 {list(task_config.supported_durations or [])} 秒",
+            )
+        if fps < MIN_FPS or fps > MAX_FPS:
+            raise HTTPException(status_code=400, detail=f"帧率仅支持 {MIN_FPS}-{MAX_FPS}")
+
+        prompt_text = (prompt or "").strip()
+        if len(prompt_text) > MAX_PROMPT_CHARS:
+            raise HTTPException(status_code=400, detail=f"提示词不能超过 {MAX_PROMPT_CHARS} 个字符")
+        if not prompt_text:
+            prompt_text = DEFAULT_PROMPT
+
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+        else:
+            raise HTTPException(status_code=400, detail="请上传视频文件或提供视频地址")
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_seconds,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，需要 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id,
+                },
+            )
+            if not success:
+                logger.error(f"Video watermark computing power deduction failed: {message}")
+
+        extra_config = json.dumps({"fps": fps}, ensure_ascii=False)
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt=prompt_text,
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_WATERMARK_REMOVE,
+            video_path=saved_video,
+            duration=duration_seconds,
+            transaction_id=transaction_id,
+            status=AI_TOOL_STATUS_PENDING,
+            extra_config=extra_config,
+            implementation=impl_id,
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": ai_tool_id,
+            "status": "submitted",
+            "computing_power": computing_power,
+            "duration": duration_seconds,
+        })
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Video watermark remove failed: {exc}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"视频去水印提交失败: {exc}")
+
+
 @app.post("/api/digital-human")
 @require_permission("digital_human:create")
 async def digital_human_generate(
@@ -4496,6 +4781,7 @@ async def digital_human_generate(
     image_url: str = Form(None, description="Image URL for digital human (alternative to file upload)"),
     audio_url: str = Form(None, description="Audio URL for digital human (alternative to file upload)"),
     aspect_ratio: str = Form("9:16", description="Video aspect ratio: 9:16, 16:9, 1:1, 3:2, 4:3, 2:3, 3:4"),
+    task_id: int = Form(TaskTypeId.DIGITAL_HUMAN, description="Digital human task type ID (13=wan2.2, 35=MiniMax H3)"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -4510,7 +4796,16 @@ async def digital_human_generate(
                 status_code=400,
                 detail="文本内容不能超过1000个字"
             )
-        
+
+        # 数字人任务类型白名单：13=wan2.2（旧默认，兼容存量前端）、35=MiniMax H3。
+        # LTX2.3（32）走 /api/digital-human-v2（文件上传 + audio_path 字段），不在此列。
+        allowed_task_ids = {TaskTypeId.DIGITAL_HUMAN, TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3}
+        if task_id not in allowed_task_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的数字人任务类型: {task_id}"
+            )
+
         # Handle image (file upload or URL)
         if image is not None:
             image_url = await asyncio.to_thread(_save_uploaded_image, image)
@@ -4519,7 +4814,7 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供图片文件或图片URL"
             )
-        
+
         # Handle audio (file upload or URL)
         if audio is not None:
             audio_url = await asyncio.to_thread(_save_uploaded_image, audio)  # Reuse the same function for audio
@@ -4528,9 +4823,9 @@ async def digital_human_generate(
                 status_code=400,
                 detail="请提供音频文件或音频URL"
             )
-        
+
         # Task type for digital human
-        task_type = TaskTypeId.DIGITAL_HUMAN
+        task_type = task_id
         task_config = TaskTypeRegistry.get(task_type)
         computing_power = task_config.get_computing_power()
         
@@ -4916,7 +5211,12 @@ async def audio_generate(
         if ref_audio:
             ref_path = await asyncio.to_thread(_save_uploaded_audio, ref_audio)  # Reuse upload function for audio
         elif ref_audio_url:
-            ref_path = ref_audio_url
+            # 本服务产出的音频 URL（如音色库预置样例）：IndexTTS 远端无法访问
+            # localhost 地址，先下载为本地文件再由 upload_reference 上传文件内容
+            if "/voice_presets/" in ref_audio_url or "localhost" in ref_audio_url:
+                ref_path = await _download_audio_url_to_tmp(ref_audio_url)
+            else:
+                ref_path = ref_audio_url
         
         # Handle emotion reference audio upload
         emo_ref_path = None
@@ -5148,8 +5448,8 @@ async def get_recharge_packages(
         auth_token: query 传 token（legacy 兼容，优先级低于 header）
 
     Returns:
-        List of recharge packages with computing power and pricing
-        If user has already recharged before, the first package (首充福利) will be filtered out
+        List of recharge packages with computing power and pricing.
+        0.1 元首充福利包已下线，不在 RECHARGE_PACKAGES 中，所有用户都看不到。
     """
     try:
         # token 优先取 Authorization 头；query 传参已废弃（防 URL 泄漏），仅为旧客户端兜底
@@ -5157,17 +5457,8 @@ async def get_recharge_packages(
         if not resolved_token:
             raise HTTPException(status_code=401, detail="未提供认证信息")
 
-        # 查询用户是否已经首充
-        has_completed_first_recharge = await _has_completed_first_recharge(resolved_token)
-
-        # 如果用户已经充值过，过滤掉首充福利套餐（第一个套餐）
         # 用 dict(pkg) 浅拷贝每个套餐，避免污染模块级常量 RECHARGE_PACKAGES
         packages = [dict(pkg) for pkg in RECHARGE_PACKAGES]
-        if has_completed_first_recharge:
-            packages = [pkg for pkg in packages if pkg.get("package_id") != 1]
-            logger.info(f"已经首充，过滤掉首充福利套餐")
-        else:
-            logger.info(f"是首充用户，显示所有套餐")
 
         # 计算扣邀请佣金后的实际到账算力（针对当前用户；社区版/无邀请人/首充=>全额）
         grants = {}
@@ -5175,7 +5466,7 @@ async def get_recharge_packages(
             g_ok, g_msg, g_data = await async_make_perseids_request(
                 endpoint='commission/recharge_grants',
                 method='POST',
-                headers={'Authorization': f'Bearer {auth_token}'}
+                headers={'Authorization': f'Bearer {resolved_token}'}
             )
             if g_ok and g_data:
                 grants = g_data.get('grants', {})
@@ -5253,6 +5544,10 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 detail="登录过期，请重新登录"
             )
         
+        # 0.1 元首充福利已下线：旧客户端仍可能提交 package_id=5，单独拒绝
+        if payment_request.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
+            raise HTTPException(status_code=400, detail="该套餐已下线")
+
         # 验证套餐ID
         package_info = None
         for package in RECHARGE_PACKAGES:
@@ -5265,17 +5560,13 @@ async def create_wechat_payment(request: Request, payment_request: WechatPayRequ
                 status_code=400,
                 detail="Invalid package ID"
             )
-
-        # 首充套餐校验：如果package_id为1且用户已首充，禁止再次购买
-        if payment_request.package_id == 1:
-            has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
-            if has_completed_first_recharge:
-                logger.warning(f"User {payment_request.user_id} attempted to purchase first-charge package again")
-                raise HTTPException(
-                    status_code=400,
-                    detail="首充福利仅限首次充值，您已领取过该套餐"
-                )
         
+        # 生产安全闸：商户私钥缺失时禁止发起支付/展示二维码
+        # （缺失时签名降级为 mock_signature 微信必拒；验签旁路也仅限密钥齐备时可防伪造回调）
+        if not wechat_pay_util.has_signing_key():
+            logger.error("Wechat merchant private key (secret/wechat/apiclient_key.pem) missing; refuse to create payment order")
+            raise HTTPException(status_code=503, detail="微信支付商户密钥未配置，无法发起支付，请联系管理员")
+
         # 生成订单ID
         order_id = wechat_pay_util.generate_order_id()
         
@@ -5487,7 +5778,7 @@ async def wechat_payment_callback(request: Request):
             computing_power = order.computing_power
             
             # 检查是否为首充福利
-            if order.package_id == 1:
+            if order.package_id == Commission.FIRST_RECHARGE_PACKAGE_ID:
                 has_completed_first_recharge = await _has_completed_first_recharge(auth_token)
                 if has_completed_first_recharge:
                     computing_power = 4
@@ -5953,11 +6244,13 @@ async def upload_workflow_asset(
 
 
 class DescribeImageRequest(BaseModel):
-    """VL 识图生成场景描述（360 全景节点连入无提示词图片时自动调用）"""
+    """VL 识图生成描述（360 全景节点连入无提示词图片时自动调用）"""
     image_url: str
     model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: Optional[int] = None
+    # 业务提示词用途：panorama（360 全景场景描述，默认）/ image_prompt（文生图提示词反推）
+    purpose: Optional[str] = "panorama"
 
 
 @app.post('/api/video-workflow/describe-image')
@@ -5969,10 +6262,11 @@ async def describe_workflow_image(
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    任意图片 → VL 模型生成场景描述提示词
+    任意图片 → VL 模型生成描述提示词
 
     360 全景节点连入图片节点且图片无提示词时，前端自动调用本接口识图，
     生成的描述填入全景节点提示词（不覆盖用户已输入内容）。
+    purpose=image_prompt 时反推文生图提示词（提示词反推节点使用）。
     走 LLM token 计费（call_api 内部上报）。
     """
     from services.image_describe import describe_image
@@ -5991,6 +6285,7 @@ async def describe_workflow_image(
             model=body.model,
             model_id=body.model_id,
             vendor_id=body.vendor_id,
+            purpose=body.purpose,
         )
         if not result.get('success'):
             status_code = 504 if '超时' in str(result.get('error') or '') else 400
@@ -6016,23 +6311,41 @@ async def extract_video_frame(
     request: Request,
     file: Optional[UploadFile] = File(None, description="视频文件"),
     video_url: Optional[str] = Form(None, description="视频URL（与file二选一）"),
-    frame_type: str = Form("first", description="帧类型: first=首帧, last=尾帧"),
+    frame_type: str = Form("first", description="帧类型: first=首帧, last=尾帧, custom=自定义时间点, keyframes=关键帧候选"),
+    time_sec: Optional[float] = Form(None, description="自定义时间点（秒），frame_type=custom 时必填"),
+    start_time: Optional[float] = Form(None, description="关键帧起始时间（秒），frame_type=keyframes 时生效，只提取该时刻之后的关键帧"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    从视频中提取首帧或尾帧图片
+    从视频中提取帧图片
 
-    接收视频文件或视频URL，使用FFmpeg提取指定帧，返回图片URL
+    接收视频文件或视频URL，使用FFmpeg提取指定帧，返回图片URL。
+    frame_type: first=首帧, last=尾帧, custom=自定义时间点（需 time_sec）,
+                keyframes=关键帧候选（场景切换检测+均匀采样，返回多帧供前端选择）
     """
     try:
         user_id = _get_user_id_from_header(user_id)
 
         # 验证帧类型
-        if frame_type not in ["first", "last"]:
+        if frame_type not in ("first", "last", "custom", "keyframes"):
             return JSONResponse(
                 status_code=400,
-                content={"code": -1, "message": "帧类型必须是 first 或 last"}
+                content={"code": -1, "message": "帧类型必须是 first / last / custom / keyframes"}
+            )
+
+        # custom 必须带有效时间点
+        if frame_type == "custom" and (time_sec is None or time_sec < 0):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "自定义时间点(frame_type=custom)必须提供非负的 time_sec"}
+            )
+
+        # 关键帧起始时间校验
+        if start_time is not None and start_time < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "start_time 必须为非负数"}
             )
 
         # 验证输入：file 或 video_url 必须有一个
@@ -6090,92 +6403,84 @@ async def extract_video_frame(
                 f.write(content)
             need_cleanup = True  # 上传的文件需要清理
 
-        # 2. 使用FFmpeg提取帧
-        ffmpeg_path = resolve_bin_path(get_config_value("bin", "ffmpeg", default="ffmpeg"), APP_DIR)
-        ffmpeg_timeout = get_config_value("bin", "ffmpeg_timeout", default=30)
-
-        # 输出图片文件名
-        frame_name = "first_frame" if frame_type == "first" else "last_frame"
-        image_filename = f"{frame_name}_{timestamp}_{unique_id}.jpg"
-        image_path = os.path.join(temp_dir, image_filename)
-
-        # FFmpeg命令: 根据帧类型选择不同的提取方式
-        if frame_type == "first":
-            # 提取首帧
-            ffmpeg_cmd = [
-                ffmpeg_path,
-                "-i", video_path,
-                "-vframes", "1",      # 只提取1帧
-                "-q:v", "2",          # 高质量（2 = 很好）
-                "-y",                # 覆盖输出文件
-                image_path
-            ]
-        else:
-            # 提取尾帧: 使用 -sseof 从文件末尾开始定位
-            ffmpeg_cmd = [
-                ffmpeg_path,
-                "-sseof", "-0.1",     # 从文件末尾前0.1秒开始
-                "-i", video_path,
-                "-vframes", "1",      # 只提取1帧
-                "-q:v", "2",          # 高质量
-                "-y",                # 覆盖输出文件
-                image_path
-            ]
-
-        # 在线程池中执行FFmpeg命令
         try:
-            process = await asyncio.to_thread(
-                lambda: subprocess.run(
-                    ffmpeg_cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=ffmpeg_timeout
-                )
-            )
+            if frame_type == "keyframes":
+                # 关键帧候选：一次返回一批（场景切换+均匀采样），由前端渲染网格供用户选择；
+                # start_time 翻页续批：只提取该时刻之后的候选，响应带 last_time_sec 供前端推进起点
+                kf_start = float(start_time) if start_time is not None else 0.0
+                name_prefix = f"keyframe_{timestamp}_{unique_id}"
+                frames = await extract_keyframe_candidates(video_path, temp_dir, name_prefix, start_time=kf_start)
+                date_dir = datetime.now().strftime('%Y%m%d')
+                logger.info(f"成功提取关键帧候选: {video_filename} -> {len(frames)} 帧 (start={kf_start:.2f}s)")
+                return JSONResponse({
+                    "code": 0,
+                    "message": "提取成功",
+                    "data": {
+                        "frames": [
+                            {
+                                "url": f"{request_host}/upload/temp/{date_dir}/{os.path.basename(fr['path'])}",
+                                "time_sec": fr["time_sec"]
+                            }
+                            for fr in frames
+                        ],
+                        "frame_type": "keyframes",
+                        "start_time": kf_start,
+                        # 末帧时间：前端将其写回起始时间，实现"不断点击、不断向后提取"
+                        "last_time_sec": frames[-1]["time_sec"] if frames else kf_start
+                    }
+                })
 
-            if process.returncode != 0:
-                error_msg = process.stderr or "未知错误"
-                logger.error(f"FFmpeg提取{frame_name}失败: {error_msg}")
-                return JSONResponse(
-                    status_code=500,
-                    content={"code": -1, "message": f"提取{frame_name}失败: {error_msg}"}
-                )
+            # 单帧提取（first / last / custom）
+            if frame_type == "first":
+                image_filename = f"first_frame_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_first_frame(video_path, image_path)
+            elif frame_type == "last":
+                image_filename = f"last_frame_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_last_frame(video_path, image_path)
+            else:  # custom
+                # 时间点越界校验（视频流时长；probe 失败时跳过校验，由提取链兜底报错）
+                duration = await probe_stream_duration(video_path)
+                if duration is not None and time_sec >= duration:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"code": -1, "message": f"时间点 {time_sec:.2f}s 超出视频时长 {duration:.2f}s"}
+                    )
+                image_filename = f"frame_{time_sec:.2f}s_{timestamp}_{unique_id}.jpg"
+                image_path = os.path.join(temp_dir, image_filename)
+                await extract_frame_at(video_path, image_path, time_sec)
 
-        except subprocess.TimeoutExpired:
-            logger.error(f"FFmpeg提取{frame_name}超时: {video_path}")
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": f"提取{frame_name}超时，请尝试较小的视频文件"}
-            )
-        except FileNotFoundError:
-            logger.error(f"FFmpeg未找到: {ffmpeg_path}")
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": "FFmpeg未配置或不可用"}
-            )
+            image_url = f"{request_host}/upload/temp/{datetime.now().strftime('%Y%m%d')}/{image_filename}"
+            logger.info(f"成功提取帧({frame_type}): {video_filename} -> {image_filename}")
 
-        # 3. 验证生成的图片
-        if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
-            return JSONResponse(
-                status_code=500,
-                content={"code": -1, "message": f"提取{frame_name}失败，生成的图片无效"}
-            )
-
-        # 4. 返回图片URL
-        image_url = f"{request_host}/upload/temp/{datetime.now().strftime('%Y%m%d')}/{image_filename}"
-
-        logger.info(f"成功提取{frame_name}: {video_filename} -> {image_filename}")
-
-        return JSONResponse({
-            "code": 0,
-            "message": "提取成功",
-            "data": {
+            data = {
                 "url": image_url,
                 "filename": image_filename,
                 "frame_type": frame_type
             }
-        })
+            if frame_type == "custom" and time_sec is not None:
+                data["time_sec"] = time_sec
 
+            return JSONResponse({
+                "code": 0,
+                "message": "提取成功",
+                "data": data
+            })
+        finally:
+            # 上传的临时视频文件用完即删（/upload/ URL 引用的服务端文件不删）
+            if need_cleanup and video_path and os.path.exists(video_path):
+                try:
+                    os.remove(video_path)
+                except OSError:
+                    logger.warning(f"临时视频文件清理失败: {video_path}")
+
+    except FrameExtractError as e:
+        logger.error(f"FFmpeg提取帧失败: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": str(e)}
+        )
     except Exception as e:
         logger.error(f"Failed to extract frame: {str(e)}")
         logger.error(traceback.format_exc())
@@ -6183,6 +6488,125 @@ async def extract_video_frame(
             status_code=500,
             content={"code": -1, "message": f"提取帧失败: {str(e)}"}
         )
+
+
+class ExtractScriptRequest(BaseModel):
+    video_url: str
+    max_frames: int = VideoScriptExtractConstants.DEFAULT_MAX_FRAMES
+    frame_height: int = VideoScriptExtractConstants.DEFAULT_FRAME_HEIGHT
+    # 提取模型：空则由后端按 VL 偏好挑选（与 describe-image 同语义）
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/extract-script')
+@require_permission("video_workflow:upload")
+async def extract_script_create(
+    request: Request,
+    body: ExtractScriptRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    创建"视频提取剧本"异步任务（剧本提取节点）。
+
+    链路：关键帧多批收集 + 音轨提取 → SenseVoice 分段 ASR →
+    关键帧图片 + 带时间戳转写稿 → 多模态 VL 模型生成文字剧本。
+    立即返回 task_id，前端轮询 GET /api/video-workflow/extract-script/status/{task_id}。
+    只接受本站 /upload/ 路径（前端先经 /api/video-workflow/upload 上传拿永久 URL）。
+
+    max_frames（4~200，默认 24）与 frame_height（720/480/360，默认 720）为节点
+    参数，用户可按视频内容与目标模型自行调整。
+    """
+    try:
+        user_id_val = _get_user_id_from_header(user_id)
+        video_url = (body.video_url or "").strip()
+        if not video_url:
+            return JSONResponse(status_code=400, content={"code": -1, "message": "缺少视频 url"})
+
+        if body.max_frames < VideoScriptExtractConstants.MIN_FRAMES_LIMIT or \
+                body.max_frames > VideoScriptExtractConstants.MAX_FRAMES_LIMIT:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "max_frames 需在 "
+                         f"{VideoScriptExtractConstants.MIN_FRAMES_LIMIT}~{VideoScriptExtractConstants.MAX_FRAMES_LIMIT} 之间"}
+            )
+        if body.frame_height not in VideoScriptExtractConstants.FRAME_HEIGHT_ALLOWED:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "frame_height 仅支持 720 / 480 / 360"}
+            )
+
+        if "/upload/" not in video_url:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "不支持外部视频URL，请先上传视频文件"}
+            )
+        video_path = resolve_upload_url_to_local_path(video_url)
+        if not video_path or not os.path.exists(video_path):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "视频文件不存在，请重新上传"}
+            )
+
+        token = (auth_token or '').strip()
+        if token.lower().startswith('bearer '):
+            token = token[7:].strip()
+
+        task_id, err = await create_extract_task(
+            video_path=video_path,
+            user_id=user_id_val,
+            auth_token=token or None,
+            max_frames=body.max_frames,
+            frame_height=body.frame_height,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
+        )
+        if err or not task_id:
+            return JSONResponse(status_code=409, content={"code": -1, "message": err or "任务创建失败"})
+        return JSONResponse({"code": 0, "message": "任务已创建", "data": {"task_id": task_id}})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建剧本提取任务失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"任务创建失败: {str(e)}"})
+
+
+@app.get('/api/video-workflow/extract-script/status/{task_id}')
+@require_permission("video_workflow:upload")
+async def extract_script_status(
+    request: Request,
+    task_id: str,
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """查询剧本提取任务状态（前端轮询，3s 间隔）。任务过期/服务重启后返回 404。"""
+    try:
+        user_id_val = _get_user_id_from_header(user_id)
+        task = get_extract_task(task_id)
+        if task is None or (user_id_val is not None and task.get("user_id") not in (None, user_id_val)):
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "任务不存在或已过期，请重新提取"}
+            )
+        return JSONResponse({
+            "code": 0,
+            "data": {
+                "task_id": task["task_id"],
+                "status": task["status"],
+                "stage": task["stage"],
+                "progress": task.get("progress") or {},
+                "error": task.get("error"),
+                "result": task.get("result"),
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询剧本提取任务失败: {str(e)}")
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"查询失败: {str(e)}"})
 
 
 def _generate_thumbnail(file_path: str, media_type: str, thumb_dir: str, thumb_filename: str) -> Optional[str]:
@@ -6300,6 +6724,12 @@ async def upload_image_to_video_media(
         # 安全校验（魔数）+ 分块限流保存（工作线程中执行，避免阻塞事件循环）
         await asyncio.to_thread(save_upload_chunked, file, file_path, original_ext)
 
+        # TIFF 归一化：转 PNG（浏览器 <img> 不解码 TIFF），缩略图与 URL 均基于转码后文件
+        saved_name = info.filename
+        if original_ext in MediaUploadSafetyConstants.TIFF_EXTS:
+            file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+            saved_name = os.path.basename(file_path)
+
         # 生成缩略图
         thumb_filename = f"thumb_{info.timestamp}_{info.unique_id}.jpg"
         thumb_path = await asyncio.to_thread(
@@ -6307,7 +6737,7 @@ async def upload_image_to_video_media(
         )
 
         # 构建返回 URL
-        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, info.filename, host=request_host)
+        file_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, saved_name, host=request_host)
         thumbnail_url = None
         if thumb_path and os.path.exists(thumb_path):
             thumbnail_url = build_upload_url(upload_subdir, str(auth_user_id), date_str, thumb_filename, host=request_host)
@@ -7013,6 +7443,30 @@ async def create_video_workflow(
         )
 
 
+_CLIENT_WRITE_ID_RE = re.compile(r'^[0-9A-Za-z-]{8,64}$')
+
+
+def _normalize_client_write_id(raw):
+    """本页 PUT 的 X-Write-Id。合法才落库；缺省或非法视为未带，成功写入时把列清掉。"""
+    if raw is None:
+        return None
+    text_id = str(raw).strip()
+    if _CLIENT_WRITE_ID_RE.match(text_id):
+        return text_id
+    return None
+
+
+def _cas_conflict_payload(current_hash, last_write_id):
+    return {
+        "code": 409,
+        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
+        "data": {
+            "content_hash": current_hash,
+            "last_write_id": last_write_id,
+        },
+    }
+
+
 @app.put('/api/video-workflow/{workflow_id}')
 @require_permission("video_workflow:update")
 async def update_video_workflow(
@@ -7083,6 +7537,12 @@ async def update_video_workflow(
                         )
                         del update_fields['workflow_data']
 
+        # 写 id 不参与内容哈希。每次真正落库都带上：合法头记下本页 id，
+        # 缺省或非法则写成 NULL，避免旧 id 把后来的别人写入认成自己。
+        client_write_id = _normalize_client_write_id(request.headers.get('x-write-id'))
+        if update_fields:
+            update_fields['last_write_id'] = client_write_id
+
         if update_fields:
             # CAS（乐观并发控制）：客户端在 X-Base-Hash 头携带本次编辑所基于的
             # 服务端内容哈希。不一致说明内容已被其他会话/迟到请求改写，
@@ -7103,10 +7563,15 @@ async def update_video_workflow(
                 def _cas_current_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None, None
+                        return None, None, None, None
                     current, incoming = content_hashes_for_cas(fresh, update_fields)
-                    return current, getattr(fresh, 'content_version', 0), incoming
-                current_hash, expected_version, incoming_hash = await asyncio.to_thread(
+                    return (
+                        current,
+                        getattr(fresh, 'content_version', 0),
+                        incoming,
+                        getattr(fresh, 'last_write_id', None),
+                    )
+                current_hash, expected_version, incoming_hash, winner_write_id = await asyncio.to_thread(
                     _cas_current_hash
                 )
                 if current_hash is not None and current_hash != base_hash:
@@ -7118,7 +7583,10 @@ async def update_video_workflow(
                         return JSONResponse({
                             "code": 0,
                             "message": "更新成功",
-                            "data": {"content_hash": current_hash}
+                            "data": {
+                                "content_hash": current_hash,
+                                "last_write_id": winner_write_id,
+                            }
                         })
                     logger.warning(
                         f"[CAS] 拒绝更新工作流 {workflow_id}："
@@ -7126,11 +7594,7 @@ async def update_video_workflow(
                     )
                     return JSONResponse(
                         status_code=409,
-                        content={
-                            "code": 409,
-                            "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                            "data": {"content_hash": current_hash}
-                        }
+                        content=_cas_conflict_payload(current_hash, winner_write_id),
                     )
             affected = await asyncio.to_thread(
                 VideoWorkflowModel.update,
@@ -7144,9 +7608,10 @@ async def update_video_workflow(
                 def _conflict_hash():
                     fresh = VideoWorkflowModel.get_by_id(workflow_id)
                     if not fresh:
-                        return None, None
-                    return content_hashes_for_cas(fresh, update_fields)
-                current_hash, incoming_hash = await asyncio.to_thread(_conflict_hash)
+                        return None, None, None
+                    current, incoming = content_hashes_for_cas(fresh, update_fields)
+                    return current, incoming, getattr(fresh, 'last_write_id', None)
+                current_hash, incoming_hash, winner_write_id = await asyncio.to_thread(_conflict_hash)
                 if current_hash is not None and incoming_hash == current_hash:
                     logger.info(
                         f"[CAS] 工作流 {workflow_id} 版本竞争但内容未变，视为成功"
@@ -7155,7 +7620,10 @@ async def update_video_workflow(
                     return JSONResponse({
                         "code": 0,
                         "message": "更新成功",
-                        "data": {"content_hash": current_hash}
+                        "data": {
+                            "content_hash": current_hash,
+                            "last_write_id": winner_write_id,
+                        }
                     })
                 logger.warning(
                     f"[CAS] 工作流 {workflow_id} 版本竞争失败"
@@ -7163,11 +7631,7 @@ async def update_video_workflow(
                 )
                 return JSONResponse(
                     status_code=409,
-                    content={
-                        "code": 409,
-                        "message": "工作流内容已被其他会话修改，本次保存被拒绝",
-                        "data": {"content_hash": current_hash}
-                    }
+                    content=_cas_conflict_payload(current_hash, winner_write_id),
                 )
 
         # 返回写入后的最新内容哈希（未写字段时哈希即当前值），
@@ -7175,11 +7639,17 @@ async def update_video_workflow(
         # 回读 + 哈希整体放入工作线程：大 JSON 序列化不占事件循环
         def _post_update_hash():
             latest = VideoWorkflowModel.get_by_id(workflow_id)
-            return compute_content_hash(latest) if latest else None
+            if not latest:
+                return None, None
+            return compute_content_hash(latest), getattr(latest, 'last_write_id', None)
+        stored_hash, stored_write_id = await asyncio.to_thread(_post_update_hash)
         return JSONResponse({
             "code": 0,
             "message": "更新成功",
-            "data": {"content_hash": await asyncio.to_thread(_post_update_hash)}
+            "data": {
+                "content_hash": stored_hash,
+                "last_write_id": stored_write_id,
+            }
         })
     except Exception as e:
         logger.error(f"Failed to update video workflow {workflow_id}: {str(e)}")
@@ -8256,6 +8726,10 @@ async def create_character(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
 
         # 处理多参考图上传
@@ -8286,6 +8760,10 @@ async def create_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -8412,6 +8890,10 @@ async def update_character(
                 content = await reference_image.read()
                 f.write(content)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
         
         # 处理音频上传
@@ -8476,6 +8958,10 @@ async def update_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -8892,6 +9378,10 @@ async def create_location(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -8930,6 +9420,10 @@ async def create_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -9044,6 +9538,10 @@ async def update_location(
                 content = await reference_image.read()
                 f.write(content)
 
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             update_data['reference_image'] = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -9081,6 +9579,10 @@ async def update_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
+                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                    filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -9256,6 +9758,10 @@ async def add_character_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/character/pic/{filename}"
             reference_images_list.append({
                 'id': str(uuid.uuid4()),
@@ -9404,6 +9910,10 @@ async def add_location_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/location/pic/{filename}"
             angle = angles[idx] if idx < len(angles) else 'front'
             reference_images_list.append({
@@ -9724,6 +10234,10 @@ async def create_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
 
         props_id = PropsModel.create(
@@ -9822,6 +10336,10 @@ async def update_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
+            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
+            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
+                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
+                filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
         
         # 更新道具

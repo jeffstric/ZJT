@@ -276,6 +276,31 @@ header {
   color: var(--text);
 }
 
+/* 弹窗滚动条：细窄圆角、贴合深色主题（WebKit 透明描边悬浮样式 + Firefox thin） */
+.modal {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.modal::-webkit-scrollbar {
+  width: 8px;
+}
+
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.modal::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(148, 163, 184, 0.6);
+}
+
 /* 可滚动弹窗（.modal 设 overflow-y:auto）内的粘性头部：
    把关闭按钮（position:absolute）的包裹层从 relative 改为 sticky，
    使头部连同 × 始终吸附在滚动容器顶部，避免滚动时关闭按钮被带出可视区。 */
@@ -712,6 +737,13 @@ header {
 .cli-media-pref-row-error {
   margin: 0;
   color: #dc2626;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.cli-media-pref-row-warning {
+  margin: 0;
+  color: #d97706;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1643,6 +1675,23 @@ header {
   font-size: 14px;
   color: var(--muted);
   margin: 0;
+}
+
+/* 「支付成功但签约未生效」引导横幅：提醒重新开通自动续费订阅，持续享受优惠 */
+.package-intro-warning {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.05) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.package-intro-warning .package-intro-text {
+  color: var(--text);
+}
+
+.package-intro-warning .package-intro-subtext {
+  color: #b45309;
 }
 
 .package-list {

@@ -1,7 +1,7 @@
 """
 World Model - Database operations for world table
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert
 from config.constant import Edition, StoryType
 import logging
@@ -211,7 +211,32 @@ class WorldModel:
         except Exception as e:
             logger.error(f"Failed to list worlds for user {user_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def list_names_for_storyboard_folders(user_id: int) -> List[Dict[str, Any]]:
+        """故事板文件夹用的世界 id 与名称。含伪删除世界，不分页。
+
+        独立空间只返回该用户的世界；共享空间返回全部世界。
+        """
+        where_conditions = []
+        params: list = []
+        if Edition.is_space_isolated():
+            where_conditions.append("user_id = %s")
+            params.append(user_id)
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        sql = f"""
+            SELECT id, name
+            FROM world
+            WHERE {where_clause}
+            ORDER BY id ASC
+        """
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return list(results) if results else []
+        except Exception as e:
+            logger.error(f"Failed to list world names for storyboard folders, user {user_id}: {e}")
+            raise
+
     @staticmethod
     def get_by_name(
         user_id: int,

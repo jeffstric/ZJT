@@ -1,16 +1,17 @@
 """
 火山引擎 / Doubao OpenAI 兼容格式 LLM 客户端
-支持 doubao 系列模型，以及方舟上的 DeepSeek-V4 系列
+支持 doubao 系列模型，以及方舟上的 DeepSeek-V4 / GLM-5.3 系列
 """
 import logging
 from .openai_base_client import OpenAIBaseClient
 from config.config_util import get_dynamic_config_value
+from config.constant import LLMModel
 
 logger = logging.getLogger(__name__)
 
 
 class VolcengineOpenAIClient(OpenAIBaseClient):
-    """火山引擎（Doubao / DeepSeek）OpenAI 兼容格式 LLM 客户端"""
+    """火山引擎（Doubao / DeepSeek / GLM）OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
     # 方舟目录的 DeepSeek 模型 ID 全部带版本后缀，不存在任何裸名
@@ -27,6 +28,8 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
         'deepseek-v4-flash': 'deepseek-v4-flash-ga-260731',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-ga-260731',
         'deepseek-v4-pro': 'deepseek-v4-pro-ga-260813',
+        # 智谱 GLM-5.3-Flash（方舟上架，原生多模态，始终启用思考）
+        'glm-5.3-flash': 'glm-5-3-flash-260828',
     }
 
     def _refresh_config(self):
@@ -50,6 +53,25 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
         if actual != model:
             logger.debug(f"VolcengineOpenAIClient model mapping: {model} -> {actual}")
         return actual
+
+    def _apply_thinking_params(self, kwargs, enable_thinking, thinking_effort):
+        """GLM 系列思考强度映射，其余模型走基类默认行为。
+
+        方舟 GLM-5.3 始终启用思考（thinking.type 仅支持 enabled，且默认
+        即开，服务端无法关闭），reasoning_effort 仅支持 low/high/max
+        （无 "medium"），前端三档 low/medium/high 需经
+        LLMModel.GLM_REASONING_EFFORT_MAP 映射，否则传 "medium" 会被
+        方舟拒绝。kwargs["model"] 在基类调用本方法前已解析为实际
+        API model ID，按 "glm" 前缀识别。
+        """
+        actual_model = str(kwargs.get("model") or "")
+        if actual_model.startswith('glm'):
+            if enable_thinking:
+                kwargs["reasoning_effort"] = LLMModel.GLM_REASONING_EFFORT_MAP.get(
+                    thinking_effort, thinking_effort
+                )
+            return
+        super()._apply_thinking_params(kwargs, enable_thinking, thinking_effort)
 
     def _humanize_api_error(self, e, model=None):
         """把方舟「模型/接入点不存在」404 翻译成可操作的中文错误。

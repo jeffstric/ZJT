@@ -103,6 +103,9 @@
             let loadingSessionId = null;  // 追踪哪个 session 触发了 loading，防止跨 session 竞态清除
             const activeIntervals = new Set();  // 追踪所有活跃的 setInterval ID
             const MAX_CONSECUTIVE_TASK_ERRORS = 3;
+            // 连续错误达到上限后转入的低频轮询间隔（任务服务端仍在生成，
+            // 刷新页面后 __PENDING_TASK__ 恢复机制也会重新拉取，前端不该判死任务）
+            const TASK_ERROR_BACKOFF_INTERVAL = 30000;
             const taskErrorCounts = new Map();
             const activeGenerationPollKeys = new Set();
             const directGenerationTasks = new Map();
@@ -146,6 +149,8 @@
                 return next;
             }
 
+            // 连续轮询错误达到上限：不判死任务（服务端仍在生成、刷新后 pending 恢复会重新拉取），
+            // 气泡显示中性提示并转入低频轮询继续探测，恢复 200 即刷新回进度
             function stopTaskAfterRepeatedErrors(key, interval, msgUid, fallbackContent) {
                 if (interval) trackedClearInterval(interval);
                 if (msgUid) {
@@ -250,6 +255,41 @@
 
             function getUrlPath(url) {
                 return String(url || '').split('#')[0].split('?')[0].toLowerCase();
+            }
+
+            // CDN 结果 URL 每次轮询都会换签名（?e=..&token=..），同一视频在历史
+            // 消息与本次轮询里的 URL 必然不同；去重比对必须以「去 query 的原始
+            // URL」为身份标识，并兼容 proxyDownloadUrl 编码后的 %2F 形式
+            // （事故：会话 66875523 同一视频因签名不同被重复追加展示 4 次）。
+            function stripUrlSignature(url) {
+                return String(url || '').split('#')[0].split('?')[0];
+            }
+
+            function contentIncludesMediaUrl(content, url) {
+                const base = stripUrlSignature(url);
+                if (!base) return false;
+                return content.includes(base) || content.includes(encodeURIComponent(base));
+            }
+
+            // 归一化媒体 URL 作为去重 key：解出 /api/download|proxy-image 代理
+            // 的内层真实 URL、解码、去签名。直接拿原始 src 当 key，同一视频会
+            // 因签名不同被当成不同消息。
+            function normalizeMediaUrlKey(url) {
+                let u = String(url || '').trim();
+                if (!u) return '';
+                const proxyMatch = u.match(/^\/api\/(?:download|proxy-image)\?url=([^&#]+)/i);
+                if (proxyMatch) {
+                    try { u = decodeURIComponent(proxyMatch[1]); } catch (e) { return u.toLowerCase(); }
+                    return stripUrlSignature(u).toLowerCase();
+                }
+                if (/^https?:\/\//i.test(u)) {
+                    if (/%[0-9A-Fa-f]{2}/.test(u)) {
+                        try { u = decodeURIComponent(u); } catch (e) { /* 非法编码，保留原文 */ }
+                    }
+                    return stripUrlSignature(u).toLowerCase();
+                }
+                // 同源相对路径等其余形式：整串作 key（不剥 query，避免把不同资源坍缩成同一 key）
+                return u.toLowerCase();
             }
 
             function isImageResultUrl(url) {
@@ -414,7 +454,9 @@
                 }
 
                 const ids = [];
-                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*id)\s*[:：]\s*([A-Za-z0-9_-]+)/gi;
+                // 兼容 markdown 粗体（**项目ID**: 266）、英文键（project_id: 266）
+                // 与复数形式（project_ids：12548，含中文冒号，数字人专家总结的写法）
+                const inlineProjectIdPattern = /(?:项目ID|project[_\s-]*ids?)\s*(?:\*\*)?\s*[:：]\s*\*{0,2}\s*([A-Za-z0-9_-]+)/gi;
                 let inlineMatch;
                 while ((inlineMatch = inlineProjectIdPattern.exec(text)) !== null) {
                     const id = inlineMatch[1];
@@ -448,7 +490,14 @@
                     || content.includes(`setModalImageInfo("${sid}"`)
                     || content.includes(`publishGeneratedResult("${sid}"`)
                     || content.includes(`publishGeneratedResult(&quot;${sid}&quot;`)
-                    || content.includes(`/${sid}_`);
+                    // 结果卡片当前 HTML 形态：发布按钮 data-publish-tool-id、
+                    // 图片卡片 data-tool-id（带引号闭合，防 1254 误配 12549）
+                    || content.includes(`data-publish-tool-id="${sid}"`)
+                    || content.includes(`data-tool-id="${sid}"`)
+                    // 文件名片段 `<pid>_<时间戳>`；代理 URL 编码后为 %2F<pid>_，
+                    // 两种形态都要匹配（只匹配 /<pid>_ 会漏掉编码形态）
+                    || content.includes(`/${sid}_`)
+                    || content.includes(`%2F${sid}_`);
             }
 
             function hasGeneratedImageResult(projectIds, imageUrls = []) {
@@ -457,9 +506,9 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('generated-image-wrapper')) return false;
-                    if (urls.length > 0) {
-                        return urls.some(url => url && content.includes(url));
-                    }
+                    // URL 带一次性 CDN 签名（去签名比对，见 contentIncludesMediaUrl），
+                    // 匹配失败时继续走 ID 兜底，不能只信 URL
+                    if (urls.length > 0 && urls.some(url => contentIncludesMediaUrl(content, url))) return true;
                     return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
@@ -482,9 +531,8 @@
                 return messages.value.some(msg => {
                     const content = msg?.content || '';
                     if (msg?.role !== 'ai' || !content.includes('<video')) return false;
-                    if (urls.length > 0) {
-                        return urls.some(url => url && content.includes(url));
-                    }
+                    // 同 hasGeneratedImageResult：URL 去签名比对，失败再走 ID 兜底
+                    if (urls.length > 0 && urls.some(url => contentIncludesMediaUrl(content, url))) return true;
                     return ids.some(id => contentHasGeneratedTaskId(content, id));
                 });
             }
@@ -511,20 +559,22 @@
                     if (msg?.role === 'ai' && content.includes('<video')) {
                         const urls = [];
                         content.replace(/<video[^>]+src=["']([^"']+)["']/gi, (match, url) => {
-                            urls.push(url);
+                            urls.push(normalizeMediaUrlKey(url));
                             return match;
                         });
-                        const key = urls.join('|') || content;
+                        // key 用归一化 URL（解代理+去签名）：同一视频多次追加时签名
+                        // 各不相同，拿原始 src 当 key 会导致去重失效、重复展示
+                        const key = urls.filter(Boolean).join('|') || content;
                         if (seenVideoUrls.has(key)) return;
                         seenVideoUrls.add(key);
                     }
                     if (msg?.role === 'ai' && content.includes('generated-image-wrapper')) {
                         const urls = [];
                         content.replace(/<img[^>]+src=["']([^"']+)["']/gi, (match, url) => {
-                            urls.push(url);
+                            urls.push(normalizeMediaUrlKey(url));
                             return match;
                         });
-                        const key = urls.join('|') || content;
+                        const key = urls.filter(Boolean).join('|') || content;
                         if (seenImageUrls.has(key)) {
                             const existingIndex = seenImageUrls.get(key);
                             const existingContent = normalizedMessages[existingIndex]?.content || '';
@@ -543,6 +593,23 @@
 
             const selectedDuration = ref('auto');
             const videoImageMode = ref('first_last_frame'); // 'first_last_frame' | 'multi_reference'
+
+            // 素材输出语言：控制图片/视频/数字人/文案素材中的文字与口播语言
+            // 'auto' 跟随界面语言（中文界面不注入，英文界面由后端回落 English）
+            // '__custom__' 使用自定义输入；其余值为语言名原值（中文/English/日本語/한국어/Español）
+            const outputLanguage = ref(localStorage.getItem('marketing_output_language') || 'auto');
+            const outputLanguageCustom = ref(localStorage.getItem('marketing_output_language_custom') || '');
+
+            function onOutputLanguageChange() {
+                localStorage.setItem('marketing_output_language', outputLanguage.value);
+                localStorage.setItem('marketing_output_language_custom', outputLanguageCustom.value.trim());
+            }
+
+            function getEffectiveOutputLanguage() {
+                if (outputLanguage.value === 'auto') return '';
+                if (outputLanguage.value === '__custom__') return outputLanguageCustom.value.trim();
+                return outputLanguage.value;
+            }
 
             // 参考图状态（全能参考模式使用）
             const referenceImageFiles = ref([]);
@@ -1061,6 +1128,13 @@
             }
 
             async function handleRechargeClick() {
+                if (window.RechargeCenter && typeof window.RechargeCenter.open === 'function') {
+                    await window.RechargeCenter.open({
+                        onLocalBlocked: (msg) => showError(msg),
+                        onPaid: () => loadComputingPower(),
+                    });
+                    return;
+                }
                 try {
                     const response = await fetch('/api/system/server-config');
                     const data = await response.json();
@@ -1617,6 +1691,12 @@
             function renderMarkdown(text) {
                 if (!text) return '';
 
+                // 图文转视频：脚本 JSON 渲染为结构化确认卡（article-to-video）
+                if (window.MarketingArticleCard) {
+                    const transformed = window.MarketingArticleCard.transformMessageText(text);
+                    if (transformed !== null) text = transformed;
+                }
+
                 // 步骤1：保护已有的 markdown 图片语法 ![alt](url)，用占位符替换
                 const imgPlaceholders = [];
                 text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, (match) => {
@@ -1636,6 +1716,13 @@
                 text = text.replace(videoUrlPattern, (match, base, query) => {
                     const fullUrl = query ? base + query : base;
                     return `\n<video src="${escapeHtml(fullUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>\n`;
+                });
+
+                // 步骤3.5：将裸音频 URL 转换为 <audio controls> 播放器（TTS 试听等）
+                const audioUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp3|wav|m4a|ogg|aac|flac))(\?[^\s<>"'\]]*)?(?=[\s\n\]|,)]|$)/gi;
+                text = text.replace(audioUrlPattern, (match, base, query) => {
+                    const fullUrl = query ? base + query : base;
+                    return `\n<audio src="${escapeHtml(fullUrl)}" controls preload="none" style="width:100%;max-width:340px;height:40px;border-radius:8px;display:block;margin:6px 0;"></audio>\n`;
                 });
 
                 // 步骤4：将裸图片 URL 转换为 Markdown 图片格式
@@ -1703,6 +1790,15 @@
                 html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
                     `${prefix}${attrs} src="${proxyImageUrl(src)}"`
                 );
+
+                // 音频链接 → 内联播放器：LLM 可能把试听音频包装成 markdown 链接
+                // （[试听](xxx.mp3)），点击新窗口体验差，统一替换为 <audio controls>。
+                html = html.replace(/<a\b[^>]*href="(https?:\/\/[^"]*?\.(?:mp3|wav|m4a|ogg|aac|flac)(?:\?[^"]*)?)"[^>]*>([\s\S]*?)<\/a>/gi,
+                    (match, href, linkText) => {
+                        const label = /试听|preview|listen/i.test(linkText) ? '' :
+                            `<span style="font-size:12px;color:var(--muted);margin-right:6px;">${escapeHtml(linkText.slice(0, 30))}</span>`;
+                        return `<span style="display:inline-flex;align-items:center;margin:4px 0;">${label}<audio src="${proxyDownloadUrl(href)}" controls preload="none" style="height:36px;max-width:320px;border-radius:8px;vertical-align:middle;"></audio></span>`;
+                    });
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
                 // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是
@@ -1781,26 +1877,14 @@
                 resetModalImageInfo();
             }
 
-            /**
-             * 构建下载 URL：CDN 地址直接下载（七牛 attname 参数指定文件名），本地路径走 /api/download 代理
-             */
-            function buildDownloadUrl(url, filename) {
-                if (url && url.startsWith('http')) {
-                    const separator = url.includes('?') ? '&' : '?';
-                    return `${url}${separator}attname=${encodeURIComponent(filename)}`;
-                }
-                return `/api/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-            }
-
             function isWechatBrowser() {
                 const ua = navigator.userAgent.toLowerCase();
                 return /micromessenger/.test(ua);
             }
 
-            function downloadModalImage() {
+            async function downloadModalImage() {
                 const img = document.getElementById('imgModalImg');
                 if (!img || !img.src) return;
-                // 从 URL 中提取文件名，默认 fallback
                 let filename = 'image.png';
                 try {
                     const urlPath = img.src.split('?')[0];
@@ -1809,21 +1893,18 @@
                     filename = 'image.png';
                 }
 
-                const downloadUrl = buildDownloadUrl(img.src, filename);
-
-                if (isWechatBrowser()) {
-                    window.open(downloadUrl, '_blank');
-                    setTimeout(() => {
-                        alert('请长按图片，然后选择"保存图片"');
-                    }, 500);
-                } else {
-                    const link = document.createElement('a');
-                    link.href = downloadUrl;
-                    link.download = filename;
-                    link.target = '_blank';
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                try {
+                    await window.downloadWithAuth(img.src, filename, {
+                        onUnauthorized: redirectToLogin,
+                    });
+                    if (isWechatBrowser()) {
+                        setTimeout(() => {
+                            alert('请长按图片，然后选择"保存图片"');
+                        }, 500);
+                    }
+                } catch (e) {
+                    if (e && e.status === 401) return;
+                    alert((e && e.message) || '下载失败');
                 }
             }
             // 挂载到全局，供原生 HTML onclick 调用
@@ -2653,14 +2734,19 @@
                         console.error('Agent 图片状态轮询错误:', err);
                         const failures = recordTaskError(errorKey);
                         if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                            shouldContinuePolling = false;
-                            activeGenerationPollKeys.delete(pollKey);
+                            // 不判死：任务服务端仍在生成，气泡转中性提示，
+                            // 销毁当前高频 interval，按低频继续探测（恢复后照常展示）
+                            shouldContinuePolling = true;
                             stopTaskAfterRepeatedErrors(
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('request_timeout') || '请求超时，请稍后重试。'
+                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
+                            if (interval) {
+                                trackedClearInterval(interval);
+                                interval = trackedSetInterval(checkImageStatus, TASK_ERROR_BACKOFF_INTERVAL);
+                            }
                         }
                     }
                 };
@@ -2779,14 +2865,19 @@
                         console.error('Agent 视频状态轮询错误:', err);
                         const failures = recordTaskError(errorKey);
                         if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                            shouldContinuePolling = false;
-                            activeGenerationPollKeys.delete(pollKey);
+                            // 不判死：任务服务端仍在生成，气泡转中性提示，
+                            // 销毁当前高频 interval，按低频继续探测（恢复后照常展示）
+                            shouldContinuePolling = true;
                             stopTaskAfterRepeatedErrors(
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('request_timeout') || '请求超时，请稍后重试。'
+                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
+                            if (interval) {
+                                trackedClearInterval(interval);
+                                interval = trackedSetInterval(checkStatus, TASK_ERROR_BACKOFF_INTERVAL);
+                            }
                         }
                     }
                 };
@@ -3226,6 +3317,7 @@
                             model_id: selectedLLMModel.value ? selectedLLMModel.value.id : undefined,
                             vendor_id: selectedLLMModel.value ? (selectedLLMModel.value.vendor_id || 1) : 1,
                             language: localStorage.getItem('zjt_locale') || 'zh-CN',
+                            output_language: isAgentMode ? (getEffectiveOutputLanguage() || undefined) : undefined,
                             image_preferences: imagePreferences,
                             video_preferences: isAgentMode ? buildAgentVideoPreferences(validImageUrls, validVideoUrls, validAudioUrls) : undefined
                         }),
@@ -3468,7 +3560,11 @@
                     }
                     });
 
-                    // 超时处理
+                    // 超时处理：仅当从未收到任何数据时才报"请求超时"。
+                    // 长流程（图文转视频：抓取→识图→要点提炼→ask_user 挂起→逐 clip 提交）
+                    // 静默期可超过 15 分钟，但期间可能已有脚本卡/进度渲染、视频轮询已接管——
+                    // 此时超时到达应静默收尾，不能把"请求超时"误标到正常进行的任务上
+                    // （会话 c7b27012 实测：3 条视频正常出片，却弹出 3 条超时气泡）。
                     streamTimeoutId = setTimeout(() => {
                         if (streamSettled) return;
                         settleStream();
@@ -4086,7 +4182,9 @@
                     });
                     if (!checkAuthResponse(res)) return false;
                     const data = await res.json();
-                    return data.success && data.replaced > 0;
+                    // replaced>0：pending 行已替换；duplicate：后端判定会话历史里已有
+                    // 该批 project 的结果卡片（另一页签/恢复流程已写入），无需再追加
+                    return !!data.success && (data.replaced > 0 || data.duplicate === true);
                 } catch (e) {
                     console.error('替换 pending task 失败:', e);
                     return false;
@@ -6987,6 +7085,7 @@
                 formatTime,
                 formatShortDate,
                 renderMarkdown,
+                windowSourceBadge: (window.MarketingArticleCard && window.MarketingArticleCard.sourceBadge) || null,
                 showImageModal,
                 previewMedia,
                 autoResize,
@@ -7026,6 +7125,9 @@
                 toggleModelPanel,
                 toggleRatioPanel,
                 toggleSettingsPanel,
+                outputLanguage,
+                outputLanguageCustom,
+                onOutputLanguageChange,
                 powerConfirmThresholdInput,
                 powerConfirmDefault,
                 powerConfirmIsCustom,

@@ -7,7 +7,7 @@ from datetime import datetime
 from .database import execute_query, execute_update, execute_insert
 import logging
 
-from config.constant import WxContractStatus
+from config.constant import WxContractStatus, SubscriptionOrderStatus
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,39 @@ class WxPapayContract:
 
 class WxPapayContractsModel:
     """委托代扣签约关系数据库操作"""
+
+    @staticmethod
+    def get_active_contracts_by_user(user_id: int) -> List[WxPapayContract]:
+        """取用户所有已签约（ACTIVE）记录，id 降序（同一用户理论上只有一条，
+        历史残留/竞态可能多条，调用方需自行决定保留哪条）"""
+        sql = """
+            SELECT * FROM wx_papay_contracts
+            WHERE user_id = %s AND status = %s
+            ORDER BY id DESC
+        """
+        try:
+            result = execute_query(sql, (user_id, WxContractStatus.ACTIVE), fetch_all=True)
+            return [WxPapayContract(**row) for row in result] if result else []
+        except Exception as e:
+            logger.error(f"Failed to get active contracts for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def get_users_with_multiple_active_contracts(limit: int = 100) -> List[int]:
+        """取拥有多条已签约合约的用户ID（微信侧双订阅残留兜底清理用）"""
+        sql = """
+            SELECT user_id FROM wx_papay_contracts
+            WHERE status = %s
+            GROUP BY user_id
+            HAVING COUNT(*) > 1
+            LIMIT %s
+        """
+        try:
+            result = execute_query(sql, (WxContractStatus.ACTIVE, limit), fetch_all=True)
+            return [int(row['user_id']) for row in result] if result else []
+        except Exception as e:
+            logger.error(f"Failed to get users with multiple active contracts: {e}")
+            raise
 
     @staticmethod
     def create(
@@ -207,6 +240,58 @@ class WxPapayContractsModel:
             return execute_update(sql, (period_start, period_end, contract_code))
         except Exception as e:
             logger.error(f"Failed to update period for {contract_code}: {e}")
+            raise
+
+    @staticmethod
+    def get_paid_pending_signs(grace_minutes: int, limit: int = 50) -> List[WxPapayContract]:
+        """取"签约中但首期订单已支付"且超过宽限时间的合约（签约结果通知未到的补偿查询用）。
+
+        支付已成功（款项已收、算力已发）而合约仍签约中，说明签约结果通知（ADD 回调）丢失
+        或用户未完成签约，需主动向微信查询签约关系后收尾，不能干等超时清理。
+        """
+        sql = """
+            SELECT c.* FROM wx_papay_contracts c
+            WHERE c.status = %s
+              AND c.create_at <= DATE_SUB(NOW(), INTERVAL %s MINUTE)
+              AND EXISTS (
+                  SELECT 1 FROM subscription_orders o
+                  WHERE o.contract_code = c.contract_code AND o.status = %s
+              )
+            ORDER BY c.id ASC
+            LIMIT %s
+        """
+        try:
+            results = execute_query(sql, (
+                WxContractStatus.PENDING, grace_minutes, SubscriptionOrderStatus.PAID, limit,
+            ), fetch_all=True)
+            return [WxPapayContract(**row) for row in results] if results else []
+        except Exception as e:
+            logger.error(f"Failed to get paid pending signs: {e}")
+            raise
+
+    @staticmethod
+    def exists_signed_contract(user_id: int, exclude_contract_code: Optional[str] = None) -> bool:
+        """用户是否存在「成功签约过」的合约（signed_at 非空，首订加赠资格判定用）。
+
+        只付款但签约未生效（订阅被关闭）的合约 signed_at 为空，不消耗首订加赠资格。
+
+        Args:
+            user_id: 用户ID
+            exclude_contract_code: 需排除的合约号（判定当前合约是否为首份成功签约时排除自身）
+
+        Returns:
+            True=存在历史成功签约（已非首订）；False=首订
+        """
+        sql = """
+            SELECT 1 FROM wx_papay_contracts
+            WHERE user_id = %s AND signed_at IS NOT NULL AND contract_code != %s
+            LIMIT 1
+        """
+        try:
+            result = execute_query(sql, (user_id, exclude_contract_code or ""), fetch_one=True)
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Failed to check signed contracts for user {user_id}: {e}")
             raise
 
     @staticmethod

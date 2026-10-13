@@ -419,10 +419,14 @@
       const collectedCharacters = new Set();
       const collectedLocations = new Set();
       const collectedProps = new Set();
+      // 精确匹配到的角色对象（含 default_voice）：供参考生视频提交时自动带入角色音色
+      const voiceCharacters = [];
+      // 角色参考图 URL（供「是否处理人脸」白名单：只有角色图参与人脸遮盖，道具/场景不处理）
+      const characterRefUrls = [];
 
       if (!state.defaultWorldId) {
         console.warn('[宫格生图] 未选择世界，无法获取参考图片');
-        return { referenceImageUrls, promptSuffix };
+        return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
       }
 
       const worldId = state.defaultWorldId;
@@ -460,11 +464,15 @@
                 const result = await response.json();
                 if (result.code === 0 && result.data && Array.isArray(result.data.data) && result.data.data.length > 0) {
                   const matchedChar = result.data.data.find(c => c.name === characterName) || result.data.data[0];
+                  if(matchedChar && matchedChar.default_voice){
+                    voiceCharacters.push(matchedChar);
+                  }
                   if (matchedChar && matchedChar.reference_image) {
                     // 优先使用用户为该角色选择的特定图片，否则使用主图
                     const userSelectedUrl = (shotNode.data.selectedCharRefImages && shotNode.data.selectedCharRefImages[characterName]);
                     const charRefUrl = userSelectedUrl || matchedChar.reference_image;
                     referenceImageUrls.push(charRefUrl);
+                    characterRefUrls.push(charRefUrl);
                     const labelSuffix = userSelectedUrl && userSelectedUrl !== matchedChar.reference_image
                       ? `的${(shotNode.data.selectedCharRefImageLabels && shotNode.data.selectedCharRefImageLabels[characterName]) || '已选择'}`
                       : '';
@@ -541,7 +549,7 @@
       }
 
       console.log(`[宫格生图] 总共收集到 ${referenceImageUrls.length} 张参考图片URL`);
-      return { referenceImageUrls, promptSuffix };
+      return { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls };
     }
 
 
@@ -2518,6 +2526,9 @@
             panoEl._updateSourceThumbnail();
           }
         }
+        if(fromNode && fromNode.type === 'video' && toNode && typeof toNode.clearVideoInput === 'function'){
+          toNode.clearVideoInput();
+        }
       }
     }
 
@@ -2532,7 +2543,16 @@
       if(conn){
         const toNode = state.nodes.find(n => n.id === conn.to);
         if(toNode && toNode.type === 'shot_frame'){
+          const isRef = (toNode.data.videoMode || 'first_last_frame') === 'multi_reference';
+          const fromNode = state.nodes.find(n => n.id === conn.from);
+          const shownUrl = toNode.data.previewImageUrl || (fromNode && fromNode.data && fromNode.data.url) || '';
+          const remember = typeof shouldRememberShotFrameFirstDismiss === 'function'
+            ? shouldRememberShotFrameFirstDismiss(shownUrl)
+            : String(shownUrl || '').trim() !== '';
           toNode.data.previewImageUrl = '';
+          // 参考模式删掉首帧连线后记住，避免稍后从仍连着的图片自动填回。首帧模式仍按原逻辑填回。
+          if(isRef && remember) toNode.data.firstFrameDismissed = true;
+          if(typeof toNode.syncFrameAutoPrompt === 'function') toNode.syncFrameAutoPrompt();
           const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
           if(nodeEl){
             const previewImageEl = nodeEl.querySelector('.shot-frame-preview-image');
@@ -2551,6 +2571,28 @@
           }
         }
       }
+    }
+
+    function removeLastFrameConnection(connId){
+      if(!state.lastFrameConnections) state.lastFrameConnections = [];
+      const conn = state.lastFrameConnections.find(c => c.id === connId);
+      state.lastFrameConnections = state.lastFrameConnections.filter(c => c.id !== connId);
+      if(state.selectedLastFrameConnId === connId) state.selectedLastFrameConnId = null;
+      hideConnDeleteBtn();
+      if(typeof renderAllConnections === 'function') renderAllConnections();
+
+      if(conn){
+        const toNode = state.nodes.find(n => n.id === conn.to);
+        if(toNode && toNode.type === 'shot_frame'){
+          toNode.data.lastFrameUrl = '';
+          const nodeEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
+          if(nodeEl && typeof nodeEl._updateLastFrame === 'function') nodeEl._updateLastFrame();
+          if(nodeEl && typeof nodeEl._updateVideoComputingPowerDisplay === 'function'){
+            nodeEl._updateVideoComputingPowerDisplay();
+          }
+        }
+      }
+      try { safeAutoSave(); } catch(e) {}
     }
 
     function renderConnections(tempLine, skipSizeUpdate){
@@ -2711,6 +2753,7 @@
           e.stopPropagation();
           state.selectedConnId = null;
           state.selectedImgConnId = connId;  // 使用保存的connId
+          state.selectedLastFrameConnId = null;
           renderAllConnections();
         });
         
@@ -2825,6 +2868,7 @@
           state.selectedConnId = null;
           state.selectedImgConnId = null;
           state.selectedFirstFrameConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedVideoConnId = conn.id;
           renderAllConnections();
         });
@@ -2930,6 +2974,7 @@
             state.selectedConnId = null;
             state.selectedImgConnId = null;
             state.selectedFirstFrameConnId = null;
+            state.selectedLastFrameConnId = null;
             state.selectedVideoConnId = null;
             state.selectedReferenceConnId = null;
             state.selectedAudioConnId = conn.id;
@@ -3027,6 +3072,7 @@
           state.selectedConnId = null;
           state.selectedImgConnId = null;
           state.selectedFirstFrameConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedVideoConnId = null;
           state.selectedReferenceConnId = conn.id;
           renderAllConnections();
@@ -3127,6 +3173,7 @@
           e.stopPropagation();
           state.selectedConnId = null;
           state.selectedImgConnId = null;
+          state.selectedLastFrameConnId = null;
           state.selectedFirstFrameConnId = conn.id;
           renderAllConnections();
         });
@@ -3444,6 +3491,8 @@
               gridImageNode.data.isSplit = true;
               gridImageNode.data.status = 'pending';
               gridImageNode.title = gridImageNode.data.name;
+              // 结果节点显示「生成中」占位（含查看状态时间轴按钮）
+              if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(gridImageNodeId);
               
               const nodeEl = canvasEl.querySelector(`.node[data-node-id="${gridImageNodeId}"]`);
               if(nodeEl) {
@@ -3902,7 +3951,7 @@
           <button class="modal-close-btn" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #666;">&times;</button>
         </div>
         <textarea class="expand-textarea" placeholder="在此输入${escapeHtml(title)}" style="flex: 1; width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; resize: none; min-height: 400px;">${escapeHtml(currentContent)}</textarea>
-        ${opts && opts.enableCharacterDropdown ? '<div style="margin-top: 8px; font-size: 12px; color: #9ca3af;">💡 按 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">/</kbd>、<kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">@</kbd> 或 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">、</kbd> 可选择角色插入到提示词中</div>' : ''}
+        ${buildPromptMentionHintHtml(opts)}
         <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px;">
           <button class="modal-cancel-btn" style="padding: 8px 20px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; font-size: 14px;">取消</button>
           <button class="modal-confirm-btn" style="padding: 8px 20px; border: none; border-radius: 6px; background: #3b82f6; color: white; cursor: pointer; font-size: 14px;">确定</button>
@@ -4022,6 +4071,8 @@
         let imageUrl; // 首尾帧模式使用
         let referenceImageUrls = []; // 参考模式使用
         let refPromptSuffix = []; // 参考图描述文字
+        let gridVoiceCharacters = []; // 参考模式精确匹配到的角色（含默认音色）
+        let gridCharacterRefUrls = []; // 参考模式角色参考图 URL（人脸遮盖白名单）
         let useTextToVideo = false; // 降级标记
 
         if(videoGenMode === 'multi_reference') {
@@ -4032,9 +4083,11 @@
           }
           generateBtn.textContent = '收集参考图...';
 
-          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix } = await collectReferenceImagesForGrid(shotFrameNodes);
+          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes);
           referenceImageUrls = refUrls;
           refPromptSuffix = _refPromptSuffix || [];
+          gridVoiceCharacters = _voiceCharacters || [];
+          gridCharacterRefUrls = _characterRefUrls || [];
 
           if(referenceImageUrls.length > 0) {
             console.log(`[分镜组视频] 参考模式：收集到 ${referenceImageUrls.length} 张参考图`);
@@ -4223,7 +4276,23 @@
           // 是否处理人脸（仅 seedance2.0 商业版生效）
           if(shotGroupNode.data.processFace === true) {
             form.append('enable_face_mask', 'true');
+            // 人脸遮盖白名单：只对角色参考图做遮盖，道具/场景参考图不参与
+            if(gridCharacterRefUrls.length > 0) {
+              form.append('face_mask_reference_urls', gridCharacterRefUrls.join(','));
+            }
           }
+
+          // 参考生 + 模型支持音色输入时，自动带入分镜组角色的默认音色；
+          // grok 等不支持模型 collectVoiceReferences 返回空，不注入
+          if(typeof collectVoiceReferences === 'function' && !useTextToVideo){
+            const voiceRefs = collectVoiceReferences(videoModel || 'wan22', gridVoiceCharacters, '');
+            if(voiceRefs.enabled){
+              form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+              form.set('prompt', appendVoiceReferencePrompt(finalVideoPrompt, voiceRefs.promptNote));
+              notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+          }
+
           appendAuthToForm(form);
 
           res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
@@ -4286,6 +4355,8 @@
             newVideoNode.data.name = videoCount > 1 ? `幕视频${i + 1}` : '幕视频';
             newVideoNode.data.project_id = projectIds[i] || projectIds[0];
             newVideoNode.title = newVideoNode.data.name;
+            // 视频节点显示「生成中」状态行（含查看状态时间轴按钮）
+            if(window.AiToolTimeline) window.AiToolTimeline.markNodeGenerating(newVideoNodeId);
             
             // 更新节点标题显示
             const canvasEl = document.getElementById('canvas');
@@ -4370,8 +4441,10 @@
                   }
                   const previewActionsField = videoNodeEl.querySelector('.video-preview-actions-field');
                   if(previewActionsField) previewActionsField.style.display = 'block';
+                  // 视频已到位：状态行标记成功
+                  if(window.AiToolTimeline) window.AiToolTimeline.settleNodeResult(videoNode);
                 }
-                
+
                 console.log(`[分镜组视频] 视频节点 ${videoNodeId} 更新URL:`, videoUrls[index]);
               }
             });
@@ -4501,6 +4574,40 @@
       }
     }
 
+    function buildPromptMentionHintHtml(opts) {
+      if (!opts || !opts.enableCharacterDropdown) return '';
+      if (opts.dropdownKey === 'videoprompt') {
+        const hintText = (window.t && window.t('shot_frame_video_prompt_mention_hint') && window.t('shot_frame_video_prompt_mention_hint') !== 'shot_frame_video_prompt_mention_hint')
+          ? window.t('shot_frame_video_prompt_mention_hint')
+          : '按 /、@ 或 、 可插入首帧图、尾帧图或角色。已设置对应图片时才会出现首帧图和尾帧图';
+        return '<div style="margin-top: 8px; font-size: 12px; color: #9ca3af;">' + escapeHtml(hintText) + '</div>';
+      }
+      return '<div style="margin-top: 8px; font-size: 12px; color: #9ca3af;">💡 按 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">/</kbd>、<kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">@</kbd> 或 <kbd style="background: #f3f4f6; padding: 1px 6px; border-radius: 4px; border: 1px solid #d1d5db; font-size: 11px;">、</kbd> 可选择角色插入到提示词中</div>';
+    }
+
+    // 视频提示词下拉置顶首尾帧。没有对应图片时不出现，插入的仍是字面量 @首帧图 / @尾帧图。
+    function listVideoPromptFrameMentions(nodeId) {
+      const nodes = (typeof state !== 'undefined' && state && state.nodes) || [];
+      const node = nodes.find(n => String(n.id) === String(nodeId));
+      if (!node || !node.data) return [];
+      const items = [];
+      const firstUrl = String(node.data.previewImageUrl || '').trim();
+      if (firstUrl) {
+        const label = (window.t && window.t('shot_frame_mention_first') && window.t('shot_frame_mention_first') !== 'shot_frame_mention_first')
+          ? window.t('shot_frame_mention_first')
+          : '首帧图';
+        items.push({ token: '@首帧图', label: label, url: firstUrl });
+      }
+      const lastUrl = String(node.data.lastFrameUrl || '').trim();
+      if (lastUrl) {
+        const label = (window.t && window.t('shot_frame_mention_last') && window.t('shot_frame_mention_last') !== 'shot_frame_mention_last')
+          ? window.t('shot_frame_mention_last')
+          : '尾帧图';
+        items.push({ token: '@尾帧图', label: label, url: lastUrl });
+      }
+      return items;
+    }
+
     // 显示角色选择下拉框（用于图片提示词，使用 state.worldCharacters）
     function showCharacterDropdownForImagePrompt(nodeId, textarea, cursorPos, dropdownKey = 'imageprompt') {
       const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
@@ -4516,53 +4623,73 @@
         textarea.parentNode.appendChild(dropdown);
       }
       
+      const frameItems = dropdownKey === 'videoprompt' ? listVideoPromptFrameMentions(nodeId) : [];
       const worldId = state.defaultWorldId;
-      if (!worldId) {
+      const characters = worldId ? (state.worldCharacters || []) : [];
+      if (frameItems.length === 0 && !worldId) {
         dropdown.innerHTML = '<div style="padding: 8px; color: #6b7280; font-size: 12px;">请先选择世界</div>';
         dropdown.style.display = 'block';
         return;
       }
-      
-      const characters = state.worldCharacters || [];
-      if (characters.length > 0) {
-        dropdown.innerHTML = characters.map(char => {
-          const hasImage = !!char.reference_image;
-          const warningStyle = hasImage ? '' : 'background: #fef2f2; border-left: 3px solid #ef4444;';
-          const nameStyle = hasImage ? 'color: #374151;' : 'color: #ef4444;';
-          const warningText = hasImage ? '' : '<span style="font-size: 10px; color: #ef4444; margin-left: 4px;">无参考图</span>';
-          return `
-            <div class="character-dropdown-item" data-character-name="${escapeHtml(char.name)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; ${warningStyle}">
-              ${hasImage ? `<img src="${escapeHtml(char.reference_image)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #fee2e2; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #ef4444;">!</div>'}
-              <span style="font-size: 12px; ${nameStyle}">${escapeHtml(char.name)}${warningText}</span>
-            </div>
-          `;
-        }).join('');
-        
-        // 绑定点击事件
-        dropdown.querySelectorAll('.character-dropdown-item').forEach(item => {
-          item.addEventListener('click', () => {
-            const charName = item.dataset.characterName;
-            insertCharacterAtCursorForImagePrompt(textarea, charName);
-            hideCharacterDropdownForImagePrompt(nodeId);
-          });
-          
-          item.addEventListener('mouseenter', () => {
-            item.style.background = item.style.borderLeft ? '#fef2f2' : '#f8fafc';
-          });
-          item.addEventListener('mouseleave', () => {
-            item.style.background = item.style.borderLeft ? '#fef2f2' : '';
-          });
-        });
-        
-        // 定位下拉框在textarea下方
-        dropdown.style.top = (textarea.offsetHeight) + 'px';
-        dropdown.style.left = '0';
-        dropdown.style.right = '0';
-        dropdown.style.display = 'block';
-      } else {
+      if (frameItems.length === 0 && characters.length === 0) {
         dropdown.innerHTML = '<div style="padding: 8px; color: #6b7280; font-size: 12px;">暂无角色</div>';
         dropdown.style.display = 'block';
+        return;
       }
+
+      const frameHtml = frameItems.map(item => `
+        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
+          <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
+        </div>
+      `).join('');
+      const charHtml = characters.map(char => {
+        const hasImage = !!char.reference_image;
+        const warningStyle = hasImage ? '' : 'background: #fef2f2; border-left: 3px solid #ef4444;';
+        const nameStyle = hasImage ? 'color: #374151;' : 'color: #ef4444;';
+        const warningText = hasImage ? '' : '<span style="font-size: 10px; color: #ef4444; margin-left: 4px;">无参考图</span>';
+        return `
+          <div class="character-dropdown-item" data-character-name="${escapeHtml(char.name)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; ${warningStyle}">
+            ${hasImage ? `<img src="${escapeHtml(char.reference_image)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #fee2e2; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #ef4444;">!</div>'}
+            <span style="font-size: 12px; ${nameStyle}">${escapeHtml(char.name)}${warningText}</span>
+          </div>
+        `;
+      }).join('');
+      dropdown.innerHTML = frameHtml + charHtml;
+
+      dropdown.querySelectorAll('.shot-frame-mention-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const token = item.getAttribute('data-insert-token') || '';
+          insertTextAtCursorForImagePrompt(textarea, token + ' ');
+          hideCharacterDropdownForImagePrompt(nodeId, dropdownKey);
+        });
+        item.addEventListener('mouseenter', () => {
+          item.style.background = '#f8fafc';
+        });
+        item.addEventListener('mouseleave', () => {
+          item.style.background = '';
+        });
+      });
+
+      dropdown.querySelectorAll('.character-dropdown-item:not(.shot-frame-mention-item)').forEach(item => {
+        item.addEventListener('click', () => {
+          const charName = item.dataset.characterName;
+          insertCharacterAtCursorForImagePrompt(textarea, charName);
+          hideCharacterDropdownForImagePrompt(nodeId, dropdownKey);
+        });
+
+        item.addEventListener('mouseenter', () => {
+          item.style.background = item.style.borderLeft ? '#fef2f2' : '#f8fafc';
+        });
+        item.addEventListener('mouseleave', () => {
+          item.style.background = item.style.borderLeft ? '#fef2f2' : '';
+        });
+      });
+
+      dropdown.style.top = (textarea.offsetHeight) + 'px';
+      dropdown.style.left = '0';
+      dropdown.style.right = '0';
+      dropdown.style.display = 'block';
     }
 
     // 隐藏角色选择下拉框（图片提示词用）
@@ -4573,27 +4700,23 @@
       }
     }
 
-    // 在光标位置插入角色名（包裹在【【】】中）
-    function insertCharacterAtCursorForImagePrompt(textarea, charName) {
+    // 在光标位置插入文本。触发符（/ @ ＠ 、）已被 keydown/input 拦截剔除。
+    function insertTextAtCursorForImagePrompt(textarea, insertText) {
       const start = textarea.selectionStart;
       const end = textarea.selectionEnd;
       const value = textarea.value;
-      
-      // 触发符（/ @ ＠ 、）已被 keydown/input 拦截剔除，不会出现在文本中，直接在光标位置插入
       const before = value.substring(0, start);
       const after = value.substring(end);
-      const insertText = '【【' + charName + '】】';
-      const newValue = before + insertText + after;
-      
-      textarea.value = newValue;
-      
-      // 设置光标位置到插入的角色名之后
+      textarea.value = before + insertText + after;
       const newCursorPos = start + insertText.length;
       textarea.setSelectionRange(newCursorPos, newCursorPos);
       textarea.focus();
-      
-      // 手动触发 input 事件，以更新 node.data 和引用标签
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    // 在光标位置插入角色名（包裹在【【】】中）
+    function insertCharacterAtCursorForImagePrompt(textarea, charName) {
+      insertTextAtCursorForImagePrompt(textarea, '【【' + charName + '】】');
     }
 
     // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）

@@ -73,7 +73,11 @@
         }
         this[key] = file;
         if (file) {
-          const previewUrl = URL.createObjectURL(file);
+          // 浏览器 <img> 不解码 TIFF：tif 用 "TIF:文件名" 标记占位（模板渲染徽标），
+          // 提交时后端会把 tif 归一化为 PNG
+          const previewUrl = (window.isTiffFile && window.isTiffFile(file))
+            ? ('TIF:' + file.name)
+            : URL.createObjectURL(file);
           this.previews.splice(index - 1, 1, previewUrl);
         } else {
           this.previews.splice(index - 1, 1, null);
@@ -627,8 +631,7 @@
           this.videoStatusTimer = null;
         }
       },
-      downloadVideo(url, index, isEnhanced = false) {
-          // Check if WeChat browser
+      async downloadVideo(url, index, isEnhanced = false) {
           if (this.$root.isWechatBrowser()) {
             this.$root.showWechatGuideModal = true;
             return;
@@ -642,15 +645,12 @@
                         now.getMinutes().toString().padStart(2, '0');
           const prefix = isEnhanced ? 'ai_script_video_enhanced' : 'ai_script_video';
           const filename = `${prefix}_${dateStr}_${timeStr}_${index + 1}.mp4`;
-          const downloadUrl = buildDownloadUrl(url, filename);
-
-          const link = document.createElement('a');
-          link.href = downloadUrl;
-          link.download = filename;
-          link.target = '_blank';
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
+          try {
+            await downloadWithAuth(url, filename);
+          } catch (e) {
+            if (e && e.status === 401) return;
+            alert((e && e.message) || '下载失败');
+          }
         },
     },
     beforeUnmount() {
@@ -669,10 +669,14 @@
         <label class="label">上传图片 (最多5张)</label>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-top: 8px;">
           <div class="upload-card" v-for="slot in 5" :key="slot">
-            <input type="file" accept="image/*" :id="'script-image-' + slot" style="display:none" @change="e => onFileChange(e, slot)" />
+            <input type="file" accept="image/*,.tif,.tiff" :id="'script-image-' + slot" style="display:none" @change="e => onFileChange(e, slot)" />
             <label :for="'script-image-' + slot" class="upload-card-body" style="cursor: pointer; display: flex; align-items: center; justify-content: center; border: 1px dashed rgba(255,255,255,0.25); border-radius: 12px; background: rgba(16,24,48,0.85); height: 160px; position: relative; overflow: hidden; transition: border-color 0.2s ease, transform 0.2s ease;">
               <template v-if="previews[slot - 1]">
-                <img :src="previews[slot - 1]" :alt="'图片' + slot + '预览'" style="width: 100%; height: 100%; object-fit: cover;" />
+                <img v-if="previews[slot - 1].indexOf('TIF:') !== 0" :src="previews[slot - 1]" :alt="'图片' + slot + '预览'" style="width: 100%; height: 100%; object-fit: cover;" />
+                <div v-else style="width: 100%; height: 100%; background: #e5e7eb; display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden;">
+                  <span style="background: #4b5563; color: #fff; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px;">TIF</span>
+                  <span style="font-size: 12px; color: #374151; margin-top: 6px; max-width: 90%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ previews[slot - 1].slice(4) }}</span>
+                </div>
                 <div style="position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(180deg, transparent, rgba(0,0,0,0.6)); padding: 6px 10px; font-size: 12px; color: #fff; text-align: right;">点击重新上传</div>
               </template>
               <template v-else>

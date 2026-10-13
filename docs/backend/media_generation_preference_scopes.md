@@ -130,8 +130,10 @@ Marketing UI / 剧本智能体（`script_writer.html` 与 marketing agent 共用
 Storyboard UI：
 
 ```text
-本次请求 task_id → storyboard.config_json 模式字段 → storyboard_ui 模式偏好 → 首次兼容默认模型
+本次请求 task_id → storyboard.config_json 模式字段 → storyboard_ui 模式偏好 → 运行时默认模型（不落库）
 ```
+
+Storyboard UI 的读取（`GET /api/storyboard/media-preferences`，`_storyboard_media_preferences_sync`）自 2026-10-12 起**不落库**（`get_profile(initialize=False)`）：偏好表只存用户在界面上的显式选择（切下拉/人脸开关时的 PUT）。无偏好且 `config_json` 也无值的槽位返回 `null`，前端按 localStorage 记忆 → 目录性价比档（`track === 'value'`，59009cf3）兜底；**用户未做选择前系统不替用户持久化任何默认**。此前的默认 `initialize=True` 会在首次读取时把 `default_model` 解析结果（旧口径 sort_order 第一 = LTX2.3）写进 `user_preferences`，从此隐身模式/新浏览器都命中该记录，前端性价比档兜底被短路（事故：`world_id=12` 的 storyboard_ui 五槽位 2026-10-12 首次 GET 即固化 LTX2.3 等）。有记录但模型已下线/失效的槽位按无记录处理，不在此处重建。提交路径（`_storyboard_generation_snapshots_sync` / `_resolve_storyboard_generation_snapshot_sync`）遇到空槽位按 `_runtime_default_profile_sync`（目录性价比档优先）冻结进本次任务快照，同样不写偏好表。
 
 Storyboard CLI：
 
@@ -140,6 +142,8 @@ Storyboard CLI：
 ```
 
 已配置模型不存在、禁用、隐藏或不兼容时，偏好解析路径直接失败或在偏好界面回落并写入第一个兼容模型；只有从未配置过或已失效的槽位可以按场景目录性价比档（`config/model_catalog.py`）初始化，再回退 `sort_order`。直接生成 API 在请求已显式传入 `task_id` 时允许 `hidden=True` 的内部模型（例如相机控制 / 场景多角度使用的 `qwen-multi-angle`），但仍拒绝 disabled。已提交任务的可信快照同样允许模型后来变为 `hidden=True` 后继续执行，disabled 仍拒绝。
+
+默认模型解析（`MediaGenerationPreferenceService.default_model`）自 2026-09-16 起与模型列表接口同口径过滤**驱动不可用**的模型（`VideoDriverFactory.get_driver_availability`，如 Vidu Token 未配置），避免智能体/CLI 首次默认选中永远跑不通的模型（事故：storyboard_cli 参考视频默认解析为 vidu_q2，提交扣费后 worker 才失败退款）；驱动未注册的进程（单测/脚本）保持原不过滤行为。自 2026-10-12 起解析口径改为**目录性价比档优先**（按槽位映射 `config/model_catalog.py` 场景取 value 档，与前端 `pickRememberedTaskId` 同源、联动管理员热更新），无配置/无命中回退 `sort_order` 第一（历史行为）。「智能体模型偏好」面板在已保存值不在可用列表时展示警示条（橙色的 `.cli-media-pref-row-warning`）而非静默回落——下拉里显示的目录默认只是推荐替代，并未保存，重新选择保存后才生效。
 
 ## Storyboard 项目配置
 

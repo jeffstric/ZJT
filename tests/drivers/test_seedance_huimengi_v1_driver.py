@@ -40,6 +40,20 @@ if _req_mod is None or not hasattr(_req_mod, 'exceptions') or \
 sys.modules['utils.sentry_util'] = MagicMock()
 sys.modules['utils.image_upload_utils'] = MagicMock()
 
+# 参考音频预算准备依赖 ffprobe/ffmpeg 子进程与文件系统，单测默认直通放行
+# （真实的均分配额/截断/清理逻辑在 tests/utils/test_audio_duration_util.py 覆盖）。
+from task.visual_drivers import seedance_huimengi_v1_driver as _huimengi_drv_mod  # noqa: E402
+
+
+def _passthrough_reference_audio_budget(paths, max_total_seconds, **kwargs):
+    return [
+        {"source": p, "path": p, "cleanup_path": None, "duration": None, "limit_seconds": 0.0}
+        for p in paths
+    ]
+
+
+_huimengi_drv_mod.prepare_reference_audio_budget_sync = _passthrough_reference_audio_budget
+
 
 def _ensure_real_requests():
     """确保 requests 是真实模块（而非被其他测试 mock 成的 MagicMock）。
@@ -396,6 +410,40 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertNotIn('reference_images', params)
         self.assertNotIn('image_url', params)
 
+    def test_reference_audio_budget_applied(self):
+        """r2v 参考音频预算：2.0 系列传 15.0；超配额音频上传截断后的 prepared 路径并清理临时文件"""
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = self._driver()
+        budget_items = [
+            {"source": 'http://example.com/a.mp3', "path": '/tmp/trimmed.mp3',
+             "cleanup_path": '/tmp/trimmed.mp3', "duration": 20.0, "limit_seconds": 7.25},
+        ]
+        ai_tool = _make_ai_tool(prompt='预算测试', image_path=None, image_mode_declared=False,
+                                audio_path='http://example.com/a.mp3')
+        with patch.object(drv_mod, 'prepare_reference_audio_budget_sync',
+                          return_value=budget_items) as mock_budget, \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/trimmed.mp3', None)) as mock_upload, \
+             patch.object(drv_mod, 'cleanup_prepared_reference_audio') as mock_cleanup:
+            req = driver.build_create_request(ai_tool)
+
+        mock_budget.assert_called_once()
+        self.assertEqual(mock_budget.call_args[0][1], 15.0)
+        self.assertIn('trimmed', str(mock_upload.call_args[0][0]))
+        self.assertEqual(req['json']['params']['reference_audios'],
+                         ['http://cdn.example.com/trimmed.mp3'])
+        mock_cleanup.assert_called_once_with(budget_items)
+
+    def test_seedance_25_overrides_budget(self):
+        """Seedance 2.5 子类：总预算 30s、条数上限 10"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import (
+            Seedance25HuimengiV1Driver, SeedanceHuimengiV1Driver,
+        )
+        self.assertEqual(SeedanceHuimengiV1Driver.R2V_AUDIO_MAX_TOTAL_SECONDS, 15.0)
+        self.assertEqual(SeedanceHuimengiV1Driver.R2V_AUDIO_MAX_COUNT, 3)
+        self.assertEqual(Seedance25HuimengiV1Driver.R2V_AUDIO_MAX_TOTAL_SECONDS, 30.0)
+        self.assertEqual(Seedance25HuimengiV1Driver.R2V_AUDIO_MAX_COUNT, 10)
+
     def test_human_review_passthrough(self):
         """human_review 从 extra_config 透传到 params.human_review"""
         driver = self._driver()
@@ -411,6 +459,43 @@ class TestBuildCreateRequest(unittest.TestCase):
         """extra_config 未声明 human_review 时，params 不含该字段"""
         driver = self._driver()
         ai_tool = _make_ai_tool(prompt='无审核', image_path=None)
+        req = driver.build_create_request(ai_tool)
+        self.assertNotIn('human_review', req['json']['params'])
+
+    def test_human_review_injected_by_face_mask(self):
+        """未声明 human_review 但 enable_face_mask=true：驱动侧补注 true
+
+        覆盖跨实现方重试场景：提交时按默认实现方（volcengine）固化 extra_config，
+        失败重试切换到本网关后字段缺失，含人脸素材否则会被网关内容审核拒绝。
+        """
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='真人审核兜底',
+            image_path=None,
+            extra_config={'enable_face_mask': True}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertIs(req['json']['params']['human_review'], True)
+
+    def test_human_review_explicit_false_not_overridden(self):
+        """显式 human_review=false 优先于 enable_face_mask=true，不被覆盖"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='显式关闭',
+            image_path=None,
+            extra_config={'human_review': False, 'enable_face_mask': True}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertIs(req['json']['params']['human_review'], False)
+
+    def test_human_review_face_mask_false_not_injected(self):
+        """enable_face_mask=false（用户未勾选）时不注入 human_review"""
+        driver = self._driver()
+        ai_tool = _make_ai_tool(
+            prompt='未勾选遮盖',
+            image_path=None,
+            extra_config={'enable_face_mask': False}
+        )
         req = driver.build_create_request(ai_tool)
         self.assertNotIn('human_review', req['json']['params'])
 

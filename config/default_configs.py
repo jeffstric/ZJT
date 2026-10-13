@@ -152,7 +152,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'timeout.request_timeout',
         'value_type': 'int',
-        'description': '请求超时时间（毫秒）',
+        'description': '单次 HTTP 请求超时（秒）。库存值大于等于 1000 仍按毫秒换算，例如 10000 等于 10 秒',
         'editable': True,
         'is_sensitive': False
     },
@@ -446,6 +446,17 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': True,
         'quick_config': True,
         'user_module_grantable': True
+    },
+
+    # ==================== 火山引擎语音合成（豆包语音） ====================
+    # 新版控制台单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
+    {
+        'key': 'volcengine_tts.api_key',
+        'value_type': 'string',
+        'description': '火山引擎语音合成 API Key（豆包语音控制台，TTS 快速合成+音色库）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
     },
 
     # ==================== 火山引擎海外版配置 ====================
@@ -961,6 +972,51 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'llm.mimo.base_url',
         'value_type': 'string',
         'description': '小米 MiMo API 基础URL（默认 https://token-plan-cn.xiaomimimo.com/v1）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== 信息采集供应商（article-to-video 图文抓取）====================
+    {
+        'key': 'article_fetch.tikhub_api_key',
+        'value_type': 'string',
+        'description': 'TikHub API Key（信息采集供应商：公众号受限文章/评论/小红书笔记，可选）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'article_fetch.wechat_provider',
+        'value_type': 'string',
+        'description': '公众号抓取通道：空=跟随key状态/self=仅自研/auto=自研优先TikHub兜底/tikhub=全部TikHub',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'article_fetch.xhs_provider',
+        'value_type': 'string',
+        'description': '小红书抓取通道：空=关闭（默认）/tikhub=启用',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== 智谱 BigModel 国内站配置 ====================
+    {
+        'key': 'llm.glmcn.api_key',
+        'value_type': 'string',
+        'description': '智谱 BigModel API Key（国内站 open.bigmodel.cn）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'llm.glmcn.base_url',
+        'value_type': 'string',
+        'description': '智谱 BigModel API 基础URL（默认 https://open.bigmodel.cn/api/paas/v4）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True

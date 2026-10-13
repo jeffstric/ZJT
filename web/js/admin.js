@@ -4,10 +4,11 @@
 
 // ==================== 服务商配置定义 ====================
 
-// 生图/生视频/其他合并为「多媒体」，共两类
+// 生图/生视频/其他合并为「多媒体」，信息采集（可选第三方抓取通道）单独一类
 const CATEGORY_LABELS = {
     llm: '大模型',
-    multimedia: '多媒体'
+    multimedia: '多媒体',
+    article_fetch: '信息采集'
 };
 
 /**
@@ -173,6 +174,25 @@ const PROVIDER_DEFINITIONS = [
         configKeyMap: { api_key: 'llm.mimo.api_key', base_url: 'llm.mimo.base_url' },
         testEndpoint: null
     },
+    {
+        id: 'glmcn',
+        nameKey: 'provider_glmcn_name',
+        descKey: 'provider_glmcn_desc',
+        category: 'llm',
+        icon: '🤖',
+        docUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+        lazyRecommended: false,
+        displayOrder: 9,
+        baseName: 'glmcn',
+        isOfficialAPI: false,
+        impactsKey: 'provider_glmcn_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_glmcn', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://open.bigmodel.cn/api/paas/v4', required: false, helpTextKey: 'field_base_url_placeholder' }
+        ],
+        configKeyMap: { api_key: 'llm.glmcn.api_key', base_url: 'llm.glmcn.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 生图/生视频共享键供应商 =====
     // 多米、火山引擎（多媒体）、火山引擎海外版、阿里云百炼（多媒体）、聚合站 1-5 的生图与生视频共用同一配置键，
@@ -232,6 +252,27 @@ const PROVIDER_DEFINITIONS = [
             { id: 'base_url', label: 'Base URL', type: 'url', placeholder: 'https://ark.ap-southeast.bytepluses.com', required: false }
         ],
         configKeyMap: { api_key: 'volcengine_oversea.api_key', base_url: 'volcengine_oversea.base_url' },
+        testEndpoint: null
+    },
+    {
+        // 火山引擎语音合成（豆包语音）：TTS 快速合成 + 音色库。
+        // 新版控制台为单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
+        id: 'huoshan_tts',
+        nameKey: 'provider_huoshan_tts_name',
+        descKey: 'provider_huoshan_tts_desc',
+        category: 'multimedia',
+        icon: '🔊',
+        docUrl: 'https://console.volcengine.com/speech/new/setting/apikeys?projectName=default',
+        docUrlLabelKey: 'provider_huoshan_tts_doc_label',
+        lazyRecommended: false,
+        displayOrder: 2,
+        baseName: 'huoshan_tts',
+        isOfficialAPI: false,
+        impactsKey: 'provider_huoshan_tts_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_huoshan_tts', required: true, helpTextKey: 'field_api_key_help_huoshan_tts' }
+        ],
+        configKeyMap: { api_key: 'volcengine_tts.api_key' },
         testEndpoint: null
     },
     {
@@ -440,6 +481,46 @@ const PROVIDER_DEFINITIONS = [
         ],
         configKeyMap: { token: 'vidu.token' },
         testEndpoint: null
+    },
+
+    // ===== 信息采集供应商（企业版专属，可选）=====
+    // 图文转视频的第三方抓取通道：不配置时公众号走自研免登录通道（免费）；
+    // 小红书抓取、受限文章兜底、评论抓取需要配置本供应商（TikHub 按次计费约 $0.01/次）。
+    // 图文转视频整体为企业版专属（开源/工作室不支持），社区版禁用本配置卡片
+    {
+        id: 'tikhub',
+        nameKey: 'provider_tikhub_name',
+        descKey: 'provider_tikhub_desc',
+        category: 'article_fetch',
+        icon: '📥',
+        docUrl: 'https://tikhub.io',
+        lazyRecommended: false,
+        displayOrder: 30,
+        baseName: 'tikhub',
+        isOfficialAPI: false,
+        commercialOnly: true,
+        impactsKey: 'provider_tikhub_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_tikhub', required: true, helpTextKey: 'field_api_key_help_tikhub' },
+            { id: 'wechat_provider', labelKey: 'field_wechat_provider_label', type: 'select', required: false, helpTextKey: 'field_wechat_provider_help',
+              options: [
+                  { value: '', labelKey: 'option_wechat_provider_default' },
+                  { value: 'auto', labelKey: 'option_wechat_provider_auto' },
+                  { value: 'tikhub', labelKey: 'option_wechat_provider_tikhub' },
+                  { value: 'self', labelKey: 'option_wechat_provider_self' }
+              ] },
+            { id: 'xhs_provider', labelKey: 'field_xhs_provider_label', type: 'select', required: false, helpTextKey: 'field_xhs_provider_help',
+              options: [
+                  { value: '', labelKey: 'option_xhs_provider_off' },
+                  { value: 'tikhub', labelKey: 'option_xhs_provider_tikhub' }
+              ] }
+        ],
+        configKeyMap: {
+            api_key: 'article_fetch.tikhub_api_key',
+            wechat_provider: 'article_fetch.wechat_provider',
+            xhs_provider: 'article_fetch.xhs_provider'
+        },
+        testEndpoint: null
     }
 ];
 
@@ -491,6 +572,9 @@ const AdminApp = {
             // 仪表盘数据
             dashboard: {
                 totalUsers: 0,
+                // 激活用户数与上限（maxActiveUsers 为 null 表示不限，∞ 展示）
+                activeUsers: null,
+                maxActiveUsers: null,
                 activeWorkflows3d: 0,
                 loading: true,
                 monthlyActiveUsers: {
@@ -558,6 +642,15 @@ const AdminApp = {
                 currentPower: 0,
                 amount: 0,
                 reason: '',
+                loading: false
+            },
+
+            // 用户备注编辑弹窗
+            remarkModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                remark: '',
                 loading: false
             },
 
@@ -857,6 +950,7 @@ const AdminApp = {
                 enforcement_mode: '',
                 capabilities: null,
                 license: null,
+                user_quota: null,
                 credential_configured: false,
             },
             // 激活表单输入框（激活成功后清空，失败时保留方便重试）。
@@ -938,6 +1032,19 @@ const AdminApp = {
     computed: {
         totalPages() {
             return Math.ceil(this.users.total / this.users.pageSize);
+        },
+
+        // 激活用户数超过上限时在仪表盘顶部展示警告条：未激活商业版本（社区版
+        // 上限 1 人）存量超限、或许可证过期回落社区口径后存量仍超上限。
+        // 注意用严格大于：等于上限是"满员"（新增已被注册/启用卡点拦截，
+        // 存量合法），只有超过上限才需要购买商业版或禁用用户。
+        // maxActiveUsers 为 null（企业Pro/显式不限）时不警告。
+        showActiveUsersQuotaWarning() {
+            return (
+                this.dashboard.maxActiveUsers != null &&
+                this.dashboard.activeUsers != null &&
+                this.dashboard.activeUsers > this.dashboard.maxActiveUsers
+            );
         },
 
         annTotalPages() {
@@ -1148,14 +1255,16 @@ const AdminApp = {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm'),
-                multimedia: this.t('category_multimedia')
+                multimedia: this.t('category_multimedia'),
+                article_fetch: this.t('category_article_fetch')
             };
         },
         categoryDescriptions() {
             const _ = this.locale;
             return {
                 llm: this.t('category_llm_desc'),
-                multimedia: this.t('category_multimedia_desc')
+                multimedia: this.t('category_multimedia_desc'),
+                article_fetch: this.t('category_article_fetch_desc')
             };
         },
 
@@ -1307,6 +1416,8 @@ const AdminApp = {
                     
                     // 加载仪表盘数据
                     this.dashboard.totalUsers = response.data.data.total_users;
+                    this.dashboard.activeUsers = response.data.data.active_users ?? null;
+                    this.dashboard.maxActiveUsers = response.data.data.max_active_users ?? null;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     this.dashboard.loading = false;
 
@@ -1407,10 +1518,20 @@ const AdminApp = {
                     enforcement_mode: '',
                     capabilities: null,
                     license: null,
+                    user_quota: null,
                     credential_configured: false,
                 };
                 this.applyBrandingAvailability(false);
             }
+        },
+
+        // 许可证 edition 的展示名（i18n key：license_edition_<value>）。
+        // 未知值原样展示，便于排查新 edition 未同步 i18n 的情况。
+        editionLabel(edition) {
+            if (!edition) return '-';
+            const key = 'license_edition_' + edition;
+            const translated = this.t(key);
+            return translated === key ? edition : translated;
         },
 
         // 统一把后端 status 响应应用到本地：同时刷新状态卡片和品牌可用性，
@@ -1423,6 +1544,7 @@ const AdminApp = {
                 enforcement_mode: data?.enforcement_mode || '',
                 capabilities: data?.capabilities || null,
                 license: data?.license || null,
+                user_quota: data?.user_quota || null,
                 credential_configured: Boolean(data?.credential_configured),
             };
             this.applyBrandingAvailability(data?.capabilities?.branding);
@@ -1549,10 +1671,12 @@ const AdminApp = {
                     this.applyLicenseStatus(response.data.data);
                     // 成功后清空输入框（敏感信息不应在前端残留）。
                     this.activateTokenInput = '';
-                    // 按 edition 区分提示，避免 studio 用户以为激活失败。
+                    // 按 edition 区分提示，避免工作室/企业Lite 用户以为激活失败。
                     const edition = response.data.data?.license?.edition;
-                    if (edition === 'studio') {
+                    if (edition === 'studio' || edition === 'studio_lite') {
                         this.showToast(this.t('license_activate_success_studio'), 'warning');
+                    } else if (edition === 'enterprise_lite') {
+                        this.showToast(this.t('license_activate_success_enterprise_lite'), 'warning');
                     } else {
                         this.showToast(this.t('license_activate_success_enterprise'), 'success');
                     }
@@ -1899,6 +2023,8 @@ const AdminApp = {
                     );
                     this.applyEnterpriseStatus(response.data.data.enterprise);
                     this.dashboard.totalUsers = response.data.data.total_users;
+                    this.dashboard.activeUsers = response.data.data.active_users ?? null;
+                    this.dashboard.maxActiveUsers = response.data.data.max_active_users ?? null;
                     this.dashboard.activeWorkflows3d = response.data.data.active_workflows_3d;
                     // dashboard 的 features.branding 由后端动态派生，这里同步一次
                     this.userModulesAvailable = Boolean(
@@ -2623,6 +2749,49 @@ const AdminApp = {
                 this.showToast(detail, 'error');
             } finally {
                 this.powerModal.loading = false;
+            }
+        },
+
+        // 打开用户备注编辑弹窗
+        openRemarkModal(user) {
+            this.remarkModal.userId = user.user_id;
+            this.remarkModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
+            this.remarkModal.remark = user.remark || '';
+            this.remarkModal.loading = false;
+            this.remarkModal.show = true;
+        },
+
+        // 关闭用户备注编辑弹窗
+        closeRemarkModal() {
+            this.remarkModal.show = false;
+            this.remarkModal.userId = null;
+            this.remarkModal.userName = '';
+            this.remarkModal.remark = '';
+            this.remarkModal.loading = false;
+        },
+
+        // 保存用户备注（传空串即清除备注）
+        async saveUserRemark() {
+            this.remarkModal.loading = true;
+
+            try {
+                const response = await axios.put(
+                    `/api/admin/users/${this.remarkModal.userId}/remark`,
+                    { remark: this.remarkModal.remark.trim() },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_remark_saved'), 'success');
+                    this.closeRemarkModal();
+                    this.loadUsers();
+                }
+            } catch (error) {
+                console.error('Save user remark failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_operation_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.remarkModal.loading = false;
             }
         },
 
@@ -3653,8 +3822,9 @@ const AdminApp = {
         },
 
         // 密钥类字段判定：这类字段默认覆盖毛玻璃遮罩，点击眼睛按钮才显示完整密钥
+        // （app_key/access_key 为火山语音合成凭证，同属敏感密钥）
         isSecretField(field) {
-            return !field.readOnly && (field.id === 'api_key' || field.id === 'token');
+            return !field.readOnly && ['api_key', 'token', 'app_key', 'access_key'].includes(field.id);
         },
 
         // 密钥字段是否应自动上玻璃遮罩：仅当值来自已保存配置（与打开弹窗时加载的原始值一致，
@@ -3689,13 +3859,13 @@ const AdminApp = {
             delete this.quickConfigModal.secretRevealed[this.secretStateKey(providerId, fieldId)];
         },
 
-        // 判断服务商"密钥"（api_key/token 必填字段）是否有值，
+        // 判断服务商"密钥"（api_key/token/app_key/access_key 等必填字段）是否有值，
         // 与 openQuickConfigModal 的自动选中规则互为正反：打开弹窗时必填字段有值才自动选中，
         // 保存后密钥为空则撤销选中
         isProviderKeyFilled(providerId) {
             const provider = PROVIDER_DEFINITIONS.find(p => p.id === providerId);
             if (!provider) return true;
-            const keyField = provider.fields.find(f => f.required && (f.id === 'api_key' || f.id === 'token'))
+            const keyField = provider.fields.find(f => f.required && ['api_key', 'token', 'app_key', 'access_key'].includes(f.id))
                 || provider.fields.find(f => f.required && !f.readOnly);
             if (!keyField) return true;
             return String(this.getFormField(providerId, keyField.id) || '').trim() !== '';

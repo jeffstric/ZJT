@@ -1,6 +1,8 @@
 // ============================
 // text_to_speech_node.js - 文字转语音节点
 // 使用 createNodeBase 基类工厂
+// 引擎：voice_library=火山音色库快速合成（扣算力，秒级）；
+//       clone=参考音频克隆 IndexTTS（免费，异步轮询，原有链路）
 // ============================
 
 (function() {
@@ -9,11 +11,19 @@
     { direction: 'output', titleI18nKey: 'tts_output_port' }
   ];
 
+  function tr(key, fallback) {
+    return window.t ? window.t(key) : fallback;
+  }
+
   function createTextToSpeechNode(opts) {
     return createNodeBase({
       type: 'text_to_speech',
-      title: function() { return window.t ? window.t('tts_title') : '文字转语音'; },
+      title: function() { return tr('tts_title', '文字转语音'); },
       defaultData: {
+        engine: 'voice_library',
+        voiceId: null,
+        voiceName: '',
+        speedRatio: 1.0,
         text: '',
         refAudioFile: null,
         refAudioUrl: '',
@@ -28,58 +38,90 @@
       ports: TTS_PORTS,
       width: 280,
       height: 250,
-      titleIcon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M12 2C13.1046 2 14 2.89543 14 4V12C14 13.1046 13.1046 14 12 14C10.8954 14 10 13.1046 10 12V4C10 2.89543 10.8954 2 12 2Z"/><path d="M17 10V12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12V10" stroke-linecap="round"/><path d="M12 17V21M12 21H8M12 21H16" stroke-linecap="round"/></svg>',
+      titleIcon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M12 2C13.1046 2 14 2.89543 14 4V12C14 13.1046 13.1046 14 12 14C10.8956 14 10 13.1046 10 12V4C10 2.89543 10.8956 2 12 2Z"/><path d="M17 10V12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12V10" stroke-linecap="round"/><path d="M12 17V21M12 21H8M12 21H16" stroke-linecap="round"/></svg>',
       bodyHtml: function() {
         return '<div class="field">' +
-          '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
-            '<div class="label" style="margin: 0;">' + (window.t ? window.t('tts_text_label') : '生成文本') + ' <span style="color: red;">*</span></div>' +
-            '<button class="mini-btn tts-text-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="' + (window.t ? window.t('script_expand_btn') : '放大编辑') + '">\u2922</button>' +
-          '</div>' +
-          '<textarea class="tts-text" rows="3" placeholder="' + (window.t ? window.t('tts_text_placeholder') : '输入要转换为语音的文本') + '"></textarea>' +
-        '</div>' +
-        '<div class="field">' +
-          '<div class="label">' + (window.t ? window.t('tts_ref_audio_label') : '参考音色音频（可选）') + '</div>' +
-          '<input class="tts-ref-audio" type="file" accept="audio/*" />' +
-          '<div class="tts-ref-preview" style="display:none; margin-top:4px;">' +
-            '<audio class="tts-ref-audio-player" controls style="width:100%; max-height:32px;"></audio>' +
-            '<button class="mini-btn tts-ref-clear" type="button" style="margin-top:4px;">' + (window.t ? window.t('tts_clear_btn') : '清除') + '</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="field">' +
-          '<div class="label">' + (window.t ? window.t('tts_emo_method_label') : '情感控制方式') + '</div>' +
-          '<select class="tts-emo-method">' +
-            '<option value="0">' + (window.t ? window.t('tts_emo_same_as_ref') : '与参考音频相同') + '</option>' +
-            '<option value="1">' + (window.t ? window.t('tts_emo_use_ref') : '使用情感参考音频') + '</option>' +
+          '<div class="label">' + tr('tts_engine_label', '合成引擎') + '</div>' +
+          '<select class="tts-engine">' +
+            '<option value="voice_library">' + tr('tts_engine_voice_library', '音色库合成（快速）') + '</option>' +
+            '<option value="clone">' + tr('tts_engine_clone', '参考音频克隆（免费）') + '</option>' +
           '</select>' +
         '</div>' +
-        '<div class="field tts-emo-ref-field" style="display:none;">' +
-          '<div class="label">' + (window.t ? window.t('tts_emo_ref_label') : '情感参考音频') + '</div>' +
-          '<input class="tts-emo-ref-audio" type="file" accept="audio/*" />' +
-          '<div class="tts-emo-ref-preview" style="display:none; margin-top:4px;">' +
-            '<audio class="tts-emo-ref-audio-player" controls style="width:100%; max-height:32px;"></audio>' +
-            '<button class="mini-btn tts-emo-ref-clear" type="button" style="margin-top:4px;">' + (window.t ? window.t('tts_clear_btn') : '清除') + '</button>' +
+        '<div class="field">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
+            '<div class="label" style="margin: 0;">' + tr('tts_text_label', '生成文本') + ' <span style="color: red;">*</span></div>' +
+            '<button class="mini-btn tts-text-expand-btn" type="button" style="font-size: 11px; padding: 4px 8px;" title="' + tr('script_expand_btn', '放大编辑') + '">\u2922</button>' +
+          '</div>' +
+          '<textarea class="tts-text" rows="3" placeholder="' + tr('tts_text_placeholder', '输入要转换为语音的文本') + '"></textarea>' +
+        '</div>' +
+        '<div class="field tts-voice-field">' +
+          '<div class="label">' + tr('tts_voice_label', '选择音色') + ' <span style="color: red;">*</span></div>' +
+          '<div style="display:flex; gap:6px; align-items:center;">' +
+            '<select class="tts-voice-select" style="flex:1;"><option value="">' + tr('tts_voice_loading', '加载中...') + '</option></select>' +
+            '<button class="mini-btn tts-voice-preview-btn" type="button" style="font-size: 11px; padding: 4px 8px; flex-shrink:0;">▶</button>' +
+          '</div>' +
+          '<audio class="tts-voice-preview-audio" controls style="width:100%; max-height:32px; display:none; margin-top:4px;"></audio>' +
+          '<div class="tts-voice-meta gen-meta" style="display:none; margin-top:4px;"></div>' +
+        '</div>' +
+        '<div class="field tts-speed-field">' +
+          '<div class="label">' + tr('tts_speed_label', '语速') + ' (<span class="tts-speed-value">1.0</span>x)</div>' +
+          '<input type="range" class="tts-speed" min="0.5" max="2" step="0.1" value="1.0" style="width:100%;" />' +
+        '</div>' +
+        '<div class="tts-clone-fields">' +
+          '<div class="field">' +
+            '<div class="label">' + tr('tts_ref_audio_label', '参考音色音频（可选）') + '</div>' +
+            '<input class="tts-ref-audio" type="file" accept="audio/*" />' +
+            '<div class="tts-ref-preview" style="display:none; margin-top:4px;">' +
+              '<audio class="tts-ref-audio-player" controls style="width:100%; max-height:32px;"></audio>' +
+              '<button class="mini-btn tts-ref-clear" type="button" style="margin-top:4px;">' + tr('tts_clear_btn', '清除') + '</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="field">' +
+            '<div class="label">' + tr('tts_emo_method_label', '情感控制方式') + '</div>' +
+            '<select class="tts-emo-method">' +
+              '<option value="0">' + tr('tts_emo_same_as_ref', '与参考音频相同') + '</option>' +
+              '<option value="1">' + tr('tts_emo_use_ref', '使用情感参考音频') + '</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="field tts-emo-ref-field" style="display:none;">' +
+            '<div class="label">' + tr('tts_emo_ref_label', '情感参考音频') + '</div>' +
+            '<input class="tts-emo-ref-audio" type="file" accept="audio/*" />' +
+            '<div class="tts-emo-ref-preview" style="display:none; margin-top:4px;">' +
+              '<audio class="tts-emo-ref-audio-player" controls style="width:100%; max-height:32px;"></audio>' +
+              '<button class="mini-btn tts-emo-ref-clear" type="button" style="margin-top:4px;">' + tr('tts_clear_btn', '清除') + '</button>' +
+            '</div>' +
+          '</div>' +
+          '<div class="field tts-emo-weight-field" style="display:none;">' +
+            '<div class="label">' + tr('tts_emo_weight_label', '情感权重') + ' (<span class="tts-emo-weight-value">1.0</span>)</div>' +
+            '<input type="range" class="tts-emo-weight" min="0" max="1.6" step="0.1" value="1.0" style="width:100%;" />' +
+            '<div class="gen-meta" style="margin-top:4px;">' + tr('tts_emo_weight_hint', '调整情感的强度，0为无情感，1.6为最强情感') + '</div>' +
           '</div>' +
         '</div>' +
-        '<div class="field tts-emo-weight-field" style="display:none;">' +
-          '<div class="label">' + (window.t ? window.t('tts_emo_weight_label') : '情感权重') + ' (<span class="tts-emo-weight-value">1.0</span>)</div>' +
-          '<input type="range" class="tts-emo-weight" min="0" max="1.6" step="0.1" value="1.0" style="width:100%;" />' +
-          '<div class="gen-meta" style="margin-top:4px;">' + (window.t ? window.t('tts_emo_weight_hint') : '调整情感的强度，0为无情感，1.6为最强情感') + '</div>' +
-        '</div>' +
         '<div class="field">' +
-          '<button class="gen-btn tts-generate-btn" type="button">' + (window.t ? window.t('tts_generate_btn') : '生成语音') + '</button>' +
+          '<button class="gen-btn tts-generate-btn" type="button">' + tr('tts_generate_btn', '生成语音') + '</button>' +
           '<div class="gen-meta tts-status" style="display:none;"></div>' +
         '</div>' +
         '<div class="field tts-result-field" style="display:none;">' +
-          '<div class="label">' + (window.t ? window.t('tts_result_label') : '生成结果') + '</div>' +
+          '<div class="label">' + tr('tts_result_label', '生成结果') + '</div>' +
           '<audio class="tts-result-audio" controls style="width:100%; margin-bottom:8px;"></audio>' +
           '<div style="display:flex; gap:8px;">' +
-            '<button class="mini-btn tts-download-btn" type="button">' + (window.t ? window.t('tts_download_btn') : '下载音频') + '</button>' +
+            '<button class="mini-btn tts-download-btn" type="button">' + tr('tts_download_btn', '下载音频') + '</button>' +
           '</div>' +
         '</div>';
       },
       onCreated: function(node, el) {
+        var engineEl = el.querySelector('.tts-engine');
         var textEl = el.querySelector('.tts-text');
         var textExpandBtn = el.querySelector('.tts-text-expand-btn');
+        var voiceField = el.querySelector('.tts-voice-field');
+        var voiceSelectEl = el.querySelector('.tts-voice-select');
+        var voicePreviewBtn = el.querySelector('.tts-voice-preview-btn');
+        var voicePreviewAudio = el.querySelector('.tts-voice-preview-audio');
+        var voiceMetaEl = el.querySelector('.tts-voice-meta');
+        var speedField = el.querySelector('.tts-speed-field');
+        var speedEl = el.querySelector('.tts-speed');
+        var speedValueEl = el.querySelector('.tts-speed-value');
+        var cloneFields = el.querySelector('.tts-clone-fields');
         var refAudioEl = el.querySelector('.tts-ref-audio');
         var refPreviewEl = el.querySelector('.tts-ref-preview');
         var refAudioPlayer = el.querySelector('.tts-ref-audio-player');
@@ -99,17 +141,104 @@
         var resultAudio = el.querySelector('.tts-result-audio');
         var downloadBtn = el.querySelector('.tts-download-btn');
 
+        // 节点级音色缓存（voices + 计价档位）
+        var voiceOptions = [];
+        var powerTiers = [];
+
+        function applyEngineVisibility() {
+          var isLibrary = node.data.engine === 'voice_library';
+          if (voiceField) voiceField.style.display = isLibrary ? 'block' : 'none';
+          if (speedField) speedField.style.display = isLibrary ? 'block' : 'none';
+          if (cloneFields) cloneFields.style.display = isLibrary ? 'none' : 'block';
+        }
+
+        function updateVoiceMeta() {
+          if (!voiceMetaEl) return;
+          var voice = voiceOptions.find(function(v) { return v.id === node.data.voiceId; });
+          if (!voice || !node.data.text || !node.data.text.trim()) {
+            voiceMetaEl.style.display = 'none';
+            return;
+          }
+          var power = window.VoiceLibraryApi
+            ? window.VoiceLibraryApi.estimatePower(node.data.text.trim().length, powerTiers)
+            : 0;
+          if (power > 0) {
+            voiceMetaEl.style.display = 'block';
+            voiceMetaEl.textContent = tr('tts_estimated_cost', '预计消耗 {power} 算力').replace('{power}', power);
+          } else {
+            voiceMetaEl.style.display = 'none';
+          }
+        }
+
+        async function loadVoices() {
+          if (!window.VoiceLibraryApi) return;
+          try {
+            var data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
+            voiceOptions = data.voices || [];
+            powerTiers = data.power_tiers || [];
+            var esc = window.escapeHtml || function(s) { return String(s == null ? '' : s); };
+            voiceSelectEl.innerHTML = '<option value="">' + esc(tr('tts_voice_placeholder', '请选择音色')) + '</option>' +
+              voiceOptions.map(function(v) {
+                return '<option value="' + v.id + '">' + esc(v.name) + '</option>';
+              }).join('');
+            if (node.data.voiceId) voiceSelectEl.value = String(node.data.voiceId);
+          } catch (e) {
+            voiceSelectEl.innerHTML = '<option value="">' +
+              esc2(tr('tts_voice_load_failed', '音色库加载失败')) + '</option>';
+          }
+        }
+
+        function esc2(s) { return window.escapeHtml ? window.escapeHtml(s) : String(s); }
+
+        // 引擎切换
+        engineEl.addEventListener('change', function() {
+          node.data.engine = engineEl.value;
+          applyEngineVisibility();
+        });
+
         // 文本输入
         textEl.addEventListener('input', function() {
           node.data.text = textEl.value;
+          updateVoiceMeta();
         });
 
         // 文本放大按钮
         textExpandBtn.addEventListener('click', function(e) {
           e.stopPropagation();
-          showPromptExpandModal(textEl, window.t ? window.t('tts_text_label') : '生成文本', function(newValue) {
+          showPromptExpandModal(textEl, tr('tts_text_label', '生成文本'), function(newValue) {
             node.data.text = newValue;
+            updateVoiceMeta();
           });
+        });
+
+        // 音色选择
+        voiceSelectEl.addEventListener('change', function() {
+          node.data.voiceId = voiceSelectEl.value ? parseInt(voiceSelectEl.value, 10) : null;
+          var voice = voiceOptions.find(function(v) { return v.id === node.data.voiceId; });
+          node.data.voiceName = voice ? voice.name : '';
+          updateVoiceMeta();
+        });
+
+        // 音色试听（服务端固定示例句 + 缓存，免费）
+        voicePreviewBtn.addEventListener('click', async function(e) {
+          e.stopPropagation();
+          if (!node.data.voiceId || !window.VoiceLibraryApi) return;
+          try {
+            var data = await window.VoiceLibraryApi.previewVoice(node.data.voiceId);
+            if (data.audio_url) {
+              voicePreviewAudio.src = data.audio_url;
+              voicePreviewAudio.style.display = 'block';
+              voicePreviewAudio.play();
+            }
+          } catch (err) {
+            showToast((err && err.message) || tr('tts_preview_failed', '试听失败'), 'error');
+          }
+        });
+
+        // 语速滑块
+        speedEl.addEventListener('input', function() {
+          node.data.speedRatio = parseFloat(speedEl.value);
+          speedValueEl.textContent = node.data.speedRatio.toFixed(1);
         });
 
         // 参考音色音频上传
@@ -168,26 +297,50 @@
           emoWeightValueEl.textContent = node.data.emoWeight.toFixed(1);
         });
 
-        // 生成语音按钮
-        generateBtn.addEventListener('click', async function(e) {
-          e.stopPropagation();
-
-          if (!node.data.text.trim()) {
-            showToast(window.t ? window.t('tts_no_text_error') : '请输入生成文本', 'warning');
+        // ============ 音色库（火山快速合成）路径 ============
+        async function generateWithVoiceLibrary() {
+          if (!node.data.voiceId) {
+            showToast(tr('tts_voice_required', '请先选择音色'), 'warning');
             return;
           }
-
-          var userId = getUserId();
-          if (!userId) {
-            showToast(window.t ? window.t('tts_login_required') : '请先登录后再使用语音生成功能', 'error');
-            return;
-          }
-
           try {
-            setBtnLoading(generateBtn, window.t ? window.t('tts_generating') : '生成中...');
+            setBtnLoading(generateBtn, tr('tts_generating', '生成中...'));
             statusEl.style.display = 'block';
             statusEl.style.color = '';
-            statusEl.textContent = window.t ? window.t('tts_generating_audio') : '正在生成音频...';
+            statusEl.textContent = tr('tts_generating_audio', '正在生成音频...');
+            resultField.style.display = 'none';
+
+            var data = await window.VoiceLibraryApi.synthesize({
+              text: node.data.text,
+              voice_id: node.data.voiceId,
+              speed_ratio: node.data.speedRatio || 1.0,
+            });
+
+            node.data.audioUrl = data.audio_url;
+            node.data.audioId = data.audio_id || null;
+            node.data.status = 'SUCCESS';
+            resultAudio.src = data.audio_url;
+            resultField.style.display = 'block';
+            statusEl.style.color = '#16a34a';
+            statusEl.textContent = tr('tts_generate_success', '生成成功！');
+            setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
+            showToast(tr('tts_generate_success', '语音生成成功'), 'success');
+          } catch (error) {
+            console.error('火山TTS生成失败:', error);
+            statusEl.style.color = '#dc2626';
+            statusEl.textContent = tr('tts_generate_failed', '生成失败') + ': ' + (error.message || '未知错误');
+            setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
+            showToast(tr('tts_generate_failed', '语音生成失败'), 'error');
+          }
+        }
+
+        // ============ 克隆（IndexTTS）路径（原有逻辑） ============
+        async function generateWithClone() {
+          try {
+            setBtnLoading(generateBtn, tr('tts_generating', '生成中...'));
+            statusEl.style.display = 'block';
+            statusEl.style.color = '';
+            statusEl.textContent = tr('tts_generating_audio', '正在生成音频...');
             resultField.style.display = 'none';
 
             var form = new FormData();
@@ -232,13 +385,37 @@
           } catch (error) {
             console.error('语音生成失败:', error);
             statusEl.style.color = '#dc2626';
-            statusEl.textContent = (window.t ? window.t('tts_generate_failed') : '生成失败') + ': ' + (error.message || '未知错误');
-            setBtnReady(generateBtn, window.t ? window.t('tts_generate_btn') : '生成语音');
-            showToast(window.t ? window.t('tts_generate_failed') : '语音生成失败', 'error');
+            statusEl.textContent = tr('tts_generate_failed', '生成失败') + ': ' + (error.message || '未知错误');
+            setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
+            showToast(tr('tts_generate_failed', '语音生成失败'), 'error');
+          }
+        }
+
+        var userId = null;
+
+        // 生成语音按钮
+        generateBtn.addEventListener('click', async function(e) {
+          e.stopPropagation();
+
+          if (!node.data.text.trim()) {
+            showToast(tr('tts_no_text_error', '请输入生成文本'), 'warning');
+            return;
+          }
+
+          userId = getUserId();
+          if (!userId) {
+            showToast(tr('tts_login_required', '请先登录后再使用语音生成功能'), 'error');
+            return;
+          }
+
+          if (node.data.engine === 'voice_library') {
+            await generateWithVoiceLibrary();
+          } else {
+            await generateWithClone();
           }
         });
 
-        // 轮询音频状态
+        // 轮询音频状态（仅克隆引擎使用）
         function pollAudioStatus(nodeId, node) {
           pollTaskStatus({
             statusUrl: '/api/audio-status/' + node.data.audioId,
@@ -249,29 +426,29 @@
                 resultField.style.display = 'block';
               }
               statusEl.style.color = '#16a34a';
-              statusEl.textContent = window.t ? window.t('tts_generate_success') : '生成成功！';
-              setBtnReady(generateBtn, window.t ? window.t('tts_generate_btn') : '生成语音');
-              showToast(window.t ? window.t('tts_generate_success') : '语音生成成功', 'success');
+              statusEl.textContent = tr('tts_generate_success', '生成成功！');
+              setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
+              showToast(tr('tts_generate_success', '语音生成成功'), 'success');
             },
             onFailed: function(payload) {
               statusEl.style.color = '#dc2626';
-              statusEl.textContent = (window.t ? window.t('tts_generate_failed') : '生成失败') + ': ' + (payload.reason || payload.message || '未知错误');
-              setBtnReady(generateBtn, window.t ? window.t('tts_generate_btn') : '生成语音');
-              showToast(window.t ? window.t('tts_generate_failed') : '语音生成失败', 'error');
+              statusEl.textContent = tr('tts_generate_failed', '生成失败') + ': ' + (payload.reason || payload.message || '未知错误');
+              setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
+              showToast(tr('tts_generate_failed', '语音生成失败'), 'error');
             },
             onTimeout: function() {
               statusEl.style.color = '#dc2626';
-              statusEl.textContent = window.t ? window.t('tts_generate_timeout_hint') : '等待超时，但音频仍在生成中。你可以通过刷新页面后查看是否生成成功。';
-              setBtnReady(generateBtn, window.t ? window.t('tts_generate_btn') : '生成语音');
+              statusEl.textContent = tr('tts_generate_timeout_hint', '等待超时，但音频仍在生成中。你可以通过刷新页面后查看是否生成成功。');
+              setBtnReady(generateBtn, tr('tts_generate_btn', '生成语音'));
             }
           });
         }
 
         // 下载按钮
-        downloadBtn.addEventListener('click', function(e) {
+        downloadBtn.addEventListener('click', async function(e) {
           e.stopPropagation();
           if (!node.data.audioUrl) {
-            showToast(window.t ? window.t('tts_no_audio_error') : '没有可下载的音频', 'error');
+            showToast(tr('tts_no_audio_error', '没有可下载的音频'), 'error');
             return;
           }
 
@@ -281,21 +458,23 @@
                         now.getDate().toString().padStart(2, '0');
           var timeStr = now.getHours().toString().padStart(2, '0') +
                         now.getMinutes().toString().padStart(2, '0');
-          var filename = 'audio_' + dateStr + '_' + timeStr + '.wav';
+          var ext = /\.(mp3|wav|aac|ogg|m4a)(\?|$)/i.exec(node.data.audioUrl || '') ?
+            /\.(mp3|wav|aac|ogg|m4a)(\?|$)/i.exec(node.data.audioUrl)[1] : 'mp3';
+          var filename = 'audio_' + dateStr + '_' + timeStr + '.' + ext;
 
-          if (node.data.audioUrl.startsWith('blob:')) {
-            var link = document.createElement('a');
-            link.href = node.data.audioUrl;
-            link.download = filename;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-          } else {
-            var downloadUrl = '/api/download?url=' + encodeURIComponent(node.data.audioUrl) + '&filename=' + encodeURIComponent(filename);
-            window.open(downloadUrl, '_blank');
+          try {
+            await window.downloadWithAuth(node.data.audioUrl, filename);
+            showToast(tr('tts_download_start', '开始下载'), 'success');
+          } catch (err) {
+            if (err && err.status === 401) return;
+            showToast((err && err.message) || '下载失败', 'error');
           }
-          showToast(window.t ? window.t('tts_download_start') : '开始下载', 'success');
         });
+
+        // 初始化
+        engineEl.value = node.data.engine || 'clone';
+        applyEngineVisibility();
+        loadVoices();
       }
     }, opts);
   }
@@ -303,6 +482,13 @@
   var createTextToSpeechNodeWithData = createNodeWithDataFactory(
     createTextToSpeechNode,
     function(el, node) {
+      var engineEl = el.querySelector('.tts-engine');
+      var voiceField = el.querySelector('.tts-voice-field');
+      var speedField = el.querySelector('.tts-speed-field');
+      var cloneFields = el.querySelector('.tts-clone-fields');
+      var voiceSelectEl = el.querySelector('.tts-voice-select');
+      var speedEl = el.querySelector('.tts-speed');
+      var speedValueEl = el.querySelector('.tts-speed-value');
       var textEl = el.querySelector('.tts-text');
       var emoMethodEl = el.querySelector('.tts-emo-method');
       var emoRefField = el.querySelector('.tts-emo-ref-field');
@@ -312,6 +498,29 @@
       var statusEl = el.querySelector('.tts-status');
       var resultField = el.querySelector('.tts-result-field');
       var resultAudio = el.querySelector('.tts-result-audio');
+
+      // 老节点（无 engine 字段）回退 clone，保持既有工作流行为不变
+      node.data.engine = node.data.engine === 'voice_library' ? 'voice_library' : 'clone';
+      if (engineEl) engineEl.value = node.data.engine;
+      var isLibrary = node.data.engine === 'voice_library';
+      if (voiceField) voiceField.style.display = isLibrary ? 'block' : 'none';
+      if (speedField) speedField.style.display = isLibrary ? 'block' : 'none';
+      if (cloneFields) cloneFields.style.display = isLibrary ? 'none' : 'block';
+
+      if (voiceSelectEl && node.data.voiceId) {
+        voiceSelectEl.value = String(node.data.voiceId);
+        // onCreated 里的 loadVoices 是异步的，选项填充晚于恢复回调时再补一次
+        setTimeout(function() {
+          if (voiceSelectEl.querySelector('option[value="' + node.data.voiceId + '"]')) {
+            voiceSelectEl.value = String(node.data.voiceId);
+          }
+        }, 1200);
+      }
+
+      if (speedEl && node.data.speedRatio !== undefined && node.data.speedRatio !== null) {
+        speedEl.value = node.data.speedRatio;
+        if (speedValueEl) speedValueEl.textContent = parseFloat(node.data.speedRatio).toFixed(1);
+      }
 
       if (textEl && node.data.text) {
         textEl.value = node.data.text;

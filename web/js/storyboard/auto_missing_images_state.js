@@ -6,6 +6,19 @@ const TARGET_PLAN_STATUSES = new Set(['pending', 'regenerate_pending', 'already_
 const RUNNING_ITEM_STATUSES = new Set(['submitted', 'running']);
 const PENDING_ITEM_STATUSES = new Set(['pending']);
 
+/**
+ * 与 web/js/storyboard/utils.js 的 t(key, fallback) 行为一致的本地实现。
+ * 本模块被 tests/js/test_storyboard_batch_image_regenerate.js 以 new Function 沙箱
+ * 执行源码(仅剥离 state.js 的 import),静态 import 会导致 SyntaxError,故内置等价实现。
+ */
+function t(key, fallback) {
+    if (typeof window !== 'undefined' && window.ZJTi18n && window.ZJTi18n.t) {
+        const translated = window.ZJTi18n.t(key);
+        if (translated !== key) return translated;
+    }
+    return fallback || key;
+}
+
 function emptyBatchState() {
     return {
         batchId: null,
@@ -103,7 +116,7 @@ export function applyLocationReferencePreflight(payload = {}) {
     state.autoImageLocationGate = {
         status,
         errorCode,
-        message: payload.message || payload.error || '场景参考图尚未就绪',
+        message: payload.message || payload.error || t('msg_location_refs_not_ready', '场景参考图尚未就绪'),
         blockers,
         affectedSceneIds: [...affected],
         retryAfterMs: Number(payload.retry_after_ms || payload.retryAfterMs || 0),
@@ -119,7 +132,9 @@ export function setAutoImageBatchSubmitting(submitting, existingPolicy = 'skip')
         submitting: Boolean(submitting),
         existingPolicy,
         message: submitting
-            ? (existingPolicy === 'regenerate' ? '正在提交重新生成任务' : '正在提交补全任务')
+            ? (existingPolicy === 'regenerate'
+                ? t('status_submitting_regeneration', '正在提交重新生成任务')
+                : t('status_submitting_autofill', '正在提交补全任务'))
             : '',
     };
 }
@@ -279,7 +294,7 @@ export function getAutoCompleteButtonViewModel() {
         const regenerating = batch.existingPolicy === 'regenerate';
         return {
             icon: 'loading',
-            label: regenerating ? '正在提交重新生成任务' : '正在提交补全任务',
+            label: regenerating ? t('status_submitting_regeneration', '正在提交重新生成任务') : t('status_submitting_autofill', '正在提交补全任务'),
             locked: true,
             disabled: false,
             busy: true,
@@ -290,7 +305,7 @@ export function getAutoCompleteButtonViewModel() {
         const regenerating = batch.existingPolicy === 'regenerate';
         return {
             icon: 'loading',
-            label: `${regenerating ? '重新生成中' : '补全中'} ${batch.completedCount}/${batch.totalCount || summary.missingCount}`,
+            label: `${regenerating ? t('status_regenerating', '重新生成中') : t('status_autofilling', '补全中')} ${batch.completedCount}/${batch.totalCount || summary.missingCount}`,
             locked: true,
             disabled: false,
             busy: true,
@@ -301,7 +316,7 @@ export function getAutoCompleteButtonViewModel() {
     if (gate.status === 'waiting') {
         return {
             icon: 'loading',
-            label: '等待场景参考图',
+            label: t('status_waiting_location_refs', '等待场景参考图'),
             locked: true,
             disabled: false,
             busy: true,
@@ -311,7 +326,7 @@ export function getAutoCompleteButtonViewModel() {
     if (gate.status === 'blocked' || gate.status === 'failed') {
         return {
             icon: 'wand',
-            label: '重新检查并生成',
+            label: t('btn_recheck_and_generate', '重新检查并生成'),
             locked: false,
             disabled: false,
             busy: false,
@@ -319,9 +334,11 @@ export function getAutoCompleteButtonViewModel() {
         };
     }
     if (summary.missingCount > 0) {
+        // 参考生视频模式下分镜图非必需，补全仅为可选增强（有图会作为主参考）
+        const isRefVideoMode = state.videoImageMode === 'multi_reference';
         return {
             icon: 'wand',
-            label: '自动补全未生成分镜',
+            label: isRefVideoMode ? t('label_complete_scene_images_optional', '补全分镜图（可选）') : t('btn_auto_fill_missing_scenes', '自动补全未生成分镜'),
             locked: false,
             disabled: false,
             busy: false,
@@ -330,7 +347,7 @@ export function getAutoCompleteButtonViewModel() {
     }
     return {
         icon: 'success',
-        label: '分镜已全部生成',
+        label: t('status_all_scenes_generated', '分镜已全部生成'),
         locked: false,
         disabled: true,
         busy: false,
@@ -339,19 +356,23 @@ export function getAutoCompleteButtonViewModel() {
 }
 
 export function getFirstFrameStatusLabel(status) {
+    // 参考生视频模式下分镜图非必需：缺失不视为「待生成」，避免误导用户必须补图
+    if (status === 'missing' && state.videoImageMode === 'multi_reference') {
+        return t('status_scene_image_exempt', '免分镜图');
+    }
     return {
-        missing: '待生成',
-        pending: '排队中',
-        waiting_location: '等场景参考',
-        blocked_location: '依赖场景缺图',
-        waiting_prev: '等前置分镜',
-        running: '生成中',
-        regenerating: '重新生成中',
-        regenerate_pending: '重新生成排队中',
-        regenerate_failed: '重新生成失败',
-        failed: '生成失败',
+        missing: t('status_first_frame_pending', '待生成'),
+        pending: t('status_queued', '排队中'),
+        waiting_location: t('status_waiting_location', '等场景参考'),
+        blocked_location: t('status_blocked_by_location_missing', '依赖场景缺图'),
+        waiting_prev: t('status_waiting_previous_scene', '等前置分镜'),
+        running: t('status_generating', '生成中'),
+        regenerating: t('status_regenerating', '重新生成中'),
+        regenerate_pending: t('status_regenerate_queued', '重新生成排队中'),
+        regenerate_failed: t('status_regenerate_failed', '重新生成失败'),
+        failed: t('msg_generate_failed', '生成失败'),
         ready: '',
-    }[status] || '待生成';
+    }[status] || t('status_first_frame_pending', '待生成');
 }
 
 export function readAutoImageBatchSession(storyboardId = state.storyboardId) {
