@@ -28,6 +28,7 @@ from .storyboard_grid_split_driver import StoryboardGridSplitPipelineDriver
 from .h3_prompt_optimize_driver import H3PromptOptimizePipelineDriver
 from .h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
+    parse_extra_config,
     resolve_h3_prompt_variant,
     resolve_h3_reference_asset_counts,
     split_media_paths,
@@ -287,6 +288,12 @@ class PipelineDriverFactory:
                 split_media_paths(getattr(ai_tool, "reference_images", None)),
                 original,
             )
+            # 分镜画面构成（生成分镜图所用提示词）：说话人绑定句的外观/站位原料。
+            # 提交方写入 extra_config.image_prompt_note（分镜直连路径）；批量/画布
+            # 链路暂不携带，优化指令自动降级用原文+图例锚定。
+            _note = str(parse_extra_config(ai_tool).get("image_prompt_note") or "").strip()
+            if _note:
+                params["image_prompt_note"] = _note
         if chat_model:
             params["chat_model"] = str(chat_model)
         if chat_vendor_id:

@@ -33,6 +33,7 @@ from config.constant import (
     TASK_TYPE_GENERATE_VIDEO, TASK_TYPE_GENERATE_AUDIO,
     TASK_STATUS_QUEUED, AI_TOOL_STATUS_PENDING, AI_AUDIO_STATUS_PENDING,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+    H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS,
     StoryboardAutoGenerateConstants,
     StoryboardAudioGenerateConstants,
     StoryboardDigitalHumanConstants,
@@ -96,6 +97,7 @@ from services.storyboard_frame_mention import (
     prompt_has_frame_mention,
     read_explicit_frame_url,
 )
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
 from services.storyboard_batch_operation_service import (
     StoryboardBatchOperationError,
@@ -4426,7 +4428,17 @@ async def generate_scene_video(
     # 不支持的模型（grok 等）collect 返回空，行为不变。在 generation_snapshot 解析后
     # 注入，不扰动 IMAGE_TO_VIDEO / REFERENCE_TO_VIDEO 模式判定；参考图全空回退
     # 文生视频（media_mode=TEXT_TO_VIDEO）时不注入。
-    if scene_characters_ctx is not None and collected_urls:
+    # KFRef 混合模型无对白镜头（原文无引号台词）不注入：音频槽只要有文件就会当成
+    # 成片声音，「保持相同音色」说明也不进优化原文；KFRef 驱动侧另有同一口径兜底。
+    kfr_skip_voice_injection = (
+        task_type == h3_keyframe_ref_task_id()
+        and not has_quoted_dialogue(prompt)
+    )
+    if (
+        scene_characters_ctx is not None
+        and collected_urls
+        and not kfr_skip_voice_injection
+    ):
         voice_items, _ = collect_character_voice_references(
             supports_voice_input=bool(getattr(config, 'supports_voice_input', False)),
             characters=scene_characters_ctx.get('characters'),
@@ -4578,6 +4590,15 @@ async def generate_scene_video(
         extra_payload['resolution'] = video_resolution
     if human_review:
         extra_payload['human_review'] = True
+    # KFRef 优化步骤的说话人绑定原料：分镜画面构成（生成分镜图所用提示词，
+    # 含人物站位/外观）。multi_reference 分支才会加载 scene_characters_ctx，
+    # 与 KFRef 的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
+    if task_type == h3_keyframe_ref_task_id() and scene_characters_ctx is not None:
+        _image_prompt_note = str(scene_characters_ctx.get('image_prompt') or '').strip()
+        if _image_prompt_note:
+            extra_payload['image_prompt_note'] = _image_prompt_note[
+                :H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS
+            ]
     extra_config = json.dumps(extra_payload, ensure_ascii=False)
 
     create_kwargs = dict(

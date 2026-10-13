@@ -296,6 +296,7 @@ class PipelineProcessor:
                     if not optimized:
                         optimized = original
                     from task.pipeline_drivers.h3_prompt_optimize_util import merge_h3_prompt_extra_config
+                    _dialogue_flag = result.get("has_dialogue")
                     updates["prompt"] = optimized
                     updates["extra_config"] = merge_h3_prompt_extra_config(
                         getattr(ai_tool, "extra_config", None),
@@ -303,6 +304,9 @@ class PipelineProcessor:
                         optimized_prompt=optimized,
                         variant=result.get("variant") or "",
                         fallback=bool(result.get("fallback")),
+                        # 保留 execute 已写入的 KFRef 台词标记；这里不带标记重merge
+                        # 会把 has_dialogue 抹成 null，导致驱动永远回退正则。
+                        has_dialogue=_dialogue_flag if isinstance(_dialogue_flag, bool) else None,
                     )
                     logger.info(
                         "Applied h3_prompt_optimize to ai_tool %s: fallback=%s variant=%s",

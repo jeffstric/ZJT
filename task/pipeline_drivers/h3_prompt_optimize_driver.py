@@ -15,6 +15,7 @@ from config.constant import (
     H3_PROMPT_OPTIMIZE_TEMPERATURE,
     H3_PROMPT_OPTIMIZE_TIMEOUT,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
     LLMModel,
 )
 from model import AITool, PipelineStep
@@ -22,6 +23,7 @@ from task.pipeline_drivers.base_pipeline_driver import BasePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     build_h3_optimize_user_message,
     merge_h3_prompt_extra_config,
+    parse_h3_optimize_kfref_output,
     resolve_h3_prompt_variant,
     strip_prompt_fences,
     validate_h3_optimized_prompt,
@@ -59,12 +61,13 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         except (TypeError, ValueError):
             duration = 5.0
 
-        optimized, fallback, error = await self._optimize(original, variant, duration, params)
+        optimized, fallback, error, dialogue_flag = await self._optimize(original, variant, duration, params)
         result_data = {
             "original_prompt": original,
             "optimized_prompt": optimized,
             "variant": variant,
             "fallback": fallback,
+            "has_dialogue": dialogue_flag,
             "error": error,
         }
         # 直接写回，避免阶段完成先把任务打回 PENDING、apply_results 尚未执行就提交。
@@ -77,6 +80,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                 optimized_prompt=optimized,
                 variant=variant,
                 fallback=fallback,
+                has_dialogue=dialogue_flag,
             )
             await asyncio.to_thread(
                 AIToolsModel.update,
@@ -91,25 +95,46 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             "result_data": result_data,
         }
 
-    async def _optimize(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> Tuple[str, bool, Optional[str]]:
+    async def _optimize(
+        self,
+        original: str,
+        variant: str,
+        duration: float,
+        step_params: Dict[str, Any],
+    ) -> Tuple[str, bool, Optional[str], Optional[bool]]:
+        """返回 (optimized, fallback, error, has_dialogue)。
+
+        KFRef 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出返回；
+        判无台词时动态开 forbid_audio_refs（结果不得出现任何 <audio）。
+        非 KFRef 变体维持纯文本输出，has_dialogue 恒为 None。
+        """
+        is_kfref = variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
         last_error = None
         for _ in range(2):
             try:
                 raw = await self._call_llm(original, variant, duration, step_params)
-                cleaned = strip_prompt_fences(raw)
+                has_dialogue: Optional[bool] = None
+                if is_kfref:
+                    cleaned, has_dialogue = parse_h3_optimize_kfref_output(raw)
+                    if cleaned is None:
+                        last_error = "kfref output missing dialogue header"
+                        continue
+                else:
+                    cleaned = strip_prompt_fences(raw)
                 if validate_h3_optimized_prompt(
                     cleaned,
                     variant,
                     keyframe_slots=step_params.get("keyframe_slots"),
                     duration=duration,
+                    forbid_audio_refs=(is_kfref and has_dialogue is False),
                 ):
-                    return cleaned, False, None
+                    return cleaned, False, None, has_dialogue
                 last_error = "optimized prompt failed structure check"
             except Exception as exc:
                 last_error = str(exc)
                 self.logger.warning("H3 prompt optimize attempt failed: %s", exc)
         self.logger.warning("H3 prompt optimize fallback to original: %s", last_error)
-        return original, True, last_error
+        return original, True, last_error, None
 
     async def _call_llm(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> str:
         # 模型解析内部有同步查库（get_dynamic_config_value / VendorDAO.get_by_id），
@@ -119,14 +144,25 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             # 所有候选模型均未配置 api_key：直接抛错，由 _optimize 回退原文，避免必败空跑。
             raise RuntimeError("no llm configured for H3 prompt optimize (all candidates missing api_key)")
 
+        system_prompt = _SYSTEM_PROMPT
+        if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
+            # KFRef 输出协议：首行 JSON 头（台词语义判断）+ 原样正文，代码强校验格式
+            system_prompt = (
+                _SYSTEM_PROMPT
+                + " Your first output line must be exactly "
+                '{\\"has_dialogue\\": true} or {\\"has_dialogue\\": false} — '
+                "true only if the source prompt explicitly contains lines spoken or sung "
+                "by a character — followed by one blank line, then the final prompt."
+            )
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": build_h3_optimize_user_message(
                 original,
                 variant,
                 duration,
                 ref_counts=step_params.get("ref_counts"),
                 keyframe_slots=step_params.get("keyframe_slots"),
+                image_prompt_note=str(step_params.get("image_prompt_note") or ""),
             )},
         ]
 
