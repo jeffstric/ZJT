@@ -73,6 +73,13 @@ CI 使用临时数据库中的固定一次性凭据，不依赖生产账号或 G
 
 E2E Runner 默认通过 DaoCloud 公共镜像代理拉取 Playwright 基础镜像，避免国内 Runner 直连 `mcr.microsoft.com` 时因约 800 MB 浏览器镜像下载过慢而耗尽 Job 时间。
 
+DaoCloud 代理会偶发返回 `502 Bad Gateway`（HEAD manifests 请求），曾使 `e2e_smoke` 在 build 阶段解析基础镜像 metadata 时直接失败——job 级 `retry:` 只覆盖 `runner_system_failure`/`stuck_or_timeout_failure`，不覆盖 `script_failure`，只能人工重跑。现已在 CI 加固：
+
+1. `before_script` 预取三个基础镜像（Playwright、`python:3.10-slim`、`mysql:8.0`）：本地已有则跳过（基础镜像常驻宿主机，预取几乎零开销），缺失时最多重试 5 次、线性退避 10s~40s。
+2. `docker compose build` 整体重试最多 3 次：BuildKit build 时仍会向 registry 解析基础镜像 metadata（预拉取不豁免），偶发 502 重试即可；build 幂等且命中宿主机层缓存，重试代价低，同时兜住 RUN 层 pip 源的瞬时抖动。
+
+Playwright 镜像 tag 与 `docker/Dockerfile.e2e` 的 `PLAYWRIGHT_BASE_IMAGE` 默认值保持同步，升级版本时两处同改。`unit_tests` job 使用相同的预取 + build 重试机制。
+
 应用镜像先复制依赖清单并安装依赖，再复制源码，支持在具有 Docker layer cache 的环境中复用依赖层。镜像内使用 `uv` 并发解析和下载 Python 包；在 jeffNas1 Runner 的全新 `python:3.10-slim` 容器中，完整解析、下载及安装实测约 1 分钟，而原先的 pip 串行下载在慢速连接下会持续数十分钟。
 
 `mcp` 固定为与 `fastapi==0.111.0` / Starlette 0.37.x 兼容的 `1.12.4`，避免 pip 在 CI 中从 2.x 向下尝试大量历史版本。`e2e_smoke` 声明了 90 分钟 job timeout，但 GitLab 实例或项目的最大超时仍可能将其限制为 60 分钟；依赖安装加速用于确保正常构建不依赖放宽该上限。
