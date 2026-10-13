@@ -133,6 +133,7 @@
 | [图片上传超限明确报错](script/script_writer_upload_size_feedback.md) | 上传大小动态预检与失败原因透传（修复只显示「上传失败」） | 待补充 |
 | [AI 介入程度调查](script/ai_intervention_level_investigation.md) | 介入程度设置未生效的根因分析与接入实施记录 | 待补充 |
 | [剧本智能体优化测试](script/script_writer_skills_optimization_test.md) | 本轮技能/SOP/质检改动的测试内容 | 待补充 |
+| [编辑通知误重生成防护](script/script_writer_edit_notification_guard.md) | 用户编辑资产通知必须确认后才可重生成形象图；修复保存并发下「undefined ""」畸形通知 | 待补充 |
 | [分镜帧参考素材](script/shot_frame_references.md) | 参考素材收集机制 | 待补充 |
 | [分镜组增量同步](script/shot_group_incremental_sync.md) | 数据增量同步 | 待补充 |
 
