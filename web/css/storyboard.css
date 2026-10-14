@@ -1484,7 +1484,7 @@ button {
     line-height: 1;
     white-space: nowrap;
     pointer-events: auto;
-    cursor: default;
+    cursor: text;
 }
 .chat-mention-chip img {
     width: 14px;

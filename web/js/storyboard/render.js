@@ -1259,8 +1259,8 @@ function renderDialoguePanel(scene) {
 
     return `
         <div class="tab-panel dialogue-panel">
-            ${renderDialogueAudioSource(scene)}
-            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>}
+            ${(scene.dialogues || []).length ? renderDialogueAudioSource(scene) : ''}
+            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>
             <button class="panel-button" data-action="add-dialogue">${icon('add', 16)} ${i18nT('btn_add_dialogue', '添加对话')}</button>`}
         </div>`;
 }
