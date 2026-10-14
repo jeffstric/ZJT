@@ -32,6 +32,23 @@ _KANA_RE = re.compile(r"[\u3040-\u30ff]")
 _HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 # 书名号《》不参与：书名不是对话；英文直引号/中文弯引号/日式引号均为台词常见形态。
 _QUOTED_SPAN_RE = re.compile(r"[\"“「『]([^\"”」』]+)[\"”」』]")
+# 画面可见文字（背景板/横幅/牌匾上的字）不算台词：引号后紧跟这些词，
+# 或引号前紧贴可见文字载体描写时排除。误判方向安全：把可见文字误判成
+# 无台词只是少传音色音频（模型自动配音台词，不报错）；反向误判会传音频+
+# 音色说明（dev3 案例 ai_tool 1816：回退原文后音色样本被当成片声音）。
+_VISIBLE_TEXT_SUFFIX_RE = re.compile(r"^(?:字样|文字|标题|标语|全称|名称|横幅|口号|两个字|几个字)")
+_VISIBLE_TEXT_PREFIX_RE = re.compile(r"(?:背景板|横幅|牌匾|屏幕|字幕|标语|标题|卷轴|写着|印着)[^\n\"”」』]{0,8}$")
+# 说话意图短语（未配台词的开口动作）。只列明确形态，避免误伤 speaker/speaks about 等用法。
+# 视频模型见到开口动作而无 <d> 台词会自动生成无法识别的含糊语音（ai_tools 56837）。
+_SPEAKING_INTENT_RE = re.compile(
+    r"ready to (?:speak|say|talk|answer|reply)"
+    r"|about to (?:speak|say|talk|answer|reply)"
+    r"|opens? (?:his|her|their|its) mouth"
+    r"|begins? to (?:speak|say|talk)"
+    r"|wants? to (?:say|speak)"
+    r"|准备开口|要开口|欲言又止|张嘴|开口说",
+    re.IGNORECASE,
+)
 # 分镜参考模式提交后写进提示词的槽位说明。1-based，与参考图列表下标对应。
 _H3_FIRST_FRAME_MARK_RE = re.compile(r"图(\d+)是首帧")
 _H3_LAST_FRAME_MARK_RE = re.compile(r"图(\d+)是尾帧")
@@ -234,7 +251,11 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
     return (
         f"下面是原本视频的提示词，已知有{asset_text}，"
         f"目标视频时长为 {float(duration or 5):.2f} 秒，请你修改为符合以上规范的提示词；"
-        "参考标签与输入资产按顺序一一对应"
+        "参考标签与输入资产按顺序一一对应；"
+        "输出格式：第一行必须是 {\"has_dialogue\": true} 或 {\"has_dialogue\": false}"
+        "（按你对原文有无角色说出或唱出台词的语义判断填写——背景板/横幅/牌匾等"
+        "画面可见文字不算台词），然后空一行，再输出最终提示词正文；"
+        "正文原样多行输出，不要再包进 JSON。\n"
     )
 
 
@@ -276,9 +297,9 @@ def kfref_required_clauses(
     return clauses
 
 
-_KFREF_AUDIO_SPOKEN = (
-    "<Audio 1> is a reference audio for voice timbre, vocal identity, speaking tone, "
-    "rhythm, intonation, and lip-sync pacing."
+_KFREF_AUDIO_BINDING_TEMPLATE = (
+    "<Audio 1> is the voice-timbre reference for <该说话人在画面中的具体描述> (S1): "
+    "it provides voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing."
 )
 _KFREF_AUDIO_TIMBRE_ONLY = (
     "<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing "
@@ -286,34 +307,73 @@ _KFREF_AUDIO_TIMBRE_ONLY = (
 )
 
 
-def _kfref_audio_line(audios: int, has_dialogue: bool) -> str:
-    """有台词时保留对口型句。没台词时只锁定音色，不把样本里的话念进成片。"""
+def _kfref_audio_line(audios: int) -> str:
+    """音频段条件式指令：代码只给「可用参考音频路数」事实，有无台词由 LLM 判断。
+
+    指令拼在 LLM 调用之前，预知不了语义判断结果，因此三种情形都写给 LLM 自选：
+    有台词 + N 路 → 每路写一个绑定句（绑定到说话人，多人对话各绑各的）；
+    有台词 + 0 路 → 不写任何 <Audio N>，台词照进 <d>（模型自动配音）；
+    无台词 → 不写任何 <Audio N>，只写环境音（无对白时连上的语音会被当成成片声音）。
+    """
     if audios <= 0:
-        return "没有参考音频，不要编造 <Audio N>。"
-    if has_dialogue:
-        stance = "this shot has spoken lines"
-        sentence = _KFREF_AUDIO_SPOKEN
-    else:
-        stance = "this shot has no spoken lines"
-        sentence = _KFREF_AUDIO_TIMBRE_ONLY
+        return (
+            "没有可用参考音频：无论原文有无台词，都不要写任何 <Audio N>。"
+            "台词照常放进 <d>（由模型自动配音），其余只描述环境音。\n"
+        )
     if audios >= 2:
         count = (
-            "有 2 个参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>。"
-            "每一段都照抄下面这一句，只改编号。"
-            "不要写 <Audio 3>，也不要写 <audio_N>。"
+            "有 2 个可用参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>，"
+            "每一段绑定到各自的说话人。不要写 <Audio 3>，也不要写 <audio_N>。"
         )
     else:
-        count = "只有 1 个参考音频，写成 <Audio 1>。不要写 <Audio 2>，也不要写 <audio_2>。"
-    return f"{stance}。{count}\n{sentence}\n"
+        count = (
+            "只有 1 个可用参考音频，写成 <Audio 1>，绑定到说话人。"
+            "不要写 <Audio 2>，也不要写 <audio_2>。"
+        )
+    return (
+        "先判断原文有没有角色说出或唱出的台词（引号内容是台词还是店名/标语等"
+        "描述性用法，由你判断），再按下面规则写音频段：\n"
+        f"- 原文有台词：{count}每个音频写一句绑定句，句式如下（编号与占位按实际改写）：\n"
+        f"{_KFREF_AUDIO_BINDING_TEMPLATE}\n"
+        "- 原文没有台词：不写任何 <Audio N>，只描述环境音。\n"
+    )
+
+
+def _kfref_speaker_binding_rules(image_prompt_note: str) -> str:
+    """说话人绑定规则：视频模型靠画面描述做 grounding，锚定原料按优先级展开。"""
+    note_block = ""
+    if image_prompt_note:
+        note_block = (
+            "绑定原料（生成本分镜图片所用的画面构成，含人物站位与外观）：\n"
+            f"{image_prompt_note}\n"
+            "展开说话人描述时优先采用这里的站位/外观信息。\n"
+        )
+    return (
+        "说话人绑定规则（只在写音频绑定句或台词时使用）：\n"
+        "- 台词说话人按实际发声顺序分配稳定编号 (S1)、(S2)；同一个人多条台词共用同一编号。\n"
+        "- 音频绑定句和台词处都用「画面描述 + (S1)」双标注，例如 "
+        "\u201cThe older man in the gray jacket on the left of <Picture 1> (S1) shouts: <d>[Chinese] …</d>\u201d。\n"
+        "- 锚定优先级：该角色的参考图（如 the man holding the broom in <Picture 2>）> "
+        "外观特征（服装/年龄/持物）+ 画面位置（on the left / on the right）。"
+        "位置词必须与外观特征一起用，不得单独作为锚。\n"
+        "- 角色名（如 李卫国）对视频模型没有画面意义，禁止作为唯一锚；必须展开为上述画面描述，"
+        "且描述必须能在画面中唯一定位这个人。\n"
+        + note_block
+    )
 
 
 def _build_kfref_instruction(
     keyframe_slots: Optional[Dict[str, Any]],
     ref_counts: Optional[Dict[str, int]],
     duration: float,
-    has_dialogue: bool = False,
+    image_prompt_note: str = "",
 ) -> str:
-    """按真实槽位写 KFRef 指令。原句交给大模型照抄，代码不拼进优化结果。"""
+    """按真实槽位写 KFRef 指令。首尾帧原句交给大模型照抄，代码不拼进优化结果。
+
+    台词有无、音频句与类型前缀的 audio reference 段均由 LLM 按条件式指令自选
+    （语义判断结果以首行 JSON 头 has_dialogue 返回，由校验与驱动消费）；
+    代码只提供确定事实：图片槽位、可用参考音频路数、时长。
+    """
     roles = _kfref_roles(keyframe_slots, ref_counts)
     lines = []
     has_keyframe = False
@@ -348,15 +408,18 @@ def _build_kfref_instruction(
         else:
             lines.append(f"Do not mention <Picture {index}>. This slot has no image.")
     audios = min(int((ref_counts or {}).get("audios") or 0), MAX_VOICE_REFERENCE_AUDIOS)
-    audio_line = _kfref_audio_line(audios, has_dialogue)
+    audio_line = _kfref_audio_line(audios)
     prefix_parts = []
     if has_keyframe:
         prefix_parts.append("keyframe completion")
     if has_reference:
         prefix_parts.append("reference generation")
-    if audios > 0:
-        prefix_parts.append("audio reference")
-    prefix = " + ".join(prefix_parts) if prefix_parts else "reference generation"
+    base_prefix = " + ".join(prefix_parts) if prefix_parts else "reference generation"
+    # audio reference 段与音频绑定句同生共死（由 LLM 按台词判断自选），代码不预写
+    audio_prefix_line = (
+        f"类型前缀基础为 [{base_prefix}]；仅当你按音频段规则写了 <Audio N> 绑定句时，"
+        "才在前缀末尾追加 \u201c + audio reference\u201d，否则前缀保持基础值。"
+    )
     seconds = f"{float(duration or 5):.2f}"
     has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in (1, 2, 3))
     # 原文常写「固定运镜」和起始姿势。大模型若把这些写进结尾，视频模型会停在首帧构图，尾帧图对不上。
@@ -371,16 +434,20 @@ def _build_kfref_instruction(
         )
     return (
         "下面是原本视频的提示词。这是关键帧与参考图混合生成，不要使用 Ref2VA 的六段标题。"
-        f"镜头正文前写类型前缀，只保留实际存在的部分：[{prefix}]。"
+        f"{audio_prefix_line}"
         "描述用英文。台词、歌词和画面上的文字放在 <d> 里，保持原来的语言。"
         "每个有图片的槽位单独成段。起始关键帧和结束关键帧的第一句必须与下面给出的英文原句逐字相同，"
         "不得改写 EXACT、时间、大小写或 ref_image 编号。\n"
         + "\n".join(lines)
         + "\n"
         + end_override
+        + _kfref_speaker_binding_rules(image_prompt_note)
         + audio_line
         + "本工作流没有参考视频槽，不要写 <video_N>。"
         + f"目标视频时长为 {seconds} 秒，请修改为符合以上规范的提示词。"
+        + "输出格式：第一行必须是 {\"has_dialogue\": true} 或 {\"has_dialogue\": false}"
+        "（按你对原文有无台词的判断填写），然后空一行，再输出最终提示词正文；"
+        "正文原样多行输出，不要再包进 JSON。\n"
     )
 
 
@@ -389,13 +456,31 @@ def _extract_quoted_cjk_spans(text: str) -> list:
 
     引号是台词/歌词/画面文字的常见形态信号,但强调、术语等描述性用法也会用引号,
     因此仅用于生成提示信息,语义由 LLM 自行判断(见 _build_dialogue_fidelity_note)。
+    背景板/横幅等画面可见文字按前后缀启发式排除(dev3 案例 ai_tool 1816:
+    背景板比赛全称让正则误判有台词,音色注入与驱动音频门控全被绕过)。
     """
     spans = []
     for match in _QUOTED_SPAN_RE.finditer(text or ""):
         span = match.group(1)
-        if _CJK_RE.search(span):
-            spans.append(span)
+        if not _CJK_RE.search(span):
+            continue
+        if (
+            _VISIBLE_TEXT_SUFFIX_RE.match(text, match.end())
+            or _VISIBLE_TEXT_PREFIX_RE.search(text[:match.start()])
+        ):
+            continue
+        spans.append(span)
     return spans
+
+
+def has_quoted_dialogue(text: str) -> bool:
+    """原文是否含引号包裹的 CJK 台词片段（正则形态信号，兜底口径）。
+
+    KFRef 链路的决策优先级：优化 LLM 的语义判断（has_dialogue 标记）> 本函数。
+    注入侧（提交时等不了 LLM）与驱动侧无标记时（旧任务/优化禁用/回退原文）
+    用本函数兜底；优化指令本身也用它生成形态提示（有无引号），语义交给 LLM。
+    """
+    return bool(_extract_quoted_cjk_spans(text))
 
 
 def _detect_cjk_language(spans: list) -> str:
@@ -409,13 +494,21 @@ def _detect_cjk_language(spans: list) -> str:
 
 
 def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
-    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。"""
+    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。
+
+    可见文字(背景板/横幅/牌匾上的字)不进 <d>:<d> 是"会被念出的说话内容"标签,
+    可见文字进了会被视频模型配音念出(dev3 案例 ai_tool 1815:背景板比赛全称被
+    角色音色念成台词)。可见文字改用英文双引号写进画面描述。
+    """
     language = _detect_cjk_language(quoted_spans)
     listed = "\n".join(f'- "{span}"' for span in quoted_spans)
     return (
         f"原始提示词中存在以下引号包裹的 {language} 片段:\n{listed}\n"
-        f"若它们是角色说出的台词、旁白/画外音口播、唱出的歌词或画面中的可见文字,"
+        f"若它们是角色说出的台词、旁白/画外音口播或唱出的歌词,"
         f"必须逐字保留在 <d> 内(语言标签写 [{language}]),严禁翻译或改写;"
+        f"若它们只是背景板/横幅/牌匾/字幕等画面可见文字,不得放入 <d>"
+        f"——<d> 只承载会被念出的说话内容——改在画面描述中原样引用"
+        f'(如 the backdrop reads "{quoted_spans[0]}"),严禁翻译;'
         f"若它们只是动作、氛围、术语等描述性用法,则正常按英文规范转写。"
     )
 
@@ -426,13 +519,21 @@ def _build_no_dialogue_note() -> str:
     线上案例(ai_tools 231):原文仅写"音频1是李卫国的音色样本,角色说话时请保持相同音色",
     Ref2VA 模板的 few-shot 示例(音色参考+角色开口说台词)诱导 LLM 编造
     "早上好,新的一天开始了。"并提交给视频模型,成片角色凭空开口说话。
+
+    线上案例(ai_tools 56837,2026-10-14):原文"音频备注:无对白"但动作写"准备开口",
+    优化结果未编台词(反幻觉生效)却原样保留了 ready to speak——视频模型见到开口
+    动作而无 <d> 台词,自动生成约 2.4 秒无文本约束的含糊语音,成片出现
+    "无法识别的说话声"。故说话意图动作必须一并改写为无声动作。
     """
     return (
         "原始提示词中没有任何引号标注的台词。"
         "只有当原文明确写出角色说出或唱出的具体话语时,才把该话语逐字放入 <d> 并标注准确的语言标签;"
         "除此之外严禁虚构、编造或补充任何对白、歌词或角色开口说话的行为——"
         "音色参考仅约束角色开口说话时应使用的音色,绝不代表角色必须说话;"
-        "若原文没有任何台词,输出中不得出现 <d> 标签。"
+        "若你判断原文没有任何台词,输出中不得出现 <d> 标签;"
+        "原文写有「准备开口」「要说」「欲言又止」等说话意图时,必须改写为无声动作"
+        "(轻点头、深吸一口气、目光停留、嘴唇闭合不发声),不得保留任何张嘴发声的动作——"
+        "视频模型见到开口动作而没有台词文本时,会自动生成一段无法识别的含糊语音。"
     )
 
 
@@ -443,6 +544,7 @@ def build_h3_optimize_user_message(
     template: Optional[str] = None,
     ref_counts: Optional[Dict[str, int]] = None,
     keyframe_slots: Optional[Dict[str, Any]] = None,
+    image_prompt_note: str = "",
 ) -> str:
     guide = template if template is not None else load_h3_prompt_template(variant)
     quoted_spans = _extract_quoted_cjk_spans(original_prompt)
@@ -451,7 +553,7 @@ def build_h3_optimize_user_message(
             keyframe_slots,
             ref_counts,
             duration,
-            has_dialogue=bool(quoted_spans),
+            image_prompt_note=image_prompt_note,
         )
     elif variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
         instruction = _build_ref2va_instruction(ref_counts, duration)
@@ -474,17 +576,65 @@ def strip_prompt_fences(text: str) -> str:
     return cleaned
 
 
+def parse_h3_optimize_kfref_output(raw: str) -> tuple:
+    """解析 KFRef 优化输出的首行 JSON 头 {"has_dialogue": bool} 与提示词正文。
+
+    协议：第一行必须是含布尔型 has_dialogue 的 JSON 对象（额外字段忽略），
+    空一行后是最终提示词正文——正文原样多行文本、不进 JSON，避免长文本
+    转义失败推高回退率。任一步不合法返回 (None, None)，由调用方计入结构
+    错误重试；重试耗尽回退原文（has_dialogue 落 None，驱动回退正则兜底）。
+    """
+    text = strip_prompt_fences(raw)
+    if not text:
+        return None, None
+    first_line, _, rest = text.partition("\n")
+    try:
+        header = json.loads(first_line.strip())
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(header, dict):
+        return None, None
+    flag = header.get("has_dialogue")
+    if not isinstance(flag, bool):
+        return None, None
+    # LLM 可能把头之后的正文再包进 ```text 围栏；整体 strip 剥不到（首行是 JSON 头），
+    # 必须对余下部分单独剥，否则围栏随正文通过校验进最终视频提示词。
+    prompt = strip_prompt_fences(rest)
+    if not prompt:
+        return None, None
+    return prompt, flag
+
+
 def validate_h3_optimized_prompt(
     text: str,
     variant: str,
     *,
     keyframe_slots: Optional[Dict[str, Any]] = None,
     duration: Optional[float] = None,
+    forbid_audio_refs: bool = False,
+    forbid_dialogue: bool = False,
 ) -> bool:
     prompt = strip_prompt_fences(text)
     if not prompt:
         return False
     lowered = prompt.lower()
+    # <d> 标签配对：畸形嵌套（如 "<d> <d>[Chinese]…</d>"，dev3 案例 ai_tool 1815
+    # 实际出现）会让上游把标签文本当说话内容念出，所有变体一律拦截。
+    if lowered.count("<d>") != lowered.count("</d>"):
+        return False
+    # 仅在原文判无台词时开启（调用方传入）：无对白镜头连上的语音会被当成成片声音，
+    # 优化结果不得出现任何音频引用；有台词镜头本来就要写 <Audio 1>，不能开。
+    if forbid_audio_refs and "<audio" in lowered:
+        return False
+    # 同上只在无台词时开启：反幻觉 note 只是指令级约束，LLM 仍可能仿照模板示例
+    # 编造台词；编出的 <d> 会让视频模型给角色自动配音（成片「乱说话」），
+    # 这里校验拦截，重试失败后回退无 <d> 的原文。
+    if forbid_dialogue and "<d>" in lowered:
+        return False
+    # 无台词时同样拦截「准备开口」类说话意图动作（ai_tools 56837）：开口动作
+    # 会让视频模型自动生成无文本约束的含糊语音，成片出现无法识别的说话声。
+    if forbid_dialogue and _SPEAKING_INTENT_RE.search(lowered):
+        return False
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
         # 只接受大模型逐字写出的首尾帧原句。不在这里补句子。
         clauses = kfref_required_clauses(keyframe_slots, duration)
@@ -520,6 +670,7 @@ def merge_h3_prompt_extra_config(
     optimized_prompt: str,
     variant: str,
     fallback: bool,
+    has_dialogue: Optional[bool] = None,
 ) -> str:
     data = extra_config if isinstance(extra_config, dict) else {}
     if not data and extra_config:
@@ -538,6 +689,10 @@ def merge_h3_prompt_extra_config(
         "original_prompt": original_prompt,
         "optimized_prompt": optimized_prompt,
         "fallback": bool(fallback),
+        # LLM 台词语义判断（KFRef/Ref2VA JSON 头）。结构校验失败回退原文时
+        # 若头已合法解析仍保留布尔值（驱动据此清音频）；None（协议未启用/
+        # 头缺失）时驱动回退 has_quoted_dialogue 正则兜底。
+        "has_dialogue": has_dialogue,
     }
     return json.dumps(data, ensure_ascii=False)
 

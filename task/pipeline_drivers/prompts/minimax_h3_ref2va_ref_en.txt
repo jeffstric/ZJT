@@ -31,7 +31,7 @@ non_diegetic_music: ...
 - `overall_soundscape`: ambience and physical sounds across the whole video. Dialogue and songs do not belong here. Use `N/A` only for complete silence.
 - `non_diegetic_music`: background music the characters cannot hear — instrumentation, tempo, dynamics. Use `N/A` when there is none.
 
-Write all sections in English, except dialogue, lyrics inside `<d>`, and visible scene text: keep those in their original language verbatim with an accurate language tag — never translate them.
+Write all sections in English, except dialogue and lyrics inside `<d>` and visible scene text: keep those in their original language verbatim — never translate them. `<d>` holds only content that is actually spoken or sung; visible on-screen text (signs, backdrop boards, banners, subtitles) never enters `<d>` — quote it in English double quotes inside the description instead, e.g. the backdrop reads "拱墅区产改试点企业品牌故事演讲比赛决赛".
 
 ## 3. Reference labels
 
@@ -83,6 +83,8 @@ When the source dialogue is Chinese (or any non-English language), keep those wo
 Never translate Chinese dialogue into English — writing `<d>[English] So that's how it is!</d>` for the line above is wrong.
 
 Only lines that are written in the source prompt may appear inside `<d>`. If the source prompt contains no spoken or sung lines, write no `<d>` spans at all — never invent a line on a character's behalf, no matter how natural it would sound in the scene. A voice-timbre reference only constrains the timbre a character uses if they speak; it never implies the character must speak.
+
+When the source prompt contains no spoken lines, also remove any speaking-intent action such as "ready to speak", "about to say", "opens his mouth to speak", or "wants to say". The video model makes any mouth-opening character vocalize; without `<d>` text it produces unintelligible speech. Rewrite such moments as silent actions: a slight nod, a deep breath, a lingering glance, lips staying closed.
 
 Cite `<audio_N>` in the shot or phase where the audio relationship is active, and state whether the signal is copied or referenced. When only timbre, rhythm, emotion, or delivery is referenced, do not carry the original dialogue from the reference audio into the target video.
 

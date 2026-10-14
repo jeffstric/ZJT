@@ -22,9 +22,11 @@ from config.constant import MAX_VOICE_REFERENCE_AUDIOS
 from config.unified_config import TaskTypeId
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
+    has_quoted_dialogue,
     h3_slot_source_prompt,
 )
 from .minimax_h3_reference_runninghub_v1_driver import (
+    _VOICE_NOTE_LINE_RE,
     ASPECT_RATIO_FIELD_DATA,
     MinimaxH3ReferenceRunninghubV1Driver,
 )
@@ -69,6 +71,11 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 f"Picture{index + 1}",
             )
 
+        # 无对白镜头不上传音频（必须在上传循环之前清空，否则文件已传完、音频槽
+        # 仍会拿到 fileName）：<Audio N> 只有绑到要说新台词的角色身上才是音色参考，
+        # 没有目标台词时连上的语音会被当成成片声音。台词有无优先取优化步骤的
+        # LLM 语义判断（extra_config.h3_prompt_optimize.has_dialogue，能识别无引号
+        # 台词、排除引号店名），旧任务/优化禁用/回退原文时回退正则引号判断。
         audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
         if len(audios) > MAX_VOICE_REFERENCE_AUDIOS:
             self.logger.warning(
@@ -77,6 +84,16 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 len(audios) - MAX_VOICE_REFERENCE_AUDIOS,
             )
             audios = audios[:MAX_VOICE_REFERENCE_AUDIOS]
+        _prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        _llm_flag = _prompt_meta.get("has_dialogue") if isinstance(_prompt_meta, dict) else None
+        _has_dialogue = _llm_flag if isinstance(_llm_flag, bool) else has_quoted_dialogue(slot_prompt)
+        if audios and not _has_dialogue:
+            self.logger.info(
+                "MiniMax H3 首帧参考混合模型镜头无对白（has_dialogue=%s），跳过 %s 个参考音频，音频槽填 None",
+                _llm_flag,
+                len(audios),
+            )
+            audios = []
         videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
         if videos:
             self.logger.warning(
@@ -93,6 +110,11 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
             prompt_text = str(prompt_meta.get("optimized_prompt") or "")
         else:
             prompt_text = getattr(ai_tool, "prompt", None) or ""
+        # 无对白且文本中残留音色说明句时剥掉（优化回退原文/旧任务兜底）：
+        # 「角色说话时请保持相同音色」会诱导视频模型让角色发声。
+        if not _has_dialogue and "参考音频说明" in prompt_text:
+            prompt_text = _VOICE_NOTE_LINE_RE.sub("", prompt_text).strip()
+            self.logger.info("MiniMax H3 首帧参考混合模型无对白，已剥除提示词中的参考音频说明句")
 
         duration = getattr(ai_tool, "duration", None) or 5
         ratio = getattr(ai_tool, "ratio", None) or "9:16"
