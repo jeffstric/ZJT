@@ -245,7 +245,11 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
     return (
         f"下面是原本视频的提示词，已知有{asset_text}，"
         f"目标视频时长为 {float(duration or 5):.2f} 秒，请你修改为符合以上规范的提示词；"
-        "参考标签与输入资产按顺序一一对应"
+        "参考标签与输入资产按顺序一一对应；"
+        "输出格式：第一行必须是 {\"has_dialogue\": true} 或 {\"has_dialogue\": false}"
+        "（按你对原文有无角色说出或唱出台词的语义判断填写——背景板/横幅/牌匾等"
+        "画面可见文字不算台词），然后空一行，再输出最终提示词正文；"
+        "正文原样多行输出，不要再包进 JSON。\n"
     )
 
 
@@ -476,13 +480,21 @@ def _detect_cjk_language(spans: list) -> str:
 
 
 def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
-    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。"""
+    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。
+
+    可见文字(背景板/横幅/牌匾上的字)不进 <d>:<d> 是"会被念出的说话内容"标签,
+    可见文字进了会被视频模型配音念出(dev3 案例 ai_tool 1815:背景板比赛全称被
+    角色音色念成台词)。可见文字改用英文双引号写进画面描述。
+    """
     language = _detect_cjk_language(quoted_spans)
     listed = "\n".join(f'- "{span}"' for span in quoted_spans)
     return (
         f"原始提示词中存在以下引号包裹的 {language} 片段:\n{listed}\n"
-        f"若它们是角色说出的台词、旁白/画外音口播、唱出的歌词或画面中的可见文字,"
+        f"若它们是角色说出的台词、旁白/画外音口播或唱出的歌词,"
         f"必须逐字保留在 <d> 内(语言标签写 [{language}]),严禁翻译或改写;"
+        f"若它们只是背景板/横幅/牌匾/字幕等画面可见文字,不得放入 <d>"
+        f"——<d> 只承载会被念出的说话内容——改在画面描述中原样引用"
+        f'(如 the backdrop reads "{quoted_spans[0]}"),严禁翻译;'
         f"若它们只是动作、氛围、术语等描述性用法,则正常按英文规范转写。"
     )
 
@@ -592,6 +604,10 @@ def validate_h3_optimized_prompt(
     if not prompt:
         return False
     lowered = prompt.lower()
+    # <d> 标签配对：畸形嵌套（如 "<d> <d>[Chinese]…</d>"，dev3 案例 ai_tool 1815
+    # 实际出现）会让上游把标签文本当说话内容念出，所有变体一律拦截。
+    if lowered.count("<d>") != lowered.count("</d>"):
+        return False
     # 仅在原文判无台词时开启（调用方传入）：无对白镜头连上的语音会被当成成片声音，
     # 优化结果不得出现任何音频引用；有台词镜头本来就要写 <Audio 1>，不能开。
     if forbid_audio_refs and "<audio" in lowered:

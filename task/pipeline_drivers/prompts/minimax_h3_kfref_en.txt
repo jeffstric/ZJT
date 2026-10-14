@@ -2,7 +2,7 @@
 
 This guide is only for the mixed keyframe-and-reference workflow. Do not use the Ref2VA six-section layout.
 
-Write the final prompt in English. Keep dialogue, lyrics, and visible on-screen text inside <d> in their original language. Do not translate them.
+Write the final prompt in English. Keep dialogue and lyrics inside <d> in their original language; visible on-screen text (signs, backdrop boards, banners, subtitles) never enters <d> — quote it in English double quotes inside the description instead. Do not translate them.
 
 For each occupied picture slot, write one paragraph in slot order. When the slot instruction gives a mandatory first sentence, copy that sentence unchanged: same capitalization, same time, same ref_image number. Then continue the same paragraph with the constraints in the slot instruction.
 

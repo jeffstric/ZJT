@@ -15,6 +15,8 @@ from config.constant import (
     H3_PROMPT_OPTIMIZE_TEMPERATURE,
     H3_PROMPT_OPTIMIZE_TIMEOUT,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+    H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
     LLMModel,
 )
 from model import AITool, PipelineStep
@@ -31,9 +33,11 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
 
 _SYSTEM_PROMPT = (
     "You rewrite MiniMax H3 video prompts. Write the final prompt in English, except "
-    "dialogue, lyrics inside <d>, and visible on-screen text: those must stay in their "
-    "original language verbatim with an accurate language tag (e.g. [Chinese]) — never "
-    "translate them. Do not add explanations or markdown fences."
+    "dialogue and lyrics inside <d> and visible on-screen text: those must stay in "
+    "their original language verbatim — never translate them. <d> holds only content "
+    "that is actually spoken or sung; visible on-screen text (signs, backdrops, "
+    "banners, subtitles) is quoted in English double quotes inside the description, "
+    "never inside <d>. Do not add explanations or markdown fences."
 )
 
 
@@ -104,27 +108,33 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
     ) -> Tuple[str, bool, Optional[str], Optional[bool]]:
         """返回 (optimized, fallback, error, has_dialogue)。
 
-        KFRef 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出返回。
-        判无台词时开 forbid_audio_refs / forbid_dialogue（结果不得出现任何
-        <audio 引用与 <d> 台词）：无对白镜头的音频会被上游拒绝（「无法识别的
-        说话内容」）或当成成片声音，幻觉台词会让角色凭空开口说话。
-        非 KFRef 变体维持纯文本输出，has_dialogue 恒为 None，无台词判定回退原文正则。
+        KFRef 与 Ref2VA 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出
+        返回（引号正则会把背景板文字等可见文字误判成台词，语义判断才能区分，
+        dev3 案例 ai_tool 1815）。判无台词时开 forbid_audio_refs /
+        forbid_dialogue（结果不得出现任何 <audio 引用与 <d> 台词）：无对白
+        镜头的音频会被上游拒绝（「无法识别的说话内容」）或当成成片声音，
+        幻觉台词会让角色凭空开口说话。
+        其余变体（I2VA/FL2VA）维持纯文本输出，has_dialogue 恒为 None，
+        无台词判定回退原文正则。
         """
-        is_kfref = variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+        uses_dialogue_header = variant in (
+            H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+            H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        )
         last_error = None
         for _ in range(2):
             try:
                 raw = await self._call_llm(original, variant, duration, step_params)
                 has_dialogue: Optional[bool] = None
-                if is_kfref:
+                if uses_dialogue_header:
                     cleaned, has_dialogue = parse_h3_optimize_kfref_output(raw)
                     if cleaned is None:
-                        last_error = "kfref output missing dialogue header"
+                        last_error = "output missing dialogue header"
                         continue
                 else:
                     cleaned = strip_prompt_fences(raw)
-                # 无台词判定：KFRef 的 LLM 语义标记优先（含 Ref2VA 在内的其余变体
-                # 标记为 None、KFRef 重试耗尽回退原文时同样为 None），回退原文正则。
+                # 无台词判定：LLM 语义标记优先（KFRef/Ref2VA；重试耗尽回退原文时
+                # 为 None），I2VA/FL2VA 与回退场景用原文正则兜底。
                 no_dialogue = (
                     (has_dialogue is False)
                     if isinstance(has_dialogue, bool)
@@ -155,14 +165,15 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             raise RuntimeError("no llm configured for H3 prompt optimize (all candidates missing api_key)")
 
         system_prompt = _SYSTEM_PROMPT
-        if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
-            # KFRef 输出协议：首行 JSON 头（台词语义判断）+ 原样正文，代码强校验格式
+        if variant in (H3_PROMPT_OPTIMIZE_VARIANT_KF_REF, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA):
+            # KFRef/Ref2VA 输出协议：首行 JSON 头（台词语义判断）+ 原样正文，代码强校验格式
             system_prompt = (
                 _SYSTEM_PROMPT
                 + " Your first output line must be exactly "
                 '{\\"has_dialogue\\": true} or {\\"has_dialogue\\": false} — '
                 "true only if the source prompt explicitly contains lines spoken or sung "
-                "by a character — followed by one blank line, then the final prompt."
+                "by a character — visible on-screen text (signs, backdrops, banners) does "
+                "not count — followed by one blank line, then the final prompt."
             )
         messages = [
             {"role": "system", "content": system_prompt},

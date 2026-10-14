@@ -116,6 +116,8 @@ subject_definitions / summary / retention_analysis / detailed_description / over
 - **参考标签**：`<picture_N>` 对应第 N 张输入参考图，`<video_N>` 第 N 个参考视频，`<audio_N>` 第 N 个参考音频，`<subject_N>` 为从资产抽象的可复用内容；标签顺序与输入资产一一对应（步骤参数 `ref_counts` 携带图/视频/音频计数）。
 - **对话保真**：六段结构描述文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；模板含中文对话正反例，原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM。
 - **无台词反幻觉（双重）**：原文无引号台词时注入 no-dialogue note——① 严禁编造台词（`<d>` 校验拦截，`forbid_dialogue`）；② **「准备开口/要说」等说话意图动作必须改写为无声动作**（轻点头、深呼吸、目光停留、嘴唇闭合），校验按 `_SPEAKING_INTENT_RE` 拦截 ready to speak / about to say / 开口说 等短语——视频模型见到开口动作而无 `<d>` 台词会自动生成无法识别的含糊语音（线上案例 ai_tools 56837：成片后半段出现 2.4 秒乱说话声）。
+- **台词语义判断（JSON 头协议，2026-10-14 起 Ref2VA 同 KFRef）**：Ref2VA 优化输出首行 `{"has_dialogue": true|false}`——引号正则会把背景板/横幅等画面可见文字误判成台词（dev3 案例 ai_tool 1815：背景板比赛全称被写进 `<d>`，用角色音色念成台词）。语义标记优先于正则：判 false 时驱动清空参考音频、优化校验双开 forbid；正则仅作回退（I2VA/FL2VA 无 JSON 头，恒用正则）。
+- **可见文字不进 `<d>`**：`<d>` 只承载会被念出的说话内容（台词/歌词）；背景板/横幅/牌匾/字幕等画面可见文字用英文双引号写进画面描述（如 `the backdrop reads "..."`）——统一口径落在 `_SYSTEM_PROMPT`、fidelity note 与 Ref2VA/KFRef 模板。另校验 `<d>`/`</d>` 配对，畸形嵌套（`<d> <d>…</d>`）一律拦截。
 - **触发条件**：`pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少一项参考资产；改写失败回退原文，不阻断出片。
 - **驱动消费**：提交时优先使用 `extra_config.h3_prompt_optimize.optimized_prompt`，否则用 `ai_tool.prompt`（原文备份在 `extra_config.original_prompt`）。
 - 机制详情（原子创建、模型回退链、超时）见 `docs/backend/pipeline_steps.md` 的 `h3_prompt_optimize` 章节。
