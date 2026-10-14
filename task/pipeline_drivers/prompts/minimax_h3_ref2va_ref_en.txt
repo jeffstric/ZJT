@@ -31,7 +31,7 @@ non_diegetic_music: ...
 - `overall_soundscape`: ambience and physical sounds across the whole video. Dialogue and songs do not belong here. Use `N/A` only for complete silence.
 - `non_diegetic_music`: background music the characters cannot hear — instrumentation, tempo, dynamics. Use `N/A` when there is none.
 
-Write all sections in English, except dialogue, lyrics inside `<d>`, and visible scene text: keep those in their original language verbatim with an accurate language tag — never translate them.
+Write all sections in English, except dialogue and lyrics inside `<d>` and visible scene text: keep those in their original language verbatim — never translate them. `<d>` holds only content that is actually spoken or sung; visible on-screen text (signs, backdrop boards, banners, subtitles) never enters `<d>` — quote it in English double quotes inside the description instead, e.g. the backdrop reads "拱墅区产改试点企业品牌故事演讲比赛决赛".
 
 ## 3. Reference labels
 
