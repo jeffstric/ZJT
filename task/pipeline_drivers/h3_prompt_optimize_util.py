@@ -32,6 +32,12 @@ _KANA_RE = re.compile(r"[\u3040-\u30ff]")
 _HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 # 书名号《》不参与：书名不是对话；英文直引号/中文弯引号/日式引号均为台词常见形态。
 _QUOTED_SPAN_RE = re.compile(r"[\"“「『]([^\"”」』]+)[\"”」』]")
+# 画面可见文字（背景板/横幅/牌匾上的字）不算台词：引号后紧跟这些词，
+# 或引号前紧贴可见文字载体描写时排除。误判方向安全：把可见文字误判成
+# 无台词只是少传音色音频（模型自动配音台词，不报错）；反向误判会传音频+
+# 音色说明（dev3 案例 ai_tool 1816：回退原文后音色样本被当成片声音）。
+_VISIBLE_TEXT_SUFFIX_RE = re.compile(r"^(?:字样|文字|标题|标语|全称|名称|横幅|口号|两个字|几个字)")
+_VISIBLE_TEXT_PREFIX_RE = re.compile(r"(?:背景板|横幅|牌匾|屏幕|字幕|标语|标题|卷轴|写着|印着)[^\n\"”」』]{0,8}$")
 # 说话意图短语（未配台词的开口动作）。只列明确形态，避免误伤 speaker/speaks about 等用法。
 # 视频模型见到开口动作而无 <d> 台词会自动生成无法识别的含糊语音（ai_tools 56837）。
 _SPEAKING_INTENT_RE = re.compile(
@@ -450,12 +456,20 @@ def _extract_quoted_cjk_spans(text: str) -> list:
 
     引号是台词/歌词/画面文字的常见形态信号,但强调、术语等描述性用法也会用引号,
     因此仅用于生成提示信息,语义由 LLM 自行判断(见 _build_dialogue_fidelity_note)。
+    背景板/横幅等画面可见文字按前后缀启发式排除(dev3 案例 ai_tool 1816:
+    背景板比赛全称让正则误判有台词,音色注入与驱动音频门控全被绕过)。
     """
     spans = []
     for match in _QUOTED_SPAN_RE.finditer(text or ""):
         span = match.group(1)
-        if _CJK_RE.search(span):
-            spans.append(span)
+        if not _CJK_RE.search(span):
+            continue
+        if (
+            _VISIBLE_TEXT_SUFFIX_RE.match(text, match.end())
+            or _VISIBLE_TEXT_PREFIX_RE.search(text[:match.start()])
+        ):
+            continue
+        spans.append(span)
     return spans
 
 
@@ -675,8 +689,9 @@ def merge_h3_prompt_extra_config(
         "original_prompt": original_prompt,
         "optimized_prompt": optimized_prompt,
         "fallback": bool(fallback),
-        # KFRef 的 LLM 台词语义判断；fallback（回退原文）时为 None，
-        # 驱动侧见非布尔值即回退 has_quoted_dialogue 正则兜底。
+        # LLM 台词语义判断（KFRef/Ref2VA JSON 头）。结构校验失败回退原文时
+        # 若头已合法解析仍保留布尔值（驱动据此清音频）；None（协议未启用/
+        # 头缺失）时驱动回退 has_quoted_dialogue 正则兜底。
         "has_dialogue": has_dialogue,
     }
     return json.dumps(data, ensure_ascii=False)

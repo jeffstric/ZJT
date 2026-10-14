@@ -25,6 +25,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     h3_slot_source_prompt,
 )
 from .minimax_h3_reference_runninghub_v1_driver import (
+    _VOICE_NOTE_LINE_RE,
     ASPECT_RATIO_FIELD_DATA,
     MinimaxH3ReferenceRunninghubV1Driver,
 )
@@ -108,6 +109,11 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
             prompt_text = str(prompt_meta.get("optimized_prompt") or "")
         else:
             prompt_text = getattr(ai_tool, "prompt", None) or ""
+        # 无对白且文本中残留音色说明句时剥掉（优化回退原文/旧任务兜底）：
+        # 「角色说话时请保持相同音色」会诱导视频模型让角色发声。
+        if not _has_dialogue and "参考音频说明" in prompt_text:
+            prompt_text = _VOICE_NOTE_LINE_RE.sub("", prompt_text).strip()
+            self.logger.info("MiniMax H3 首帧参考混合模型无对白，已剥除提示词中的参考音频说明句")
 
         duration = getattr(ai_tool, "duration", None) or 5
         ratio = getattr(ai_tool, "ratio", None) or "9:16"

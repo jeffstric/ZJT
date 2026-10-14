@@ -382,7 +382,8 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     optimized, fallback, error, flag = asyncio.run(driver._optimize(
         "无对白原文", H3_PROMPT_OPTIMIZE_VARIANT_KF_REF, 5.0, {"keyframe_slots": slots},
     ))
-    assert fallback is True and flag is None and optimized == "无对白原文"
+    # 文本回退原文，但 JSON 头已合法解析的语义判断保留（驱动据此清音频）
+    assert fallback is True and flag is False and optimized == "无对白原文"
 
 
 def test_step_configs_pass_image_prompt_note_for_kfref():
@@ -842,7 +843,8 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     optimized, fallback, _, flag = asyncio.run(driver._optimize(
         "无对白镜头，只有环境音", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
     ))
-    assert fallback is True and flag is None
+    # 文本回退原文但语义判断保留：驱动读 has_dialogue=False 清音频（1816 教训）
+    assert fallback is True and flag is False
     assert optimized == "无对白镜头，只有环境音"
     assert calls["n"] == 2
 
@@ -890,16 +892,19 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
 
 
 def test_fidelity_note_routes_visible_text_out_of_d():
-    """dev3 案例 ai_tool 1815：背景板可见文字进 <d> 被角色音色念成台词，
-    note 必须明确可见文字改用英文双引号写进画面描述。"""
+    """dev3 案例 ai_tool 1815：可见文字进 <d> 被角色音色念成台词，note 必须
+    明确可见文字改用英文双引号写进画面描述。
+
+    注：背景板/字样等典型形态已被 has_quoted_dialogue 启发式排除（走
+    no-dialogue note，见 test_has_quoted_dialogue_excludes_visible_text）；
+    这里用未命中启发式的变体验证 fidelity note 的可见文字改写指令。"""
     message = build_h3_optimize_user_message(
-        '舞台灯光渐亮，背景板上的"拱墅区产改试点企业品牌故事演讲比赛决赛"字样清晰可见。'
-        "音频备注：舞台环境音",
+        '"欢迎光临本店"四个大字挂在门口。音频备注：环境音',
         H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
         5,
         template="GUIDE",
     )
-    assert "拱墅区产改试点企业品牌故事演讲比赛决赛" in message
+    assert "欢迎光临本店" in message
     assert "不得放入 <d>" in message
     assert "the backdrop reads" in message
     # 台词仍要求逐字保留进 <d>
@@ -921,3 +926,23 @@ def test_validate_rejects_mismatched_d_tags():
         _ref2va_ok_body("He says: <d>[Chinese] 今天到此为止</d>"),
         H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
     )
+
+
+def test_has_quoted_dialogue_excludes_visible_text():
+    """dev3 案例 ai_tool 1816：背景板引号文字被正则误判成台词，音色注入与
+    驱动音频门控全被绕过。可见文字形态（后缀「字样/标题…」/前缀「背景板/
+    写着…」）排除，真实台词不受影响。"""
+    visible = (
+        '背景板上的"拱墅区产改试点企业品牌故事演讲比赛决赛"字样清晰可见',
+        '横幅上写着"安全生产月"标题',
+        '牌匾"老王饭店"',
+    )
+    for text in visible:
+        assert not has_quoted_dialogue(text), text
+    spoken = (
+        '他说："今天天气真好。"',
+        '李卫国喊道「今天到此为止」',
+        '字幕打上"未完待续"后他念道："下次再见。"',  # 同句有真实台词
+    )
+    for text in spoken:
+        assert has_quoted_dialogue(text), text
