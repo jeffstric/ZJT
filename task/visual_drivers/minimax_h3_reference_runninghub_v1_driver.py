@@ -25,6 +25,7 @@ webapp_id: 2086470155902734337
   - 分辨率      → nodeId 115 fieldName=megapixels    (ResolutionSelector，0.4/0.9)
 """
 import json
+import re
 from typing import Dict, Any, Optional, Tuple
 import traceback
 from .base_video_driver import BaseVideoDriver, ImageMode
@@ -64,6 +65,12 @@ MAX_REFERENCE_VIDEOS = 2
 # 顺序与 REFERENCE_VIDEO_NODE_IDS / REFERENCE_AUDIO_NODE_IDS 一一对应。
 REFERENCE_VIDEO_SWITCH_NODE_IDS = ["165", "166"]
 REFERENCE_AUDIO_SWITCH_NODE_IDS = ["167", "168"]
+
+# 注入侧写进提示词尾部的音色说明句（append_voice_reference_note 产物）。
+# 无对白回退原文场景兜底剥掉：说明本身带「角色说话」语义，会诱导视频模型
+# 让角色发声（dev3 案例 ai_tool 1816：优化回退后说明随原文提交，成片出现
+# 一堆含糊语音）。
+_VOICE_NOTE_LINE_RE = re.compile(r"\n*参考音频说明：[^\n]*")
 
 # 比例 → ResolutionSelector(nodeId=115) aspect_ratio COMBO 完整文本
 RATIO_TO_ASPECT_RATIO_VALUE = {
@@ -371,6 +378,11 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
             prompt_text = str(prompt_meta.get("optimized_prompt") or "")
         else:
             prompt_text = ai_tool.prompt or ""
+        # 无对白且文本中残留音色说明句时剥掉（优化回退原文/旧任务兜底）：
+        # 「角色说话时请保持相同音色」会诱导视频模型让角色发声。
+        if not _has_dialogue and "参考音频说明" in prompt_text:
+            prompt_text = _VOICE_NOTE_LINE_RE.sub("", prompt_text).strip()
+            self.logger.info("MiniMax H3 参考生视频无对白，已剥除提示词中的参考音频说明句")
 
         # 构建 nodeInfoList
         # - nodeId 137/139/142/147/149/150/151/152/153 image  参考图1~9

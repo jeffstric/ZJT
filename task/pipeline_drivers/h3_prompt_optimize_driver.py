@@ -122,6 +122,10 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
         )
         last_error = None
+        # 语义判断与文本优化解耦：结构校验失败回退原文时，JSON 头里已解析出的
+        # has_dialogue 保留返回（驱动据此清音频），否则回退场景会丢掉语义判断、
+        # 落回正则兜底被可见文字误判（dev3 案例 ai_tool 1816）。
+        last_flag: Optional[bool] = None
         for _ in range(2):
             try:
                 raw = await self._call_llm(original, variant, duration, step_params)
@@ -133,8 +137,10 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                         continue
                 else:
                     cleaned = strip_prompt_fences(raw)
-                # 无台词判定：LLM 语义标记优先（KFRef/Ref2VA；重试耗尽回退原文时
-                # 为 None），I2VA/FL2VA 与回退场景用原文正则兜底。
+                if isinstance(has_dialogue, bool):
+                    last_flag = has_dialogue
+                # 无台词判定：LLM 语义标记优先（KFRef/Ref2VA），I2VA/FL2VA 与
+                # 头缺失场景用原文正则兜底（正则已排除背景板等可见文字形态）。
                 no_dialogue = (
                     (has_dialogue is False)
                     if isinstance(has_dialogue, bool)
@@ -154,7 +160,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                 last_error = str(exc)
                 self.logger.warning("H3 prompt optimize attempt failed: %s", exc)
         self.logger.warning("H3 prompt optimize fallback to original: %s", last_error)
-        return original, True, last_error, None
+        return original, True, last_error, last_flag
 
     async def _call_llm(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> str:
         # 模型解析内部有同步查库（get_dynamic_config_value / VendorDAO.get_by_id），

@@ -194,3 +194,35 @@ def test_build_create_request_dialogue_flag_from_llm_takes_priority():
         extra_config=meta_false,
     )))
     assert node_map(request)[("155", "audio")] == ""
+
+
+def test_build_create_request_strips_voice_note_without_dialogue():
+    """无对白回退原文时剥掉注入的音色说明句（1816：「角色说话时请保持相同音色」
+    诱导发声）；说明剥除后音频门控/提示词均干净。"""
+    driver = make_driver()
+    prompt = "舞台远景，观众安静。" + "\n\n参考音频说明：音频1是角色：朱俊的音色样本，角色说话时请保持相同音色。"
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt=prompt,
+        audio_path="voice1.wav",
+    )))
+
+    nodes = node_map(request)
+    # 音频不上传（无对白）
+    assert nodes[("155", "audio")] == ""
+    # 音色说明句已剥除，正文保留
+    assert "参考音频说明" not in nodes[("138", "value")]
+    assert "舞台远景，观众安静。" == nodes[("138", "value")]
+
+
+def test_build_create_request_keeps_voice_note_with_dialogue():
+    """有对白时说明句与音频照常保留。"""
+    driver = make_driver()
+    prompt = '朱俊说："今天到此为止。"' + "\n\n参考音频说明：音频1是角色：朱俊的音色样本，角色说话时请保持相同音色。"
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt=prompt,
+        audio_path="voice1.wav",
+    )))
+
+    nodes = node_map(request)
+    assert nodes[("155", "audio")] == "openapi/voice1.wav"
+    assert "参考音频说明" in nodes[("138", "value")]
