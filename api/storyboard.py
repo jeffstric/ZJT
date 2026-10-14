@@ -85,6 +85,7 @@ from services.storyboard_reference_prompt_service import (
     append_storyboard_visual_suffix,
     append_voice_reference_note,
     collect_character_voice_references,
+    extract_speaking_character_ids,
 )
 from utils.resource_access import (
     get_user_id_from_header,
@@ -4435,6 +4436,15 @@ async def generate_scene_video(
         task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
         and not has_quoted_dialogue(prompt)
     )
+    # H3（参考生/首帧参考混合）有台词镜头按说话人过滤：只注入开口说话角色的音色。
+    # 不说话角色的音色上传后在提示词里没有声明目标，H3 会把它错误配对给画面
+    # 可见人物或混入成片人声（单人近景镜头串音色，线上分镜 2 事故）。
+    speaking_voice_ids = None
+    if task_type in (int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO), int(h3_keyframe_ref_task_id())):
+        _speaking = extract_speaking_character_ids((scene_characters_ctx or {}).get('dialogues'))
+        if _speaking:
+            speaking_voice_ids = _speaking
+        # 对话记录为空时不过滤：无对白镜头已由 h3_no_dialogue_skip_voice 拦截
     if (
         scene_characters_ctx is not None
         and collected_urls
@@ -4445,6 +4455,7 @@ async def generate_scene_video(
             characters=scene_characters_ctx.get('characters'),
             image_mode=image_mode,
             existing_audio_urls=audio_path,
+            speaking_character_ids=speaking_voice_ids,
         )
         if voice_items:
             audio_path = ','.join([item['url'] for item in voice_items])
