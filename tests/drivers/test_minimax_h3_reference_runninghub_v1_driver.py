@@ -90,6 +90,8 @@ def test_build_create_request_image_node_mapping():
 def test_build_create_request_audio_video_nodes_use_filename():
     driver = make_driver()
     request = asyncio.run(driver.build_create_request(make_ai_tool(
+        # 音色参考必须绑台词：有对白镜头（引号台词）音频才会上传
+        prompt='李明环视众人后说："今天天气真好。"',
         audio_path="voice1.wav",
         video_path="clip1.mp4,clip2.mp4",
     )))
@@ -110,6 +112,7 @@ def test_build_create_request_audio_video_nodes_use_filename():
 def test_build_create_request_truncates_extra_audio_video():
     driver = make_driver()
     request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt='李明说："今天天气真好。"',
         audio_path="a1.wav,a2.wav,a3.wav",
         video_path="v1.mp4,v2.mp4,v3.mp4",
     )))
@@ -151,3 +154,75 @@ def test_build_create_request_requires_reference_image():
     except ValueError:
         return
     raise AssertionError("无参考图时应抛 ValueError（仅有参考视频不够）")
+
+
+def test_build_create_request_skips_audios_without_dialogue():
+    """无对白镜头不上传参考音频（口径同 KFRef）：音频槽旁路，参考视频不受影响。"""
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav",
+        video_path="clip1.mp4",
+    )))
+
+    nodes = node_map(request)
+    assert nodes[("155", "audio")] == ""
+    assert nodes[("163", "audio")] == ""
+    assert nodes[("167", "select")] == "2"
+    assert nodes[("168", "select")] == "2"
+    # 音频不上传，参考视频照常
+    assert "voice1.wav" not in driver._storage.calls
+    assert nodes[("158", "video")] == "openapi/clip1.mp4"
+    assert nodes[("165", "select")] == "1"
+
+
+def test_build_create_request_dialogue_flag_from_llm_takes_priority():
+    """has_dialogue 语义标记优先：LLM 判有台词（正则无引号）时音频照传，判无台词时拦截。"""
+    meta = '{"image_mode": "multi_reference", "h3_prompt_optimize": ' \
+          '{"variant": "Ref2VA", "has_dialogue": true, "optimized_prompt": "ok"}}'
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt="无引号但语义有台词",
+        audio_path="voice1.wav",
+        extra_config=meta,
+    )))
+    assert node_map(request)[("155", "audio")] == "openapi/voice1.wav"
+
+    meta_false = meta.replace('"has_dialogue": true', '"has_dialogue": false')
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt='他说："今天到此为止。"',  # 正则判有台词，但 LLM 标记 False 优先
+        audio_path="voice1.wav",
+        extra_config=meta_false,
+    )))
+    assert node_map(request)[("155", "audio")] == ""
+
+
+def test_build_create_request_strips_voice_note_without_dialogue():
+    """无对白回退原文时剥掉注入的音色说明句（1816：「角色说话时请保持相同音色」
+    诱导发声）；说明剥除后音频门控/提示词均干净。"""
+    driver = make_driver()
+    prompt = "舞台远景，观众安静。" + "\n\n参考音频说明：音频1是角色：朱俊的音色样本，角色说话时请保持相同音色。"
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt=prompt,
+        audio_path="voice1.wav",
+    )))
+
+    nodes = node_map(request)
+    # 音频不上传（无对白）
+    assert nodes[("155", "audio")] == ""
+    # 音色说明句已剥除，正文保留
+    assert "参考音频说明" not in nodes[("138", "value")]
+    assert "舞台远景，观众安静。" == nodes[("138", "value")]
+
+
+def test_build_create_request_keeps_voice_note_with_dialogue():
+    """有对白时说明句与音频照常保留。"""
+    driver = make_driver()
+    prompt = '朱俊说："今天到此为止。"' + "\n\n参考音频说明：音频1是角色：朱俊的音色样本，角色说话时请保持相同音色。"
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        prompt=prompt,
+        audio_path="voice1.wav",
+    )))
+
+    nodes = node_map(request)
+    assert nodes[("155", "audio")] == "openapi/voice1.wav"
+    assert "参考音频说明" in nodes[("138", "value")]

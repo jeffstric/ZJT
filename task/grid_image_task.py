@@ -408,9 +408,12 @@ def _resubmit_image_request(task) -> str:
             if task.image_size:
                 request_data['image_size'] = task.image_size
         
-        response = httpx.post(api_url, data=request_data, timeout=30, verify=False, trust_env=False)
+        # require_permission 只认 Authorization 头 / ?auth_token= query，form 字段不过鉴权；
+        # 红线禁止 token 拼 URL，故走 header（与 mcp_tool 初次提交保持一致，缺失则必 401）
+        headers = {'Authorization': f'Bearer {task.auth_token}'} if getattr(task, 'auth_token', None) else None
+        response = httpx.post(api_url, data=request_data, headers=headers, timeout=30, verify=False, trust_env=False)
         response.raise_for_status()
-        
+
         result_data = response.json()
         project_ids = result_data.get('project_ids', [])
         

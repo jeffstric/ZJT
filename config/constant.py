@@ -211,6 +211,9 @@ REFERENCE_VIDEO_DURATION_PROBE_TIMEOUT = 10
 # 单次生成最多注入的角色音色参考音频数：受 MiniMax H3 LoadAudio 槽位硬上限（2）约束，
 # 注入侧统一截断；驱动层对超限音频另有兜底截断。
 MAX_VOICE_REFERENCE_AUDIOS = 2
+# KFRef 优化步骤携带的「分镜画面构成」原料（生成分镜图所用提示词）截断上限：
+# 说话人绑定句的外观/站位信息主要在前段，超长截断以控制优化调用 token 预算。
+H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS = 600
 
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
@@ -2025,11 +2028,14 @@ class GridConfig:
     VALIDATION_SEPARATOR_SIDE_WIDTH = 5    # 计算分割线两侧对比时的采样宽度
     VALIDATION_MIN_LINE_COVERAGE = 0.75    # 分割线贯穿比例阈值（细线友好采样后真实宫格普遍≥0.9；普通照片单格可达0.7，不宜再低）
     VALIDATION_MIN_CELL_UNIFORMITY = 0.90  # 同方向 cell 尺寸最小/最大比例阈值
-    # 占位格识别阈值：用灰度中位数判定（不受占位格里穿过的白色分割线干扰——分割线像素
-    # 占比小，不影响中位数）。纯黑占位格 median≈0，纯白占位格 median≈255，真实场景内容
-    # median 普遍 >20（即便夜景/暗场也因有明暗对比而中位数偏中）。占位格友好旁路据此识别。
-    VALIDATION_PLACEHOLDER_DARK_MAX = 15.0    # median <= 此值 → 纯黑占位格
-    VALIDATION_PLACEHOLDER_BRIGHT_MIN = 240.0 # median >= 此值 → 纯白占位格
+    # 占位格识别阈值：中位数 + 极暗/极亮像素占比 双条件判定。中位数不受占位格里穿过的
+    # 白色分割线干扰（分割线像素占比小）；但夜景/暗场等真实场景 cell 中位数也可能 ≤15，
+    # 故叠加占比条件：纯黑占位格极暗像素占比实测 >0.97，纯白占位格极亮占比实测 ≈0.84，
+    # 而暗色场景格极暗占比 ≤0.5（月亮/灯光/反射面拉高分布）。
+    VALIDATION_PLACEHOLDER_DARK_MAX = 15.0    # 极暗像素灰度上限（median 与占比共用）
+    VALIDATION_PLACEHOLDER_BRIGHT_MIN = 240.0 # 极亮像素灰度下限（median 与占比共用）
+    VALIDATION_PLACEHOLDER_DARK_RATIO_MIN = 0.90   # 极暗像素占比 ≥ 此值才算纯黑占位格
+    VALIDATION_PLACEHOLDER_BRIGHT_RATIO_MIN = 0.75 # 极亮像素占比 ≥ 此值才算纯白占位格
     # 占位格友好旁路的宽松阈值（仅旁路使用，严格校验绝不用）：
     # 旁路已确认图像含占位格，对占位区缺失的分割线用理论位置兜底后，仍需校验有内容段的
     # 分割线质量。此处放宽以容忍占位格边缘对 coverage 的轻微影响，但不能低到让普通照片
