@@ -72,6 +72,15 @@
 > **参考音频/视频同理**：按顺序填入 155/163（音频）、158/164（视频），未传时 `fieldValue` 留空；音/视频为独立映射，`audio_path[i]`→第 i 个音频节点、`video_path[i]`→第 i 个视频节点，互不关联。
 > **旁路开关**：音/视频加载器经 ImpactSwitch（懒加载）接入 H3 节点——有文件时对应开关 `select=1`，无文件时 `select=2`；旁路时加载器不执行（空槽位不会报 `Please upload...` 错），H3 对应输入收到 None（等效未接线）。驱动对 4 个开关总是显式下发。
 
+### 无对白参考音频门控（2026-10-14）
+
+MiniMax 的音色参考必须绑定说话内容：镜头没有台词时连上的参考音频会被上游拒绝（报「无法识别的说话内容」）或被当成成片声音。驱动在 `build_create_request` 上传音频前做无对白门控（口径与 KFRef 驱动 `minimax_h3_keyframe_ref_runninghub_v1_driver.py` 一致）：
+
+- **台词判定**：优先取 `extra_config.h3_prompt_optimize.has_dialogue`（LLM 语义判断，布尔），取不到（旧任务/优化禁用/回退原文）时回退优化前原文（`h3_slot_source_prompt`）的 `has_quoted_dialogue` 正则；
+- **无对白且带音频** → 清空音频列表、不上传，音频槽 ImpactSwitch 自然旁路（`select=2`、`fieldValue=""`），参考视频不受影响；
+- 注入侧（`api/storyboard.py` 单发 / `services/storyboard_agent_cli_service.py` 批量）同口径：H3 家族（KFRef + 参考生）无对白镜头不注入角色 `default_voice` 音色、不追加「参考音频说明」，避免音色说明污染优化原文；
+- 优化侧（`h3_prompt_optimize`）校验：原文判无台词时 `forbid_audio_refs` 开启，优化结果不得出现任何 `<audio` 引用。
+
 ## 分辨率映射
 
 复用首尾帧版 `MINIMAX_H3_DRIVER_VALUES`：
@@ -106,6 +115,7 @@ subject_definitions / summary / retention_analysis / detailed_description / over
 
 - **参考标签**：`<picture_N>` 对应第 N 张输入参考图，`<video_N>` 第 N 个参考视频，`<audio_N>` 第 N 个参考音频，`<subject_N>` 为从资产抽象的可复用内容；标签顺序与输入资产一一对应（步骤参数 `ref_counts` 携带图/视频/音频计数）。
 - **对话保真**：六段结构描述文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；模板含中文对话正反例，原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM。
+- **无台词反幻觉（双重）**：原文无引号台词时注入 no-dialogue note——① 严禁编造台词（`<d>` 校验拦截，`forbid_dialogue`）；② **「准备开口/要说」等说话意图动作必须改写为无声动作**（轻点头、深呼吸、目光停留、嘴唇闭合），校验按 `_SPEAKING_INTENT_RE` 拦截 ready to speak / about to say / 开口说 等短语——视频模型见到开口动作而无 `<d>` 台词会自动生成无法识别的含糊语音（线上案例 ai_tools 56837：成片后半段出现 2.4 秒乱说话声）。
 - **触发条件**：`pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少一项参考资产；改写失败回退原文，不阻断出片。
 - **驱动消费**：提交时优先使用 `extra_config.h3_prompt_optimize.optimized_prompt`，否则用 `ai_tool.prompt`（原文备份在 `extra_config.original_prompt`）。
 - 机制详情（原子创建、模型回退链、超时）见 `docs/backend/pipeline_steps.md` 的 `h3_prompt_optimize` 章节。

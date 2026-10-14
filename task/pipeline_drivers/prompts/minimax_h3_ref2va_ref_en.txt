@@ -84,6 +84,8 @@ Never translate Chinese dialogue into English — writing `<d>[English] So that'
 
 Only lines that are written in the source prompt may appear inside `<d>`. If the source prompt contains no spoken or sung lines, write no `<d>` spans at all — never invent a line on a character's behalf, no matter how natural it would sound in the scene. A voice-timbre reference only constrains the timbre a character uses if they speak; it never implies the character must speak.
 
+When the source prompt contains no spoken lines, also remove any speaking-intent action such as "ready to speak", "about to say", "opens his mouth to speak", or "wants to say". The video model makes any mouth-opening character vocalize; without `<d>` text it produces unintelligible speech. Rewrite such moments as silent actions: a slight nod, a deep breath, a lingering glance, lips staying closed.
+
 Cite `<audio_N>` in the shot or phase where the audio relationship is active, and state whether the signal is copied or referenced. When only timbre, rhythm, emotion, or delivery is referenced, do not carry the original dialogue from the reference audio into the target video.
 
 ## 6. Example

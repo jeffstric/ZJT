@@ -12,6 +12,8 @@ webapp_id: 2086470155902734337
   - 参考图1~9   → nodeId 137/139/142/147/149/150/151/152/153 fieldName=image (LoadImage)
                   顺序填入，未使用的节点 fieldValue 留空，避免 RunningHub 用节点默认值
   - 参考音频1~2 → nodeId 155/163 fieldName=audio (LoadAudio)，独立参考音频，未用留空
+                  无对白镜头不上传（口径同 KFRef：音色参考必须绑台词，否则上游报
+                  「无法识别的说话内容」或把语音当成成片声音），ImpactSwitch 自然旁路
   - 参考视频1~2 → nodeId 158/164 fieldName=video (VHS_LoadVideo)，未用留空
   - 音/视频开关 → nodeId 167/168(音频) 167 对应 155、168 对应 163；
                   nodeId 165/166(视频) 165 对应 158、166 对应 164；
@@ -32,6 +34,10 @@ from config.constant import VIDEO_RESOLUTION_EXTRA_CONFIG_KEY, LEGACY_RESOLUTION
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.runninghub_error import is_upstream_congested_error
+from task.pipeline_drivers.h3_prompt_optimize_util import (
+    has_quoted_dialogue,
+    h3_slot_source_prompt,
+)
 from .exceptions import ImageExpiredError
 
 
@@ -313,12 +319,29 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
             uploaded_images.append(uploaded)
 
         # 参考音频/参考视频（可选，独立映射 LoadAudio / VHS_LoadVideo 节点，超量截断）
+        extra_config = self._parse_extra_config(ai_tool)
         reference_audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
         if len(reference_audios) > MAX_REFERENCE_AUDIOS:
             self.logger.warning(
                 f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_AUDIOS}个参考音频，已忽略多余的音频"
             )
             reference_audios = reference_audios[:MAX_REFERENCE_AUDIOS]
+        # 无对白镜头不上传参考音频（口径同 KFRef 驱动）：MiniMax 的音色参考必须绑定
+        # 说话内容，没有台词时连上的语音会被上游拒绝（「无法识别的说话内容」）或被
+        # 当成成片声音。台词有无优先取优化步骤的 LLM 语义判断
+        # （extra_config.h3_prompt_optimize.has_dialogue），旧任务/优化禁用/回退原文时
+        # 回退优化前原文的正则引号判断。
+        _prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        _llm_flag = _prompt_meta.get("has_dialogue") if isinstance(_prompt_meta, dict) else None
+        _has_dialogue = _llm_flag if isinstance(_llm_flag, bool) else has_quoted_dialogue(
+            h3_slot_source_prompt(extra_config, getattr(ai_tool, "prompt", None) or "")
+        )
+        if reference_audios and not _has_dialogue:
+            self.logger.info(
+                f"MiniMax H3 参考生视频镜头无对白（has_dialogue={_llm_flag}），"
+                f"跳过 {len(reference_audios)} 个参考音频，音频槽旁路"
+            )
+            reference_audios = []
         reference_videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
         if len(reference_videos) > MAX_REFERENCE_VIDEOS:
             self.logger.warning(
@@ -339,8 +362,7 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         ratio = ai_tool.ratio or '9:16'
         aspect_ratio_value = self._ratio_to_aspect_ratio_value(ratio)
 
-        # 从 extra_config 解析分辨率并映射为 megapixels
-        extra_config = self._parse_extra_config(ai_tool)
+        # 从 extra_config 解析分辨率并映射为 megapixels（extra_config 已在音频门控前解析）
         megapixels_value = self._get_megapixels(extra_config)
 
         # 构建提示词：优先使用 pipeline 优化结果（Ref2VA 改写），原文已备份在 extra_config.original_prompt

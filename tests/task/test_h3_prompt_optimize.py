@@ -822,3 +822,108 @@ def test_resolve_returns_none_when_all_unconfigured(mock_config, mock_get_client
     )
     assert model is None
     assert vendor_id is None
+
+
+def _ref2va_ok_body(extra: str = "") -> str:
+    """结构合法的 Ref2VA 优化输出骨架（六段字段齐全）。"""
+    return (
+        "subject_definitions: <subject_1> is the man in <picture_1>.\n\n"
+        "summary: [reference generation] A quiet office scene.\n\n"
+        "retention_analysis: <subject_1> (appears in [Shot 1]): fully_preserved - identity kept.\n\n"
+        "detailed_description: [Shot 1] He nods silently and glances around the room.\n"
+        + extra
+        + "\n\noverall_soundscape: Room tone only.\n\n"
+        "non_diegetic_music: N/A"
+    )
+
+
+def test_user_message_no_dialogue_note_rewrites_speaking_intent():
+    """线上案例 ai_tools 56837：无台词但动作写「准备开口」，note 要求改写为无声动作。"""
+    message = build_h3_optimize_user_message(
+        "描述：胡敏环视一圈团队成员，准备开口。音频备注：无对白",
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        5,
+        template="GUIDE",
+    )
+    # note 特有措辞（原文不含「欲言又止/嘴唇闭合」，命中即说明指令已注入）
+    assert "欲言又止" in message
+    assert "改写为无声动作" in message
+    assert "嘴唇闭合" in message
+    assert "无法识别的含糊语音" in message
+
+
+def test_validate_forbid_dialogue_blocks_speaking_intent():
+    """forbid_dialogue 拦 <d> 与说话意图短语；无声动作与普通名词（loudspeaker）不误伤。"""
+    ok = _ref2va_ok_body()
+    assert validate_h3_optimized_prompt(ok, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=True)
+    assert validate_h3_optimized_prompt(
+        _ref2va_ok_body("A loudspeaker on the wall plays static noise."),
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        forbid_dialogue=True,
+    )
+    for bad in (
+        _ref2va_ok_body("He says: <d>[Chinese] 你好</d>"),
+        _ref2va_ok_body("He gives a slight nod, ready to speak."),
+        _ref2va_ok_body("She opens her mouth to speak."),
+        _ref2va_ok_body("He is about to say something."),
+        _ref2va_ok_body("他准备开口说话。"),
+    ):
+        assert not validate_h3_optimized_prompt(
+            bad, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=True
+        ), bad
+        # 有台词场景不开 forbid_dialogue，同样内容不拦
+        assert validate_h3_optimized_prompt(
+            bad, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=False
+        ), bad
+
+
+def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
+    """Ref2VA 无台词：优化结果含 <audio 引用或说话意图短语均打回，耗尽回退原文。"""
+    driver = H3PromptOptimizePipelineDriver()
+    driver.logger = MagicMock()
+    calls = {"n": 0}
+
+    async def writes_audio(original, variant, duration, step_params):
+        calls["n"] += 1
+        return _ref2va_ok_body(
+            "<audio_1> is the voice-timbre reference for <subject_1> (S1)."
+        )
+
+    driver._call_llm = writes_audio
+    optimized, fallback, _, flag = asyncio.run(driver._optimize(
+        "无对白镜头，只有环境音", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is True and flag is None
+    assert optimized == "无对白镜头，只有环境音"
+    assert calls["n"] == 2
+
+    async def keeps_speaking_intent(original, variant, duration, step_params):
+        return _ref2va_ok_body("He gives a slight nod, ready to speak.")
+
+    driver._call_llm = keeps_speaking_intent
+    optimized, fallback, _, _ = asyncio.run(driver._optimize(
+        "胡敏环视众人，准备开口。音频备注：无对白", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is True and optimized.startswith("胡敏环视众人")
+
+    async def clean(original, variant, duration, step_params):
+        return _ref2va_ok_body()
+
+    driver._call_llm = clean
+    optimized, fallback, error, _ = asyncio.run(driver._optimize(
+        "无对白镜头", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is False and error is None
+
+    # 有台词：音色引用与 <d> 均合法，forbid 不开
+    async def with_dialogue(original, variant, duration, step_params):
+        return _ref2va_ok_body(
+            "<audio_1> is the voice-timbre reference for <subject_1> (S1). "
+            "He says: <d>[Chinese] 今天到此为止</d>"
+        )
+
+    driver._call_llm = with_dialogue
+    optimized, fallback, _, _ = asyncio.run(driver._optimize(
+        "李卫国说「今天到此为止」", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is False and "<audio_1>" in optimized

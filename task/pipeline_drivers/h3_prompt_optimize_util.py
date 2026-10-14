@@ -32,6 +32,17 @@ _KANA_RE = re.compile(r"[\u3040-\u30ff]")
 _HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 # 书名号《》不参与：书名不是对话；英文直引号/中文弯引号/日式引号均为台词常见形态。
 _QUOTED_SPAN_RE = re.compile(r"[\"“「『]([^\"”」』]+)[\"”」』]")
+# 说话意图短语（未配台词的开口动作）。只列明确形态，避免误伤 speaker/speaks about 等用法。
+# 视频模型见到开口动作而无 <d> 台词会自动生成无法识别的含糊语音（ai_tools 56837）。
+_SPEAKING_INTENT_RE = re.compile(
+    r"ready to (?:speak|say|talk|answer|reply)"
+    r"|about to (?:speak|say|talk|answer|reply)"
+    r"|opens? (?:his|her|their|its) mouth"
+    r"|begins? to (?:speak|say|talk)"
+    r"|wants? to (?:say|speak)"
+    r"|准备开口|要开口|欲言又止|张嘴|开口说",
+    re.IGNORECASE,
+)
 # 分镜参考模式提交后写进提示词的槽位说明。1-based，与参考图列表下标对应。
 _H3_FIRST_FRAME_MARK_RE = re.compile(r"图(\d+)是首帧")
 _H3_LAST_FRAME_MARK_RE = re.compile(r"图(\d+)是尾帧")
@@ -478,13 +489,21 @@ def _build_no_dialogue_note() -> str:
     线上案例(ai_tools 231):原文仅写"音频1是李卫国的音色样本,角色说话时请保持相同音色",
     Ref2VA 模板的 few-shot 示例(音色参考+角色开口说台词)诱导 LLM 编造
     "早上好,新的一天开始了。"并提交给视频模型,成片角色凭空开口说话。
+
+    线上案例(ai_tools 56837,2026-10-14):原文"音频备注:无对白"但动作写"准备开口",
+    优化结果未编台词(反幻觉生效)却原样保留了 ready to speak——视频模型见到开口
+    动作而无 <d> 台词,自动生成约 2.4 秒无文本约束的含糊语音,成片出现
+    "无法识别的说话声"。故说话意图动作必须一并改写为无声动作。
     """
     return (
         "原始提示词中没有任何引号标注的台词。"
         "只有当原文明确写出角色说出或唱出的具体话语时,才把该话语逐字放入 <d> 并标注准确的语言标签;"
         "除此之外严禁虚构、编造或补充任何对白、歌词或角色开口说话的行为——"
         "音色参考仅约束角色开口说话时应使用的音色,绝不代表角色必须说话;"
-        "若你判断原文没有任何台词,输出中不得出现 <d> 标签。"
+        "若你判断原文没有任何台词,输出中不得出现 <d> 标签;"
+        "原文写有「准备开口」「要说」「欲言又止」等说话意图时,必须改写为无声动作"
+        "(轻点头、深吸一口气、目光停留、嘴唇闭合不发声),不得保留任何张嘴发声的动作——"
+        "视频模型见到开口动作而没有台词文本时,会自动生成一段无法识别的含糊语音。"
     )
 
 
@@ -563,14 +582,24 @@ def validate_h3_optimized_prompt(
     keyframe_slots: Optional[Dict[str, Any]] = None,
     duration: Optional[float] = None,
     forbid_audio_refs: bool = False,
+    forbid_dialogue: bool = False,
 ) -> bool:
     prompt = strip_prompt_fences(text)
     if not prompt:
         return False
     lowered = prompt.lower()
-    # 仅在 KFRef 且原文无引号台词时开启：无对白镜头连上的语音会被当成成片声音，
+    # 仅在原文判无台词时开启（调用方传入）：无对白镜头连上的语音会被当成成片声音，
     # 优化结果不得出现任何音频引用；有台词镜头本来就要写 <Audio 1>，不能开。
     if forbid_audio_refs and "<audio" in lowered:
+        return False
+    # 同上只在无台词时开启：反幻觉 note 只是指令级约束，LLM 仍可能仿照模板示例
+    # 编造台词；编出的 <d> 会让视频模型给角色自动配音（成片「乱说话」），
+    # 这里校验拦截，重试失败后回退无 <d> 的原文。
+    if forbid_dialogue and "<d>" in lowered:
+        return False
+    # 无台词时同样拦截「准备开口」类说话意图动作（ai_tools 56837）：开口动作
+    # 会让视频模型自动生成无文本约束的含糊语音，成片出现无法识别的说话声。
+    if forbid_dialogue and _SPEAKING_INTENT_RE.search(lowered):
         return False
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
         # 只接受大模型逐字写出的首尾帧原句。不在这里补句子。
