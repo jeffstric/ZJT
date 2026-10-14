@@ -124,6 +124,8 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     request = asyncio.run(driver.build_create_request(make_ai_tool(
         audio_path="voice1.wav,voice2.wav",
         video_path="clip.mp4",
+        # 有引号台词的镜头维持上传音色 + lip-sync pacing 现状
+        prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
     )))
     nodes = node_map(request)
     assert nodes[("157", "audio")]["fieldValue"] == "openapi/voice1.wav"
@@ -136,6 +138,7 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     extra = make_driver()
     extra_request = asyncio.run(extra.build_create_request(make_ai_tool(
         audio_path="a.wav,b.wav,c.wav",
+        prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
     )))
     extra_nodes = node_map(extra_request)
     assert extra_nodes[("157", "audio")]["fieldValue"] == "openapi/a.wav"

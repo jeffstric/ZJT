@@ -15,6 +15,7 @@ from task.pipeline_drivers.h3_prompt_optimize_driver import H3PromptOptimizePipe
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
     build_h3_optimize_user_message,
+    has_quoted_dialogue,
     h3_slot_source_prompt,
     kfref_required_clauses,
     load_h3_prompt_template,

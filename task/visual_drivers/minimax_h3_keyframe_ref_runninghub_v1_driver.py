@@ -22,6 +22,7 @@ from config.constant import MAX_VOICE_REFERENCE_AUDIOS
 from config.unified_config import TaskTypeId
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     assign_h3_keyframe_ref_pictures,
+    has_quoted_dialogue,
     h3_slot_source_prompt,
 )
 from .minimax_h3_reference_runninghub_v1_driver import (
