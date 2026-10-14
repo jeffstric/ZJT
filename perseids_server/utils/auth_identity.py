@@ -24,7 +24,11 @@ def normalize_authorization_token(value: Optional[str]) -> str:
 async def resolve_authorization_user_id(
     value: Optional[str],
 ) -> Tuple[Optional[int], Optional[JSONResponse]]:
-    """异步解析 Authorization，返回 ``(user_id, error_response)``。"""
+    """异步解析 Authorization，返回 ``(user_id, error_response)``。
+
+    401 响应体附 ``detail`` 字段：前端错误处理约定读取 ``data.detail``
+    展示用户可读文案，缺失时会退化为含糊的"提交任务失败"。
+    """
     token = normalize_authorization_token(value)
     if not token:
         return None, JSONResponse(
@@ -33,6 +37,7 @@ async def resolve_authorization_user_id(
                 "success": False,
                 "error_code": "missing_auth_token",
                 "error": "Authorization is required",
+                "detail": "登录状态失效，请保存当前内容后重新登录",
             },
         )
 
@@ -44,6 +49,7 @@ async def resolve_authorization_user_id(
                 "success": False,
                 "error_code": "invalid_auth_token",
                 "error": "Authorization is invalid or expired",
+                "detail": "登录已过期，请保存当前内容后重新登录",
             },
         )
     return int(user_id), None
@@ -76,6 +82,7 @@ def user_mismatch_response() -> JSONResponse:
             "success": False,
             "error_code": "user_mismatch",
             "error": "user_id 与当前登录用户不一致",
+            "detail": "用户身份不一致，请重新登录后再试",
         },
     )
 

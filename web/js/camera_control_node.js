@@ -486,19 +486,16 @@
             if (userId) form.append('user_id', userId);
             if (authToken) form.append('auth_token', authToken);
 
-            var res = await fetch('/api/image-edit', {
-              method: 'POST',
-              body: form
-            });
+            var res = await authPostForm('/api/image-edit', form);
 
             if (!res.ok) {
               var errData = await res.json().catch(function() { return {}; });
-              throw new Error(errData.detail || 'HTTP ' + res.status);
+              throw new Error(extractApiErrorMessage(errData, res));
             }
 
             var data = await res.json();
             if (!data.project_ids || data.project_ids.length === 0) {
-              throw new Error(data.detail || data.message || '提交任务失败');
+              throw new Error(extractApiErrorMessage(data, res));
             }
 
             showToast(window.t ? window.t('camera_control_submitted') : '任务已提交，正在生成图片...', 'info');
