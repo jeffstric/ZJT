@@ -21,6 +21,7 @@ from model import AITool, PipelineStep
 from task.pipeline_drivers.base_pipeline_driver import BasePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
     build_h3_optimize_user_message,
+    has_quoted_dialogue,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
     resolve_h3_prompt_variant,
@@ -103,9 +104,11 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
     ) -> Tuple[str, bool, Optional[str], Optional[bool]]:
         """返回 (optimized, fallback, error, has_dialogue)。
 
-        KFRef 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出返回；
-        判无台词时动态开 forbid_audio_refs（结果不得出现任何 <audio）。
-        非 KFRef 变体维持纯文本输出，has_dialogue 恒为 None。
+        KFRef 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出返回。
+        判无台词时开 forbid_audio_refs / forbid_dialogue（结果不得出现任何
+        <audio 引用与 <d> 台词）：无对白镜头的音频会被上游拒绝（「无法识别的
+        说话内容」）或当成成片声音，幻觉台词会让角色凭空开口说话。
+        非 KFRef 变体维持纯文本输出，has_dialogue 恒为 None，无台词判定回退原文正则。
         """
         is_kfref = variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
         last_error = None
@@ -120,12 +123,20 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                         continue
                 else:
                     cleaned = strip_prompt_fences(raw)
+                # 无台词判定：KFRef 的 LLM 语义标记优先（含 Ref2VA 在内的其余变体
+                # 标记为 None、KFRef 重试耗尽回退原文时同样为 None），回退原文正则。
+                no_dialogue = (
+                    (has_dialogue is False)
+                    if isinstance(has_dialogue, bool)
+                    else not has_quoted_dialogue(original)
+                )
                 if validate_h3_optimized_prompt(
                     cleaned,
                     variant,
                     keyframe_slots=step_params.get("keyframe_slots"),
                     duration=duration,
-                    forbid_audio_refs=(is_kfref and has_dialogue is False),
+                    forbid_audio_refs=no_dialogue,
+                    forbid_dialogue=no_dialogue,
                 ):
                     return cleaned, False, None, has_dialogue
                 last_error = "optimized prompt failed structure check"

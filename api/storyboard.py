@@ -4398,7 +4398,18 @@ async def generate_scene_video(
     # 不支持的模型（grok 等）collect 返回空，行为不变。在 generation_snapshot 解析后
     # 注入，不扰动 IMAGE_TO_VIDEO / REFERENCE_TO_VIDEO 模式判定；参考图全空回退
     # 文生视频（media_mode=TEXT_TO_VIDEO）时不注入。
-    if scene_characters_ctx is not None and collected_urls:
+    # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入：音色参考
+    # 必须绑台词，没有台词时连上的语音会被上游拒绝（「无法识别的说话内容」）或被
+    # 当成成片声音，「保持相同音色」说明也不进优化原文；两类驱动侧另有同一口径兜底。
+    h3_no_dialogue_skip_voice = (
+        task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+        and not has_quoted_dialogue(prompt)
+    )
+    if (
+        scene_characters_ctx is not None
+        and collected_urls
+        and not h3_no_dialogue_skip_voice
+    ):
         voice_items, _ = collect_character_voice_references(
             supports_voice_input=bool(getattr(config, 'supports_voice_input', False)),
             characters=scene_characters_ctx.get('characters'),
