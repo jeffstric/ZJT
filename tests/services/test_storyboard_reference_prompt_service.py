@@ -7,6 +7,7 @@ from services.storyboard_reference_prompt_service import (
     build_storyboard_reference_items,
     build_voice_casting_note,
     collect_character_voice_references,
+    extract_speaking_character_ids,
     remove_storyboard_visual_suffix,
 )
 
@@ -330,6 +331,64 @@ VOICE_CHARACTERS = [
     {"name": "无音色角色", "default_voice": ""},
     {"name": "王五", "default_voice": "/upload/character/voice/wangwu.wav"},
 ]
+
+
+def test_extract_speaking_character_ids():
+    """说话角色 = 对话记录里 text 非空的角色；text 空或无 character_id 不算。"""
+    dialogues = [
+        {"character_id": 42, "text": "李保国！你看看你扫的什么地！"},
+        {"character_id": 43, "text": ""},          # 占位/已清空，不开口
+        {"character_id": None, "text": "旁白"},     # 未绑定角色
+        {"character_id": "44", "text": "知道了"},   # 字符串 id 也接受
+        "not-a-dict",
+    ]
+    assert extract_speaking_character_ids(dialogues) == {42, 44}
+    assert extract_speaking_character_ids(None) == set()
+    assert extract_speaking_character_ids([]) == set()
+
+
+def test_voice_references_filtered_by_speaking_characters():
+    """H3 单人/少人说话镜头只注入开口说话角色的音色；None 不过滤（seedance 现状）。"""
+    characters = [
+        {"id": 1, "name": "赵志高", "default_voice": "/upload/character/voice/zhao.wav"},
+        {"id": 2, "name": "李卫国", "default_voice": "/upload/character/voice/li.wav"},
+    ]
+    # 只有赵志高说话：只注入他的音色（分镜 2 事故修复：第二路不挂槽）
+    items, note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids={1},
+    )
+    assert [item["name"] for item in items] == ["赵志高"]
+    assert note == "参考音频说明：音频1是角色：赵志高的音色样本，角色说话时请保持相同音色。"
+
+    # 两人都说话：都注入
+    both, _ = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids={1, 2},
+    )
+    assert [item["name"] for item in both] == ["赵志高", "李卫国"]
+
+    # None = 不过滤（现行为，seedance 等链路）
+    unfiltered, _ = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids=None,
+    )
+    assert [item["name"] for item in unfiltered] == ["赵志高", "李卫国"]
+
+    # 空集合：一个都不注入（有对话记录但角色不在库等边界）
+    empty, empty_note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids=set(),
+    )
+    assert empty == [] and empty_note == ""
 
 
 def test_voice_references_collected_when_model_supports():

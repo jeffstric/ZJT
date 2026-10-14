@@ -18,6 +18,7 @@ webapp_id: 2108549232725680129
 空槽 fieldValue 为 ""。这个应用没有 ImpactSwitch，也没有参考视频节点。
 """
 from typing import Any, Dict, List
+import re
 
 from config.constant import MAX_VOICE_REFERENCE_AUDIOS
 from config.unified_config import TaskTypeId
@@ -36,6 +37,8 @@ _WEBAPP_ID = "2108549232725680129"
 _PICTURE_NODE_IDS = ("137", "156", "187")
 _AUDIO_NODE_IDS = ("157", "188")
 _EMPTY_AUDIO_FIELD_VALUE = "None"
+# 优化结果里的音频绑定声明（<Audio 1> / <Audio 2>）：声明几路上传几路
+_AUDIO_DECL_RE = re.compile(r"<Audio\s*([0-9]+)>")
 
 
 class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Driver):
@@ -72,6 +75,13 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 f"Picture{index + 1}",
             )
 
+        # 提示词要在音频处理之前取值：按声明数截断音频要解析它里面的 <Audio N>。
+        _prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
+        if isinstance(_prompt_meta, dict) and _prompt_meta.get("optimized_prompt"):
+            prompt_text = str(_prompt_meta.get("optimized_prompt") or "")
+        else:
+            prompt_text = getattr(ai_tool, "prompt", None) or ""
+
         # 无对白镜头不上传音频（必须在上传循环之前清空，否则文件已传完、音频槽
         # 仍会拿到 fileName）：<Audio N> 只有绑到要说新台词的角色身上才是音色参考，
         # 没有目标台词时连上的语音会被当成成片声音。台词有无优先取优化步骤的
@@ -91,7 +101,6 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 len(audios) - MAX_VOICE_REFERENCE_AUDIOS,
             )
             audios = audios[:MAX_VOICE_REFERENCE_AUDIOS]
-        _prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
         _llm_flag = _prompt_meta.get("has_dialogue") if isinstance(_prompt_meta, dict) else None
         _has_dialogue = _llm_flag if isinstance(_llm_flag, bool) else has_quoted_dialogue(slot_prompt)
         if audios and not _has_dialogue:
@@ -101,6 +110,19 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 len(audios),
             )
             audios = []
+        elif audios:
+            # 有对白时按优化结果实际声明的 <Audio N> 数上传：优化只给开口说话的
+            # 角色写绑定句，未声明的音频不传（槽填 None）——单人说话镜头不再把
+            # 非说话人的音色挂槽（H3 会错配给画面人物或混入成片人声，分镜 2 事故）。
+            # 回退原文/无优化记录时声明为 0，同样不上传（干净降级为模型自动配音）。
+            declared_count = max((int(m) for m in _AUDIO_DECL_RE.findall(prompt_text)), default=0)
+            if len(audios) > declared_count:
+                self.logger.info(
+                    "MiniMax H3 首帧参考混合模型按提示词声明的 %s 路音频上传（audio_path 有 %s 路，未声明的不上传、槽填 None）",
+                    declared_count,
+                    len(audios),
+                )
+                audios = audios[:declared_count]
         videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
         if videos:
             self.logger.warning(
@@ -112,11 +134,6 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
         for index, audio in enumerate(audios):
             uploaded_audios.append(await self._upload_reference_media(audio, f"参考音频{index + 1}"))
 
-        prompt_meta = extra_config.get("h3_prompt_optimize") if isinstance(extra_config, dict) else None
-        if isinstance(prompt_meta, dict) and prompt_meta.get("optimized_prompt"):
-            prompt_text = str(prompt_meta.get("optimized_prompt") or "")
-        else:
-            prompt_text = getattr(ai_tool, "prompt", None) or ""
         # 无对白且文本中残留音色说明句时剥掉（优化回退原文/旧任务兜底）：
         # 「角色说话时请保持相同音色」会诱导视频模型让角色发声。
         if not _has_dialogue and "参考音频说明" in prompt_text:
