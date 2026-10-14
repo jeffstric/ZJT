@@ -119,6 +119,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from task.audio_task import recalc_scene_duration_if_all_completed
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 
 logger = logging.getLogger(__name__)
 
