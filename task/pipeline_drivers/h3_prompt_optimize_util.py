@@ -32,6 +32,23 @@ _KANA_RE = re.compile(r"[\u3040-\u30ff]")
 _HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
 # 书名号《》不参与：书名不是对话；英文直引号/中文弯引号/日式引号均为台词常见形态。
 _QUOTED_SPAN_RE = re.compile(r"[\"“「『]([^\"”」』]+)[\"”」』]")
+# 画面可见文字（背景板/横幅/牌匾上的字）不算台词：引号后紧跟这些词，
+# 或引号前紧贴可见文字载体描写时排除。误判方向安全：把可见文字误判成
+# 无台词只是少传音色音频（模型自动配音台词，不报错）；反向误判会传音频+
+# 音色说明（dev3 案例 ai_tool 1816：回退原文后音色样本被当成片声音）。
+_VISIBLE_TEXT_SUFFIX_RE = re.compile(r"^(?:字样|文字|标题|标语|全称|名称|横幅|口号|两个字|几个字)")
+_VISIBLE_TEXT_PREFIX_RE = re.compile(r"(?:背景板|横幅|牌匾|屏幕|字幕|标语|标题|卷轴|写着|印着)[^\n\"”」』]{0,8}$")
+# 说话意图短语（未配台词的开口动作）。只列明确形态，避免误伤 speaker/speaks about 等用法。
+# 视频模型见到开口动作而无 <d> 台词会自动生成无法识别的含糊语音（ai_tools 56837）。
+_SPEAKING_INTENT_RE = re.compile(
+    r"ready to (?:speak|say|talk|answer|reply)"
+    r"|about to (?:speak|say|talk|answer|reply)"
+    r"|opens? (?:his|her|their|its) mouth"
+    r"|begins? to (?:speak|say|talk)"
+    r"|wants? to (?:say|speak)"
+    r"|准备开口|要开口|欲言又止|张嘴|开口说",
+    re.IGNORECASE,
+)
 # 分镜参考模式提交后写进提示词的槽位说明。1-based，与参考图列表下标对应。
 _H3_FIRST_FRAME_MARK_RE = re.compile(r"图(\d+)是首帧")
 _H3_LAST_FRAME_MARK_RE = re.compile(r"图(\d+)是尾帧")
@@ -234,7 +251,11 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
     return (
         f"下面是原本视频的提示词，已知有{asset_text}，"
         f"目标视频时长为 {float(duration or 5):.2f} 秒，请你修改为符合以上规范的提示词；"
-        "参考标签与输入资产按顺序一一对应"
+        "参考标签与输入资产按顺序一一对应；"
+        "输出格式：第一行必须是 {\"has_dialogue\": true} 或 {\"has_dialogue\": false}"
+        "（按你对原文有无角色说出或唱出台词的语义判断填写——背景板/横幅/牌匾等"
+        "画面可见文字不算台词），然后空一行，再输出最终提示词正文；"
+        "正文原样多行输出，不要再包进 JSON。\n"
     )
 
 
@@ -431,12 +452,20 @@ def _extract_quoted_cjk_spans(text: str) -> list:
 
     引号是台词/歌词/画面文字的常见形态信号,但强调、术语等描述性用法也会用引号,
     因此仅用于生成提示信息,语义由 LLM 自行判断(见 _build_dialogue_fidelity_note)。
+    背景板/横幅等画面可见文字按前后缀启发式排除(dev3 案例 ai_tool 1816:
+    背景板比赛全称让正则误判有台词,音色注入与驱动音频门控全被绕过)。
     """
     spans = []
     for match in _QUOTED_SPAN_RE.finditer(text or ""):
         span = match.group(1)
-        if _CJK_RE.search(span):
-            spans.append(span)
+        if not _CJK_RE.search(span):
+            continue
+        if (
+            _VISIBLE_TEXT_SUFFIX_RE.match(text, match.end())
+            or _VISIBLE_TEXT_PREFIX_RE.search(text[:match.start()])
+        ):
+            continue
+        spans.append(span)
     return spans
 
 
@@ -461,13 +490,21 @@ def _detect_cjk_language(spans: list) -> str:
 
 
 def _build_dialogue_fidelity_note(quoted_spans: list) -> str:
-    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。"""
+    """构造条件式对话保真提示:点名列出引号 CJK 片段,角色判断(台词还是描述)交给 LLM。
+
+    可见文字(背景板/横幅/牌匾上的字)不进 <d>:<d> 是"会被念出的说话内容"标签,
+    可见文字进了会被视频模型配音念出(dev3 案例 ai_tool 1815:背景板比赛全称被
+    角色音色念成台词)。可见文字改用英文双引号写进画面描述。
+    """
     language = _detect_cjk_language(quoted_spans)
     listed = "\n".join(f'- "{span}"' for span in quoted_spans)
     return (
         f"原始提示词中存在以下引号包裹的 {language} 片段:\n{listed}\n"
-        f"若它们是角色说出的台词、旁白/画外音口播、唱出的歌词或画面中的可见文字,"
+        f"若它们是角色说出的台词、旁白/画外音口播或唱出的歌词,"
         f"必须逐字保留在 <d> 内(语言标签写 [{language}]),严禁翻译或改写;"
+        f"若它们只是背景板/横幅/牌匾/字幕等画面可见文字,不得放入 <d>"
+        f"——<d> 只承载会被念出的说话内容——改在画面描述中原样引用"
+        f'(如 the backdrop reads "{quoted_spans[0]}"),严禁翻译;'
         f"若它们只是动作、氛围、术语等描述性用法,则正常按英文规范转写。"
     )
 
@@ -478,13 +515,21 @@ def _build_no_dialogue_note() -> str:
     线上案例(ai_tools 231):原文仅写"音频1是李卫国的音色样本,角色说话时请保持相同音色",
     Ref2VA 模板的 few-shot 示例(音色参考+角色开口说台词)诱导 LLM 编造
     "早上好,新的一天开始了。"并提交给视频模型,成片角色凭空开口说话。
+
+    线上案例(ai_tools 56837,2026-10-14):原文"音频备注:无对白"但动作写"准备开口",
+    优化结果未编台词(反幻觉生效)却原样保留了 ready to speak——视频模型见到开口
+    动作而无 <d> 台词,自动生成约 2.4 秒无文本约束的含糊语音,成片出现
+    "无法识别的说话声"。故说话意图动作必须一并改写为无声动作。
     """
     return (
         "原始提示词中没有任何引号标注的台词。"
         "只有当原文明确写出角色说出或唱出的具体话语时,才把该话语逐字放入 <d> 并标注准确的语言标签;"
         "除此之外严禁虚构、编造或补充任何对白、歌词或角色开口说话的行为——"
         "音色参考仅约束角色开口说话时应使用的音色,绝不代表角色必须说话;"
-        "若你判断原文没有任何台词,输出中不得出现 <d> 标签。"
+        "若你判断原文没有任何台词,输出中不得出现 <d> 标签;"
+        "原文写有「准备开口」「要说」「欲言又止」等说话意图时,必须改写为无声动作"
+        "(轻点头、深吸一口气、目光停留、嘴唇闭合不发声),不得保留任何张嘴发声的动作——"
+        "视频模型见到开口动作而没有台词文本时,会自动生成一段无法识别的含糊语音。"
     )
 
 
@@ -563,14 +608,28 @@ def validate_h3_optimized_prompt(
     keyframe_slots: Optional[Dict[str, Any]] = None,
     duration: Optional[float] = None,
     forbid_audio_refs: bool = False,
+    forbid_dialogue: bool = False,
 ) -> bool:
     prompt = strip_prompt_fences(text)
     if not prompt:
         return False
     lowered = prompt.lower()
-    # 仅在 KFRef 且原文无引号台词时开启：无对白镜头连上的语音会被当成成片声音，
+    # <d> 标签配对：畸形嵌套（如 "<d> <d>[Chinese]…</d>"，dev3 案例 ai_tool 1815
+    # 实际出现）会让上游把标签文本当说话内容念出，所有变体一律拦截。
+    if lowered.count("<d>") != lowered.count("</d>"):
+        return False
+    # 仅在原文判无台词时开启（调用方传入）：无对白镜头连上的语音会被当成成片声音，
     # 优化结果不得出现任何音频引用；有台词镜头本来就要写 <Audio 1>，不能开。
     if forbid_audio_refs and "<audio" in lowered:
+        return False
+    # 同上只在无台词时开启：反幻觉 note 只是指令级约束，LLM 仍可能仿照模板示例
+    # 编造台词；编出的 <d> 会让视频模型给角色自动配音（成片「乱说话」），
+    # 这里校验拦截，重试失败后回退无 <d> 的原文。
+    if forbid_dialogue and "<d>" in lowered:
+        return False
+    # 无台词时同样拦截「准备开口」类说话意图动作（ai_tools 56837）：开口动作
+    # 会让视频模型自动生成无文本约束的含糊语音，成片出现无法识别的说话声。
+    if forbid_dialogue and _SPEAKING_INTENT_RE.search(lowered):
         return False
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF:
         # 只接受大模型逐字写出的首尾帧原句。不在这里补句子。
@@ -626,8 +685,9 @@ def merge_h3_prompt_extra_config(
         "original_prompt": original_prompt,
         "optimized_prompt": optimized_prompt,
         "fallback": bool(fallback),
-        # KFRef 的 LLM 台词语义判断；fallback（回退原文）时为 None，
-        # 驱动侧见非布尔值即回退 has_quoted_dialogue 正则兜底。
+        # LLM 台词语义判断（KFRef/Ref2VA JSON 头）。结构校验失败回退原文时
+        # 若头已合法解析仍保留布尔值（驱动据此清音频）；None（协议未启用/
+        # 头缺失）时驱动回退 has_quoted_dialogue 正则兜底。
         "has_dialogue": has_dialogue,
     }
     return json.dumps(data, ensure_ascii=False)

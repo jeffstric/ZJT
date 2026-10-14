@@ -214,10 +214,12 @@ def test_fidelity_note_language_tag_japanese_and_korean():
 
 
 def test_system_prompt_requires_dialogue_fidelity():
-    """system prompt 不再要求整段全英文：对话/歌词/屏幕文字保留原语言"""
+    """system prompt 不再要求整段全英文：对话/歌词保留原语言；可见文字不进 <d>"""
     from task.pipeline_drivers.h3_prompt_optimize_driver import _SYSTEM_PROMPT
     assert "never" in _SYSTEM_PROMPT and "translate" in _SYSTEM_PROMPT
-    assert "[Chinese]" in _SYSTEM_PROMPT
+    # <d> 只放说出的内容；可见文字（背景板/横幅）用英文双引号写进描述
+    assert "spoken or sung" in _SYSTEM_PROMPT
+    assert "never inside <d>" in _SYSTEM_PROMPT
     assert "Output only the final English prompt" not in _SYSTEM_PROMPT
 
 
@@ -381,7 +383,8 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     optimized, fallback, error, flag = asyncio.run(driver._optimize(
         "无对白原文", H3_PROMPT_OPTIMIZE_VARIANT_KF_REF, 5.0, {"keyframe_slots": slots},
     ))
-    assert fallback is True and flag is None and optimized == "无对白原文"
+    # 文本回退原文，但 JSON 头已合法解析的语义判断保留（驱动据此清音频）
+    assert fallback is True and flag is False and optimized == "无对白原文"
 
 
 def test_step_configs_pass_image_prompt_note_for_kfref():
@@ -594,7 +597,7 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
     assert "原文没有台词：不写任何 <Audio N>" in two_audio
     assert "每一段绑定到各自的说话人" in two_audio
 
-    # 非 KFRef 变体不出现条件式音频指令与协议段
+    # Ref2VA 不出现 KFRef 的条件式音频指令，但 2026-10 起同走 JSON 头协议（语义判台词）
     ref2va = build_h3_optimize_user_message(
         "参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。",
         H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
@@ -603,7 +606,8 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
         ref_counts={"images": 1, "videos": 0, "audios": 1},
     )
     assert "先判断原文有没有角色说出或唱出的台词" not in ref2va
-    assert "has_dialogue" not in ref2va
+    assert "has_dialogue" in ref2va
+    assert "画面可见文字不算台词" in ref2va
 
 
 def test_kfref_instruction_carries_image_prompt_note():
@@ -822,3 +826,178 @@ def test_resolve_returns_none_when_all_unconfigured(mock_config, mock_get_client
     )
     assert model is None
     assert vendor_id is None
+
+
+def _ref2va_ok_body(extra: str = "") -> str:
+    """结构合法的 Ref2VA 优化输出骨架（六段字段齐全）。"""
+    return (
+        "subject_definitions: <subject_1> is the man in <picture_1>.\n\n"
+        "summary: [reference generation] A quiet office scene.\n\n"
+        "retention_analysis: <subject_1> (appears in [Shot 1]): fully_preserved - identity kept.\n\n"
+        "detailed_description: [Shot 1] He nods silently and glances around the room.\n"
+        + extra
+        + "\n\noverall_soundscape: Room tone only.\n\n"
+        "non_diegetic_music: N/A"
+    )
+
+
+def test_user_message_no_dialogue_note_rewrites_speaking_intent():
+    """线上案例 ai_tools 56837：无台词但动作写「准备开口」，note 要求改写为无声动作。"""
+    message = build_h3_optimize_user_message(
+        "描述：胡敏环视一圈团队成员，准备开口。音频备注：无对白",
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        5,
+        template="GUIDE",
+    )
+    # note 特有措辞（原文不含「欲言又止/嘴唇闭合」，命中即说明指令已注入）
+    assert "欲言又止" in message
+    assert "改写为无声动作" in message
+    assert "嘴唇闭合" in message
+    assert "无法识别的含糊语音" in message
+
+
+def test_validate_forbid_dialogue_blocks_speaking_intent():
+    """forbid_dialogue 拦 <d> 与说话意图短语；无声动作与普通名词（loudspeaker）不误伤。"""
+    ok = _ref2va_ok_body()
+    assert validate_h3_optimized_prompt(ok, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=True)
+    assert validate_h3_optimized_prompt(
+        _ref2va_ok_body("A loudspeaker on the wall plays static noise."),
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        forbid_dialogue=True,
+    )
+    for bad in (
+        _ref2va_ok_body("He says: <d>[Chinese] 你好</d>"),
+        _ref2va_ok_body("He gives a slight nod, ready to speak."),
+        _ref2va_ok_body("She opens her mouth to speak."),
+        _ref2va_ok_body("He is about to say something."),
+        _ref2va_ok_body("他准备开口说话。"),
+    ):
+        assert not validate_h3_optimized_prompt(
+            bad, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=True
+        ), bad
+        # 有台词场景不开 forbid_dialogue，同样内容不拦
+        assert validate_h3_optimized_prompt(
+            bad, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, forbid_dialogue=False
+        ), bad
+
+
+def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
+    """Ref2VA 无台词（JSON 头 has_dialogue=false）：结果含 <audio 引用或说话意图
+    短语均打回，耗尽回退原文；语义标记优先于原文正则（背景板文字不算台词）。"""
+    driver = H3PromptOptimizePipelineDriver()
+    driver.logger = MagicMock()
+    calls = {"n": 0}
+
+    async def writes_audio(original, variant, duration, step_params):
+        calls["n"] += 1
+        return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(
+            "<audio_1> is the voice-timbre reference for <subject_1> (S1)."
+        )
+
+    driver._call_llm = writes_audio
+    optimized, fallback, _, flag = asyncio.run(driver._optimize(
+        "无对白镜头，只有环境音", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    # 文本回退原文但语义判断保留：驱动读 has_dialogue=False 清音频（1816 教训）
+    assert fallback is True and flag is False
+    assert optimized == "无对白镜头，只有环境音"
+    assert calls["n"] == 2
+
+    async def keeps_speaking_intent(original, variant, duration, step_params):
+        return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(
+            "He gives a slight nod, ready to speak."
+        )
+
+    driver._call_llm = keeps_speaking_intent
+    optimized, fallback, _, _ = asyncio.run(driver._optimize(
+        "胡敏环视众人，准备开口。音频备注：无对白", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is True and optimized.startswith("胡敏环视众人")
+
+    async def clean(original, variant, duration, step_params):
+        return '{"has_dialogue": false}\n\n' + _ref2va_ok_body()
+
+    driver._call_llm = clean
+    optimized, fallback, error, flag = asyncio.run(driver._optimize(
+        "无对白镜头", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is False and error is None and flag is False
+
+    # 语义判断优先于正则：原文引号是背景板可见文字（正则会误判有台词），
+    # LLM 判 false 时无对白防护照常生效
+    driver._call_llm = clean
+    optimized, fallback, _, flag = asyncio.run(driver._optimize(
+        '背景板上的"拱墅区产改试点企业品牌故事演讲比赛决赛"字样清晰可见，无对白',
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is False and flag is False
+
+    # 有台词（JSON 头 true）：音色引用与 <d> 均合法，forbid 不开
+    async def with_dialogue(original, variant, duration, step_params):
+        return '{"has_dialogue": true}\n\n' + _ref2va_ok_body(
+            "<audio_1> is the voice-timbre reference for <subject_1> (S1). "
+            "He says: <d>[Chinese] 今天到此为止</d>"
+        )
+
+    driver._call_llm = with_dialogue
+    optimized, fallback, _, flag = asyncio.run(driver._optimize(
+        "李卫国说「今天到此为止」", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+    ))
+    assert fallback is False and flag is True and "<audio_1>" in optimized
+
+
+def test_fidelity_note_routes_visible_text_out_of_d():
+    """dev3 案例 ai_tool 1815：可见文字进 <d> 被角色音色念成台词，note 必须
+    明确可见文字改用英文双引号写进画面描述。
+
+    注：背景板/字样等典型形态已被 has_quoted_dialogue 启发式排除（走
+    no-dialogue note，见 test_has_quoted_dialogue_excludes_visible_text）；
+    这里用未命中启发式的变体验证 fidelity note 的可见文字改写指令。"""
+    message = build_h3_optimize_user_message(
+        '"欢迎光临本店"四个大字挂在门口。音频备注：环境音',
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "欢迎光临本店" in message
+    assert "不得放入 <d>" in message
+    assert "the backdrop reads" in message
+    # 台词仍要求逐字保留进 <d>
+    assert "必须逐字保留在 <d> 内" in message
+
+
+def test_validate_rejects_mismatched_d_tags():
+    """<d>/</d> 不配对（如 "<d> <d>[Chinese]…</d>" 畸形嵌套）一律拦截。"""
+    assert not validate_h3_optimized_prompt(
+        _ref2va_ok_body("The backdrop reads X. <d> <d>[Chinese] 比赛</d>"),
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+    )
+    assert not validate_h3_optimized_prompt(
+        _ref2va_ok_body("He says: </d>[Chinese] 比赛"),
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+    )
+    # 配对的不受影响
+    assert validate_h3_optimized_prompt(
+        _ref2va_ok_body("He says: <d>[Chinese] 今天到此为止</d>"),
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+    )
+
+
+def test_has_quoted_dialogue_excludes_visible_text():
+    """dev3 案例 ai_tool 1816：背景板引号文字被正则误判成台词，音色注入与
+    驱动音频门控全被绕过。可见文字形态（后缀「字样/标题…」/前缀「背景板/
+    写着…」）排除，真实台词不受影响。"""
+    visible = (
+        '背景板上的"拱墅区产改试点企业品牌故事演讲比赛决赛"字样清晰可见',
+        '横幅上写着"安全生产月"标题',
+        '牌匾"老王饭店"',
+    )
+    for text in visible:
+        assert not has_quoted_dialogue(text), text
+    spoken = (
+        '他说："今天天气真好。"',
+        '李卫国喊道「今天到此为止」',
+        '字幕打上"未完待续"后他念道："下次再见。"',  # 同句有真实台词
+    )
+    for text in spoken:
+        assert has_quoted_dialogue(text), text

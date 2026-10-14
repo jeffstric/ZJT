@@ -2,7 +2,7 @@
 
 This guide is only for the mixed keyframe-and-reference workflow. Do not use the Ref2VA six-section layout.
 
-Write the final prompt in English. Keep dialogue, lyrics, and visible on-screen text inside <d> in their original language. Do not translate them.
+Write the final prompt in English. Keep dialogue and lyrics inside <d> in their original language; visible on-screen text (signs, backdrop boards, banners, subtitles) never enters <d> — quote it in English double quotes inside the description instead. Do not translate them.
 
 For each occupied picture slot, write one paragraph in slot order. When the slot instruction gives a mandatory first sentence, copy that sentence unchanged: same capitalization, same time, same ref_image number. Then continue the same paragraph with the constraints in the slot instruction.
 
@@ -16,6 +16,7 @@ Audio paragraphs are conditional. First judge whether the source prompt explicit
 <Audio 1> is the voice-timbre reference for the older man in the gray jacket on the left of <Picture 1> (S1): it provides voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.
 - If the shot has spoken lines but there is no available reference audio, do not write any <Audio N> tag at all. Keep the lines inside <d>; the model voices them.
 - If the shot has no spoken lines, do not write any <Audio N> tag at all. Do not invent an audio reference, do not invent spoken lines, and do not mention any character voice sample. Describe only the ambient and environmental sound of the shot.
+- If the shot has no spoken lines, also remove any speaking-intent action such as "ready to speak", "about to say", or "opens his mouth to speak". The video model makes any mouth-opening character vocalize; without <d> text it produces unintelligible speech. Rewrite such moments as silent actions: a slight nod, a deep breath, a lingering glance, lips staying closed.
 
 Speaker binding rules (apply when writing binding sentences or dialogue):
 

@@ -20,7 +20,7 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
 )
-from config.unified_config import SceneVideoType, UnifiedConfigRegistry
+from config.unified_config import SceneVideoType, TaskTypeId, UnifiedConfigRegistry
 from services.storyboard_frame_mention import (
     FrameMentionError,
     H3_KEYFRAME_REF_MAX_IMAGES,
@@ -1189,9 +1189,11 @@ class StoryboardAgentCliService:
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
         # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
-        # KFRef 混合模型无对白镜头（原文无引号台词）不注入，同单发生成路径口径。
+        # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入，
+        # 同单发生成路径口径：音色参考必须绑台词，无台词上传会被上游拒绝
+        # （「无法识别的说话内容」）或被当成成片声音。
         if mode == "image_to_video" and not (
-            task_type == h3_keyframe_ref_task_id()
+            task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
             and not has_quoted_dialogue(prompt_text)
         ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
