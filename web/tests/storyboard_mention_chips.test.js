@@ -59,4 +59,13 @@ describe('chip mirror and hover preview mount points', () => {
         expect(eventsSource).toContain('row.dataset.hoverPreview = frame.url');
         expect(eventsSource).toContain('row.dataset.hoverPreview = aurl');
     });
+
+    it('chips record token end and left dropdown previews open to the right', () => {
+        const chipsSource = readSource('web/js/storyboard/chat_mention_chips.js');
+        // 胶囊记录标记结束位置：点击时光标定位到标记之后，不落进遮盖区
+        expect(chipsSource).toContain('data-end="${end}"');
+        expect(chipsSource).toMatch(/closest\('\.chat-mention-chip'\)[\s\S]{0,600}setSelectionRange/);
+        // 左侧提示词下拉（asset-dropdown）内的预览在右侧展开
+        expect(chipsSource).toContain("anchor.closest('.asset-dropdown') ? 'right' : 'top'");
+    });
 });

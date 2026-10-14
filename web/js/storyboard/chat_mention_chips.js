@@ -87,7 +87,7 @@ export function syncChatMentionChips() {
         const url = urlByKey[key];
         parts.push(escapeHtml(text.slice(cursor, start)));
         parts.push(
-            `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(url)}">`
+            `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(url)}" data-end="${end}">`
             + `<img src="${escapeHtml(getThumbnailUrl(url, 28))}" alt="">`
             + `<span class="chat-mention-chip-id">${escapeHtml(shortImageId(url))}</span>`
             + `</span></span>`,
@@ -128,23 +128,34 @@ function hoverPreviewEl() {
     return previewEl;
 }
 
-function positionPreview(pop, anchor) {
+function positionPreview(pop, anchor, placement = 'top') {
     if (!anchor.isConnected) return;
     const rect = anchor.getBoundingClientRect();
     pop.style.visibility = 'hidden';
     pop.style.display = 'block';
     const pw = pop.offsetWidth;
     const ph = pop.offsetHeight;
-    let left = rect.left + rect.width / 2 - pw / 2;
-    left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
-    let top = rect.top - ph - 8;
-    if (top < 8) top = rect.bottom + 8;
+    let left;
+    let top;
+    if (placement === 'right') {
+        // 右侧优先；屏幕右缘放不下时翻到锚点左侧，垂直贴齐锚点并夹在视口内
+        left = rect.right + 8;
+        if (left + pw > window.innerWidth - 8) left = rect.left - pw - 8;
+        left = Math.max(8, left);
+        top = rect.top + rect.height / 2 - ph / 2;
+        top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
+    } else {
+        left = rect.left + rect.width / 2 - pw / 2;
+        left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+        top = rect.top - ph - 8;
+        if (top < 8) top = rect.bottom + 8;
+    }
     pop.style.left = `${left}px`;
     pop.style.top = `${top}px`;
     pop.style.visibility = 'visible';
 }
 
-export function showHoverPreview(url, anchor) {
+export function showHoverPreview(url, anchor, placement = 'top') {
     const pop = hoverPreviewEl();
     const cleaned = String(url || '');
     if (!cleaned || !anchor) {
@@ -155,11 +166,11 @@ export function showHoverPreview(url, anchor) {
         pop.dataset.url = cleaned;
         pop.innerHTML = `<img src="${escapeHtml(cleaned)}" alt="">`;
     }
-    positionPreview(pop, anchor);
+    positionPreview(pop, anchor, placement);
     const img = pop.querySelector('img');
     if (img && !img.complete) {
         img.addEventListener('load', () => {
-            if (pop.dataset.url === cleaned) positionPreview(pop, anchor);
+            if (pop.dataset.url === cleaned) positionPreview(pop, anchor, placement);
         }, { once: true });
     }
 }
@@ -178,11 +189,29 @@ export function setupHoverPreview() {
         if (!(event.target instanceof Element)) return;
         const anchor = event.target.closest('[data-hover-preview]');
         if (anchor && anchor.dataset.hoverPreview) {
-            showHoverPreview(anchor.dataset.hoverPreview, anchor);
+            // 左侧提示词下拉：预览放右侧，避免盖住选项列表
+            const placement = anchor.closest('.asset-dropdown') ? 'right' : 'top';
+            showHoverPreview(anchor.dataset.hoverPreview, anchor, placement);
         } else if (!event.target.closest('.sb-hover-preview')) {
             hideHoverPreview();
         }
     });
     document.addEventListener('scroll', hideHoverPreview, true);
     window.addEventListener('blur', hideHoverPreview);
+    // 点击胶囊：光标定位到标记之后（含尾随空格），不落进胶囊遮盖的区域
+    document.addEventListener('mousedown', (event) => {
+        if (!(event.target instanceof Element)) return;
+        const chip = event.target.closest('.chat-mention-chip');
+        if (!chip) return;
+        const ta = document.getElementById('chat-textarea');
+        if (!ta) return;
+        event.preventDefault();
+        const end = Number(chip.dataset.end);
+        if (!Number.isFinite(end)) return;
+        let pos = end;
+        if (ta.value[pos] === ' ') pos += 1;
+        pos = Math.min(Math.max(pos, 0), ta.value.length);
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+    });
 }
