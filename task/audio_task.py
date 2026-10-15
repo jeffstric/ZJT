@@ -610,6 +610,9 @@ async def _analyze_character_voice_capability(
         "   - 个性气质：性格带来的说话感觉（如\"透着长者的沉稳和蔼\"\"俏皮灵动、爱撒娇\"\"威严不容置疑\"）\n"
         "   - 说话风格：语速快慢、音量、说话方式（如\"语速偏慢，字字清晰像在讲往事\"\"语速轻快像闺蜜聊天\"）\n"
         "   - 录音质感：以\"录音干净清晰，像在耳边近距离说话\"收尾，保证生成音质稳定\n"
+        "   - 音色必须与角色外观、年龄、身份一致（壮硕粗犷的角色配低沉厚重的声音，"
+        "瘦弱年轻的角色配清亮轻快的声音）——该描述同时用作视频生成的角色音色指纹"
+        "（MiniMax H3 提示词注入），与形象矛盾会导致成片音色对不上人物\n"
         "   - 总体语气保持平静自然：参考音频用于后续声音克隆，不要描述激烈起伏的情绪\n"
         "   ✅ 合格示例：\"一位六十岁左右的北方老先生，说话带明显的东北口音，声音低沉浑厚、略带沙哑，"
         "透着长者的沉稳和蔼，语速偏慢，字字清晰像在讲往事，录音干净清晰，像在耳边近距离说话。\"\n"
@@ -664,6 +667,19 @@ async def _analyze_character_voice_capability(
         "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
         "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
     }
+
+
+async def analyze_character_voice(character_data: Dict[str, Any],
+                                  model: Optional[str] = None,
+                                  vendor_id: Optional[int] = None) -> Dict[str, Any]:
+    """公开封装：按角色人设做 LLM 音色分析。
+
+    「生成参考音频」与「自动生成音色描述」共用同一次分析结果：
+    voice_description 既是 TTS 风格提示词，也是角色声学音色指纹（character.voice_desc）。
+    调用方持有多消费需求时应调用本函数一次自行派生，避免分别调
+    build_character_audio_style_prompt / build_character_audio_text 造成重复 LLM 调用。
+    """
+    return await _analyze_character_voice_capability(character_data, model=model, vendor_id=vendor_id)
 
 
 async def build_character_audio_text(

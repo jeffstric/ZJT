@@ -47,12 +47,15 @@ from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
     build_storyboard_reference_items,
+    build_voice_casting_note,
     collect_character_voice_references,
     extract_storyboard_reference_names,
     reference_urls,
 )
+from task.pipeline_drivers import PipelineDriverFactory
 from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
@@ -1208,6 +1211,19 @@ class StoryboardAgentCliService:
                 merged.extend(item['url'] for item in _voice_items)
                 audio_urls = ','.join(merged)
                 prompt_text = append_voice_reference_note(prompt_text, _voice_items)
+
+        # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
+        # （character.voice_desc），批量补视频与单发链路同口径：H3 参考音频只是
+        # 弱微调，音色一致性靠文字指纹渲染进提示词。纯文本不占音频槽，
+        # 非 H3 模型零变化；KFRef 无对白镜头与音色注入同口径跳过（防诱导配音）。
+        if PipelineDriverFactory.is_h3_prompt_optimize_type(int(task_type)) and not (
+            task_type == h3_keyframe_ref_task_id()
+            and not has_quoted_dialogue(prompt_text)
+        ):
+            prompt_text = append_voice_casting_note(
+                prompt_text,
+                build_voice_casting_note(context.get('characters')),
+            )
 
         from script_writer_core.mcp_tool import scoped_video_preferences
         with scoped_video_preferences(generation_snapshot):

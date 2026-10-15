@@ -25,6 +25,14 @@ Speaker binding rules (apply when writing binding sentences or dialogue):
 - Anchor priority: the character's own reference picture (e.g. the man holding the broom in <Picture 2>) > appearance features (clothing, age, held objects) combined with position (on the left / on the right). Never use a bare position word alone.
 - Character names mean nothing to the video model; never use a name as the only anchor. Expand names into visual descriptions that uniquely locate the person in the picture.
 
+Voice casting (when the source prompt carries a 角色音色说明 block):
+
+- That block lists each character's acoustic voice profile (gender & age feel, pitch, texture, volume, pace, tone habit — written in Chinese). It is authoritative casting: whenever that character speaks, render the profile into the English voice wording of the spoken line.
+- Translate every acoustic trait into English (e.g. 「30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳」 → "a deep, slightly hoarse middle-aged male voice, full volume, slow steady delivery"). Keep all traits semantically intact — never drop, soften, or invent traits.
+- Attach the voice wording to the dialogue attribution next to the speaker anchor, e.g. "The plump guard on the right of <Picture 1> (S1) says in a deep, slightly hoarse middle-aged male voice: <d>[Chinese] …</d>". Use identical voice wording for the same character across all of their lines.
+- Ignore the profiles of characters who do not speak in this shot; a profile never causes a silent character to speak.
+- Do not copy the 角色音色说明 block into the final prompt; it is casting input only.
+
 Then write the shot, starting with [Shot 1]. Before the shot, include the type prefix. Start from the base prefix named in the slot instruction and append " + audio reference" only when you wrote <Audio N> binding sentences.
 
 Do not write <video_N>. Do not write an <Audio N> tag the slot instruction does not name. Do not paraphrase a mandatory keyframe sentence.

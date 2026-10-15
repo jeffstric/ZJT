@@ -72,7 +72,11 @@ with stub_modules({
     'utils.index_tts_util': MagicMock(),
     'config.config_util': MagicMock(),
 }):
-    from task.audio_task import build_character_audio_text, calculate_next_retry_delay
+    from task.audio_task import (
+        analyze_character_voice,
+        build_character_audio_text,
+        calculate_next_retry_delay,
+    )
 
 
 def _run_async(coro):
@@ -98,6 +102,27 @@ class TestBuildCharacterAudioText(unittest.TestCase):
             custom_text="  有内容的文本  "
         ))
         self.assertEqual(result, "有内容的文本")
+
+    @patch('task.audio_task._analyze_character_voice_capability')
+    def test_analyze_character_voice_delegates_to_analysis(self, mock_analyze):
+        """analyze_character_voice 公开封装透传分析结果（生成参考音频与音色描述共用一次分析）"""
+        mock_analyze.return_value = {
+            'can_speak_human_language': True,
+            'voice_type': 'human',
+            'voice_description': '30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳，语气威严',
+            'sample_text': '大家好，我是张伟。',
+        }
+        result = _run_async(analyze_character_voice(
+            character_data={"name": "张伟", "age": "30"},
+            model="test-model", vendor_id=7,
+        ))
+        self.assertEqual(
+            result['voice_description'],
+            '30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳，语气威严',
+        )
+        mock_analyze.assert_called_once_with(
+            {"name": "张伟", "age": "30"}, model="test-model", vendor_id=7
+        )
 
     @patch('task.audio_task._analyze_character_voice_capability')
     def test_empty_custom_text_uses_llm(self, mock_analyze):

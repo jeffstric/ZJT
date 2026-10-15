@@ -859,6 +859,7 @@
   "placeholder_char_personality": "Describe character personality",
   "placeholder_char_behavior": "Describe character behavior",
   "placeholder_char_other": "Other related information",
+  "placeholder_voice_desc": "Acoustic voice traits of the character (gender & age / pitch / texture / volume / pace) for voice-consistent video generation",
   "placeholder_audio_url": "Reference audio URL",
   "placeholder_image_url": "Image URL or description",
   "placeholder_tag_dress": "Tag, e.g.: Evening dress",
@@ -891,6 +892,7 @@
   "label_updated_at": "Updated At",
   "label_script_title": "Script Title",
   "label_episode_num": "Episode",
+  "label_voice_desc": "Voice Description",
   "label_audio_ref": "Reference Audio",
   "label_required_mark": "{label} *",
   "placeholder_script_content_optional": "Enter script content (optional)",
@@ -904,6 +906,7 @@
   "btn_return_select_package": "Back to Packages",
   "btn_select_package": "Select Package",
   "btn_pay": "Pay Now",
+  "btn_generate_voice_desc": "Auto-generate",
   "btn_generate_audio": "Generate Reference Audio",
   "option_male": "Male",
   "option_female": "Female",
@@ -1181,5 +1184,9 @@
   "ann_view_link": "View details",
   "tts_ref_source_library": "From Voice Library",
   "tts_ref_source_upload": "Upload Audio File",
-  "tts_ref_source_library_tip": "Uses the selected voice's sample audio as cloning reference (cross-model results may vary)"
+  "tts_ref_source_library_tip": "Uses the selected voice's sample audio as cloning reference (cross-model results may vary)",
+  "error_voice_desc_need_audio": "Generate or upload a reference audio first; the voice description is derived from it",
+  "status_generating_voice_desc": "Generating voice description...",
+  "success_voice_desc_generated": "Voice description generated; edit freely before saving",
+  "error_voice_desc_failed": "Failed to generate voice description: {error}"
 }

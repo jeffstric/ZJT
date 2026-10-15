@@ -11,6 +11,7 @@ from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
     H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+    H3_VOICE_CASTING_NOTE_MARKER,
     MAX_VOICE_REFERENCE_AUDIOS,
 )
 from config.unified_config import DriverKey
@@ -533,6 +534,24 @@ def _build_no_dialogue_note() -> str:
     )
 
 
+def _build_voice_casting_instruction(original_prompt: str) -> str:
+    """原文携带「角色音色说明」块时追加的配音规格指令。
+
+    注入侧（分镜直连/批量补视频，仅 H3 系列）把角色声学音色指纹
+    （character.voice_desc）追加到原文尾部；H3 的参考音频只是弱微调，
+    音色一致性靠该指纹渲染成英文声音描述。指纹特征必须语义逐字转写，
+    禁止润色增删（文本恒定是跨镜头音色一致性的根基）。
+    """
+    if H3_VOICE_CASTING_NOTE_MARKER not in str(original_prompt or ""):
+        return ""
+    return (
+        "原文末尾的「角色音色说明」块是角色配音规格："
+        "有台词的角色，说话句中必须融入其对应音色特征的英文转写"
+        "（全部声学特征语义保留，禁止增删或改写，不说话的角色忽略其特征）；"
+        "该说明块本身不要抄进最终提示词，只作为配音依据。"
+    )
+
+
 def build_h3_optimize_user_message(
     original_prompt: str,
     variant: str,
@@ -561,6 +580,9 @@ def build_h3_optimize_user_message(
         instruction = f"{instruction}\n{_build_dialogue_fidelity_note(quoted_spans)}"
     else:
         instruction = f"{instruction}\n{_build_no_dialogue_note()}"
+    voice_casting_line = _build_voice_casting_instruction(original_prompt)
+    if voice_casting_line:
+        instruction = f"{instruction}\n{voice_casting_line}"
     body = (original_prompt or "").strip() or "(empty original prompt)"
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
 

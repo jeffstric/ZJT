@@ -4852,6 +4852,8 @@
             document.getElementById('char-behavior').value = data.behavior || '';
             document.getElementById('char-other').value = data.other_info || '';
             document.getElementById('char-default-voice').value = data.default_voice || '';
+            document.getElementById('char-voice-desc').value = data.voice_desc || '';
+            updateVoiceDescButtonState();
             document.getElementById('char-image').value = data.reference_image || '';
 
             showCharacterDefaultVoicePreview(data.default_voice || '');
@@ -4888,6 +4890,74 @@
         function clearCharacterDefaultVoice() {
             document.getElementById('char-default-voice').value = '';
             showCharacterDefaultVoicePreview('');
+            updateVoiceDescButtonState();
+        }
+
+        // 音色描述「自动生成」按钮：有参考音频才可点击（指纹与音频同源，
+        // 音频是声音的最终事实）。参考音频输入框为 readonly，仅在
+        // 打开编辑器 / 上传 / 生成 / 清空这四个入口变化，各处调用本函数刷新状态。
+        function updateVoiceDescButtonState() {
+            const hasVoice = !!document.getElementById('char-default-voice').value.trim();
+            document.getElementById('generate-voice-desc-btn').disabled = !hasVoice;
+        }
+
+        // 按角色人设自动生成声学音色描述（character.voice_desc）。
+        // 只回填输入框，随角色卡保存链路持久化；用户可手改。
+        async function generateCharacterVoiceDesc() {
+            if (!currentEditFile || currentEditFile.fileType !== 'characters') {
+                showError(window.t ? window.t('error_open_character_first') : '请先打开一个角色进行编辑');
+                return;
+            }
+            const voiceUrl = document.getElementById('char-default-voice').value.trim();
+            if (!voiceUrl) {
+                showError(window.t ? window.t('error_voice_desc_need_audio') : '请先生成或上传参考音频');
+                return;
+            }
+            const characterName = document.getElementById('char-name').value.trim();
+            if (!characterName) {
+                showError(window.t ? window.t('error_character_name_required') : '角色名称不能为空');
+                return;
+            }
+            const btn = document.getElementById('generate-voice-desc-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '生成中...';
+            try {
+                updateStatus(window.t ? window.t('status_generating_voice_desc') : '正在生成音色描述...');
+                const modelSelector = document.getElementById('model-selector');
+                const selectedModelOption = modelSelector?.options[modelSelector.selectedIndex];
+                const response = await fetch('/api/script-writer/characters/voice-desc', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: parseInt(WORLD_ID),
+                        character_name: characterName,
+                        character_data: JSON.parse(collectCharacterData()),
+                        model: modelSelector?.value || '',
+                        model_id: selectedModelOption?.dataset?.modelId ? parseInt(selectedModelOption.dataset.modelId) : null,
+                        vendor_id: selectedModelOption?.dataset?.vendorId ? parseInt(selectedModelOption.dataset.vendorId) : null
+                    })
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || '生成失败');
+                }
+                document.getElementById('char-voice-desc').value = data.voice_desc || '';
+                showSuccess(window.t ? window.t('success_voice_desc_generated') : '音色描述已生成，可手动修改后保存');
+            } catch (error) {
+                showError((window.t ? window.t('error_voice_desc_failed', {error: error.message}) : '生成音色描述失败: ' + error.message));
+            } finally {
+                btn.textContent = originalText;
+                updateVoiceDescButtonState();
+            }
         }
 
         function triggerCharacterVoiceUpload() {
@@ -4936,6 +5006,7 @@
                 if (data.success) {
                     document.getElementById('char-default-voice').value = data.url;
                     showCharacterDefaultVoicePreview(data.url);
+                    updateVoiceDescButtonState();
                     showSuccess(window.t ? window.t('success_audio_uploaded') : '音频上传成功');
                 } else {
                     showError(uploadErrorText(data.error));
@@ -4992,6 +5063,11 @@
                 }
                 document.getElementById('char-default-voice').value = data.default_voice || data.result_url || '';
                 showCharacterDefaultVoicePreview(data.default_voice || data.result_url || '');
+                // 音频重新生成 → 音色指纹同步刷新（同一次音色分析的产物）
+                if (data.voice_desc) {
+                    document.getElementById('char-voice-desc').value = data.voice_desc;
+                }
+                updateVoiceDescButtonState();
                 await saveEditedFile();
                 showSuccess(window.t ? window.t('success_audio_generated') : '角色参考音频生成成功');
                 updateStatus(window.t ? window.t('status_audio_generated') : '角色参考音频已生成');
@@ -6963,6 +7039,7 @@
                 behavior: document.getElementById('char-behavior').value.trim(),
                 other_info: document.getElementById('char-other').value.trim(),
                 default_voice: document.getElementById('char-default-voice').value.trim(),
+                voice_desc: document.getElementById('char-voice-desc').value.trim(),
                 reference_image: document.getElementById('char-image').value.trim()
             };
             // 收集多服装参考图

@@ -55,7 +55,8 @@ from perseids_server.utils.auth_identity import (
 )
 from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
-from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
+from task.audio_task import analyze_character_voice
+from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from llm.llm_client_factory import get_available_models, get_llm_client
 
 # ==================== 加载 API 配置 ====================
@@ -857,6 +858,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
+                    voice_desc=char.get('voice_desc'),
                     _temp_filename=temp_filename,
                     _skip_image_validation=True
                 )
@@ -883,6 +885,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         other_info=sync_other_info,
                                         reference_image=char.get('reference_image'),
                                         default_voice=char.get('default_voice'),
+                                        voice_desc=char.get('voice_desc'),
                                         _skip_image_validation=True
                                     )
                                     if not overwrite_result.get('success'):
@@ -911,6 +914,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
+                    voice_desc=char.get('voice_desc'),
                     _skip_image_validation=True
                 )
                 if not create_result.get('success'):
@@ -1272,6 +1276,16 @@ class CharacterReferenceAudioRequest(BaseModel):
     character_data: Optional[Dict[str, Any]] = None
     style_prompt: Optional[str] = None
     text: Optional[str] = None
+    # LLM 模型信息（从前端 model-selector 获取）
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+class CharacterVoiceDescRequest(BaseModel):
+    world_id: int
+    character_id: Optional[int] = None
+    character_name: Optional[str] = None
+    character_data: Optional[Dict[str, Any]] = None
     # LLM 模型信息（从前端 model-selector 获取）
     model: Optional[str] = None
     model_id: Optional[int] = None
@@ -3138,6 +3152,7 @@ async def submit_to_database(request: Request, submit_request: SubmitDatabaseReq
                         reference_image = char_data.get('reference_image')
                         reference_images = char_data.get('reference_images')
                         default_voice = char_data.get('default_voice')
+                        voice_desc = char_data.get('voice_desc')
 
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         char_id = CharacterModel.create_or_update(
@@ -3152,7 +3167,8 @@ async def submit_to_database(request: Request, submit_request: SubmitDatabaseReq
                             other_info=other_info,
                             reference_image=reference_image,
                             reference_images=reference_images,
-                            default_voice=default_voice
+                            default_voice=default_voice,
+                            voice_desc=voice_desc
                         )
                         # 确保 CDN mapping（图片 + 音频）
                         try:
@@ -3489,15 +3505,19 @@ async def generate_character_reference_audio(
         if audio_request.character_name and not character_data.get('name'):
             character_data['name'] = audio_request.character_name
 
-        # 构建参数
-        style_prompt = await build_character_audio_style_prompt(
-            character_data, audio_request.style_prompt,
+        # 构建参数：音色分析只跑一次 LLM，voice_description 同时充当
+        # TTS 风格提示词与角色声学音色指纹（随响应返回给前端落 voice_desc）
+        voice_analysis = await analyze_character_voice(
+            character_data,
             model=audio_request.model, vendor_id=audio_request.vendor_id
         )
-        text = await build_character_audio_text(
-            character_data, audio_request.text,
-            model=audio_request.model, vendor_id=audio_request.vendor_id
-        )
+        style_prompt = (audio_request.style_prompt or '').strip() or str(
+            voice_analysis.get('voice_description') or ''
+        ).strip() or RunningHubAudioConfig.AUDIO_STYLE_DEFAULT_PROMPT
+        text = (audio_request.text or '').strip() or str(
+            voice_analysis.get('sample_text') or ''
+        ).strip() or f"大家好，我是{character_data.get('name', '角色')}。"
+        voice_desc = str(voice_analysis.get('voice_description') or '').strip()
 
         # 写入异步任务表，由 scheduler 后台统一处理提交
         from model import AsyncTasksModel
@@ -3512,6 +3532,7 @@ async def generate_character_reference_audio(
         return JSONResponse({
             'success': True,
             'task_id': task_id,
+            'voice_desc': voice_desc,
             'message': '音频生成任务已提交，请通过 task_id 查询状态'
         })
     except Exception as e:
@@ -3559,6 +3580,57 @@ async def get_reference_audio_status(request: Request, task_id: int):
             })
     except Exception as e:
         logger.error(f'查询音频任务状态失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+@router.post('/script-writer/characters/voice-desc')
+@require_permission("character:edit")
+async def generate_character_voice_desc(
+    request: Request,
+    voice_request: CharacterVoiceDescRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """按角色人设自动生成声学音色描述（voice_desc，角色声学音色指纹）。
+
+    与「生成参考音频」共用同一套 LLM 音色分析；此接口供角色编辑页的
+    「自动生成」按钮单独重生成指纹（存量角色补生成、用户改完人设后刷新）。
+    只返回文本，不落库——前端填进音色描述输入框，随角色卡保存链路持久化。
+    """
+    try:
+        if not user_id:
+            body = await request.json()
+            user_id = body.get('user_id')
+        if not user_id:
+            return JSONResponse({'success': False, 'error': '缺少用户ID'}, status_code=400)
+        character = None
+        if voice_request.character_id:
+            character = await asyncio.to_thread(CharacterModel.get_by_id, voice_request.character_id)
+        elif voice_request.character_name:
+            character = await asyncio.to_thread(
+                CharacterModel.get_by_name, voice_request.world_id, voice_request.character_name
+            )
+        if character and (character.world_id != voice_request.world_id or character.user_id != int(user_id)):
+            return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
+        character_data = character.to_dict() if character else (voice_request.character_data or {})
+        if not character_data:
+            return JSONResponse({'success': False, 'error': '缺少角色数据'}, status_code=400)
+        if voice_request.character_name and not character_data.get('name'):
+            character_data['name'] = voice_request.character_name
+
+        voice_analysis = await analyze_character_voice(
+            character_data,
+            model=voice_request.model, vendor_id=voice_request.vendor_id
+        )
+        voice_desc = str(voice_analysis.get('voice_description') or '').strip()
+        if not voice_desc:
+            return JSONResponse({'success': False, 'error': '音色描述生成失败，请重试'}, status_code=502)
+        return JSONResponse({
+            'success': True,
+            'voice_desc': voice_desc,
+            'voice_type': str(voice_analysis.get('voice_type') or ''),
+        })
+    except Exception as e:
+        logger.error(f'生成角色音色描述失败: {str(e)}', exc_info=True)
         return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 @router.get('/world-files')

@@ -328,6 +328,12 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         # 参考音频/参考视频（可选，独立映射 LoadAudio / VHS_LoadVideo 节点，超量截断）
         extra_config = self._parse_extra_config(ai_tool)
         reference_audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
+        # TODO(音色裁剪，优先级低)：MiniMax 官方约束参考音频每条 2–15 秒，音色库
+        # 存在 20–44s 超长文件（疑似被模型静默丢弃）。但 2026-10-14 消融实验已证明
+        # H3 的音频参考本身极弱（音色一致性实际由文字指纹 voice_desc 承担，见
+        # docs/storyboard/storyboard_reference_to_video.md），裁剪到 15s 内也未必
+        # 改善音色效果，故暂不实施；若后续重新强化音频参考，参照 seedance 驱动的
+        # 时长预算截断模式（临时文件裁剪，不改角色原音频）实施。
         if len(reference_audios) > MAX_REFERENCE_AUDIOS:
             self.logger.warning(
                 f"MiniMax H3 参考生视频最多支持{MAX_REFERENCE_AUDIOS}个参考音频，已忽略多余的音频"

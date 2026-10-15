@@ -1,9 +1,11 @@
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
     build_reference_legend,
     build_storyboard_reference_items,
+    build_voice_casting_note,
     collect_character_voice_references,
     remove_storyboard_visual_suffix,
 )
@@ -389,6 +391,34 @@ def test_append_voice_reference_note_is_idempotent():
     prompt = append_voice_reference_note("镜头内容", [{"name": "林悦", "url": "u"}])
     assert prompt.endswith(note)
     assert append_voice_reference_note(prompt, [{"name": "林悦", "url": "u"}]) == prompt
+
+
+VOICE_DESC_CHARACTERS = [
+    {"name": "林悦", "voice_desc": "25岁左右的年轻女性，声音清脆圆润，音量轻柔，语速轻快"},
+    {"name": "张三"},
+    {"name": "王五", "voice_desc": "  "},
+]
+
+
+def test_voice_casting_note_lists_only_characters_with_fingerprint():
+    note = build_voice_casting_note(VOICE_DESC_CHARACTERS)
+    assert note.startswith("角色音色说明：")
+    assert "林悦的音色特征：25岁左右的年轻女性" in note
+    assert "张三" not in note and "王五" not in note
+    assert note.endswith("。描述这些角色说话的声音时必须遵循对应音色特征。")
+
+
+def test_voice_casting_note_empty_without_fingerprints():
+    assert build_voice_casting_note(VOICE_CHARACTERS) == ""
+    assert build_voice_casting_note(None) == ""
+
+
+def test_append_voice_casting_note_is_idempotent_and_skips_empty():
+    note = build_voice_casting_note(VOICE_DESC_CHARACTERS)
+    prompt = append_voice_casting_note("镜头内容", note)
+    assert prompt.endswith(note)
+    assert append_voice_casting_note(prompt, note) == prompt
+    assert append_voice_casting_note("镜头内容", "") == "镜头内容"
 
 
 def test_voice_reference_capability_flag_wired_on_expected_models_only():

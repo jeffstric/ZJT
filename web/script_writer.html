@@ -921,6 +921,18 @@
                             <textarea id="char-other" class="form-textarea" rows="3" placeholder="其他相关信息" data-i18n-placeholder="placeholder_char_other"></textarea>
                         </div>
                         <div class="form-group full-width">
+                            <label class="form-label"><span data-i18n="label_voice_desc">音色描述</span></label>
+                            <div class="image-upload-container">
+                                <textarea id="char-voice-desc" class="form-textarea" rows="2" style="flex:1;" placeholder="角色声音的声学特征（性别年龄段/音高/质感/音量/语速），用于视频生成的音色一致性" data-i18n-placeholder="placeholder_voice_desc"></textarea>
+                                <div class="image-upload-actions">
+                                    <button type="button" class="btn btn-primary btn-sm" id="generate-voice-desc-btn" onclick="generateCharacterVoiceDesc()" disabled data-i18n="btn_generate_voice_desc">
+                                        自动生成
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">由 AI 根据角色人设自动生成，可手动修改；仅 MiniMax H3 系列视频模型使用</div>
+                        </div>
+                        <div class="form-group full-width">
                             <label class="form-label"><span data-i18n="label_audio_ref">参考音频</span></label>
                             <div class="image-upload-container">
                                 <input type="text" id="char-default-voice" class="form-input" placeholder="参考音频URL" data-i18n-placeholder="placeholder_audio_url" readonly>
