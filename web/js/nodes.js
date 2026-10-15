@@ -4280,11 +4280,18 @@
           // 参考生 + 模型支持音色输入时，自动带入分镜组角色的默认音色；
           // grok 等不支持模型 collectVoiceReferences 返回空，不注入
           if(typeof collectVoiceReferences === 'function' && !useTextToVideo){
+            // H3 系列：先追加角色音色指纹（voice_desc），再叠加参考音频说明（两块共存，防覆盖）
+            if(typeof appendVoiceCastingIfH3 === 'function'){
+              finalVideoPrompt = appendVoiceCastingIfH3(videoModel, finalVideoPrompt, gridVoiceCharacters);
+            }
             const voiceRefs = collectVoiceReferences(videoModel || 'wan22', gridVoiceCharacters, '');
             if(voiceRefs.enabled){
               form.append('audio_urls', voiceRefs.voiceUrls.join(','));
               form.set('prompt', appendVoiceReferencePrompt(finalVideoPrompt, voiceRefs.promptNote));
               notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            } else {
+              // 无参考音频（含 grok 等非 H3）时也写回，统一落 form
+              form.set('prompt', finalVideoPrompt);
             }
           }
 

@@ -8843,6 +8843,7 @@ async def update_character(
     personality: Optional[str] = Form(None, description="性格"),
     behavior: Optional[str] = Form(None, description="行为习惯"),
     other_info: Optional[str] = Form(None, description="其他信息"),
+    voice_desc: Optional[str] = Form(None, description="音色描述（声学指纹，仅 MiniMax H3 提示词使用）"),
     sora_character: Optional[str] = Form(None, description="Sora角色卡ID"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
     reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组"),
@@ -8927,6 +8928,7 @@ async def update_character(
             'personality': personality.strip() if personality else None,
             'behavior': behavior.strip() if behavior else None,
             'other_info': other_info.strip() if other_info else None,
+            'voice_desc': voice_desc.strip() if voice_desc else None,
             'sora_character': sora_character.strip() if sora_character else None,
         }
         

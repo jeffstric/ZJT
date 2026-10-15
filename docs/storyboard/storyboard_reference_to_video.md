@@ -100,7 +100,7 @@ MiniMax H3 的提示词优化 pipeline（ref2va）改写时会统计 `ai_tool.au
 - **注入**（仅 H3 系列，`PipelineDriverFactory.is_h3_prompt_optimize_type` 门控）：提示词尾部追加「角色音色说明：XX的音色特征：…；…。描述这些角色说话的声音时必须遵循对应音色特征。」（`build_voice_casting_note`/`append_voice_casting_note`，幂等，`H3_VOICE_CASTING_NOTE_MAX_CHARS` 截断）。KFRef 无对白镜头与音频注入同口径跳过（音色说明会诱导模型给无对白镜头配音）。seedance 等其他模型零变化（它们的音频参考走 TTS 克隆，工作正常）
 - **渲染**：三个 H3 优化模板（I2VA/FL2VA base、Ref2VA、KFRef）都有 Voice casting 段：有台词角色的说话句必须融入其指纹特征的英文转写（全部声学特征语义保留、禁止增删改写——文本恒定是跨镜头音色一致性的根基），不说话的角色忽略其指纹；说明块本身不抄进最终提示词。原文带指纹块时优化指令再追加一条条件指令强化遵守
 - **与参考音频的关系**：并存不互斥。指纹是主保证；`default_voice` 音频照常上传（LoadAudio 槽）当盆地内微调——两者同源（指纹由生成音频时的同一分析产出），不会冲突。H3 参考音频每条 2–15s 的官方约束暂未实施裁剪（两个 H3 驱动有 TODO 注释：音频参考本身弱，裁剪也未必有效）
-- **链路覆盖**：分镜直连（`api/storyboard.py`）+ 批量补视频（`storyboard_agent_cli_service`）已注入；video_workflow 画布走前端注入（`voice_reference.js`），指纹暂未接入（后续工作）；存量角色无指纹自然降级（注入为空跳过），在角色编辑页点「自动生成」即可补
+- **链路覆盖**：分镜直连（`api/storyboard.py`）+ 批量补视频（`storyboard_agent_cli_service`）+ video_workflow 画布（`voice_reference.js` 的 `appendVoiceCastingIfH3`，生视频节点/分镜组/分镜帧生成器三个提交点，仅 H3 门控不限 multi_reference）均已注入；画布角色编辑弹窗带「音色描述」字段与「自动生成」按钮（`/api/characters/update` 支持 voice_desc，保存后 node.data 全量替换）；画布首尾帧分支无角色数据暂不覆盖（后续增强）；存量角色无指纹自然降级（注入为空跳过），点「自动生成」即可补
 - **一致性边界**：指纹是"描述性声音"而非克隆——同角色跨镜头一致靠文本逐字恒定；不能复刻某个特定真人的音色（那是 TTS/克隆的领域）
 
 ## 回退
