@@ -503,8 +503,41 @@
             onTaskUpdate(result.tasks);
           }
 
-          if(result.status === 'SUCCESS' || result.status === 'FAILED'){
-            // SUCCESS或FAILED都表示所有任务已完成，调用onComplete处理
+          // 集中同步各结果节点「取消排队」按钮可见性（按 project_id 反查节点，
+          // 所有 pollVideoStatus 消费方共用；仅排队中的任务显示）
+          if(result.tasks && window.AiToolTimeline && typeof window.AiToolTimeline.setNodeCancelVisible === 'function'){
+            const runningIds = new Set(
+              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED')
+                .map(t => String(t.project_id))
+            );
+            state.nodes.forEach(node => {
+              if(!node.data || !node.data.project_id) return;
+              if(node.data.url) return; // 已有结果，无需同步
+              const pid = String(node.data.project_id);
+              if(!runningIds.has(pid)) return;
+              const task = result.tasks.find(t => String(t.project_id) === pid);
+              if(!task) return;
+              if(task.status === 'CANCELLED'){
+                window.AiToolTimeline.markNodeCancelled(node.id);
+              } else {
+                window.AiToolTimeline.setNodeCancelVisible(node.id, task.status === 'QUEUED');
+                // 排队中（尚未提交上游）时明确提示，与「生成中」区分
+                if(task.status === 'QUEUED'){
+                  const nodeEl2 = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+                  const queuedText = window.t ? window.t('ai_task_status_queued') : '排队中...';
+                  if(nodeEl2){
+                    const vs = nodeEl2.querySelector('.video-status');
+                    if(vs && !vs.textContent.startsWith('✓') && !vs.textContent.startsWith('✗')) vs.textContent = queuedText;
+                    const il = nodeEl2.querySelector('.image-generating-label');
+                    if(il && !il.textContent.startsWith('✓') && !il.textContent.startsWith('✗')) il.textContent = queuedText;
+                  }
+                }
+              }
+            });
+          }
+
+          if(result.status === 'SUCCESS' || result.status === 'FAILED' || result.status === 'CANCELLED'){
+            // SUCCESS/FAILED/CANCELLED 都表示所有任务已达终态，调用onComplete处理
             // onComplete会根据每个任务的详细状态来更新视频节点
             onComplete(result);
           } else {

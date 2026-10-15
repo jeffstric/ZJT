@@ -89,5 +89,12 @@
   "timeline_fetch_failed": "获取时间线失败",
   "timeline_generating": "生成中...",
   "timeline_generate_success": "生成成功",
-  "timeline_generate_failed": "生成失败"
+  "timeline_generate_failed": "生成失败",
+  "ai_task_cancel_queue": "取消排队",
+  "ai_task_cancel_queue_title": "任务仍在排队（尚未提交上游）时可取消，取消后自动退还算力",
+  "ai_task_cancel_confirm": "确认取消该排队中的任务？取消后将退还已扣算力。",
+  "ai_task_cancel_done": "任务已取消，算力将自动退还",
+  "ai_task_cancel_failed": "取消任务失败",
+  "ai_task_cancelled": "已取消（算力已退还）",
+  "ai_task_status_queued": "排队中..."
 }
