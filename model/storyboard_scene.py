@@ -121,6 +121,7 @@ class StoryboardSceneModel:
         difficulty: str = SceneDifficulty.MEDIUM,
         act_name: Optional[str] = None,
         last_modified_user_id: Optional[int] = None,
+        source_shot_key: Optional[str] = None,
     ) -> int:
         # audio_embedded 默认按 video_type 推导：digital_human 产物已含口型音轨。
         # 调用方显式传 bool（含 False）则尊重其选择，不再覆盖。
@@ -129,15 +130,17 @@ class StoryboardSceneModel:
         sql = """
             INSERT INTO storyboard_scene
             (storyboard_id, sort_order, title, duration, prompt_json, video_prompt,
-             video_type, video_config_json, audio_embedded, difficulty, act_name, last_modified_user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             video_type, video_config_json, audio_embedded, difficulty, act_name,
+             last_modified_user_id, source_shot_key)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         prompt_str = json.dumps(prompt_json, ensure_ascii=False) if prompt_json else None
         video_config_str = json.dumps(video_config_json, ensure_ascii=False) if video_config_json else None
         params = (storyboard_id, float(sort_order), title, duration, prompt_str, video_prompt,
                   video_type, video_config_str, 1 if audio_embedded else 0,
                   SceneDifficulty.normalize(difficulty),
-                  act_name or None, last_modified_user_id)
+                  act_name or None, last_modified_user_id,
+                  str(source_shot_key).strip() or None if source_shot_key else None)
         try:
             record_id = execute_insert(sql, params)
             logger.info(f"Created storyboard_scene with ID: {record_id}")

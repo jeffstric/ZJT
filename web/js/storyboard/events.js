@@ -2950,15 +2950,37 @@ function handleRoute(route) {
         return;
     }
     if (route === 'canvas') {
-        if (state.workflowId) {
+        const openWorkflowCanvas = (workflowId) => {
             window.location.href = buildQuery('/video-workflow', {
-                id: state.workflowId,
+                id: workflowId,
                 from_world_id: state.worldId,
                 auto_load_script: 'true',
             });
-        } else {
-            window.location.href = '/video-workflow-list';
+        };
+        // 统一走转换接口（幂等）：已关联画布仍存在 → 返回既有画布直接打开；
+        // 关联画布已被删除 → 后端自动重建并回写 workflow_id，再打开新画布。
+        // 不能只看 state.workflowId 直接跳转——画布被删后会落在「工作流不存在」页。
+        if (state.storyboardId) {
+            // 防重复点击：创建路径进行中再点会产生第二个画布（首个成为孤儿）
+            if (handleRoute._convertingCanvas) return;
+            handleRoute._convertingCanvas = true;
+            api.convertStoryboardToWorkflow(state.storyboardId)
+                .then((res) => {
+                    state.workflowId = res.workflow_id;
+                    openWorkflowCanvas(res.workflow_id);
+                })
+                .catch((err) => {
+                    handleRoute._convertingCanvas = false;
+                    showToast(err.message || t('msg_convert_to_workflow_failed', '转换工作流画布失败'), 'error');
+                });
+            return;
         }
+        if (state.workflowId) {
+            // 无故事板 id（异常态）但有关联画布：退回直接跳转
+            openWorkflowCanvas(state.workflowId);
+            return;
+        }
+        window.location.href = '/video-workflow-list';
     }
 }
 

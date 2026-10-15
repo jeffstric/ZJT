@@ -397,6 +397,8 @@
     "msg_confirm_split_script": "是否根据本集剧本自动拆分并生成分镜、对话数据？",
     "msg_connection_lost": "任务连接中断，请稍后查看生成结果或重新发送",
     "msg_content_violation_retry": "内容审核未通过：请检查提示词和参考图后重试",
+    "msg_convert_to_workflow_failed": "转换工作流画布失败",
+    "msg_converting_to_workflow": "正在把故事板转换为工作流画布...",
     "msg_cost_estimate_failed": "费用预估失败",
     "msg_create_pay_order_failed": "创建支付订单失败",
     "msg_create_storyboard_failed": "创建故事板失败，请重试",

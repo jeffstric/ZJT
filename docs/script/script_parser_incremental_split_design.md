@@ -655,6 +655,22 @@ web/js/script_split_task.js
 
 “拆分幕 + 宫格生图”必须等拆分结果全部应用后才启动宫格任务，并通过 `postActionStarted` 防止刷新后重复提交。
 
+**刷新恢复路径完整重放宫格流程（2026-10-14 修复）**：宫格模式拆分期间刷新页面，恢复轮询的
+`onComplete` 此前只能降级调用 `applyParsedData(autoGenerateFrames: false)`——只物化幕节点、
+不生成分镜，却立即置 `splitTaskResultApplied = true`，导致之后永远跳过恢复，画布上
+“只有幕、没有分镜”。现在 `runGridFlow` 定义在剧本节点创建作用域并暴露为 `node.runGridFlow`
+（`web/js/script_node.js`），恢复路径优先完整重放宫格流程（创建幕 → 生成分镜 → 收集参考图 →
+宫格确认弹窗），与活动会话行为一致；仅旧节点未暴露该方法时才退回“仅物化幕”降级。
+无论活动会话还是恢复路径，宫格流程抛错时都回滚 `splitTaskPostActionStarted` 且不置
+`splitTaskResultApplied`，下次刷新自动重试。
+
+**幕节点恢复保真（2026-10-14 修复）**：`workflow.js` 的 `createShotGroupNodeWithData`
+重建幕节点时必须透传 `scriptNodeId` / `scriptContent`（分镜帧恢复已有
+`node.data = {...node.data, ...nodeData.data}` 合并保真，幕节点此前没有）。
+缺失时 `createShotGroupNode` 的 `opts.scriptNodeId || ''` 会把关联抹成空串，
+刷新+保存后幕与剧本节点失联：`hasExistingShotGroup` 等幂等判断失效，
+再次拆分/宫格流程会复制出整套重复幕（实测 36 幕画布刷新后重跑复制出 36 个新幕）。
+
 ### 14.1 paused 态按钮：继续拆分 / 放弃并重新拆分（2026-09-16 实现）
 
 任务进入 `paused / waiting_auth` 时（典型根因：LLM 欠费熔断，见

@@ -87,56 +87,68 @@
             </div>
           </div>
           <div class="world-selector-actions">
-            <button class="mini-btn" id="createWorkflowBtn" type="button" data-i18n="create_canvas:title" style="display: inline-flex; align-items: center; gap: 4px;">
+            <button class="mini-btn icon-only" id="createWorkflowBtn" type="button" data-i18n="create_canvas:title" aria-label="新建画布" style="display: inline-flex; align-items: center; justify-content: center;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <line x1="12" y1="8" x2="12" y2="16"/>
                 <line x1="8" y1="12" x2="16" y2="12"/>
               </svg>
-              <span data-i18n="create_canvas">新建画布</span>
+            </button>
+            <button class="mini-btn secondary icon-only" id="toStoryboardBtn" type="button" data-i18n="to_storyboard:title" aria-label="转故事板" style="display: inline-flex; align-items: center; justify-content: center;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7" rx="1"/>
+                <rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/>
+                <rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
             </button>
           </div>
           <span id="editionBadge" style="display: none; margin-left: 8px; padding: 2px 8px; background: #22c55e; color: white; border-radius: 4px; font-size: 12px; font-weight: 500;" data-i18n="public_space">公共空间</span>
         </div>
         <div style="display: flex; gap: 4px; align-items: center;">
-          <a href="https://bq3mlz1jiae.feishu.cn/wiki/LBw5w7zZaiuQhuk4sT7c42zcn0e" target="_blank" class="mini-btn secondary" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" data-i18n="workflow_tutorial">工作流教程</a>
+          <a href="https://bq3mlz1jiae.feishu.cn/wiki/LBw5w7zZaiuQhuk4sT7c42zcn0e" target="_blank" class="mini-btn secondary icon-only" style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;" data-i18n="workflow_tutorial:title" aria-label="工作流教程">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+              <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+            </svg>
+          </a>
         </div>
       </div>
       <div class="ratio-floating">
-        <button class="btn save-btn" id="saveBtn" data-i18n="save_workflow:title">
+        <button class="btn save-btn icon-only" id="saveBtn" data-i18n="save_workflow:title" aria-label="保存">
           <span class="save-btn-ring" aria-hidden="true"></span>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
             <polyline points="17 21 17 13 7 13 7 21"></polyline>
             <polyline points="7 3 7 8 15 8"></polyline>
           </svg>
-          <span id="saveBtnText" data-i18n="save">保存</span>
         </button>
-        <button class="btn secondary save-btn" id="styleBtn" data-i18n="style_settings:title">
+        <button class="btn secondary save-btn icon-only" id="styleBtn" data-i18n="style_settings:title" aria-label="画风">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
             <circle cx="8.5" cy="8.5" r="1.5"></circle>
             <polyline points="21 15 16 10 5 21"></polyline>
           </svg>
-          <span data-i18n="image_style">画风</span>
         </button>
-        <button class="btn secondary save-btn" id="videoPromptSuffixBtn" type="button" data-i18n="video_prompt_suffix:title">
+        <button class="btn secondary save-btn icon-only" id="videoPromptSuffixBtn" type="button" data-i18n="video_prompt_suffix:title" aria-label="视频提示词后缀">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 20h9"></path>
             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
           </svg>
-          <span data-i18n="suffix">后缀</span>
         </button>
-        <button class="btn secondary save-btn" id="shortcutHelpBtn" type="button" title="查看画布快捷键">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
-            <path d="M6 14h.01M18 14h.01"></path>
-            <path d="M9 14h6"></path>
+        <button class="btn secondary save-btn icon-only" id="shortcutHelpBtn" type="button" title="查看画布快捷键" aria-label="快捷键">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/>
           </svg>
-          <span>快捷键</span>
         </button>
-        <div class="ratio-label" data-i18n="video_ratio">视频比例</div>
+        <div class="ratio-label" style="display: inline-flex; align-items: center; cursor: default;" data-i18n="video_ratio:title" title="视频比例">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="5" width="20" height="14" rx="2"/>
+            <path d="M8 12h8"/>
+            <path d="M10 10l-2 2 2 2"/>
+            <path d="M14 10l2 2-2 2"/>
+          </svg>
+        </div>
         <select id="ratioSelect">
           <option value="9:16">9:16</option>
           <option value="3:4">3:4</option>
@@ -145,7 +157,12 @@
           <option value="16:9" selected>16:9</option>
         </select>
         <div class="computing-power-chip" id="computingPowerChip" data-i18n="remaining_power:title">
-          <span style="cursor: pointer;" onclick="openComputingPowerLogs()" data-i18n="view_power_logs:title"><span data-i18n="power">算力</span>: <span class="computing-power-value" id="computingPowerValue">--</span></span>
+          <span style="cursor: pointer; display: inline-flex; align-items: center;" onclick="openComputingPowerLogs()" data-i18n="view_power_logs:title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M13 2L3 14h7l-1 8 11-14h-7l1-6z"/>
+            </svg>
+            <span class="computing-power-value" id="computingPowerValue">--</span>
+          </span>
           <button class="mini-btn computing-power-refresh" id="computingPowerRefreshBtn" type="button" data-i18n="refresh_power:title">↻</button>
         </div>
       </div>
@@ -410,11 +427,8 @@
     <div class="modal-card shortcut-help-card" role="dialog" aria-modal="true" aria-label="画布快捷键">
       <div class="modal-header shortcut-help-header">
         <div class="modal-title">
-          <svg class="shortcut-help-title-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-            <rect x="2" y="6" width="20" height="12" rx="2"></rect>
-            <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01"></path>
-            <path d="M6 14h.01M18 14h.01"></path>
-            <path d="M9 14h6"></path>
+          <svg class="shortcut-help-title-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/>
           </svg>
           画布快捷键
         </div>
@@ -1223,6 +1237,7 @@
   <script src="/js/model_catalog.js?v=__VERSION__"></script>
   <script src="/js/world.js"></script>
   <script src="/js/create_workflow_modal.js"></script>
+  <script src="/js/workflow_storyboard_switch.js?v=__VERSION__"></script>
   <script src="/js/timeline.js"></script>
   <script src="/js/workflow.js?v=__VERSION__"></script>
   <script src="/js/canvas.js?v=__VERSION__"></script>
