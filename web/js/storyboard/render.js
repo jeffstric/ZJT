@@ -58,7 +58,7 @@ import {
     updatePlayheadPosition,
     isPreviewMediaBusy,
 } from './playback.js';
-import { syncChatMentionChips } from './chat_mention_chips.js';
+import { syncChatMentionChips, shortImageId } from './chat_mention_chips.js';
 import {
     SCENE_AUDIO_MODE,
     resolveSceneAudioMode,
@@ -2628,10 +2628,11 @@ function renderFrameMentionButtons() {
     const labels = frameMentionRowLabels();
     const buttons = [];
     if (frames.frame_first_url) {
-        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, labels.first));
+        // token 携带图片唯一短 id：插入后底层文本与胶囊展示一致，服务端按前缀语义解析
+        buttons.push(renderFrameMentionButton(`首帧图:${shortImageId(frames.frame_first_url)}`, frames.frame_first_url, labels.first));
     }
     if (frames.frame_last_url) {
-        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, labels.last));
+        buttons.push(renderFrameMentionButton(`尾帧图:${shortImageId(frames.frame_last_url)}`, frames.frame_last_url, labels.last));
     }
     if (!buttons.length) return '';
     return `<div class="mention-frames">${buttons.join('')}</div>`;

@@ -58,7 +58,7 @@ import {
     shouldUseH3KeyframeRef,
     stripMentionTrigger,
 } from './frame_mention.js';
-import { syncChatMentionChips, setupHoverPreview } from './chat_mention_chips.js';
+import { syncChatMentionChips, setupHoverPreview, shortImageId } from './chat_mention_chips.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
@@ -4120,8 +4120,8 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
             const frames = mentionableVideoFrameUrls();
             const labels = frameMentionRowLabels();
             const frameRows = [];
-            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: labels.first });
-            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: labels.last });
+            if (frames.frame_first_url) frameRows.push({ token: `首帧图:${shortImageId(frames.frame_first_url)}`, url: frames.frame_first_url, label: labels.first });
+            if (frames.frame_last_url) frameRows.push({ token: `尾帧图:${shortImageId(frames.frame_last_url)}`, url: frames.frame_last_url, label: labels.last });
             frameRows.forEach((frame) => {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';

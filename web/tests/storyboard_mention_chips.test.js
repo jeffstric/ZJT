@@ -23,6 +23,13 @@ describe('scanFrameMentionTokens', () => {
         expect(scanFrameMentionTokens('看 @首帧图片')).toEqual([]);
         expect(scanFrameMentionTokens('没有标记')).toEqual([]);
     });
+
+    it('matches tokens with an embedded unique id', () => {
+        expect(scanFrameMentionTokens('前面 @首帧图:1c88f7a9 中间 @尾帧图:0be032f5 结束')).toEqual([
+            { key: 'first', token: '@首帧图:1c88f7a9', start: 3, end: 16 },
+            { key: 'last', token: '@尾帧图:0be032f5', start: 20, end: 33 },
+        ]);
+    });
 });
 
 describe('shortImageId', () => {
@@ -65,7 +72,12 @@ describe('chip mirror and hover preview mount points', () => {
         // 胶囊记录标记结束位置：点击时光标定位到标记之后，不落进遮盖区
         expect(chipsSource).toContain('data-end="${end}"');
         expect(chipsSource).toMatch(/closest\('\.chat-mention-chip'\)[\s\S]{0,600}setSelectionRange/);
-        // 左侧提示词下拉（asset-dropdown）内的预览在右侧展开
-        expect(chipsSource).toContain("anchor.closest('.asset-dropdown') ? 'right' : 'top'");
+        // 左侧提示词下拉与 @ 弹窗内的预览在右侧展开，不盖选项
+        expect(chipsSource).toContain("anchor.closest('.asset-dropdown, .mention-popup') ? 'right' : 'top'");
+        // 标记原子化：删除触及标记整枚删除、标记中间插入被阻止
+        expect(chipsSource).toContain('handleTokenBeforeInput');
+        expect(chipsSource).toMatch(/beforeinput[\s\S]{0,80}handleTokenBeforeInput/);
+        expect(chipsSource).toContain("type.startsWith('delete')");
+        expect(chipsSource).toContain("type.startsWith('insert')");
     });
 });
