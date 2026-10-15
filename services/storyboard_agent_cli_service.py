@@ -50,6 +50,7 @@ from services.storyboard_reference_prompt_service import (
     append_voice_reference_note,
     build_storyboard_reference_items,
     collect_character_voice_references,
+    extract_speaking_character_ids,
     extract_storyboard_reference_names,
     reference_urls,
 )
@@ -1192,16 +1193,27 @@ class StoryboardAgentCliService:
         # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入，
         # 同单发生成路径口径：音色参考必须绑台词，无台词上传会被上游拒绝
         # （「无法识别的说话内容」）或被当成成片声音。
+        # 有台词镜头按说话人过滤：只注入开口说话角色的音色，不说话角色的音色
+        # 上传后无声明目标，会被 H3 错配给画面人物或混入成片人声（同单发口径）。
         if mode == "image_to_video" and not (
             task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
             and not has_quoted_dialogue(prompt_text)
         ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
+            _speaking_voice_ids = None
+            if int(task_type) in (
+                int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO),
+                int(h3_keyframe_ref_task_id()),
+            ):
+                _speaking = extract_speaking_character_ids(context.get('dialogues'))
+                if _speaking:
+                    _speaking_voice_ids = _speaking
             _voice_items, _ = collect_character_voice_references(
                 supports_voice_input=bool(getattr(_config, 'supports_voice_input', False)),
                 characters=context.get('characters'),
                 image_mode=image_mode,
                 existing_audio_urls=audio_urls,
+                speaking_character_ids=_speaking_voice_ids,
             )
             if _voice_items:
                 merged = [url for url in str(audio_urls or '').split(',') if url.strip()]

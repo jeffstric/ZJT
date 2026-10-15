@@ -553,15 +553,18 @@ def test_kfref_instruction_names_second_audio_when_two_are_present():
         ref_counts={"images": 3, "videos": 0, "audios": 3},
         keyframe_slots=slots,
     )
-    # 3 路截断到 2：指令给「可用 2 路」事实与绑定句骨架，写不写由 LLM 判台词后自选
-    assert "有 2 个可用参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>" in message
+    # 3 路截断到 2：指令给「可用 2 路」事实与绑定句骨架，只给说话人写声明
+    assert "有 2 个可用参考音频。第一段是 <Audio 1>，第二段是 <Audio 2>" in message
     assert "voice-timbre reference for <该说话人在画面中的具体描述> (S1)" in message
+    assert "只给实际开口说话的角色写绑定句" in message
     assert "原文没有台词：不写任何 <Audio N>" in message
     assert "不要写 <Audio 3>" in message
+    # 模板同步：未声明的音频不上传
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "only for each character who actually speaks" in guide
+    assert "without a binding sentence are not uploaded" in guide
     # 输出协议段：首行 JSON 头由代码强校验
     assert '{"has_dialogue": true} 或 {"has_dialogue": false}' in message
-    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
-    assert "has_dialogue" in guide
     assert "Speaker binding rules" in guide
     assert "Never use a bare position word alone" in guide
     assert "mean nothing to the video model" in guide
@@ -595,7 +598,10 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
     assert "先判断原文有没有角色说出或唱出的台词" in two_audio
     assert "店名/标语" in two_audio
     assert "原文没有台词：不写任何 <Audio N>" in two_audio
-    assert "每一段绑定到各自的说话人" in two_audio
+    # 只给开口说话的角色写绑定句：未声明的音频不上传（单人镜头不挂第二路）
+    assert "只给实际开口说话的角色写绑定句" in two_audio
+    assert "编号取音色说明「音频N是角色：X」中该角色对应的音频号" in two_audio
+    assert "不说话的角色不写绑定句；未写绑定句的音频不会上传" in two_audio
 
     # Ref2VA 不出现 KFRef 的条件式音频指令，但 2026-10 起同走 JSON 头协议（语义判台词）
     ref2va = build_h3_optimize_user_message(
