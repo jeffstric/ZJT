@@ -58,6 +58,7 @@ import {
     shouldUseH3KeyframeRef,
     stripMentionTrigger,
 } from './frame_mention.js';
+import { syncChatMentionChips, setupHoverPreview, shortImageId } from './chat_mention_chips.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
@@ -69,6 +70,7 @@ import {
     syncSequenceModeIntroCards,
     patchHeaderPower,
     isDigitalHumanScene,
+    frameMentionRowLabels,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -941,12 +943,21 @@ function consumeChatMentionTrigger(textarea) {
     return true;
 }
 
-function focusChatMentionCaret() {
+/**
+ * 提及插入后同步输入框并恢复光标。
+ * 直接写 DOM，不走 AGENT_PANEL 重绘：整段重建会把 textarea 换成无焦点的
+ * 新元素，:focus-within 的高度（168px→72px）先瞬塌再过渡回弹，视觉抖动。
+ */
+function syncChatMentionInsert(inserted) {
+    state.inputMessage = inserted.value;
+    chatMentionCaret = inserted.caret;
     const ta = document.getElementById('chat-textarea');
-    if (!ta || typeof chatMentionCaret !== 'number') return;
+    if (!ta) return;
+    ta.value = inserted.value;
     ta.focus();
     const pos = Math.min(Math.max(chatMentionCaret, 0), ta.value.length);
     ta.setSelectionRange(pos, pos);
+    syncChatMentionChips();
 }
 
 /** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。 */
@@ -2958,6 +2969,9 @@ const RATIO_GATE_ALLOWED_ACTIONS = new Set([
 ]);
 
 export function bindEvents() {
+    // 悬停大图预览（@ 提及弹窗条目 + 输入框内标记胶囊共用）
+    setupHoverPreview();
+
     // 视频预估（后端估价接口异步返回）回填后重渲助手面板的预估行
     onPowerEstimateUpdated(() => rerenderAgentPanel());
 
@@ -3254,8 +3268,12 @@ export function bindEvents() {
     document.addEventListener('input', (event) => {
         const target = event.target;
         if (target.id === 'chat-textarea') {
-            if (!event.isComposing && consumeChatMentionTrigger(target)) return;
+            if (!event.isComposing && consumeChatMentionTrigger(target)) {
+                syncChatMentionChips();
+                return;
+            }
             state.inputMessage = target.value;
+            syncChatMentionChips();
         } else if (target.matches && target.matches('[data-subtitle-margin]')) {
             // 字幕左右边距滑杆：实时应用预览（数值与持久化由 change/其它逻辑处理）
             const pct = Number(target.value) || 0;
@@ -3315,6 +3333,16 @@ export function bindEvents() {
         if (!target || target.id !== 'chat-textarea') return;
         if (!consumeChatMentionTrigger(target)) {
             state.inputMessage = target.value;
+        }
+        syncChatMentionChips();
+    });
+
+    // 提及弹窗按钮按下时不转移焦点（仅按钮，弹窗列表滚动条不受影响）：
+    // textarea 全程保持 ：focus-within 展开态，高度不塌陷、光标选区不丢
+    document.addEventListener('mousedown', (event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest('.mention-popup button')) {
+            event.preventDefault();
         }
     });
 
@@ -3769,11 +3797,9 @@ export function bindEvents() {
                 chatMentionCaret,
                 mentionItem.dataset.mentionItem,
             );
-            state.inputMessage = inserted.value;
-            chatMentionCaret = inserted.caret;
             state.showMentionPopup = false;
-            rerender([Region.MODAL, Region.AGENT_PANEL]);
-            focusChatMentionCaret();
+            rerenderModals();
+            syncChatMentionInsert(inserted);
             return;
         }
 
@@ -4092,12 +4118,14 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
         if (promptType === 'video' && state.videoImageMode === 'multi_reference') {
             const frames = mentionableVideoFrameUrls();
+            const labels = frameMentionRowLabels();
             const frameRows = [];
-            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: t('label_mention_first_frame', '首帧图') });
-            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: t('label_mention_last_frame', '尾帧图') });
+            if (frames.frame_first_url) frameRows.push({ token: `首帧图:${shortImageId(frames.frame_first_url)}`, url: frames.frame_first_url, label: labels.first });
+            if (frames.frame_last_url) frameRows.push({ token: `尾帧图:${shortImageId(frames.frame_last_url)}`, url: frames.frame_last_url, label: labels.last });
             frameRows.forEach((frame) => {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';
+                row.dataset.hoverPreview = frame.url;
                 const img = document.createElement('img');
                 img.src = getThumbnailUrl(frame.url, 20);
                 img.alt = '';
@@ -4128,6 +4156,7 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';
                 const aurl = item.avatar || item.reference_image;
+                if (aurl) row.dataset.hoverPreview = aurl;
                 const img = aurl ? `<img src="${escapeHtml(getThumbnailUrl(aurl, 20))}" style="width:20px;height:20px;border-radius:3px;margin-right:6px;object-fit:cover;">` : '';
                 row.innerHTML = `${img}<span>${escapeHtml(item.name)}</span>`;
                 row.onmousedown = (e) => {

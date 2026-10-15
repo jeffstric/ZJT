@@ -93,4 +93,19 @@ describe('storyboard reference-to-video without first frame', () => {
         expect(renderSource).toMatch(/const imageHint = isRefVideoMode \? '' : ` · \$\{summary\.missingCount\} \$\{i18nT\('label_pending_count', '个待生成'\)\}`/);
         expect(renderSource).toContain("const refModeHint = isRefVideoMode ? ` · ${i18nT('hint_ref_mode_exempt', '参考生视频免分镜图')}` : '';");
     });
+
+    it('multi_reference mode labels media slots as numbered images before frame roles', () => {
+        const renderSource = readSource('web/js/storyboard/render.js');
+        const start = renderSource.indexOf('function videoRoleLabel(');
+        const end = renderSource.indexOf('const REF_VIDEO_BETA_TAG', start);
+        expect(start).toBeGreaterThan(-1);
+        const fn = renderSource.slice(start, end);
+        // 参考模式槽位保留 first_frame/last_frame 角色（@首帧图/@尾帧图 路由用），
+        // 角标必须按模式显示 图1/图2/…：mode 分支必须先于 role 分支
+        const modeBranch = fn.indexOf("mode === 'multi_reference'");
+        const roleBranch = fn.indexOf("role === 'first_frame'");
+        expect(modeBranch).toBeGreaterThan(-1);
+        expect(roleBranch).toBeGreaterThan(modeBranch);
+        expect(fn).toContain("label_image_short");
+    });
 });

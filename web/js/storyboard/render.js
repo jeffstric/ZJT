@@ -58,6 +58,7 @@ import {
     updatePlayheadPosition,
     isPreviewMediaBusy,
 } from './playback.js';
+import { syncChatMentionChips, shortImageId } from './chat_mention_chips.js';
 import {
     SCENE_AUDIO_MODE,
     resolveSceneAudioMode,
@@ -96,6 +97,9 @@ const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml ==
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+const escapeHtmlAttr = (typeof window !== 'undefined' && typeof window.escapeHtmlAttr === 'function')
+    ? window.escapeHtmlAttr
+    : escapeHtml;
 
 /** Map scene.videoType to Chinese label for UI. */
 export function videoTypeLabel(videoType) {
@@ -1255,8 +1259,8 @@ function renderDialoguePanel(scene) {
 
     return `
         <div class="tab-panel dialogue-panel">
-            ${renderDialogueAudioSource(scene)}
-            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>}
+            ${(scene.dialogues || []).length ? renderDialogueAudioSource(scene) : ''}
+            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>
             <button class="panel-button" data-action="add-dialogue">${icon('add', 16)} ${i18nT('btn_add_dialogue', '添加对话')}</button>`}
         </div>`;
 }
@@ -1333,11 +1337,13 @@ function renderLeftSidebar(scene) {
  * - 全能参考：图1 / 图2 / …（对齐 marketing_agent 的编号展示）
  */
 function videoRoleLabel(role, mode, index = 0) {
-    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
-    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
+    // mode 必须先于 role 判断：参考模式槽位有意保留 first_frame/last_frame 角色
+    // （供 @首帧图/@尾帧图 路由），角标仍按编号展示
     if (mode === 'multi_reference') {
         return `${i18nT('label_image_short', '图')}${index + 1}`;
     }
+    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
+    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
     return `${i18nT('label_image_short', '图')}${index + 1}`;
 }
 
@@ -1589,7 +1595,7 @@ function renderAiPanel() {
                     ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        ${isDhDirectVideo ? '' : `<textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>`}
+                        ${isDhDirectVideo ? '' : `<div class="chat-textarea-wrap"><div class="chat-textarea-mirror" data-chat-textarea-mirror aria-hidden="true"></div><textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea></div>`}
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="${i18nT('title_model_config_detail', '模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）')}">${icon('settings', 14)}</button>
@@ -2591,19 +2597,42 @@ function renderGenerateFromScriptDialog() {
 function renderFrameMentionButton(token, url, label) {
     const safeLabel = escapeHtml(label);
     const thumb = escapeHtml(getThumbnailUrl(url, 28));
-    return `<button type="button" data-mention-item="${escapeHtml(token)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+    return `<button type="button" data-mention-item="${escapeHtml(token)}" data-hover-preview="${escapeHtmlAttr(url)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+}
+
+/**
+ * 提及菜单里首尾帧按钮的展示名：按媒体槽顺序编号（图1/图2/…），
+ * 与左侧媒体槽角标一致。token 仍是 @首帧图/@尾帧图（服务端按标记解析）。
+ */
+export function frameMentionRowLabels() {
+    const frames = mentionableVideoFrameUrls();
+    const items = state.videoMediaItems || [];
+    const indexByUrl = (url) => items.findIndex(
+        item => String(item.url || '').trim() === String(url || '').trim(),
+    );
+    const firstIdx = frames.frame_first_url ? indexByUrl(frames.frame_first_url) : -1;
+    const lastIdx = frames.frame_last_url ? indexByUrl(frames.frame_last_url) : -1;
+    // 槽位被移除、URL 来自分镜图兜底时不在媒体栈里：按自然槽位序取默认编号
+    const lastFallback = items.some(item => item.role === 'first_frame') ? 1 : 0;
+    const num = (idx) => `${i18nT('label_image_short', '图')}${idx + 1}`;
+    return {
+        first: frames.frame_first_url ? num(firstIdx >= 0 ? firstIdx : 0) : '',
+        last: frames.frame_last_url ? num(lastIdx >= 0 ? lastIdx : lastFallback) : '',
+    };
 }
 
 function renderFrameMentionButtons() {
     const videoChat = state.chatMode === 'video' || state.chatMode === 'aivideo';
     if (!videoChat || state.videoImageMode !== 'multi_reference') return '';
     const frames = mentionableVideoFrameUrls();
+    const labels = frameMentionRowLabels();
     const buttons = [];
     if (frames.frame_first_url) {
-        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, i18nT('label_mention_first_frame', '首帧图')));
+        // token 携带图片唯一短 id：插入后底层文本与胶囊展示一致，服务端按前缀语义解析
+        buttons.push(renderFrameMentionButton(`首帧图:${shortImageId(frames.frame_first_url)}`, frames.frame_first_url, labels.first));
     }
     if (frames.frame_last_url) {
-        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, i18nT('label_mention_last_frame', '尾帧图')));
+        buttons.push(renderFrameMentionButton(`尾帧图:${shortImageId(frames.frame_last_url)}`, frames.frame_last_url, labels.last));
     }
     if (!buttons.length) return '';
     return `<div class="mention-frames">${buttons.join('')}</div>`;
@@ -2627,7 +2656,10 @@ function renderMentionPopup() {
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${items.map(item => {
+                    const preview = item.avatar || item.reference_image || '';
+                    return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
+                }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
             </div>
         </div>`;
 }
@@ -3370,7 +3402,9 @@ export function patchAgentPanel() {
     const section = document.querySelector('.ai-chat-section');
     if (!section) return false;
     const html = renderAiPanel();
-    return Boolean(replaceElWithHtml(section, html));
+    const patched = Boolean(replaceElWithHtml(section, html));
+    if (patched) syncChatMentionChips();
+    return patched;
 }
 
 /** 整块 header（含集数选择器等） */
@@ -3992,6 +4026,7 @@ function renderAppFull() {
         state.workflowRatio || '16:9'
     );
     bindPreviewCanvasObserver();
+    syncChatMentionChips();
 
     requestAnimationFrame(() => {
         savedScrolls.forEach(({ selector, prop, value }) => {

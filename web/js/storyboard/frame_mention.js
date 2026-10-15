@@ -2,10 +2,16 @@
  * 故事板全能参考：@首帧图 / @尾帧图 的提交前检查。
  * 图片顺序由服务端 services/storyboard_frame_mention.py 决定，这里只拦截缺图。
  * 标记与画布分镜节点一致，「@首帧图片」不能命中「@首帧图」。
+ * 前端插入的标记带唯一短 id 后缀（@首帧图:1c88f7a9），服务端正则同样可消费。
  */
 
-const FIRST_MENTION_RE = /@首帧图(?![\u4e00-\u9fff])/g;
-const LAST_MENTION_RE = /@尾帧图(?![\u4e00-\u9fff])/g;
+const FIRST_MENTION_RE = /@首帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])/g;
+const LAST_MENTION_RE = /@尾帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])/g;
+
+const FRAME_TOKEN_RES = [
+    { key: 'first', re: FIRST_MENTION_RE },
+    { key: 'last', re: LAST_MENTION_RE },
+];
 
 const H3_REFERENCE_KEYS = new Set([
     'minimax_h3_r2v',
@@ -28,6 +34,20 @@ function mentionFlags(prompt) {
 export function promptHasFrameMention(prompt) {
     const flags = mentionFlags(prompt);
     return flags.wantsFirst || flags.wantsLast;
+}
+
+/** 扫描提示词里的首尾帧标记（含 :id 后缀），返回 {key, token, start, end}（按出现序）。 */
+export function scanFrameMentionTokenRanges(text) {
+    const value = text == null ? '' : String(text);
+    const found = [];
+    FRAME_TOKEN_RES.forEach(({ key, re }) => {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(value)) !== null) {
+            found.push({ key, token: m[0], start: m.index, end: m.index + m[0].length });
+        }
+    });
+    return found.sort((a, b) => a.start - b.start);
 }
 
 export function isH3ReferenceVideoModel(model) {

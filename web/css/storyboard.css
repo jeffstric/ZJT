@@ -1439,6 +1439,87 @@ button {
 }
 .chat-textarea:focus { border-color: var(--primary); }
 
+/* 输入框内 @首帧图/@尾帧图 的胶囊镜像层：
+   与 textarea 同字距（同 padding/字号/行高），标记文本隐藏仅保留占位，
+   胶囊绝对定位盖在标记上方；底层文本仍是标记本身，可直接编辑/删除 */
+.chat-textarea-wrap {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+}
+.chat-textarea-mirror {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    overflow: hidden;
+    pointer-events: none;
+    padding: 11px;
+    font-size: var(--agent-chat-font-size, 12px);
+    line-height: 1.45;
+    color: transparent;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: break-word;
+}
+.chat-textarea-mirror .chip-anchor {
+    position: relative;
+    visibility: hidden;
+}
+.chat-mention-chip {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    visibility: visible;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    width: 100%;
+    box-sizing: border-box;
+    height: 17px;
+    padding: 0 6px 0 2px;
+    border-radius: 8.5px;
+    background: #3b3b3b;
+    color: #e8e8e8;
+    font-size: 9px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    pointer-events: auto;
+    cursor: text;
+}
+.chat-mention-chip img {
+    width: 14px;
+    height: 14px;
+    border-radius: 8px;
+    object-fit: cover;
+    display: block;
+}
+.chat-mention-chip-id {
+    font-family: ui-monospace, Consolas, monospace;
+    letter-spacing: 0;
+}
+
+/* 悬停大图预览（提及菜单条目 / 输入框胶囊共用） */
+.sb-hover-preview {
+    position: fixed;
+    z-index: 10001;
+    display: none;
+    pointer-events: none;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.sb-hover-preview img {
+    display: block;
+    max-width: 280px;
+    max-height: 220px;
+    border-radius: 4px;
+}
+
 /* hover / 聚焦助手区 / 浮层固定 / 智能体运行：输入框加高，方便长文本 */
 .ai-chat-section:hover .chat-textarea,
 .ai-chat-section:focus-within .chat-textarea,
