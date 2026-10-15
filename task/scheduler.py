@@ -454,6 +454,20 @@ def init_scheduler(app):
         coalesce=True,
     )
 
+    # RunningHub 槽位对账回收：周期核对活跃槽位与任务真实状态，回收
+    # 「任务已终态但槽位未释放」的残留（兜底，不感知具体业务动作）
+    from task.runninghub_slot_reclaimer import reclaim_stale_slots, get_reclaim_interval_seconds
+    logger.info(f'启用 RunningHub 槽位对账回收（间隔 {get_reclaim_interval_seconds()} 秒）')
+    scheduler.add_job(
+        func=reclaim_stale_slots,
+        trigger=IntervalTrigger(seconds=get_reclaim_interval_seconds()),
+        id='runninghub_slot_reclaim',
+        name='Reconcile and reclaim stale RunningHub slots',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
     # 商业许可证周期续租（仅商业版注册；开源版无商业许可证概念，注册亦被跳过）：
     # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务，
     # 进程启动时获取的短期许可证租约（约 24h）到期后商业能力全部失效
