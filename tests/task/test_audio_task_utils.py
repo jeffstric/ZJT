@@ -109,16 +109,20 @@ class TestBuildCharacterAudioText(unittest.TestCase):
         mock_analyze.return_value = {
             'can_speak_human_language': True,
             'voice_type': 'human',
-            'voice_description': '30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳，语气威严',
+            'voice_description': '30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳，语气威严，录音干净清晰，像在耳边近距离说话',
+            'voice_desc': '三十岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢，语气威严。',
             'sample_text': '大家好，我是张伟。',
         }
         result = _run_async(analyze_character_voice(
             character_data={"name": "张伟", "age": "30"},
             model="test-model", vendor_id=7,
         ))
+        # voice_description = TTS 丰富版（含录音质感）；voice_desc = H3 指纹（纯声学短句）
+        self.assertIn('录音干净清晰', result['voice_description'])
+        self.assertNotIn('录音', result['voice_desc'])
         self.assertEqual(
-            result['voice_description'],
-            '30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳，语气威严',
+            result['voice_desc'],
+            '三十岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢，语气威严。',
         )
         mock_analyze.assert_called_once_with(
             {"name": "张伟", "age": "30"}, model="test-model", vendor_id=7

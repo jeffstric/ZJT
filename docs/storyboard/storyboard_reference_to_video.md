@@ -94,8 +94,9 @@ MiniMax H3 的提示词优化 pipeline（ref2va）改写时会统计 `ai_tool.au
 
 > 背景：2026-10-14 消融实验（同 seed 删性别提示词即失效）证明 H3 的参考音频只是弱微调——音色的宏观属性（性别/年龄感）由提示词文字决定，音频只在文字划定的范围内微调。音色一致性因此改由**文字指纹**承担，参考音频降级为可选增强。
 
-- **字段**：`character.voice_desc`（varchar(1000)，迁移 `no_145_20261014_character_voice_desc`）——角色声音的六维声学指纹（性别年龄段/音高/质感/音量/语速/轻度语气）
-- **生成**：与参考音频同源。① script_writer「生成参考音频」时，LLM 音色分析（`task/audio_task.py` `analyze_character_voice`）产出的 `voice_description` 随响应返回并自动填入；② 角色编辑页「音色描述」字段的「自动生成」按钮（有参考音频才可点击，接口 `POST /script-writer/characters/reference-audio` 旁的 `/script-writer/characters/voice-desc`）；③ 用户可手动改，手改后不重新生成音频就不会被覆盖。分析提示词要求指纹与外观一致、情绪词克制（情绪由每场戏台词决定）
+- **字段**：`character.voice_desc`（varchar(1000)，迁移 `no_150_20261014_character_voice_desc`）——角色声学音色指纹，**只写恒定的声学基色**（性别年龄段/音高/质感/音量/语速，30~60 字）。严禁写入：体型外貌与肢体动作（"微胖""叉腰挺肚"）、录音质感（TTS 专用要素）、按对象/情境切换的说话方式（"对下属嗓门拔高、对领导谄媚"）、口头禅台词——这些交给每场戏的剧本与提示词现场决定；写进指纹会导致提示词冗长、注意力分散、跨镜头音色漂移
+- **生成**：与参考音频同源但**双字段解耦**。LLM 音色分析（`task/audio_task.py` `analyze_character_voice`）一次产出两份：`voice_description`（60~100 字 TTS 丰富版，含录音质感收尾，给 VoxCPM2 声音设计模型）与 `voice_desc`（30~60 字纯声学指纹，给 H3 注入）。① script_writer「生成参考音频」响应回填 `voice_desc`；② 角色编辑页「音色描述」字段的「自动生成」按钮（有参考音频才可点击，接口 `POST /script-writer/characters/reference-audio` 旁的 `/script-writer/characters/voice-desc`）；③ 用户可手动改，手改后不重新生成音频就不会被覆盖。两条红线贯穿两个字段：音色与外观一致、情绪克制
+- **情境语气分层**：指纹（基色，恒定）与情境语气（每场戏变化）是两层——"对下属拔高嗓门、对领导压低谄媚"这类按对象/情绪的说话方式，由提示词优化 LLM 拿着完整剧本在写台词句时现场判断叠加（如 `says in a deep hoarse voice, obsequious and fawning`），不进指纹。指纹若带情境变化，每场戏描述都变，音色一致性即漂移
 - **注入**（仅 H3 系列，`PipelineDriverFactory.is_h3_prompt_optimize_type` 门控）：提示词尾部追加「角色音色说明：XX的音色特征：…；…。描述这些角色说话的声音时必须遵循对应音色特征。」（`build_voice_casting_note`/`append_voice_casting_note`，幂等，`H3_VOICE_CASTING_NOTE_MAX_CHARS` 截断）。KFRef 无对白镜头与音频注入同口径跳过（音色说明会诱导模型给无对白镜头配音）。seedance 等其他模型零变化（它们的音频参考走 TTS 克隆，工作正常）
 - **渲染**：三个 H3 优化模板（I2VA/FL2VA base、Ref2VA、KFRef）都有 Voice casting 段：有台词角色的说话句必须融入其指纹特征的英文转写（全部声学特征语义保留、禁止增删改写——文本恒定是跨镜头音色一致性的根基），不说话的角色忽略其指纹；说明块本身不抄进最终提示词。原文带指纹块时优化指令再追加一条条件指令强化遵守
 - **与参考音频的关系**：并存不互斥。指纹是主保证；`default_voice` 音频照常上传（LoadAudio 槽）当盆地内微调——两者同源（指纹由生成音频时的同一分析产出），不会冲突。H3 参考音频每条 2–15s 的官方约束暂未实施裁剪（两个 H3 驱动有 TODO 注释：音频参考本身弱，裁剪也未必有效）
