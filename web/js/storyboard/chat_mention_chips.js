@@ -54,7 +54,7 @@ let resizeObserver = null;
  * 把 textarea 里的首尾帧标记同步成镜像层胶囊。
  * 幂等：输入、滚动、重绘后调用；textarea/镜像层不存在（对口型直连）时直接返回。
  */
-export function syncChatMentionChips() {
+export function syncChatMentionChips(depth = 0) {
     const ta = document.getElementById('chat-textarea');
     const mirror = document.querySelector('[data-chat-textarea-mirror]');
     if (!ta || !mirror) return;
@@ -66,9 +66,9 @@ export function syncChatMentionChips() {
         mirror.innerHTML = '';
         return;
     }
-    // 滚动条出现时 textarea 内容宽变窄，镜像内容宽必须同步收窄，否则换行错位
+    // 滚动条出现时 textarea 内容宽变窄（syncMirrorTypography 会把它计入右侧内边距）
     const scrollbar = ta.offsetWidth - ta.clientWidth - 2;
-    mirror.style.paddingRight = scrollbar > 0 ? `${11 + scrollbar}px` : '';
+    syncMirrorTypography(ta, mirror, scrollbar);
     const parts = [];
     let cursor = 0;
     tokens.forEach(({ key, token, start, end }) => {
@@ -78,7 +78,7 @@ export function syncChatMentionChips() {
         const id = embedded ? embedded[1] : shortImageId(url);
         parts.push(escapeHtml(text.slice(cursor, start)));
         parts.push(
-            `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(url)}" data-end="${end}">`
+            `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(url)}" data-start="${start}" data-end="${end}">`
             + `<img src="${escapeHtml(getThumbnailUrl(url, 28))}" alt="">`
             + `<span class="chat-mention-chip-id">${escapeHtml(id)}</span>`
             + `</span></span>`,
@@ -88,6 +88,58 @@ export function syncChatMentionChips() {
     parts.push(escapeHtml(text.slice(cursor)));
     mirror.innerHTML = parts.join('');
     mirror.scrollTop = ta.scrollTop;
+    // 标记被折行截断时（落在行尾），胶囊跨行定位被裁切、裸文本外露：强制换行让其独占一行
+    if (depth < 3 && fixStraddlingTokens(ta)) {
+        syncChatMentionChips(depth + 1);
+    }
+}
+
+/**
+ * 镜像层排版参数逐项复制 textarea 的 computedStyle（字体/行高/内边距含边框补偿）。
+ * 折行点对像素级一致极其敏感，任何 CSS 漂移都会让胶囊盖错位置、裸文本外露。
+ */
+function syncMirrorTypography(ta, mirror, scrollbar) {
+    const cs = getComputedStyle(ta);
+    const num = (v) => parseFloat(v) || 0;
+    mirror.style.fontSize = cs.fontSize;
+    mirror.style.fontFamily = cs.fontFamily;
+    mirror.style.fontWeight = cs.fontWeight;
+    mirror.style.lineHeight = cs.lineHeight;
+    mirror.style.letterSpacing = cs.letterSpacing;
+    const scrollbarPad = scrollbar > 0 ? scrollbar : 0;
+    mirror.style.padding = [
+        num(cs.borderTopWidth) + num(cs.paddingTop),
+        num(cs.borderRightWidth) + num(cs.paddingRight) + scrollbarPad,
+        num(cs.borderBottomWidth) + num(cs.paddingBottom),
+        num(cs.borderLeftWidth) + num(cs.paddingLeft),
+    ].map((v) => `${v}px`).join(' ');
+}
+
+/** 标记跨行（锚点多于一个片段）时在标记前插入换行，让标记整体挪到下一行行首。 */
+function fixStraddlingTokens(ta) {
+    const mirror = document.querySelector('[data-chat-textarea-mirror]');
+    if (!mirror) return false;
+    const jobs = [];
+    mirror.querySelectorAll('.chip-anchor').forEach((anchor) => {
+        if (anchor.getClientRects().length <= 1) return;
+        const chip = anchor.querySelector('.chat-mention-chip');
+        const start = Number(chip?.dataset.start);
+        if (Number.isFinite(start) && start > 0 && ta.value[start - 1] !== '\n') {
+            jobs.push(start);
+        }
+    });
+    if (!jobs.length) return false;
+    const selStart = typeof ta.selectionStart === 'number' ? ta.selectionStart : null;
+    const selEnd = typeof ta.selectionEnd === 'number' ? ta.selectionEnd : null;
+    // 从后往前插换行，靠前的偏移不受影响；恢复光标时按插入点数平移
+    jobs.sort((a, b) => b - a);
+    jobs.forEach((pos) => ta.setRangeText('\n', pos, pos, 'end'));
+    const shift = (p) => p + jobs.filter((s) => s < p).length;
+    if (selStart != null) {
+        ta.setSelectionRange(shift(selStart), shift(selEnd ?? selStart));
+    }
+    state.inputMessage = ta.value;
+    return true;
 }
 
 /**
