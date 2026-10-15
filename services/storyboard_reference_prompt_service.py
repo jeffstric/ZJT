@@ -583,10 +583,15 @@ def build_voice_casting_note(characters: Optional[List[Dict[str, Any]]]) -> str:
         parts.append(f"{name}的音色特征：{desc}")
     if not parts:
         return ""
+    # 指纹文本可能自带句号，拼接处避免出现「命令。。描述」双句号
+    joined = "；".join(
+        part if part.rstrip().endswith(("。", ".", "！", "？")) else part + "。"
+        for part in parts
+    )
     note = (
         H3_VOICE_CASTING_NOTE_MARKER
-        + "；".join(parts)
-        + "。描述这些角色说话的声音时必须遵循对应音色特征。"
+        + joined
+        + "描述这些角色说话的声音时必须遵循对应音色特征。"
     )
     return note[:H3_VOICE_CASTING_NOTE_MAX_CHARS]
 
