@@ -149,6 +149,30 @@ class StoryboardModel:
             raise
 
     @staticmethod
+    def get_by_workflow_id(user_id: int, workflow_id: int) -> Optional[Storyboard]:
+        """按关联工作流查找故事板（工作流→故事板互转的幂等入口）。"""
+        sql = "SELECT * FROM storyboard WHERE workflow_id = %s AND user_id = %s ORDER BY id ASC"
+        try:
+            result = execute_query(sql, (workflow_id, user_id), fetch_one=True)
+            if result:
+                return Storyboard(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get storyboard by workflow {workflow_id}: {e}")
+            raise
+
+    @staticmethod
+    def max_episode_number(user_id: int, world_id: int) -> int:
+        """某世界下该用户已有故事板的最大集数（无则 0），供工作流转故事板时分配新集数。"""
+        sql = "SELECT COALESCE(MAX(episode_number), 0) AS max_ep FROM storyboard WHERE user_id = %s AND world_id = %s"
+        try:
+            result = execute_query(sql, (user_id, world_id), fetch_one=True)
+            return int((result or {}).get('max_ep') or 0)
+        except Exception as e:
+            logger.error(f"Failed to get max episode for world {world_id}: {e}")
+            raise
+
+    @staticmethod
     def list_ratios_by_world(user_id: int, world_id: int) -> List[Dict[str, Any]]:
         """
         列出某世界下故事板的集数与画幅比例，按 episode_number ASC。

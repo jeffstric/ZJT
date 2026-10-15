@@ -397,6 +397,8 @@
     "msg_confirm_split_script": "Auto-split this episode's script into scenes and dialogue data?",
     "msg_connection_lost": "Connection lost. Check results later or send again.",
     "msg_content_violation_retry": "Content review failed: check the prompt and references, then retry",
+    "msg_convert_to_workflow_failed": "Failed to convert to workflow canvas",
+    "msg_converting_to_workflow": "Converting storyboard to workflow canvas...",
     "msg_cost_estimate_failed": "Cost estimate failed",
     "msg_create_pay_order_failed": "Failed to create payment order",
     "msg_create_storyboard_failed": "Failed to create the storyboard. Please try again",

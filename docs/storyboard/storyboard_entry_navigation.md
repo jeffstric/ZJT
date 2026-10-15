@@ -130,6 +130,8 @@ get-or-create 命中已有故事板时**不改** title。历史空 title 不自�
 
 `web/storyboard.html` 左上角 `.header-logo` 使用 `data-route="storyboard-list"` 接入现有路由事件代理，点击后跳转 `/storyboard-list`，返回故事板列表页。
 
+头部「画布」按钮（`data-route="canvas"`）：已关联画布（`state.workflowId`）直接跳 `/video-workflow?id=...`；未关联时调用 `POST /api/storyboard/{id}/to-workflow` 把当前故事板内容转换为工作流画布后跳转（仅首次创建，见 `docs/storyboard/storyboard_workflow_conversion.md`）。工作流画布顶栏另有「转故事板」按钮，走 `POST /api/storyboard/from-workflow` 反向增量同步。
+
 ### 空故事板生成分镜
 
 进入 `web/storyboard.html` 后，如果当前故事板没有任何 `storyboard_scene`，前端会显示确认弹框（`renderGenerateFromScriptDialog`）：

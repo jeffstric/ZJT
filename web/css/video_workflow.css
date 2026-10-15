@@ -5112,3 +5112,26 @@ html.theme-dark #shortcutHelpModal .shortcut-tip::before{
   color: #052e16;
 }
 
+
+/*
+ * 顶栏图标化按钮：仅保留图标缩小横向占位，文字说明通过 title 悬停提示。
+ * 覆盖 .save-btn / .mini-btn / .world-selector .mini-btn 的文字型内边距。
+ */
+.mini-btn.icon-only,
+.world-selector .mini-btn.icon-only{
+  padding: 6px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  justify-content: center;
+  gap: 0;
+}
+.btn.icon-only,
+.btn.save-btn.icon-only{
+  padding: 8px;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  justify-content: center;
+  gap: 0;
+}

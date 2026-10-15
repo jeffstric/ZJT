@@ -140,6 +140,13 @@ export async function updateStoryboard(storyboardId, data) {
 export async function generateFromScript(storyboardId, data = {}) {
     return request(`/${storyboardId}/generate-from-script`, { method: 'POST', body: JSON.stringify(data) });
 }
+/**
+ * 故事板 → 工作流画布（见 docs/storyboard/storyboard_workflow_conversion.md）。
+ * 已关联画布时后端直接返回该画布（created=false），首次转换创建画布并回写 workflow_id。
+ */
+export async function convertStoryboardToWorkflow(storyboardId) {
+    return request(`/${storyboardId}/to-workflow`, { method: 'POST', body: JSON.stringify({}) });
+}
 
 /**
  * 拉取剧本正文（拆分弹窗「总分镜时长」估算 hint 用）。
