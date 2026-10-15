@@ -48,6 +48,28 @@ class ScriptSplitPreconditionError(ValueError):
         super().__init__(f"[{code}] {message}")
 
 
+def _validate_script_content_precondition(script_content: str) -> None:
+    """前置校验：剧本正文长度必须达到最小阈值，否则视为内容信息不足。
+
+    正文过短（如被误写为标题/占位文本）时，规划阶段唯一锚点会被模型整体
+    归入 excluded_block_ids（非正文），segments 为空，重试耗尽后 paused——
+    重试不会改变结论。与其让用户等待多轮规划 LLM 后收到含糊的
+    「分段计划缺少 segments 数组」，不如创建任务时直接 4xx 提示补全剧本。
+    纯字符串检查无 IO，同步执行不阻塞事件循环（AGENTS.md 规则 1）。
+    """
+    text = str(script_content or "").strip()
+    if len(text) >= ScriptSplitConstants.MIN_SCRIPT_SPLIT_CHARS:
+        return
+    raise ScriptSplitPreconditionError(
+        "script_content_insufficient",
+        (
+            f"剧本内容信息不足（仅 {len(text)} 字，至少需要 "
+            f"{ScriptSplitConstants.MIN_SCRIPT_SPLIT_CHARS} 字），无法拆分分镜，"
+            "请检查剧本内容是否完整后再试。"
+        ),
+    )
+
+
 async def _validate_world_scene_precondition(world_id: Optional[int]) -> None:
     """前置校验：world 至少有 1 个场景，且至少有 1 个带参考图的场景。
 
@@ -510,7 +532,9 @@ async def create_split_task(
     request_config = _normalize_request_config(request_config)
     # 内部角色契约只允许服务端生成；在前置校验和幂等键计算前丢弃客户端同名字段。
     request_config.pop(CHARACTER_CONTRACT_CONFIG_KEY, None)
-    # 前置校验：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
+    # 前置校验 1：剧本正文长度（纯内存检查，先于需要查库的场景校验）
+    _validate_script_content_precondition(script_content)
+    # 前置校验 2：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
     await _validate_world_scene_precondition(request_config.get("world_id"))
     script_sha256 = hashlib.sha256(
         (script_content or "").encode("utf-8")

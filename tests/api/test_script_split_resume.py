@@ -81,6 +81,33 @@ def test_precondition_passes_when_world_has_imaged_scene(monkeypatch):
     asyncio.run(_validate_world_scene_precondition(246))
 
 
+def test_script_content_precondition_rejects_placeholder_text():
+    """剧本内容信息不足（如被占位文本覆盖）→ 创建任务前直接拒绝。
+
+    背景：2026-10-15 事故——剧本被 AI 探针文本覆盖为 13 字占位符后，
+    拆分任务在规划阶段反复 plan_no_segments 失败；应创建时就 4xx 提示。
+    """
+    from api.script_split import _validate_script_content_precondition
+
+    with pytest.raises(ScriptSplitPreconditionError) as exc:
+        _validate_script_content_precondition("【PROBE-4】")
+    assert exc.value.code == "script_content_insufficient"
+    assert "剧本内容信息不足" in exc.value.message
+    assert "请检查剧本内容" in exc.value.message
+
+    with pytest.raises(ScriptSplitPreconditionError):
+        _validate_script_content_precondition("")
+    with pytest.raises(ScriptSplitPreconditionError):
+        _validate_script_content_precondition(None)
+
+
+def test_script_content_precondition_passes_for_normal_script():
+    from api.script_split import _validate_script_content_precondition
+
+    normal = "# 第2集：运河边的回声\n\n" + "王奶奶坐在运河边，慢慢讲起往事。" * 5
+    _validate_script_content_precondition(normal)
+
+
 def test_character_contract_pause_exposes_sanitized_validation_details(monkeypatch):
     task = ScriptSplitTask(
         id=22,
@@ -321,7 +348,7 @@ def test_duplicate_submission_auto_resumes_paused_task(monkeypatch):
         source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
         source_id=9,
         source_node_key=None,
-        script_content="同一份剧本",
+        script_content="同一份用于幂等键与恢复校验的完整测试剧本正文",
         request_config={"model": "test-model"},
         auth_token="fresh-token",
     ))
@@ -369,7 +396,7 @@ def test_duplicate_submission_does_not_restart_running_task(monkeypatch):
         source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
         source_id=9,
         source_node_key=None,
-        script_content="同一份剧本",
+        script_content="同一份用于幂等键与恢复校验的完整测试剧本正文",
         request_config={"model": "test-model"},
     ))
 
@@ -417,7 +444,7 @@ def test_create_task_replaces_client_character_contract_with_server_snapshot(mon
         source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
         source_id=9,
         source_node_key=None,
-        script_content="测试剧本",
+        script_content="用于角色契约快照注入校验的完整测试剧本正文内容",
         request_config={
             "world_id": 823,
             "_character_contract": {
@@ -468,7 +495,7 @@ def test_duplicate_submission_refreshes_token_and_resumes_waiting_auth(monkeypat
         source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
         source_id=9,
         source_node_key=None,
-        script_content="同一份剧本",
+        script_content="同一份用于幂等键与恢复校验的完整测试剧本正文",
         request_config={"model": "test-model"},
         auth_token="renewed-token",
     ))

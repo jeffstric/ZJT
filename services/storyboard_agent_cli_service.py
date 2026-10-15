@@ -3334,18 +3334,23 @@ class StoryboardAgentCliService:
         # service 已在路由层 asyncio.to_thread 的子线程中执行，无活动事件循环，
         # asyncio.run 安全（与 _parse_script_to_shots_sync 的既有模式一致）。
         import asyncio as _asyncio
-        from api.script_split import create_split_task
-        task_id, is_new = _asyncio.run(
-            create_split_task(
-                user_id=int(user_id),
-                source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
-                source_id=int(storyboard_id),
-                source_node_key=None,
-                script_content=str(content),
-                request_config=request_config,
-                auth_token=auth_token or None,
+        from api.script_split import ScriptSplitPreconditionError, create_split_task
+        try:
+            task_id, is_new = _asyncio.run(
+                create_split_task(
+                    user_id=int(user_id),
+                    source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
+                    source_id=int(storyboard_id),
+                    source_node_key=None,
+                    script_content=str(content),
+                    request_config=request_config,
+                    auth_token=auth_token or None,
+                )
             )
-        )
+        except ScriptSplitPreconditionError as exc:
+            # 剧本内容信息不足等前置校验失败：转 CLI 错误码，路由层返回 400 详情，
+            # 不让 Agent 链路吃裸 ValueError（与 web 入口 400 通路对齐）。
+            raise StoryboardCliError(exc.code, exc.message)
 
         return {
             "success": True,

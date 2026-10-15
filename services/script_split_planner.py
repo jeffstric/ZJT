@@ -109,6 +109,25 @@ def validate_segment_plan(
 
     segments = plan.get("segments")
     if not isinstance(segments, list) or not segments:
+        # 区分「全部锚点被排除」：模型认为剧本没有任何正文（全部是标题/概要等
+        # 非正文），segments 为空是模型的正确判断而非输出缺陷，重试不会改变结论。
+        # 典型诱因是剧本内容被占位文本覆盖（2026-10-15 事故：正文仅剩 13 字探针）。
+        # 给出专门错误码与可操作提示，替代含糊的「缺少 segments 数组」。
+        raw_excluded_now = plan.get("excluded_block_ids")
+        anchor_ids_now = {b["block_id"] for b in anchors}
+        if (
+            isinstance(segments, list)
+            and anchor_ids_now
+            and isinstance(raw_excluded_now, list)
+            and anchor_ids_now <= set(raw_excluded_now)
+        ):
+            return False, [{
+                "code": "plan_all_blocks_excluded",
+                "message": (
+                    "模型将剧本全部内容判定为非正文（如标题/概要/占位文本），"
+                    "没有可拆分的正文分段；请检查剧本内容是否完整后再重试"
+                ),
+            }]
         return False, [{"code": "plan_no_segments", "message": "分段计划缺少 segments 数组"}]
 
     valid_block_ids = [b["block_id"] for b in anchors]

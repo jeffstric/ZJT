@@ -1503,6 +1503,14 @@ class ScriptSplitConstants:
     """
     _CONSTANT_GROUP = True
 
+    # ---- 任务创建前置校验 ----
+    # 剧本正文字符数下限（strip 后）。低于该值视为「内容信息不足」：
+    # 规划阶段唯一锚点必然被模型整体归入 excluded_block_ids（非正文），
+    # segments 为空 → plan_all_blocks_excluded 重试耗尽后 paused。
+    # 与其在用户等待多轮规划 LLM 后才失败，不如创建任务时直接 4xx 提示补全剧本。
+    # 背景：2026-10-15 事故——剧本被 AI 探针文本覆盖为 13 字占位符后反复拆分失败。
+    MIN_SCRIPT_SPLIT_CHARS = 20
+
     # ---- 分段规划诊断日志 ----
     # 记录第一阶段语义分段的输入、提示词、原始响应、解析结果和业务校验结果。
     # 默认关闭以减少 logs/script_parser 磁盘占用；排查分段规划问题时改为 True。
