@@ -1,12 +1,14 @@
 /**
  * 分镜助手输入框的图片提及渲染：
- * - textarea 内无法内嵌图片，用同字距镜像层把 @首帧图/@尾帧图 文本盖成
- *   「缩略图 + 唯一短id」胶囊；底层文本仍是标记本身，提交链路（服务端
- *   services/storyboard_frame_mention.py 按标记解析）不变；
+ * - textarea 内无法内嵌图片，用同字距镜像层把 @首帧图[:id]/@尾帧图[:id]
+ *   文本盖成「缩略图 + 唯一短id」胶囊；底层文本即标记本身（含 id 后缀，
+ *   服务端 services/storyboard_frame_mention.py 按标记语义解析）；
+ * - 标记是原子单位：光标不可落入标记中间编辑，删除一律整枚删除；
  * - 胶囊与提及菜单条目统一支持 data-hover-preview 悬停大图预览。
  */
 import state, { mentionableVideoFrameUrls } from './state.js';
 import { getThumbnailUrl } from './render.js';
+import { scanFrameMentionTokenRanges } from './frame_mention.js';
 
 const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
     ? window.escapeHtml
@@ -21,23 +23,9 @@ const escapeHtmlAttr = (typeof window !== 'undefined' && typeof window.escapeHtm
     ? window.escapeHtmlAttr
     : escapeHtml;
 
-const FRAME_TOKEN_RES = [
-    { key: 'first', re: /@首帧图(?![\u4e00-\u9fff])/g },
-    { key: 'last', re: /@尾帧图(?![\u4e00-\u9fff])/g },
-];
-
-/** 扫描提示词里的首尾帧标记，返回 {key, token, start, end}（按出现序）。 */
+/** 兼容旧导出名：token 扫描统一收敛到 frame_mention.js（与前端正则同源）。 */
 export function scanFrameMentionTokens(text) {
-    const value = text == null ? '' : String(text);
-    const found = [];
-    FRAME_TOKEN_RES.forEach(({ key, re }) => {
-        re.lastIndex = 0;
-        let m;
-        while ((m = re.exec(value)) !== null) {
-            found.push({ key, token: m[0], start: m.index, end: m.index + m[0].length });
-        }
-    });
-    return found.sort((a, b) => a.start - b.start);
+    return scanFrameMentionTokenRanges(text);
 }
 
 /** 由图片 URL 生成稳定短 id：十六进制文件名直接截取，否则 FNV-1a 哈希 8 位。
@@ -85,11 +73,14 @@ export function syncChatMentionChips() {
     let cursor = 0;
     tokens.forEach(({ key, token, start, end }) => {
         const url = urlByKey[key];
+        // 标记自带 id 后缀（@首帧图:xxxx）时以文本里的 id 为准，与底层文本一致
+        const embedded = /:([0-9a-f]{8})$/.exec(token);
+        const id = embedded ? embedded[1] : shortImageId(url);
         parts.push(escapeHtml(text.slice(cursor, start)));
         parts.push(
             `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(url)}" data-end="${end}">`
             + `<img src="${escapeHtml(getThumbnailUrl(url, 28))}" alt="">`
-            + `<span class="chat-mention-chip-id">${escapeHtml(shortImageId(url))}</span>`
+            + `<span class="chat-mention-chip-id">${escapeHtml(id)}</span>`
             + `</span></span>`,
         );
         cursor = end;
@@ -99,6 +90,42 @@ export function syncChatMentionChips() {
     mirror.scrollTop = ta.scrollTop;
 }
 
+/**
+ * 标记是原子单位：删除触及标记 → 整枚删除；在标记中间插入 → 阻止。
+ * 挂在 textarea 的 beforeinput 上（ensureSyncListeners）。
+ */
+function handleTokenBeforeInput(event) {
+    const ta = event.target;
+    if (!ta || ta.id !== 'chat-textarea') return;
+    const spans = scanFrameMentionTokens(ta.value);
+    if (!spans.length) return;
+    const type = String(event.inputType || '');
+    const start = typeof ta.selectionStart === 'number' ? ta.selectionStart : 0;
+    const end = typeof ta.selectionEnd === 'number' ? ta.selectionEnd : start;
+    if (type.startsWith('delete')) {
+        let rangeStart = start;
+        let rangeEnd = end;
+        const touched = spans.filter((s) => {
+            if (rangeStart < rangeEnd) return rangeStart < s.end && rangeEnd > s.start;
+            if (type === 'deleteContentForward') return rangeStart >= s.start && rangeStart < s.end;
+            return rangeStart > s.start && rangeStart <= s.end;
+        });
+        if (!touched.length) return;
+        event.preventDefault();
+        rangeStart = Math.min(rangeStart, ...touched.map((s) => s.start));
+        rangeEnd = Math.max(rangeEnd, ...touched.map((s) => s.end));
+        ta.setRangeText('', rangeStart, rangeEnd, 'end');
+        state.inputMessage = ta.value;
+        syncChatMentionChips();
+        return;
+    }
+    if (type.startsWith('insert')) {
+        // 光标或选区边缘落在标记内部：不允许分段修改，要改就整枚删掉重插
+        const inside = spans.some((s) => (start > s.start && start < s.end) || (end > s.start && end < s.end));
+        if (inside) event.preventDefault();
+    }
+}
+
 function ensureSyncListeners(ta) {
     if (syncedTextareas.has(ta)) return;
     syncedTextareas.add(ta);
@@ -106,6 +133,7 @@ function ensureSyncListeners(ta) {
         const mirror = document.querySelector('[data-chat-textarea-mirror]');
         if (mirror) mirror.scrollTop = ta.scrollTop;
     });
+    ta.addEventListener('beforeinput', handleTokenBeforeInput);
     if (typeof ResizeObserver !== 'undefined') {
         if (!resizeObserver) resizeObserver = new ResizeObserver(() => syncChatMentionChips());
         // patchAgentPanel 会整体重建 textarea：先断开旧目标，避免持有已拆离元素
@@ -189,8 +217,8 @@ export function setupHoverPreview() {
         if (!(event.target instanceof Element)) return;
         const anchor = event.target.closest('[data-hover-preview]');
         if (anchor && anchor.dataset.hoverPreview) {
-            // 左侧提示词下拉：预览放右侧，避免盖住选项列表
-            const placement = anchor.closest('.asset-dropdown') ? 'right' : 'top';
+            // 左侧提示词下拉与 @ 弹窗：预览放条目右侧，避免盖住选项列表
+            const placement = anchor.closest('.asset-dropdown, .mention-popup') ? 'right' : 'top';
             showHoverPreview(anchor.dataset.hoverPreview, anchor, placement);
         } else if (!event.target.closest('.sb-hover-preview')) {
             hideHoverPreview();
