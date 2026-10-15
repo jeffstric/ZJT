@@ -589,6 +589,14 @@ H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
+# ===== 营销数字人时长自动路由（>10s 走 LTX2.3，见 docs/marketing_agent_digital_human_duration_routing_plan.md）=====
+# H3 数字人档位上限，与 unified_config DIGITAL_HUMAN_MINIMAX_H3.supported_durations 上限一致
+DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 10
+# LTX2.3 With Voice 音频时长上限（官方建议 5-30s，见 docs/video/digital_human_node.md）
+DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS = 30
+# 口播时长估算速率（字/秒），营销数字人草案在缺实测时长时按文案长度估算
+DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""

@@ -4931,6 +4931,7 @@ async def digital_human_v2_generate(
     image: UploadFile = File(..., description="Input image for digital human"),
     text: str = Form(..., description="Text content for digital human to speak (max 1000 characters)"),
     audio: UploadFile = File(..., description="Reference audio file"),
+    duration: int = Form(None, description="Billable duration in seconds for audio-driven billing (LTX2.3); omit to keep legacy flat-rate behavior"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -4945,6 +4946,12 @@ async def digital_human_v2_generate(
                 detail="文本内容不能超过1000个字"
             )
 
+        if duration is not None and duration < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="时长参数无效（须为正整数秒）"
+            )
+
         # Save uploaded image
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
 
@@ -4954,7 +4961,12 @@ async def digital_human_v2_generate(
         # Task type for digital human v2
         task_type = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.get_computing_power()
+        # 传 duration 时按音频时长档位计费（数据库 implementation_power 优先，兜底实现方默认值）；
+        # 缺省保持旧固定费率行为，向后兼容未携带 duration 的调用方
+        if task_config and duration:
+            computing_power = task_config.get_computing_power(duration=duration)
+        else:
+            computing_power = task_config.get_computing_power() if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -5010,6 +5022,7 @@ async def digital_human_v2_generate(
                     type=task_type,
                     image_path=image_url,
                     audio_path=audio_url,  # v2 uses audio_path field
+                    duration=duration,  # billable seconds (None keeps legacy NULL)
                     transaction_id=transaction_id,
                     status=AI_TOOL_STATUS_PENDING
                 )

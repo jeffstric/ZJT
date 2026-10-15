@@ -1,0 +1,188 @@
+# 营销数字人时长路由方案：>10 秒自动切换 LTX2.3
+
+> 分支：`develop_1019`（基于 origin/develop @ 0d06a3e8）
+> 状态：**已实施**（2026-10-15，单测 26 项覆盖路由边界/分派/兼容；端到端自测见文末附录）
+> 日期：2026-10-15
+
+## 1. 背景与调查结论
+
+### 1.1 marketing_agent.html 的数字人功能在哪里
+
+`web/marketing_agent.html` 及 `web/js/marketing_agent.js` **不含任何数字人提交代码**——前端只是对话 UI，数字人完全由营销智能体（LLM agent）在后端工具链中完成。现有两条工具链：
+
+| 链路 | 工具 | 模型（task_type） | 端点 | 音频语义 | 时长能力 |
+|---|---|---|---|---|---|
+| 两段式确认制（**2026-10-12 起默认**） | `prepare_digital_human_draft` + `confirm_digital_human`（`script_writer_core/digital_human_tts_tools.py`） | MiniMax H3（35） | `/api/digital-human-minimax-h3` | **驱动音频**（音频即口播） | 档位 4–10 秒，**超长被 clamp 截断** |
+| 参考音色模式（用户明确要求时） | `generate_digital_human`（`script_writer_core/mcp_tool.py:4897`） | wan2.2（13） | `/api/digital-human` | **参考音色**（webapp 内部 TTS 说 text） | 文本 ≤1000 字，无档位 |
+
+**现存痛点**：两段式链路中 `clamp_h3_duration`（`digital_human_tts_tools.py:81`）把 >10 秒的口播一律截到 10 秒档，长文案口播被静默截断；wan2.2 参考音色模式虽无硬时长上限，但口型/音色在长文本下不稳（产品侧结论），且该模式仅剩少数场景。
+
+### 1.2 LTX2.3 数字人基础设施已完整存在，可直接复用
+
+- **模型注册**：`TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE`（32），`config/unified_config.py:3144`，数字人品类 `TaskCategory.DIGITAL_HUMAN`。
+- **端点**：`POST /api/digital-human-v2`（`server.py:4927`），multipart：`image + audio + text`（text 为动作提示词），音频写 `ai_tools.audio_path`。
+- **驱动**：`Ltx23WithVoiceRunninghubV1Driver`（`task/visual_drivers/digital_human_ltx2_3_voice_runninghub_v1_driver.py`），RunningHub webapp `2064227959384395777`，节点：image（444）/ audio（1755）/ value（1624）。
+- **时长语义**：音频驱动，**视频时长 = 音频时长**，官方建议 5–30 秒（`docs/video/digital_human_node.md`）。
+- **画布先例**：`web/js/digital_human_node.js` 画布数字人节点已默认 LTX2.3（`DH_MODEL_KEY_PRIMARY = 'digital_human_ltx2_3_voice'`）。
+- **历史先例**：分镜数字人曾实现 Wan2.2/LTX2.3 双模型时长路由（`docs/storyboard/storyboard_digital_human_dual_model_routing_design.md`，阈值 1 秒，后统一 H3 而废弃）——统一常量、`routing_reason`、`extra_config` 元数据的模式可直接借鉴。
+
+### 1.3 能力对照与差异（路由必须处理的点）
+
+| 维度 | wan2.2（13） | MiniMax H3（35） | LTX2.3（32） |
+|---|---|---|---|
+| 音频语义 | 参考音色 | 驱动音频 | 驱动音频 |
+| 口播驱动 | text（webapp 内 TTS） | audio | audio |
+| 时长 | 随文本 | 档位 4–10s | =音频时长，建议 ≤30s |
+| 画幅 ratio | 支持 7 种比例 | 不消费 | **不消费（画幅跟随首帧图）** |
+| max_edge | 无 | 720/1280/1920 | **无** |
+| 算力 | 固定（12） | 按档位 | v2 端点当前**固定 6**，未按时长 |
+
+关键差异：LTX2.3 与 H3 音频语义一致（驱动音频），**两段式链路的 TTS 产物天然可直接喂给 LTX2.3，无需任何音频转换**；wan2.2 的参考音色则不能直接给 LTX2.3（它是"提取音色"用的，不是口播内容）。
+
+## 2. 目标与非目标
+
+**目标**：营销智能体数字人口播，按口播时长自动路由模型：
+
+| 口播时长 D | 模型 | 说明 |
+|---|---|---|
+| D ≤ 10s | MiniMax H3（35） | 现状不变，档位 clamp |
+| 10s < D ≤ 30s | **LTX2.3（32）** | 时长=音频实际时长，ceil 计费 |
+| D > 30s | 拒绝并提示 | 超出 LTX2.3 建议上限，提示拆分文案分段生成 |
+
+**非目标**：
+- 不改画布（`digital_human_node.js` 已默认 LTX2.3）与分镜链路（已统一 H3）。
+- 不改 `/api/digital-human`（wan2.2）端点本身。
+- 不做 wan2.2 参考音色模式的自动克隆桥接（见 §4.4，列为可选二期）。
+
+## 3. 路由规则与常量
+
+### 3.1 新增常量（`config/constant.py`）
+
+```python
+# ===== 营销数字人时长自动路由（>10s 走 LTX2.3）=====
+# H3 数字人档位上限，与 unified_config DIGITAL_HUMAN_MINIMAX_H3.supported_durations 上限一致
+DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 10
+# LTX2.3 With Voice 音频时长上限（官方建议 5-30s，见 docs/video/digital_human_node.md）
+DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS = 30
+# 口播时长估算速率（字/秒），与 prepare 现有估算口径一致
+DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
+```
+
+路由阈值单一来源，禁止在工具函数里散落魔法数字（沿用分镜双模型路由设计的教训）。
+
+### 3.2 时长来源（按优先级）
+
+1. TTS 实测时长（`tts.duration`，火山/IndexTTS 产物已由 `probe_audio_duration` 探测）；
+2. 用户直供驱动音频：**prepare 阶段补一次 `probe_audio_duration`**（现状用户音频 `duration=None`，必须补齐才有路由依据）；
+3. 探测失败时按文案长度估算（`len(script_text) / 4`，现成逻辑）；
+4. 仍无法确定 → 走 H3 default 10（保守回退，与现状一致）。
+
+### 3.3 可观测性（借鉴分镜路由设计）
+
+草案与提交结果新增 `model_task_type` / `routing_reason`（`duration_lte_10s_h3` / `duration_gt_10s_ltx2_3` / `duration_fallback_h3`），写入返回 message；`ai_tools.extra_config` 由端点侧自然落库 task_type，无需额外字段。
+
+## 4. 改动点设计
+
+### 4.1 `prepare_digital_human_draft`（主改动，`script_writer_core/digital_human_tts_tools.py`）
+
+现第 4 步「时长与 H3 算力预估」改为路由决策：
+
+```
+est_seconds = TTS 实测 or 用户音频 probe or 文案估算
+if est_seconds <= 10:   routing = H3(35)；duration = clamp_h3_duration(est)；power = H3 配置按档位
+elif est_seconds <= 30: routing = LTX2.3(32)；billable = ceil(est)；power = LTX2.3 配置按 duration
+else:                   return 失败：「口播时长约 Xs，超出数字人支持上限 30s，请拆分文案分段生成」
+```
+
+草案 dict 新增字段：`model_task_type`、`routing_reason`、`billable_duration`（H3 时等于 `h3_duration`，LTX2.3 时为 ceil 后音频秒数）。`h3_computing_power` 字段语义扩为「视频算力」，或新增 `video_computing_power`（保留旧字段兼容）。
+
+### 4.2 `confirm_digital_human`（提交分派）
+
+- 读 `draft.get('model_task_type', TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)` —— **缺省 H3，兼容升级窗口内的存量草案**。
+- 35 → 现有 `/api/digital-human-minimax-h3` 提交路径原样保留。
+- 32 → 改投 `/api/digital-human-v2`：files 同样为 `image + audio`，`data.text = motion_prompt`（LTX2.3 的 text 语义与 H3 相同，均为动作提示词，复用同一 VL 生成的 motion_prompt），新增 `duration = billable_duration`（见 4.3）。
+- 返回 `model_used` 按实际模型（`'MiniMax H3 数字人'` / `'LTX2.3 数字人'`）。
+
+素材下载、`_fetch_asset_bytes`、一次性消费、30 分钟 TTL 等逻辑完全复用，不重复实现。
+
+### 4.3 `/api/digital-human-v2` 端点扩展（`server.py:4927`）
+
+当前该端点扣费为固定 `get_computing_power()`（=6），与音频时长无关。新增**可选**表单参数：
+
+```python
+duration: int = Form(None, description="Billable duration in seconds (audio-driven); omit to keep flat-rate legacy behavior")
+```
+
+- 传入时：`computing_power = task_config.get_computing_power(duration=duration)`，写入 `ai_tools.extra_config`（便于退款核对）；
+- 缺省时：行为完全不变（向后兼容现有调用方）。
+- 同步核对 `implementation_power` 表 / `ImplementationConfig.default_computing_power` 是否有 `ltx2_3_with_voice_runninghub_v1` 的按时长档位配置，缺失则在管理后台补配置（历史提交 145dc62f 已调整过该实现方费用，说明配置通道存在）。
+
+### 4.4 wan2.2 参考音色模式（`generate_digital_human`，一期只引导不改行为）
+
+该模式音频是"参考音色"，LTX2.3 无法直接接手（需要驱动音频）。一期方案：
+
+- 工具内部按 `len(text) / 4` 估算口播时长，**>10s 时不再直接提交 wan2.2**，返回结构化引导：
+  `"口播约 X 秒，超过 10 秒建议使用 prepare_digital_human_draft + confirm_digital_human（将自动路由 LTX2.3 数字人，时长与音色更稳）；如必须使用参考音色模式，请缩短文案至约 40 字以内。"`
+- LLM 会依据引导自动改走两段式链路（SOP 中该模式本就是少数场景）。
+- **可选二期**：用 IndexTTS 以用户参考音频克隆合成驱动音频（复用 `_synthesize_via_indextts`，把 ref 换成用户音频）后自动转投 LTX2.3。不建议一期做：`generate_digital_human` 是同步工具函数（httpx.post 直调），内嵌 TTS（180s 超时）会把链路拉长到分钟级，且涉及 R6 红线（同步包装异步须模块级长寿 executor）。
+
+### 4.5 工具 schema 与 SOP 同步
+
+- `mcp_tool.py` 工具定义：`confirm_digital_human` 的 description 由「提交 MiniMax H3」改为「提交 MiniMax H3 或 LTX2.3 数字人（按口播时长自动路由：≤10s 走 H3，>10s 走 LTX2.3）」；`prepare_digital_human_draft` description 补充路由说明。LLM 无需做路由决策，仅展示草案时告知用户所选模型。
+- `agents/skills/marketing-pm/sops/sop-digital-human.md`：新增「时长路由」小节（本方案 §3 表格）+ 确认消息要求展示「将使用的模型」。
+- `docs/marketing_agent.md`：数字人链路章节同步。
+
+### 4.6 前端
+
+`web/marketing_agent.html` / `marketing_agent.js` **零改动**：路由完全在后端工具链内完成，消息中模型名随 `model_used` 自然展示。
+
+## 5. 兼容性与风险
+
+| 风险 | 处理 |
+|---|---|
+| 存量草案无 `model_task_type` | `confirm` 缺省按 H3(35) 处理，行为与现状一致 |
+| LTX2.3 不消费 ratio / max_edge | 草案 message 注明「LTX2.3 模式下画幅跟随首帧图」；9:16 需求建议上传竖版首帧。不阻塞提交 |
+| 口播 >30s | prepare 直接拒绝并提示拆分（2000 字上限文案理论上可达 ~500s，必须显式拦截而非截断） |
+| v2 端点计费口径 | 通过可选 duration 参数修复；缺省保持固定 6 不影响旧调用方 |
+| IndexTTS 免费音色路径 | TTS 产物一样有实测时长，路由逻辑与火山路径共用，无差异 |
+| 事件循环阻塞 | confirm 内 httpx 调用沿用 `asyncio.to_thread` 包装（现状已合规）；probe 用现有 async 工具 |
+| LTX2.3 上游拥堵 | driver 已有 `is_upstream_congested_error` 自动重试，无需新增 |
+
+## 6. 实施步骤与测试
+
+### 实施顺序
+
+1. `config/constant.py` 新增路由常量；
+2. `server.py` v2 端点扩展可选 `duration` 参数；
+3. `digital_human_tts_tools.py`：prepare 路由决策 + confirm 分派 + 用户音频 probe 补齐；
+4. `mcp_tool.py` 工具 description 更新；
+5. SOP 与 docs 同步；
+6. 核对/补齐 LTX2.3 数字人按时长算力配置（管理后台）。
+
+### 测试设计（`tests/agents/test_digital_human_tts_tools.py` 扩展）
+
+- 路由边界：9.9s→H3；10.0s→H3；10.1s→LTX2.3；30.0s→LTX2.3；30.1s→拒绝并提示拆分。
+- 时长来源优先级：实测 > 用户音频 probe > 文案估算 > 回退 H3 default。
+- confirm 分派：H3 草案打 `/api/digital-human-minimax-h3`（断言 form 字段不变）；LTX2.3 草案打 `/api/digital-human-v2`（断言 `text=motion_prompt`、`duration=billable_duration`）；旧草案（无 model_task_type）→ H3。
+- 草案一次性消费、TTL 行为回归不变。
+- v2 端点：传 duration 按档位扣费；不传维持固定值。
+
+## 7. 结论
+
+**可行，且改动面小**：LTX2.3 数字人的端点、驱动、模型注册、画布先例全部现成；营销两段式链路的 TTS 产物（驱动音频）与 LTX2.3 输入语义天然一致，路由只需在 prepare/confirm 两处做时长分支 + v2 端点补一个可选计费参数。wan2.2 参考音色模式因音频语义不同，一期以「超长引导转两段式」处理，二期可选做克隆桥接。
+
+## 附录：实施与自测记录（2026-10-15）
+
+**单测**：`tests/agents/test_digital_human_tts_tools.py` 26 项全过（新增路由边界 6 项、prepare LTX 路由/超限拒绝/用户音频 probe 3 项、confirm LTX 分派 1 项；`tests/agents/` 全目录 137 项回归通过，`lint_blocking_calls.py` 无新增违例）。
+
+**端到端**（本地起全栈服务，登录 admin 账号实测）：
+
+| 验证点 | 结果 |
+|---|---|
+| `/api/digital-human-v2` 带 `duration=12` 提交（12s 测试音频） | ✅ 提交 RunningHub 成功（taskId 2110762032566599682，RUNNING），`ai_tools.type=32`、`duration=12` 落库，轮询正常 |
+| 同端点**不带** duration（向后兼容） | ✅ 正常提交，`duration` 落库 NULL，行为与升级前一致 |
+| prepare 真实跑（用户直供 12.04s 音频，跳过 TTS） | ✅ probe 实测→路由 LTX2.3（`duration_gt_10s_ltx2_3`），billable=13，VL 正常生成动作提示词 |
+| prepare 真实跑（5s 音频） | ✅ 路由 H3（`duration_lte_10s_h3`），billable=6 |
+| prepare 真实跑（35s 音频） | ✅ 拒绝并提示拆分文案 |
+
+**运维注意**：本地环境提交走的是 enterprise **RunningHub 密钥池**（`runninghub.key.1.api_key`，label=用户钱包），池内 key 优先于全局 `runninghub.api_key`——更换 key 时两处都要更新（自测时已把池槽位 1 与全局 key 均更新为用户提供的新 key，并清零该槽位 fail_count）。`get_computing_power(duration=...)` 计费通道已打通，数据库 `implementation_power` 暂无 LTX2.3 数字人按时长档位，当前兜底 6 算力，可在管理后台按档位补配。

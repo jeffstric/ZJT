@@ -11,6 +11,7 @@ SOP 场景判定规则见 agents/skills/marketing-pm/sops/sop-digital-human.md�
 """
 import asyncio
 import json
+import math
 import os
 import threading
 import time
@@ -21,10 +22,17 @@ import httpx
 
 from config.config_util import get_config
 from config.constant import IMAGE_DESCRIBE_PREFERRED_MODEL, IMAGE_DESCRIBE_PREFERRED_VENDOR
-from config.constant import TaskTypeId, TaskTypeRegistry
+from config.constant import (
+    DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
+    DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS,
+    DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
+    TaskTypeId,
+    TaskTypeRegistry,
+)
 from model.voice import VoiceModel
 from services.volcengine_tts_service import synthesize_speech_for_user
 from services.vl_gateway import call_vl, image_url_to_base64, pick_vl_model
+from utils.audio_duration_util import probe_audio_duration
 from utils.index_tts_util import generate_audio as indextts_generate_audio
 from utils.volcengine_tts_util import get_volcengine_tts_config, is_tts_configured
 
@@ -82,8 +90,31 @@ def clamp_h3_duration(seconds: float) -> int:
     """TTS 时长吸附到 H3 档位 4–10 秒（向上取整）"""
     if seconds <= 0:
         return 4
-    import math
     return max(4, min(10, int(math.ceil(seconds))))
+
+
+def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
+    """按口播时长路由数字人模型（营销链路，>10s 自动走 LTX2.3）。
+
+    - ≤10s → MiniMax H3（35），时长吸附 4-10 档位；
+    - 10-30s → LTX2.3（32），时长=音频时长（向上取整，计费用）；
+    - >30s → 返回 None（超出 LTX2.3 建议上限），调用方须拒绝并提示拆分文案。
+
+    返回 dict 含 model_task_type / routing_reason / billable_duration。
+    """
+    if est_seconds <= DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS:
+        return {
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+            "routing_reason": "duration_lte_10s_h3",
+            "billable_duration": clamp_h3_duration(est_seconds),
+        }
+    if est_seconds <= DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS:
+        return {
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE,
+            "routing_reason": "duration_gt_10s_ltx2_3",
+            "billable_duration": max(1, int(math.ceil(est_seconds))),
+        }
+    return None
 
 
 def _load_voice_candidates(language: str = "zh", provider: str = "volcengine") -> list:
@@ -155,7 +186,6 @@ async def _synthesize_via_indextts(user_id: int, text: str, ref_voice: Dict[str,
     upload_url = get_dynamic_config_value("tts", "upload_url") or ''
     audio_url = f"{upload_url}{filename}"
 
-    from utils.audio_duration_util import probe_audio_duration
     duration = await probe_audio_duration(audio_url)
 
     return {
@@ -383,13 +413,29 @@ async def prepare_digital_human_draft(
         if not tts.get('success'):
             return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
 
-        # 4. 时长与 H3 算力预估（用户音频缺时长时按文案长度粗估：约 4 字/秒，clamp 4-10）
+        # 4. 口播时长与模型路由（≤10s 走 H3 档位；10-30s 走 LTX2.3；>30s 拒绝并提示拆分。
+        #    见 docs/marketing_agent_digital_human_duration_routing_plan.md）
         est_seconds = float(tts.get('duration') or 0)
+        if not est_seconds and user_audio_url:
+            # 用户直供驱动音频缺实测时长：补一次探测，路由与计费都依赖它
+            est_seconds = float(await probe_audio_duration(user_audio_url) or 0)
+            tts['duration'] = est_seconds or None  # 回填实测时长供草案展示
         if not est_seconds:
-            est_seconds = max(4.0, min(10.0, len(script_text) / 4.0))
-        duration = clamp_h3_duration(est_seconds)
-        task_config = TaskTypeRegistry.get(TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
-        h3_power = task_config.get_computing_power(duration=duration) if task_config else 0
+            est_seconds = len(script_text) / DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND
+        routing = resolve_digital_human_model(est_seconds)
+        if routing is None:
+            return {
+                'success': False,
+                'error': (f'口播时长约 {est_seconds:.1f} 秒，超出数字人支持上限 '
+                          f'{DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS} 秒（LTX2.3 数字人）。'
+                          f'请把文案拆分成多段后分次生成。'),
+            }
+        model_task_type = routing["model_task_type"]
+        task_config = TaskTypeRegistry.get(model_task_type)
+        model_name = task_config.name if task_config else str(model_task_type)
+        billable = routing["billable_duration"]
+        video_power = task_config.get_computing_power(duration=billable) if task_config else 0
+        is_h3 = model_task_type == TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
 
         draft = {
             "draft_id": None,  # store 后回填
@@ -403,8 +449,13 @@ async def prepare_digital_human_draft(
             "audio_url": tts.get('audio_url'),
             "audio_duration": tts.get('duration'),
             "tts_computing_power": tts.get('computing_power'),
-            "h3_duration": duration,
-            "h3_computing_power": h3_power,
+            "model_task_type": model_task_type,
+            "routing_reason": routing["routing_reason"],
+            "billable_duration": billable,
+            "video_computing_power": video_power,
+            # 兼容旧字段：仅 H3 路由时填充，confirm 优先读新字段
+            "h3_duration": billable if is_h3 else None,
+            "h3_computing_power": video_power if is_h3 else 0,
             "max_edge": max_edge if max_edge in (720, 1280, 1920) else 1280,
             "aspect_ratio": aspect_ratio,
         }
@@ -413,15 +464,17 @@ async def prepare_digital_human_draft(
 
         tts_cost_note = (f"已消耗 TTS 算力 {tts.get('computing_power')}；"
                          if not user_audio_url else "驱动音频由用户提供（无 TTS 消耗）；")
+        ratio_note = ("；LTX2.3 模式下画幅跟随首帧图" if not is_h3 else "")
         return {
             'success': True,
             'draft': draft,
             'message': (
                 f"数字人口播草案已就绪（draft_id: {draft_id}）。"
+                f"将使用模型：{model_name}（按口播时长自动路由）；"
                 f"音色：{draft['voice_name'] or '用户音频'}（{draft['voice_selection_reason']}）；"
                 f"动作提示词：{motion_prompt}；"
-                f"音频时长 {draft['audio_duration'] or duration}s；{tts_cost_note}"
-                f"确认后生成视频将消耗 {h3_power} 算力。"
+                f"音频时长 {draft['audio_duration'] or billable}s；{tts_cost_note}"
+                f"确认后生成视频将消耗 {video_power} 算力{ratio_note}。"
                 f"请向用户展示草案（文案/音色/试听链接 {draft['audio_url']}）并等待用户确认，"
                 f"用户确认后调用 confirm_digital_human 提交生成。"
             ),
@@ -437,8 +490,10 @@ async def confirm_digital_human(
     auth_token: str,
     draft_id: str,
 ) -> Dict[str, Any]:
-    """确认数字人口播草案：提交 MiniMax H3 生成视频（扣视频时长算力）。
+    """确认数字人口播草案：按草案路由提交 H3 / LTX2.3 生成视频（扣视频时长算力）。
 
+    路由规则见 prepare_digital_human_draft：≤10s → MiniMax H3（/api/digital-human-minimax-h3），
+    10-30s → LTX2.3（/api/digital-human-v2）。存量草案缺 model_task_type 时按 H3 处理。
     仅在用户明确确认后调用。草案一次性消费，重复调用返回失败。
 
     Args:
@@ -502,16 +557,39 @@ async def confirm_digital_human(
             'image': (image_name, image_bytes, 'image/png'),
             'audio': (audio_name, audio_bytes, 'audio/mpeg'),
         }
-        data = {
-            # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
-            'text': (draft.get("motion_prompt") or "角色面向镜头深情的说话，固定镜头。")[:1000],
-            'duration': str(draft["h3_duration"]),
-            'max_edge': str(draft["max_edge"]),
-            'start_second': '0',
-            'user_id': str(user_id),
-            'auth_token': auth_token or '',
-        }
-        api_url = f"{base_url.rstrip('/')}/api/digital-human-minimax-h3"
+
+        # 按草案路由分派端点；存量草案（无 model_task_type）缺省 H3，行为与升级前一致
+        model_task_type = draft.get("model_task_type") or TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+        billable = draft.get("billable_duration") or draft.get("h3_duration") or 10
+        video_power = (draft.get("video_computing_power")
+                       or draft.get("h3_computing_power") or 0)
+        motion_text = (draft.get("motion_prompt")
+                       or "角色面向镜头深情的说话，固定镜头。")[:1000]
+
+        if model_task_type == TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE:
+            # LTX2.3 数字人：音频驱动，时长=音频时长；text 同样是动作提示词；
+            # duration 供端点按时长计费（端点缺省时保持旧固定费率行为）
+            api_url = f"{base_url.rstrip('/')}/api/digital-human-v2"
+            model_used = 'LTX2.3 数字人'
+            data = {
+                'text': motion_text,
+                'duration': str(billable),
+                'user_id': str(user_id),
+                'auth_token': auth_token or '',
+            }
+        else:
+            api_url = f"{base_url.rstrip('/')}/api/digital-human-minimax-h3"
+            model_used = 'MiniMax H3 数字人'
+            data = {
+                # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
+                'text': motion_text,
+                'duration': str(billable),
+                'max_edge': str(draft.get("max_edge") or 1280),
+                'start_second': '0',
+                'user_id': str(user_id),
+                'auth_token': auth_token or '',
+            }
+
         try:
             resp = await asyncio.to_thread(
                 httpx.post, api_url, data=data, files=files,
@@ -538,11 +616,12 @@ async def confirm_digital_human(
             'success': True,
             'project_ids': [str(project_id)],
             'status': 'submitted',
-            'model_used': 'MiniMax H3 数字人',
-            'computing_power_required': draft["h3_computing_power"],
+            'model_used': model_used,
+            'model_task_type': model_task_type,
+            'computing_power_required': video_power,
             'message': (
-                f"数字人视频生成已提交（project_id: {project_id}），"
-                f"时长 {draft['h3_duration']}s，已消耗视频算力 {draft['h3_computing_power']}。"
+                f"数字人视频生成已提交（project_id: {project_id}，模型: {model_used}），"
+                f"时长 {billable}s，已消耗视频算力 {video_power}。"
             ),
         }
     except Exception as e:  # noqa: BLE001

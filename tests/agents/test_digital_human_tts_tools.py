@@ -2,7 +2,8 @@
 digital_human_tts_tools 单元测试
 
 覆盖：草案存储（TTL/一次性消费/容量淘汰）、VL 选音色 JSON 解析与降级、
-clamp_h3_duration、工具流程（mock TTS/VL/H3 HTTP，不连真实服务）。
+clamp_h3_duration、时长模型路由（>10s 走 LTX2.3）、工具流程
+（mock TTS/VL/H3/LTX2.3 HTTP，不连真实服务）。
 """
 import asyncio
 import json
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from config.constant import TaskTypeId  # noqa: E402
 from script_writer_core.digital_human_tts_tools import (  # noqa: E402
     _DRAFT_STORE,
     _pick_voice_by_image,
@@ -22,6 +24,7 @@ from script_writer_core.digital_human_tts_tools import (  # noqa: E402
     consume_draft,
     get_draft,
     prepare_digital_human_draft,
+    resolve_digital_human_model,
 )
 
 
@@ -58,6 +61,37 @@ class TestClampDuration(unittest.TestCase):
         self.assertEqual(clamp_h3_duration(5.6), 6)
         self.assertEqual(clamp_h3_duration(10), 10)
         self.assertEqual(clamp_h3_duration(99), 10)
+
+
+class TestResolveDigitalHumanModel(unittest.TestCase):
+    """时长路由边界：≤10s→H3，10-30s→LTX2.3（ceil 计费），>30s→拒绝"""
+
+    def test_lte_10s_routes_h3(self):
+        for sec in (0, 4.0, 9.9, 10.0):
+            r = resolve_digital_human_model(sec)
+            self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+                             f"{sec}s 应路由 H3")
+            self.assertEqual(r["routing_reason"], "duration_lte_10s_h3")
+
+    def test_h3_billable_clamps_to_grid(self):
+        self.assertEqual(resolve_digital_human_model(5.2)["billable_duration"], 6)
+        self.assertEqual(resolve_digital_human_model(0)["billable_duration"], 4)
+        self.assertEqual(resolve_digital_human_model(10.0)["billable_duration"], 10)
+
+    def test_gt_10s_routes_ltx(self):
+        r = resolve_digital_human_model(10.1)
+        self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(r["routing_reason"], "duration_gt_10s_ltx2_3")
+        self.assertEqual(r["billable_duration"], 11)  # ceil(10.1)
+
+    def test_30s_boundary_ltx(self):
+        r = resolve_digital_human_model(30.0)
+        self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(r["billable_duration"], 30)
+
+    def test_gt_30s_rejected(self):
+        for sec in (30.1, 60, 500):
+            self.assertIsNone(resolve_digital_human_model(sec), f"{sec}s 应拒绝")
 
 
 class _VoiceModelMockBase(unittest.TestCase):
@@ -224,8 +258,91 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["h3_duration"], 6)  # 5.2s → ceil 6
         self.assertEqual(draft["tts_computing_power"], 2)
         self.assertIn("固定镜头", draft["motion_prompt"])
+        # ≤10s 路由 H3，新字段与旧字段一致
+        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+        self.assertEqual(draft["routing_reason"], "duration_lte_10s_h3")
+        self.assertEqual(draft["billable_duration"], 6)
+        self.assertEqual(draft["video_computing_power"], draft["h3_computing_power"])
+        self.assertIn("MiniMax H3", result["message"])
         # 草案已入库存
         self.assertIsNotNone(get_draft(draft["draft_id"]))
+
+    def test_long_speech_routes_ltx(self):
+        """TTS 实测 20s（>10s）→ 路由 LTX2.3，billable=ceil(20)"""
+        voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
+                          voice_type="zh_female_vv_uranus_bigtts")
+
+        async def fake_tts(**kw):
+            return {"success": True, "audio_url": "http://x/a.mp3", "duration": 20.0,
+                    "computing_power": 8, "voice_name": "Vivi 2.0", "voice_type": "zh",
+                    "voice_id": 7}
+
+        with patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+             patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts):
+            vm.get_by_id.return_value = voice
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="长文案" * 30, voice_id=7))
+
+        self.assertTrue(result["success"])
+        draft = result["draft"]
+        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(draft["routing_reason"], "duration_gt_10s_ltx2_3")
+        self.assertEqual(draft["billable_duration"], 20)
+        self.assertIsNone(draft["h3_duration"], "LTX 路由不应填充 h3_duration")
+        self.assertIn("LTX2.3", result["message"])
+        self.assertIn("首帧图", result["message"], "LTX 路由须提示画幅跟随首帧")
+
+    def test_over_30s_rejected_with_split_hint(self):
+        """TTS 实测 35s → 拒绝并提示拆分文案，不产生草案"""
+        voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
+                          voice_type="zh_female_vv_uranus_bigtts")
+
+        async def fake_tts(**kw):
+            return {"success": True, "audio_url": "http://x/a.mp3", "duration": 35.0,
+                    "computing_power": 10, "voice_name": "Vivi 2.0", "voice_type": "zh",
+                    "voice_id": 7}
+
+        with patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+             patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts):
+            vm.get_by_id.return_value = voice
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="超长文案", voice_id=7))
+
+        self.assertFalse(result["success"])
+        self.assertIn("拆分", result["error"])
+        self.assertIn("35", result["error"])
+        self.assertEqual(len(_DRAFT_STORE), 0)
+
+    def test_user_audio_duration_probed_for_routing(self):
+        """用户直供音频缺时长时补 probe：15s → LTX2.3"""
+        probed = {}
+
+        async def fake_probe(url):
+            probed["url"] = url
+            return 15.0
+
+        async def fake_pick(*a, **k):
+            return {"voice_id": None, "reason": "r",
+                    "motion_prompt": "角色面向镜头深情的说话，固定镜头。"}
+
+        def fake_candidates(*a, **k):
+            return []
+
+        with patch("script_writer_core.digital_human_tts_tools.probe_audio_duration", fake_probe), \
+             patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick), \
+             patch("script_writer_core.digital_human_tts_tools._load_voice_candidates", fake_candidates):
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="文案",
+                audio_url="http://x/user_audio.mp3"))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(probed["url"], "http://x/user_audio.mp3")
+        draft = result["draft"]
+        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(draft["billable_duration"], 15)
 
 
 class TestConfirmTool(_VoiceModelMockBase):
@@ -333,7 +450,65 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(result["project_ids"], ["555"])
         self.assertIn("digital-human-minimax-h3", captured["url"])
         self.assertEqual(captured["data"]["duration"], "5")
+        # 存量草案（无 model_task_type）缺省按 H3 提交，兼容升级前数据
+        self.assertEqual(result["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         # 草案一次性消费
+        self.assertIsNone(get_draft(draft_id))
+
+    def test_confirm_dispatches_ltx(self):
+        """LTX2.3 草案 → 提交 /api/digital-human-v2：duration=billable，
+        不带 max_edge/start_second（LTX2.3 不消费这两个参数）"""
+        draft_id = _store_draft({
+            "script_text": "长文案", "image_url": "http://x/img.png",
+            "audio_url": "http://x/a.mp3", "voice_name": "v",
+            "motion_prompt": "角色面向镜头深情的说话，固定镜头。",
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE,
+            "routing_reason": "duration_gt_10s_ltx2_3",
+            "billable_duration": 15,
+            "video_computing_power": 6,
+            "h3_duration": None, "h3_computing_power": 0,
+            "max_edge": 1280,
+        })
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.content = payload if isinstance(payload, bytes) else b'{}'
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return self._payload
+
+        async def fake_get(*a, **k):
+            return FakeResp(b"file-bytes")
+
+        captured = {}
+
+        def fake_post(*a, **kw):
+            captured["url"] = kw.get("url") or (a[0] if a else None)
+            captured["data"] = kw.get("data")
+            captured["files"] = kw.get("files")
+            return FakeResp({"success": True, "project_id": 777})
+
+        cfg = MagicMock()
+        cfg.get.return_value = {"host": "http://localhost:13003"}
+        with patch("script_writer_core.digital_human_tts_tools.get_config", return_value=cfg), \
+             patch("script_writer_core.digital_human_tts_tools.httpx.AsyncClient.get", fake_get), \
+             patch("script_writer_core.digital_human_tts_tools.httpx.post", side_effect=fake_post):
+            result = asyncio.run(confirm_digital_human(
+                user_id="1", world_id="w", auth_token="tok", draft_id=draft_id))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["project_ids"], ["777"])
+        self.assertIn("digital-human-v2", captured["url"])
+        self.assertEqual(captured["data"]["duration"], "15")
+        self.assertEqual(captured["data"]["text"], "角色面向镜头深情的说话，固定镜头。")
+        self.assertNotIn("max_edge", captured["data"])
+        self.assertNotIn("start_second", captured["data"])
+        self.assertEqual(result["model_used"], "LTX2.3 数字人")
+        self.assertEqual(result["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(result["computing_power_required"], 6)
         self.assertIsNone(get_draft(draft_id))
 
     def test_confirm_h3_error_propagates(self):
