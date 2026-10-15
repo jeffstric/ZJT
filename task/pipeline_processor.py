@@ -163,8 +163,6 @@ class PipelineProcessor:
             )
             return False
 
-        PipelineStepModel.update_status(step.id, PipelineStepStatus.PROCESSING)
-
         # 获取关联的 ai_tool
         ai_tool = AIToolsModel.get_by_id(step.ai_tool_id)
         if not ai_tool:
@@ -174,6 +172,25 @@ class PipelineProcessor:
                 PipelineStepStatus.FAILED,
                 error_message='关联的 ai_tool 不存在'
             )
+            return False
+
+        # 用户已取消（排队阶段）：步骤连带取消，绝不执行（不调用步骤背后的
+        # LLM/上游接口）。剩余 PENDING 步骤由取消接口批量标记 CANCELLED。
+        from config.constant import AI_TOOL_STATUS_CANCELLED
+        if ai_tool.status == AI_TOOL_STATUS_CANCELLED:
+            logger.info(f"Step {step.id} skipped: ai_tool {step.ai_tool_id} cancelled by user")
+            PipelineStepModel.try_update_status(
+                step.id, PipelineStepStatus.PENDING, PipelineStepStatus.CANCELLED,
+                error_message='任务已被用户取消'
+            )
+            return False
+
+        # CAS PENDING→PROCESSING：与取消接口的步骤取消（PENDING→CANCELLED）互斥。
+        # 抢占失败说明步骤已被取消/已被他方处理，跳过执行。
+        if PipelineStepModel.try_update_status(
+            step.id, PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING
+        ) == 0:
+            logger.info(f"Step {step.id} CAS PENDING->PROCESSING rejected (state changed), skip dispatch")
             return False
 
         # 执行步骤
@@ -636,16 +653,32 @@ class PipelineProcessor:
 
         # 所有步骤已结束（没有 PENDING/PROCESSING 了）
         if stage == PipelineStage.PARAM_PREPARE:
-            from model import AIToolsModel
-            from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_FAILED
+            from model import AIToolsModel, TasksModel
+            from config.constant import (
+                AI_TOOL_STATUS_PENDING,
+                AI_TOOL_STATUS_FAILED,
+                AI_TOOL_STATUS_CANCELLED,
+                AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                TASK_STATUS_QUEUED,
+            )
+
+            current = AIToolsModel.get_by_id(ai_tool_id)
+            if current and current.status == AI_TOOL_STATUS_CANCELLED:
+                # 用户已取消：保持 CANCELLED 终态，不应用结果、不推进回 PENDING、
+                # 不覆盖为 FAILED（否则任务会被重新提交上游，违反取消互斥）
+                logger.info(f"ai_tool {ai_tool_id} cancelled during param_prepare, keep CANCELLED")
+                return
 
             if len(completed) == total:
                 # 全部完成：先回写步骤结果，再推进到 PENDING，避免 visual_task 抢先提交旧参数
-                current = AIToolsModel.get_by_id(ai_tool_id)
+                # CAS 4→0：与取消接口（4→CANCELLED）互斥，杜绝「取消后又被推回提交队列」
                 if current:
                     PipelineProcessor.apply_results(current, stage)
-                AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_PENDING)
-                logger.info(f"ai_tool {ai_tool_id} param_prepare all completed, status -> PENDING")
+                if AIToolsModel.transition_status(
+                    ai_tool_id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING
+                ) > 0:
+                    TasksModel.update_by_task_id(ai_tool_id, status=TASK_STATUS_QUEUED)
+                    logger.info(f"ai_tool {ai_tool_id} param_prepare all completed, status -> PENDING")
             elif failed:
                 # 有失败：标记 ai_tool 失败
                 AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_FAILED, completed_time=datetime.now())

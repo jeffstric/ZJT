@@ -20,6 +20,7 @@ class PipelineStepStatus:
     COMPLETED = 2        # 完成
     FAILED = -1          # 失败
     TIMEOUT = -2         # 超时
+    CANCELLED = -3       # 用户取消排队任务时连带取消（未执行，不计失败）
 
 
 class PipelineStage:
@@ -395,6 +396,72 @@ class PipelineStepModel:
             raise
         except Exception as e:
             logger.error(f"Failed to update pipeline step {record_id} (unexpected): {e}")
+            raise
+
+    @staticmethod
+    def try_update_status(
+        record_id: int,
+        from_status: int,
+        to_status: int,
+        error_message: Optional[str] = None
+    ) -> int:
+        """
+        条件状态迁移（CAS）：仅当当前状态等于 from_status 时才更新为 to_status。
+
+        用于「分发抢占」与「用户取消」的互斥（两者抢同一行）：
+        分发侧 PENDING→PROCESSING，取消侧 PENDING→CANCELLED，谁先落库谁生效。
+
+        Returns:
+            影响的行数（0 表示当前状态不是 from_status，迁移未发生）
+        """
+        update_fields = ["status = %s"]
+        params = [to_status]
+        if error_message is not None:
+            update_fields.append("error_message = %s")
+            params.append(error_message)
+        # ⚠️ 参数顺序与占位符一致：SET → WHERE id → WHERE status
+        # （record_id 必须在 from_status 前，错序会导致 id 绑定到状态值、永不命中）
+        params.extend([record_id, from_status])
+        sql = (
+            f"UPDATE ai_tool_pipeline_steps SET {', '.join(update_fields)} "
+            f"WHERE id = %s AND status = %s"
+        )
+        try:
+            affected = execute_update(sql, tuple(params))
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to CAS pipeline step {record_id} {from_status}->{to_status}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to CAS pipeline step {record_id} {from_status}->{to_status} (unexpected): {e}")
+            raise
+
+    @staticmethod
+    def cancel_pending_steps_by_ai_tool(ai_tool_id: int) -> int:
+        """
+        取消指定 ai_tool 下所有 PENDING 状态的流水线步骤（用户取消排队任务时调用）。
+
+        已处于 PROCESSING 的步骤不改动（调用已在途，完成后由 ai_tool 终态检查丢弃结果）。
+        CANCELLED 不计入失败统计，也不应触发 ai_tool 失败推进。
+
+        Returns:
+            影响的行数
+        """
+        sql = """
+            UPDATE ai_tool_pipeline_steps
+            SET status = %s, error_message = %s
+            WHERE ai_tool_id = %s AND status = %s
+        """
+        try:
+            affected = execute_update(sql, (PipelineStepStatus.CANCELLED, '任务已被用户取消', ai_tool_id, PipelineStepStatus.PENDING))
+            if affected:
+                logger.info(f"Cancelled {affected} pending pipeline steps for ai_tool {ai_tool_id}")
+            return affected
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to cancel pending steps for ai_tool {ai_tool_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to cancel pending steps for ai_tool {ai_tool_id} (unexpected): {e}")
             raise
 
     @staticmethod

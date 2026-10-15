@@ -194,6 +194,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         AI_TOOL_STATUS_PROCESSING,
         AI_TOOL_STATUS_COMPLETED,
         AI_TOOL_STATUS_FAILED,
+        AI_TOOL_STATUS_SYNC_QUEUED,
         TASK_STATUS_PROCESSING,
         TASK_STATUS_COMPLETED,
         TASK_STATUS_FAILED,
@@ -204,8 +205,22 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
     )
 
     try:
+        # CAS 3→1（SYNC_QUEUED→PROCESSING）：与用户取消（0/3/4→CANCELLED）互斥。
+        # 抢占失败说明任务在池队列中等待期间被用户取消 —— 绝不调用上游接口，
+        # 直接返回（取消接口已完成退款与终态落库）。
+        if AIToolsModel.transition_status(
+            task_id, [AI_TOOL_STATUS_SYNC_QUEUED], AI_TOOL_STATUS_PROCESSING
+        ) == 0:
+            logger.info(f"[SyncTask] Task {task_id} cancel guard rejected, skip execution (already cancelled or state changed)")
+            return SyncTaskResult(
+                task_id=task_id,
+                ai_tool_type=ai_tool_type,
+                success=True,
+                result_url=None,
+                error="cancelled",
+                error_type="CANCELLED",
+            )
         # 更新状态为处理中
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PROCESSING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
 
         # ===== E2E Mock 短路（同步子进程，覆盖所有 13 个 sync_mode 实现）=====
@@ -938,10 +953,24 @@ class SyncTaskExecutor:
         from model import AIToolsModel, TasksModel
         from config.constant import (
             AI_TOOL_STATUS_COMPLETED,
+            AI_TOOL_STATUS_CANCELLED,
             TASK_STATUS_COMPLETED,
         )
 
         task_id = result.task_id
+
+        # 用户已取消（排队阶段）：保留 CANCELLED 终态，不写 COMPLETED/FAILED，
+        # 也不再触发退款（取消接口已退款且幂等流水号相同）
+        if result.error_type == "CANCELLED":
+            logger.info(f"[SyncTaskExecutor] Task {task_id} was cancelled before execution, keep terminal state")
+            return
+        try:
+            current = AIToolsModel.get_by_id(task_id)
+            if current and current.status == AI_TOOL_STATUS_CANCELLED:
+                logger.info(f"[SyncTaskExecutor] Task {task_id} already cancelled, skip result handling")
+                return
+        except Exception as e:
+            logger.warning(f"[SyncTaskExecutor] Cancel check failed for task {task_id}: {e}")
 
         if result.success:
             # 任务成功

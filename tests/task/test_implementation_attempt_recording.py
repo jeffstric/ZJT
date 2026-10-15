@@ -86,6 +86,9 @@ def _install_module_stubs():
     constant.AI_TOOL_STATUS_SYNC_QUEUED = 3
     constant.AI_TOOL_STATUS_WAITING_PARAM_PREPARE = 4
     constant.AI_TOOL_STATUS_WAITING_BEFORE_FINISH = 5
+    constant.AI_TOOL_STATUS_CANCELLED = -2
+    constant.AI_TOOL_CANCELLABLE_STATUSES = (0, 3, 4)
+    constant.AI_TOOL_ACTIVE_STATUSES = (0, 1, 3, 4, 5, 6)
     constant.TASK_STATUS_QUEUED = 0
     constant.TASK_STATUS_PROCESSING = 1
     constant.TASK_STATUS_COMPLETED = 2
@@ -93,6 +96,7 @@ def _install_module_stubs():
     constant.TASK_STATUS_SYNC_QUEUED = 3
     constant.TASK_STATUS_WAITING_PARAM_PREPARE = 4
     constant.TASK_STATUS_WAITING_BEFORE_FINISH = 5
+    constant.TASK_STATUS_CANCELLED = -2
     constant.RUNNINGHUB_TASK_TYPES = []
     constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
     constant.VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96

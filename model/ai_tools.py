@@ -452,6 +452,72 @@ class AIToolsModel:
         return committed_ai_tool_id
 
     @staticmethod
+    def transition_status(
+        record_id: int,
+        from_statuses,
+        to_status: int,
+        message: Optional[str] = None,
+        completed_time: Optional[datetime] = None,
+        **extra_fields
+    ) -> int:
+        """
+        条件状态迁移（CAS）：仅当当前 status 属于 from_statuses 时才更新为 to_status。
+
+        排队任务取消互斥的基石（详见 docs/video/queued_task_cancel_design.md）：
+          - 取消侧：from_statuses=AI_TOOL_CANCELLABLE_STATUSES, to_status=CANCELLED
+          - 调度器提交侧：from_statuses=[PENDING], to_status=PROCESSING（抢占）
+        两边在 DB 行锁上串行、先到先得，保证已取消的任务绝不会被再次提交上游。
+
+        Args:
+            record_id: ai_tools.id
+            from_statuses: 允许迁出的状态集合（int 或 int 集合）
+            to_status: 目标状态
+            message: 可选，同时更新的 message 字段
+            completed_time: 可选，同时更新的 completed_time 字段
+            **extra_fields: 其他允许字段（如 project_id）
+
+        Returns:
+            影响的行数（0 表示当前状态不在 from_statuses，迁移未发生）
+        """
+        if isinstance(from_statuses, int):
+            from_statuses = [from_statuses]
+        from_statuses = [int(s) for s in from_statuses]
+        if not from_statuses:
+            return 0
+
+        allowed_extras = ('project_id', 'implementation')
+        update_fields = ["status = %s"]
+        params = [to_status]
+        if message is not None:
+            update_fields.append("message = %s")
+            params.append(message)
+        if completed_time is not None:
+            update_fields.append("completed_time = %s")
+            params.append(completed_time)
+        for field, value in extra_fields.items():
+            if field in allowed_extras:
+                update_fields.append(f"{field} = %s")
+                params.append(value)
+
+        placeholders = ','.join(['%s'] * len(from_statuses))
+        # ⚠️ 参数顺序必须与 SQL 占位符顺序一致：SET 字段 → WHERE id → status IN (...)。
+        # 此前 record_id 放在末尾导致 WHERE id 绑定到 from_statuses[0]（PENDING=0），
+        # 条件更新永远 0 行命中——取消接口全 409、调度器提交闸门全数误判"已取消"
+        # 拒绝提交（真实数据库复现发现，单测因断言了错序参数未拦截）。
+        params.append(record_id)
+        params.extend(from_statuses)
+        sql = (
+            f"UPDATE ai_tools SET {', '.join(update_fields)} "
+            f"WHERE id = %s AND status IN ({placeholders})"
+        )
+        try:
+            affected = execute_update(sql, tuple(params))
+            return affected
+        except Exception as e:
+            logger.error(f"Failed to transition AI tool {record_id} {from_statuses}->{to_status}: {e}")
+            raise
+
+    @staticmethod
     def get_by_id(record_id: int) -> Optional[AITool]:
         """
         Get AI tool record by ID

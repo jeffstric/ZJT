@@ -1379,6 +1379,7 @@ class AIToolStatus:
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
         'DOWNLOADING': '结果下载中',
+        'CANCELLED': '用户取消（排队阶段）',
     }
     PENDING = 0
     PROCESSING = 1
@@ -1388,6 +1389,7 @@ class AIToolStatus:
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
     DOWNLOADING = 6
+    CANCELLED = -2
 
 
 class ComposeJobStatus:
@@ -1416,6 +1418,7 @@ class TaskStatus:
         'FAILED': '处理失败',
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
+        'CANCELLED': '用户取消（排队阶段）',
     }
     QUEUED = 0
     PROCESSING = 1
@@ -1424,6 +1427,7 @@ class TaskStatus:
     FAILED = -1
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
+    CANCELLED = -2
 
 
 class GridImageTaskStatus:
@@ -1472,6 +1476,30 @@ AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 AI_TOOL_STATUS_WAITING_PARAM_PREPARE = AIToolStatus.WAITING_PARAM_PREPARE
 AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
 AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
+AI_TOOL_STATUS_CANCELLED = AIToolStatus.CANCELLED
+
+# 排队阶段可取消的 ai_tools 状态集合（尚未调用上游提交接口、未产生上游成本）：
+#   PENDING(0)             调度队列等待提交
+#   SYNC_QUEUED(3)         已入同步进程池队列、worker 尚未执行
+#   WAITING_PARAM_PREPARE(4) 预处理流水线排队中
+# 取消与调度器提交均以条件 UPDATE（CAS）互斥：取消成功后调度器抢占必失败，
+# 保证「已取消的任务绝不再被调用上游接口」（详见 docs/video/queued_task_cancel_design.md）。
+AI_TOOL_CANCELLABLE_STATUSES = (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+)
+
+# 非终态（活跃）ai_tools 状态集合：调度器把任务标记为 FAILED（过期/超最大重试等）
+# 时必须以此集合做条件更新（CAS），避免覆盖用户刚写入的 CANCELLED 终态。
+AI_TOOL_ACTIVE_STATUSES = (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+    AI_TOOL_STATUS_WAITING_BEFORE_FINISH,
+    AI_TOOL_STATUS_DOWNLOADING,
+)
 
 
 # ===== 视觉任务调度退避封顶 =====
@@ -2324,6 +2352,7 @@ TASK_STATUS_FAILED = TaskStatus.FAILED
 TASK_STATUS_SYNC_QUEUED = TaskStatus.SYNC_QUEUED
 TASK_STATUS_WAITING_PARAM_PREPARE = TaskStatus.WAITING_PARAM_PREPARE
 TASK_STATUS_WAITING_BEFORE_FINISH = TaskStatus.WAITING_BEFORE_FINISH
+TASK_STATUS_CANCELLED = TaskStatus.CANCELLED
 
 # 向后兼容别名 - AI Audio 状态
 AI_AUDIO_STATUS_PENDING = AIAudioStatus.PENDING

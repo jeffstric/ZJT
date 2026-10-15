@@ -42,6 +42,7 @@ from config.constant import (
     AI_TOOL_STATUS_SYNC_QUEUED,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
     AI_TOOL_STATUS_WAITING_BEFORE_FINISH,
+    AI_TOOL_STATUS_CANCELLED,
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
     TASK_STATUS_COMPLETED,
@@ -49,6 +50,7 @@ from config.constant import (
     TASK_STATUS_SYNC_QUEUED,
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
+    TASK_STATUS_CANCELLED,
     RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
     VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
@@ -56,6 +58,7 @@ from config.constant import (
 )
 from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
+from config.constant import AI_TOOL_CANCELLABLE_STATUSES, AI_TOOL_ACTIVE_STATUSES
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 from utils.content_moderation_error import classify_content_moderation
 
@@ -95,6 +98,17 @@ def register_enterprise_failure_handler(handler):
     global _enterprise_failure_handler
     _enterprise_failure_handler = handler
     logger.info("[Enterprise] Failure retry handler registered")
+
+
+def _log_cancel_guard_rejected(task_id, user_id, action):
+    """提交前 CAS 抢占失败（任务已被用户取消）：记录日志并放弃调用上游。"""
+    logger.info(f"Task {task_id} cancel guard rejected at '{action}', skipping (already cancelled or state changed)")
+    try:
+        AIToolsLogModel.log(task_id, AIToolsLogEvent.CANCEL_GUARD_REJECTED,
+                            user_id=user_id,
+                            message=f"提交前检查发现任务已取消，放弃调用上游（{action}）")
+    except Exception:
+        pass
 
 def _is_test_mode_enabled():
     """动态获取测试模式状态"""
@@ -301,7 +315,13 @@ async def _submit_new_task(ai_tool):
         from task.pipeline_processor import PipelineProcessor
         pending_prep = PipelineProcessor.get_pending_steps(task_id, PipelineStage.PARAM_PREPARE)
         if pending_prep:
-            AIToolsModel.update(task_id, status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
+            # CAS 0→4：与用户取消（0/3/4→CANCELLED）互斥。抢占失败说明任务已被
+            # 取消（或状态异常），放弃进入流水线，避免取消后仍分发预处理步骤。
+            if AIToolsModel.transition_status(
+                task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_WAITING_PARAM_PREPARE
+            ) == 0:
+                _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'param_prepare')
+                return True
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_WAITING_PARAM_PREPARE)
             logger.info(f"Task {task_id} has {len(pending_prep)} param_prepare steps, entering pipeline")
             return PROCESS_RESULT_IN_FLIGHT  # 调度器会自动分发 PENDING 步骤
@@ -354,20 +374,36 @@ async def _submit_new_task(ai_tool):
 
             # 检查是否为同步模式 - 分流到进程池
             if impl_config and impl_config.sync_mode:
+                # 先 CAS 0→3（SYNC_QUEUED）再入池：与用户取消互斥。抢占失败说明
+                # 任务已被取消，不入池；worker 侧执行前还会 CAS 3→1 再校验一次。
+                if AIToolsModel.transition_status(
+                    task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_SYNC_QUEUED
+                ) == 0:
+                    _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'sync_pool_dispatch')
+                    return True
+                TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
                 executor = get_sync_task_executor()
                 if executor.is_running():
                     submitted = executor.submit(task_id, ai_tool_type, implementation_name)
                     if submitted:
-                        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
-                        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
                         logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
                         return PROCESS_RESULT_IN_FLIGHT
 
+                    # 入池失败：回滚 3→0，让外层重试（CAS 防止覆盖期间发生的取消）
+                    AIToolsModel.transition_status(
+                        task_id, [AI_TOOL_STATUS_SYNC_QUEUED], AI_TOOL_STATUS_PENDING
+                    )
+                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED)
                     logger.error(
                         f"[SyncTask] Submit failed for task {task_id} implementation={implementation_name}; outer retry will backoff"
                     )
                     return False
                 else:
+                    # 执行器未运行：回滚 3→0 走普通流程
+                    AIToolsModel.transition_status(
+                        task_id, [AI_TOOL_STATUS_SYNC_QUEUED], AI_TOOL_STATUS_PENDING
+                    )
+                    TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED)
                     logger.warning(f"[SyncTask] Sync task executor not running, falling back to normal processing")
 
         # ===== E2E Mock 短路（保留 param_prepare 与 sync_mode 调度之后，仅拦截普通异步 driver）=====
@@ -424,6 +460,17 @@ async def _submit_new_task(ai_tool):
                 if rh_api_key and hasattr(driver, '_apply_api_key'):
                     driver._apply_api_key(rh_api_key)
         
+        # ⚠️ 取消互斥闸门（CAS 0→1）：必须在调用 driver.submit_task（上游 HTTP）之前执行。
+        # 与取消接口的条件更新（status IN (0,3,4) → CANCELLED）在同一行上竞争，
+        # DB 行锁保证串行：抢占成功则取消接口必然失败（409），取消成功则此处必然
+        # affected=0 —— 已取消的任务绝不会再被调用上游接口。
+        if AIToolsModel.transition_status(
+            task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_PROCESSING
+        ) == 0:
+            _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'upstream_submit')
+            return True
+        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
+
         # 2. 调用驱动提交任务
         import inspect
         if inspect.iscoroutinefunction(driver.submit_task):
@@ -469,6 +516,10 @@ async def _submit_new_task(ai_tool):
                     default=RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT
                 )
                 next_trigger = datetime.now() + timedelta(seconds=delay)
+                # 回滚抢占的 PROCESSING(1) → PENDING(0)（CAS：不覆盖期间发生的取消/终态）
+                AIToolsModel.transition_status(
+                    task_id, [AI_TOOL_STATUS_PROCESSING], AI_TOOL_STATUS_PENDING
+                )
                 TasksModel.update_by_task_id(
                     task_id, status=TASK_STATUS_QUEUED, next_trigger=next_trigger
                 )
@@ -478,6 +529,10 @@ async def _submit_new_task(ai_tool):
             # 处理需要重试的情况（通常是网络异常）
             if result.get("retry"):
                 logger.warning(f"Task {task_id} will retry later due to network error")
+                # 回滚抢占的 PROCESSING(1) → PENDING(0)，让下一轮调度以 PENDING 重新提交
+                AIToolsModel.transition_status(
+                    task_id, [AI_TOOL_STATUS_PROCESSING], AI_TOOL_STATUS_PENDING
+                )
                 # 返回 False，让 process_task_with_retry 增加重试计数并设置延迟
                 return False
             
@@ -845,10 +900,12 @@ def _check_pipeline_stage(ai_tool, stage):
             if step.step_type != PipelineStepType.STORYBOARD_FIRST_FRAME_GRID_SPLIT
         ]
     if not all_steps:
-        # 无步骤，直接回到主流程
+        # 无步骤，直接回到主流程（CAS 4→0：任务被取消时不推进）
         if stage == PipelineStage.PARAM_PREPARE:
-            AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_PENDING)
-            TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
+            if AIToolsModel.transition_status(
+                ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING
+            ) > 0:
+                TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
         return PROCESS_RESULT_IN_FLIGHT
 
     has_pending_or_processing = any(
@@ -909,9 +966,19 @@ def _check_pipeline_stage(ai_tool, stage):
 
     # 所有步骤已完成
     if stage == PipelineStage.PARAM_PREPARE:
-        # 预处理完成：应用结果并回到 PENDING
+        # 用户已取消：保持 CANCELLED 终态，不应用结果、不推进回 PENDING
+        # （否则任务会被重新提交上游，违反取消互斥）
+        current = AIToolsModel.get_by_id(ai_tool.id)
+        if current and current.status == AI_TOOL_STATUS_CANCELLED:
+            logger.info(f"Task {ai_tool.id} cancelled during param_prepare, skip advancing to PENDING")
+            return True
+        # 预处理完成：应用结果并回到 PENDING（CAS 4→0：与取消接口互斥）
         PipelineProcessor.apply_results(ai_tool, stage)
-        AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_PENDING)
+        if AIToolsModel.transition_status(
+            ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING
+        ) == 0:
+            logger.info(f"Task {ai_tool.id} cancel guard rejected param_prepare completion, skip advancing")
+            return True
         TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
         logger.info(f"Task {ai_tool.id} param_prepare completed, returning to PENDING")
     elif stage == PipelineStage.BEFORE_FINISH:
@@ -1063,6 +1130,16 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
     # 尝试企业版重试处理器（before_finish 切换备用实现方）
     reason = _normalize_failure_reason(reason)
 
+    # 用户已取消的排队任务：保留 CANCELLED 终态，不再覆盖为 FAILED、
+    # 不触发企业版重试（重试会把任务推回 PENDING 导致取消后被重新提交）
+    try:
+        cancelled_check = AIToolsModel.get_by_id(task_id)
+        if cancelled_check and cancelled_check.status == AI_TOOL_STATUS_CANCELLED:
+            logger.info(f"Task {task_id} already cancelled by user, skip failure handling")
+            return True
+    except Exception as e:
+        logger.warning(f"Cancel check failed for task {task_id}: {e}")
+
     if _enterprise_failure_handler:
         try:
             result = _enterprise_failure_handler(task_id, ai_tool_type, reason, user_id, project_id=project_id)
@@ -1207,6 +1284,11 @@ async def process_generate_video(task):
             return _check_pipeline_stage(ai_tool, PipelineStage.PARAM_PREPARE)
         elif status == AI_TOOL_STATUS_WAITING_BEFORE_FINISH:
             return _check_pipeline_stage(ai_tool, PipelineStage.BEFORE_FINISH)
+        elif status == AI_TOOL_STATUS_CANCELLED:
+            # 用户已取消：同步 tasks 表终态（防御双表不同步导致调度器空转拾取）
+            TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_CANCELLED)
+            logger.info(f"Task {task.task_id} cancelled by user, sync tasks status")
+            return True
         else:
             logger.warning(f"Unexpected status {status} for task {task.task_id}")
             return False
@@ -1316,9 +1398,13 @@ def process_task_with_retry(task_type, process_func):
                 
                 # 检查任务是否过期
                 if _check_task_expiration(task):
-                    # 标记任务为失败
+                    # 标记任务为失败（CAS：调度循环拿着旧快照期间任务可能已被用户取消，
+                    # 条件更新保证不覆盖 CANCELLED 终态）
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
-                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message="任务已过期", completed_time=datetime.now())
+                    AIToolsModel.transition_status(
+                        task.task_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                        message="任务已过期", completed_time=datetime.now()
+                    )
 
                     # 标记当前实现方尝试为失败
                     try:
@@ -1378,9 +1464,12 @@ def process_task_with_retry(task_type, process_func):
                 
                 # 检查是否超过最大重试次数
                 if _check_max_retry_exceeded(task):
-                    # 标记任务为失败
+                    # 标记任务为失败（CAS：不覆盖期间发生的用户取消终态，同过期分支）
                     TasksModel.update_by_task_id(task.task_id, status=TASK_STATUS_FAILED)
-                    AIToolsModel.update(task.task_id, status=AI_TOOL_STATUS_FAILED, message=f"超过最大重试次数({_get_max_retry_count()})", completed_time=datetime.now())
+                    AIToolsModel.transition_status(
+                        task.task_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                        message=f"超过最大重试次数({_get_max_retry_count()})", completed_time=datetime.now()
+                    )
 
                     # 标记当前实现方尝试为失败
                     try:
@@ -1634,6 +1723,10 @@ def process_task_with_retry(task_type, process_func):
                         # 任务已失败但 tasks.status 未同步
                         TasksModel.update_by_task_id(st.task_id, status=TASK_STATUS_FAILED)
                         logger.info(f"Recovered stuck task {st.task_id}: tasks.status 5->FAILED")
+                    elif st_ai_tool.status == AI_TOOL_STATUS_CANCELLED:
+                        # 任务已取消但 tasks.status 未同步（取消落在 pipeline 阶段中途）
+                        TasksModel.update_by_task_id(st.task_id, status=TASK_STATUS_CANCELLED)
+                        logger.info(f"Recovered stuck task {st.task_id}: tasks.status 5->CANCELLED")
         except Exception as e:
             logger.warning(f"Recovery check error: {e}")
 
