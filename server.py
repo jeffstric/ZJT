@@ -526,6 +526,10 @@ app.include_router(script_writer_router)
 from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
+# 故事板 ↔ 工作流画布互转（见 docs/storyboard/storyboard_workflow_conversion.md）
+from api.storyboard_conversion import router as storyboard_conversion_router
+app.include_router(storyboard_conversion_router)
+
 # 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
 from api.script_split import (
     router as script_split_router,
