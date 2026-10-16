@@ -1,7 +1,7 @@
 ---
 name: novel-episode-splitter
 description: 小说剧本分集工具，读取用户输入的小说剧本，根据每集时长自动分集，智能检测重复内容并处理差异。当需要导入小说并分集时使用。
-allowed-tools: Read, Write
+allowed-tools: create_script_json, update_script_json, read_script_json, list_script_jsons, read_character_json, list_character_jsons, read_location_json, list_location_jsons, read_prop_json, list_prop_jsons, get_long_user_input, ask_user
 ---
 
 # 小说剧本分集专家
@@ -167,7 +167,7 @@ allowed-tools: Read, Write
 
 #### 4.1 检查是否已存在
 
-使用 `get_script_by_episode()` 检查该集数是否已存在
+使用 `list_script_jsons()` 获取已有剧本列表，再用 `read_script_json(title="[集数字符串]")` 读取该集已有内容（title 传集数数字即可，如 `read_script_json(title="3")` 读取第3集）
 
 **如果不存在**：
 - 标记为"新建"
@@ -224,15 +224,15 @@ allowed-tools: Read, Write
   4. 查看完整内容对比
   ```
 
-**等待用户选择**，根据用户指令执行相应操作。
+**等待用户选择**，根据用户指令执行相应操作：
+
+- **用户选择"保留已有版本（跳过）"**：不做任何操作，继续处理下一集
+- **用户选择"覆盖为新版本"**：必须调用 `update_script_json(title, episode_number, content)` 覆盖该集内容（见下方工具说明）。**禁止**用 `create_script_json` 覆盖——集数已存在时它会返回"集数冲突"错误
+- **用户选择"创建为新的集数"**：调用 `create_script_json` 以新集数创建
 
 ### 第五步：批量创建剧本
 
-对于所有需要创建的集数，使用MCP工具批量创建：
-
-**创建方式**：
-
-使用 `create_script_json` 工具，参数如下：
+对于所有**新建**的集数，使用 `create_script_json` 工具，参数如下：
 
 ```
 工具名称: create_script_json
@@ -241,6 +241,8 @@ allowed-tools: Read, Write
 - episode_number: [集数] (必填)
 - content: [该集的剧本内容] (必填)
 ```
+
+对于用户确认**覆盖**的已有集数，使用 `update_script_json(title, episode_number, content)` 覆盖（禁止用 `create_script_json` 重复创建已存在的集数，会报"集数冲突"错误）。
 
 **⚠️ 极其重要：剧本内容格式要求**
 
@@ -409,19 +411,27 @@ content: '[{"role": "小明", "text": "..."}]'  ❌ 不要使用JSON数组字符
    - 功能：列出所有已存在的剧本
    - 返回：剧本列表，包含 title, episode_number, content 等信息
 
-2. **read_script_json(title, episode_number)**
-   - 功能：获取指定标题和集数的剧本
+2. **read_script_json(title)**
+   - 功能：获取指定标题或集数的剧本
    - 参数：
-     - title: 剧本标题
-     - episode_number: 集数
+     - title: 剧本标题，或集数数字字符串（如 `"3"` 表示第3集）
    - 返回：剧本数据或 None
 
 3. **create_script_json(title, episode_number, content)**
-   - 功能：创建剧本JSON文件
+   - 功能：创建剧本JSON文件（仅限新建，集数已存在会报错"集数冲突"）
    - 参数：
      - title: 剧本标题（必填）
      - episode_number: 集数（必填）
      - content: 剧本内容（必填）
+   - 返回：操作结果
+
+4. **update_script_json(title, episode_number, content)**
+   - 功能：更新已存在的剧本JSON文件（用于用户确认"覆盖为新版本"时）
+   - 参数：
+     - title: 剧本标题（必填，用于定位文件；也可传集数数字字符串定位该集）
+     - episode_number: 集数（可选）
+     - content: 剧本内容（可选）
+   - 注意：只能更新已存在的剧本，剧本不存在会报错；新建集数必须使用 `create_script_json`
    - 返回：操作结果
 
 ## 重要原则
