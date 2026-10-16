@@ -211,7 +211,7 @@ class TaskManager:
         self.tasks: Dict[str, AgentTask] = {}
         self.task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
-        # session_id -> {skip: bool, unconfirmed_cost: int}
+        # session_id -> {skip, unconfirmed_cost, approved_ceiling}
         self._power_confirm_state: Dict[str, Dict[str, Any]] = {}
         logger.info("TaskManager initialized")
     
@@ -492,15 +492,19 @@ class TaskManager:
         thread.start()
         logger.info(f"Task {task.task_id} thread started")
     
+    def _blank_power_confirm_state(self) -> Dict[str, Any]:
+        return {"skip": False, "unconfirmed_cost": 0, "approved_ceiling": 0}
+
     def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
-        """读取会话级算力确认状态（skip / 本轮未授权累计）。"""
+        """读取会话级算力确认状态（skip / 本轮未确认累计 / 已同意最高单笔）。"""
         if not session_id:
-            return {"skip": False, "unconfirmed_cost": 0}
+            return self._blank_power_confirm_state()
         with self._lock:
             state = self._power_confirm_state.get(session_id) or {}
             return {
                 "skip": bool(state.get("skip")),
                 "unconfirmed_cost": int(state.get("unconfirmed_cost") or 0),
+                "approved_ceiling": int(state.get("approved_ceiling") or 0),
             }
 
     def set_power_confirm_skip(self, session_id: Optional[str], skip: bool = True) -> None:
@@ -508,16 +512,28 @@ class TaskManager:
             return
         with self._lock:
             state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
+                session_id, self._blank_power_confirm_state()
             )
             state["skip"] = bool(skip)
+
+    def raise_approved_ceiling(self, session_id: Optional[str], cost: int) -> int:
+        """把本会话已同意的最高单笔抬到不少于 cost。"""
+        if not session_id:
+            return 0
+        amount = max(0, int(cost or 0))
+        with self._lock:
+            state = self._power_confirm_state.setdefault(
+                session_id, self._blank_power_confirm_state()
+            )
+            state["approved_ceiling"] = max(int(state.get("approved_ceiling") or 0), amount)
+            return state["approved_ceiling"]
 
     def add_unconfirmed_power_cost(self, session_id: Optional[str], cost: int) -> int:
         if not session_id:
             return 0
         with self._lock:
             state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
+                session_id, self._blank_power_confirm_state()
             )
             state["unconfirmed_cost"] = int(state.get("unconfirmed_cost") or 0) + max(0, int(cost or 0))
             return state["unconfirmed_cost"]
@@ -527,7 +543,7 @@ class TaskManager:
             return
         with self._lock:
             state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
+                session_id, self._blank_power_confirm_state()
             )
             state["unconfirmed_cost"] = 0
 

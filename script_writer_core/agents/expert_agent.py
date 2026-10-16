@@ -545,11 +545,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         """
         计费生成工具的算力确认门。
         返回 None 表示放行；返回 dict 则作为工具错误结果，不执行生成。
+        放行且本笔已授权时，置 _budget_authorize_next，由 _execute_tool 按实扣划出预算。
         """
-        # 剧本创作（script_writer）链路已关闭算力确认门：不再弹确认、不再累计未确认消耗
-        if not getattr(self, "power_confirm_enabled", True):
-            return None
-
         from .power_confirm import (
             BILLABLE_GENERATION_TOOLS,
             OPTION_APPROVE,
@@ -558,6 +555,7 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             ConfirmAnswer,
             build_confirm_description,
             estimate_tool_computing_power,
+            generation_is_budget_authorized,
             get_effective_thresholds,
             parse_confirm_answer,
             query_user_balance,
@@ -565,6 +563,11 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         )
 
         if tool_name not in BILLABLE_GENERATION_TOOLS:
+            return None
+
+        # 剧本创作链路关闭确认门：不估算、不弹窗。生成本身视为本条消息已授权。
+        if not getattr(self, "power_confirm_enabled", True):
+            self._budget_authorize_next = True
             return None
 
         if not getattr(self, "task_manager", None) or not getattr(self, "task_id", None):
@@ -598,10 +601,14 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             soft_threshold=soft,
             hard_threshold=hard,
             unknown=estimate.unknown,
+            approved_ceiling=state.get("approved_ceiling") or 0,
         )
         if not decision.need_confirm:
-            if not estimate.unknown:
+            # 只有低于阈值的自动放行才累计「未确认」。已同意单价内的高价生成不再累进硬阈值。
+            if not estimate.unknown and decision.reason == "below_threshold":
                 self.task_manager.add_unconfirmed_power_cost(session_key, estimate.cost)
+            if generation_is_budget_authorized(decision.reason, estimate.cost, soft):
+                self._budget_authorize_next = True
             return None
 
         question = build_confirm_description(
@@ -648,7 +655,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             }
         if answer == ConfirmAnswer.SKIP_SESSION:
             self.task_manager.set_power_confirm_skip(session_key, True)
+        if not estimate.unknown and estimate.cost > 0:
+            self.task_manager.raise_approved_ceiling(session_key, estimate.cost)
         self.task_manager.clear_unconfirmed_power_cost(session_key)
+        self._budget_authorize_next = True
         return None
 
     def _execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Dict[str, Any]:
@@ -666,8 +676,10 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             logger.warning(f"{self.agent_id}: {error_msg}")
             return {"error": error_msg}
 
+        self._budget_authorize_next = False
         blocked = self._gate_computing_power(tool_name, tool_args or {})
         if blocked is not None:
+            self._budget_authorize_next = False
             return blocked
         
         try:
@@ -683,11 +695,29 @@ class ExpertAgent(BaseAgent, AskUserMixin):
                 model_id=self.model_id,
             )
             logger.info(f"{self.agent_id}: Tool {tool_name} executed successfully")
+            if self._budget_authorize_next:
+                self._authorize_generation_spend(result)
             return result
         except Exception as e:
             error_msg = f"工具执行失败: {str(e)}"
             logger.error(f"{self.agent_id}: {error_msg}", exc_info=True)
             return {"error": error_msg}
+        finally:
+            self._budget_authorize_next = False
+
+    def _authorize_generation_spend(self, result: Any) -> None:
+        """把已放行生成的实扣算力划入预算已授权额度。失败或未扣费时不划。"""
+        budget = getattr(self, "power_budget", None)
+        if budget is None or not isinstance(result, dict):
+            return
+        power = (
+            result.get("computing_power")
+            or result.get("computing_power_total")
+            or result.get("computing_power_required")
+        )
+        if isinstance(power, bool) or not isinstance(power, (int, float)) or power <= 0:
+            return
+        budget.authorize(int(power))
 
     def _is_deepseek_model(self) -> bool:
         """判断当前模型是否为 DeepSeek 模型"""

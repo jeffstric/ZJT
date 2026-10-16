@@ -71,6 +71,33 @@ def test_disabled_when_limit_zero_or_no_snapshot():
         assert budget.consumed() == 0
 
 
+def test_authorized_generation_does_not_pause_task():
+    # 用户确认过的 303 视频从余额里扣掉，但不算进 200 的未授权上限
+    budget = PowerBudget(limit=200, start_balance=1000)
+    budget.observe(697)
+    budget.authorize(303)
+    assert budget.consumed() == 303
+    assert budget.unauthorized_consumed() == 0
+    budget.check()
+    # 之后的 LLM 空转仍计入未授权消耗
+    budget.observe(497)
+    try:
+        budget.check()
+        raise AssertionError("未授权消耗达到上限时应当暂停")
+    except PowerBudgetExhaustedError as e:
+        assert e.consumed == 200
+        assert e.limit == 200
+
+
+def test_recharge_clears_authorized_credit():
+    budget = PowerBudget(limit=200, start_balance=1000)
+    budget.observe(697)
+    budget.authorize(303)
+    budget.observe(1500)
+    assert budget.consumed() == 0
+    assert budget.authorized == 0
+
+
 def test_check_without_fresh_balance_uses_last_observed():
     # ask_user 入口不主动查询余额，用最近一次 observe 的值判定
     budget = PowerBudget(limit=10, start_balance=100)

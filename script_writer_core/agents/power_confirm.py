@@ -156,17 +156,54 @@ def should_confirm(
     soft_threshold: int,
     hard_threshold: int,
     unknown: bool = False,
+    approved_ceiling: int = 0,
 ) -> ConfirmDecision:
-    """判定本次生成是否需要弹出确认。"""
+    """判定本次生成是否需要弹出确认。
+
+    - 点过「确认生成」后，会话记下已同意的最高单笔。不超过这个价格不再问；
+      更贵（更长时长、更高分辨率、更大数量）再问一次。
+    - 点过「本次对话不再询问」后，硬阈值只累计多笔小生成。
+      单笔本身已经超过硬阈值的（如 Seedance 一条 303），不再因为硬阈值再问。
+    """
     projected = max(0, int(unconfirmed_cost or 0)) + max(0, int(cost or 0))
+    cost = max(0, int(cost or 0))
+    ceiling = max(0, int(approved_ceiling or 0))
     if unknown:
         return ConfirmDecision(True, "unknown", projected)
 
-    limit = hard_threshold if skip_session else soft_threshold
-    if cost > limit or projected > limit:
-        reason = "over_hard" if skip_session else "over_soft"
-        return ConfirmDecision(True, reason, projected)
+    if skip_session:
+        if cost > hard_threshold:
+            return ConfirmDecision(False, "single_item_over_hard_allowed", projected)
+        if projected > hard_threshold:
+            return ConfirmDecision(True, "over_hard", projected)
+        return ConfirmDecision(False, "below_threshold", projected)
+
+    if ceiling > 0 and cost <= ceiling:
+        return ConfirmDecision(False, "within_approved_ceiling", projected)
+
+    if cost > soft_threshold or projected > soft_threshold:
+        return ConfirmDecision(True, "over_soft", projected)
     return ConfirmDecision(False, "below_threshold", projected)
+
+
+def generation_is_budget_authorized(
+    reason: str,
+    cost: int,
+    soft_threshold: int,
+    user_confirmed: bool = False,
+) -> bool:
+    """这笔生成是否应从任务预算的未授权消耗里划出。
+
+    用户刚点确认、或本笔不低于软阈值且已落在同意过的单价内、
+    或免打扰后放行的单笔高价，都算已授权。低于软阈值的小额自动放行仍计入预算。
+    """
+    if user_confirmed:
+        return True
+    if reason == "single_item_over_hard_allowed":
+        return True
+    if reason == "within_approved_ceiling" and max(0, int(cost or 0)) > int(soft_threshold or 0):
+        return True
+    return False
 
 
 def parse_confirm_answer(user_input: Optional[str]) -> ConfirmAnswer:

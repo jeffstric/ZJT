@@ -52,10 +52,42 @@ class TestShouldConfirm(unittest.TestCase):
         decision = should_confirm(80, 0, True, 35, 200)
         self.assertFalse(decision.need_confirm)
 
-    def test_skip_still_blocks_over_hard(self):
-        decision = should_confirm(201, 0, True, 35, 200)
+    def test_skip_allows_single_item_over_hard(self):
+        # Seedance 一条 303 高于硬阈值：点过「不再询问」后不再为这一条再弹
+        decision = should_confirm(303, 0, True, 35, 200)
+        self.assertFalse(decision.need_confirm)
+        self.assertEqual(decision.reason, "single_item_over_hard_allowed")
+
+    def test_skip_still_confirms_when_small_items_accumulate_over_hard(self):
+        decision = should_confirm(30, 180, True, 35, 200)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(decision.reason, "over_hard")
+        self.assertEqual(decision.projected_total, 210)
+
+    def test_approved_ceiling_allows_same_or_cheaper_price(self):
+        decision = should_confirm(303, 0, False, 35, 200, approved_ceiling=303)
+        self.assertFalse(decision.need_confirm)
+        self.assertEqual(decision.reason, "within_approved_ceiling")
+        cheaper = should_confirm(152, 0, False, 35, 200, approved_ceiling=303)
+        self.assertFalse(cheaper.need_confirm)
+
+    def test_more_expensive_than_ceiling_confirms_again(self):
+        decision = should_confirm(454, 0, False, 35, 200, approved_ceiling=303)
+        self.assertTrue(decision.need_confirm)
+        self.assertEqual(decision.reason, "over_soft")
+
+    def test_unknown_confirms_even_with_ceiling(self):
+        decision = should_confirm(0, 0, False, 35, 200, unknown=True, approved_ceiling=303)
+        self.assertTrue(decision.need_confirm)
+        self.assertEqual(decision.reason, "unknown")
+
+    def test_budget_authorization_follows_confirm_reason(self):
+        authorize = power_confirm.generation_is_budget_authorized
+        self.assertTrue(authorize("over_soft", 303, 35, user_confirmed=True))
+        self.assertTrue(authorize("within_approved_ceiling", 303, 35))
+        self.assertFalse(authorize("within_approved_ceiling", 2, 35))
+        self.assertTrue(authorize("single_item_over_hard_allowed", 303, 35))
+        self.assertFalse(authorize("below_threshold", 20, 35))
 
     def test_unknown_always_confirms(self):
         decision = should_confirm(0, 0, False, 35, 200, unknown=True)
@@ -160,7 +192,8 @@ class TestGateDecisionWiring(unittest.TestCase):
     def test_skip_session_then_below_hard(self):
         self.assertEqual(parse_confirm_answer(OPTION_SKIP_SESSION), ConfirmAnswer.SKIP_SESSION)
         self.assertFalse(should_confirm(80, 0, True, 35, 200).need_confirm)
-        self.assertTrue(should_confirm(250, 0, True, 35, 200).need_confirm)
+        self.assertFalse(should_confirm(303, 0, True, 35, 200).need_confirm)
+        self.assertTrue(should_confirm(30, 180, True, 35, 200).need_confirm)
 
 
 if __name__ == "__main__":

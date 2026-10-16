@@ -352,6 +352,48 @@ class TestPowerConfirmSwitch(TestExpertAgent):
             agent = self._create_agent()
         self.assertIn("算力确认上限", agent.system_prompt)
 
+    def test_confirmed_video_price_is_not_asked_again_and_does_not_pause(self):
+        from script_writer_core.agents.power_budget import PowerBudget
+        from script_writer_core.agents.power_confirm import PowerEstimate
+        from script_writer_core.agents.task_manager import TaskManager
+
+        with patch('script_writer_core.agents.power_confirm.resolve_user_soft_threshold',
+                   return_value=(35, False)):
+            agent = self._create_agent(
+                power_confirm_enabled=True,
+                allowed_tools=["image_to_video"],
+            )
+        agent.task_manager = TaskManager()
+        agent.task_id = "task-1"
+        agent._session_id = "session-1"
+        agent.power_budget = PowerBudget(limit=200, start_balance=1000)
+        same_price = PowerEstimate(cost=303, label="图生视频", duration=5)
+        pricier = PowerEstimate(cost=454, label="图生视频", duration=15)
+
+        with patch("script_writer_core.agents.power_confirm.estimate_tool_computing_power", return_value=same_price), \
+             patch("script_writer_core.agents.power_confirm.query_user_balance", return_value=1000), \
+             patch("script_writer_core.agents.power_confirm.get_effective_thresholds", return_value=(35, 200, False)), \
+             patch.object(agent, "_handle_ask_user", return_value={"success": True, "user_input": "确认生成"}) as ask:
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 5}))
+            self.assertEqual(ask.call_count, 1)
+            self.assertTrue(agent._budget_authorize_next)
+            agent._authorize_generation_spend({"computing_power_required": 303})
+
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 5}))
+            self.assertEqual(ask.call_count, 1)
+            self.assertEqual(agent.task_manager.get_power_confirm_state("session-1")["approved_ceiling"], 303)
+
+        agent.power_budget.observe(697)
+        agent.power_budget.check()
+
+        with patch("script_writer_core.agents.power_confirm.estimate_tool_computing_power", return_value=pricier), \
+             patch("script_writer_core.agents.power_confirm.query_user_balance", return_value=697), \
+             patch("script_writer_core.agents.power_confirm.get_effective_thresholds", return_value=(35, 200, False)), \
+             patch.object(agent, "_handle_ask_user", return_value={"success": True, "user_input": "确认生成"}) as ask_again:
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 15}))
+            self.assertEqual(ask_again.call_count, 1)
+            self.assertEqual(agent.task_manager.get_power_confirm_state("session-1")["approved_ceiling"], 454)
+
 
 if __name__ == '__main__':
     unittest.main()

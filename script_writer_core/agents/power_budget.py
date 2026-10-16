@@ -8,7 +8,9 @@
   快照（视为新预算起点）。
 - 超限：抛 PowerBudgetExhaustedError（InsufficientComputingPowerError 子类），
   复用现有「算力不足」逐层停止链路：专家循环 → PM 循环捕获并向用户推送停止
-  消息 → 任务结束。会话与产出保留，充值或调高上限后发送新消息即开启新任务继续。
+  消息 → 任务结束。比较的是未授权消耗（consumed - authorized）：用户刚确认
+  或已同意过单价的生成、以及剧本链路直接放行的生成，其实扣算力记入 authorized，
+  不拿去和上限比较。会话与产出保留，充值或调高上限后发送新消息即开启新任务继续。
 - ask_user 入口在超限后立即返回 ask_disabled，不再进入 5 分钟等待——掐断
   无人应答时「提问→300s 超时→LLM 重试→再提问」的空转扣费循环
   （docs/backend/incidents/2026-09-01、2026-09-26）。
@@ -118,6 +120,7 @@ class PowerBudget:
         self.limit = max(0, int(limit or 0))
         self.start_balance = start_balance
         self.last_balance = start_balance
+        self.authorized = 0
         self.agent_id = agent_id
 
     @property
@@ -156,6 +159,7 @@ class PowerBudget:
                 "%s: 余额由 %s 升至 %s，重置算力预算快照", self.agent_id, self.start_balance, balance
             )
             self.start_balance = balance
+            self.authorized = 0
         self.last_balance = balance
 
     def consumed(self) -> int:
@@ -163,8 +167,25 @@ class PowerBudget:
             return 0
         return max(0, self.start_balance - self.last_balance)
 
+    def authorize(self, cost: int) -> None:
+        """把用户已点头、或剧本链路已放行的生成实扣算力划出未授权消耗。"""
+        if not self.enabled or isinstance(cost, bool):
+            return
+        try:
+            amount = int(cost)
+        except (TypeError, ValueError):
+            return
+        if amount <= 0:
+            return
+        self.authorized += amount
+
+    def unauthorized_consumed(self) -> int:
+        return max(0, self.consumed() - self.authorized)
+
     def check(self, balance: Optional[int] = None) -> None:
         """超限抛 PowerBudgetExhaustedError；未启用时静默放行。
+
+        比较未授权消耗（总消耗减去已授权生成），不是余额总下降。
 
         Args:
             balance: 最新余额。传 None 时用最近一次 observe 的值（如 ask_user 入口）。
@@ -173,13 +194,13 @@ class PowerBudget:
             return
         if balance is not None:
             self.observe(balance)
-        consumed = self.consumed()
-        if consumed >= self.limit:
+        unauthorized = self.unauthorized_consumed()
+        if unauthorized >= self.limit:
             logger.warning(
-                "%s: 单次任务算力上限触发 - 本次已消耗 %s，上限 %s",
-                self.agent_id, consumed, self.limit,
+                "%s: 单次任务算力上限触发 - 未授权消耗 %s，总消耗 %s，已授权 %s，上限 %s",
+                self.agent_id, unauthorized, self.consumed(), self.authorized, self.limit,
             )
-            raise PowerBudgetExhaustedError(consumed=consumed, limit=self.limit)
+            raise PowerBudgetExhaustedError(consumed=unauthorized, limit=self.limit)
 
 
 def observe_and_check(budget: Optional[PowerBudget], auth_token: str, agent_id: str) -> None:

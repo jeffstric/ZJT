@@ -38,7 +38,7 @@ class PowerBudgetExhaustedError(InsufficientComputingPowerError):
         super().__init__(
             computing_power=0,
             message=(
-                f"已达本次任务算力上限（本次已消耗 {consumed}，上限 {limit}），"
+                f"已达本次任务算力上限（本次未授权消耗 {consumed}，上限 {limit}），"
                 f"任务已自动暂停；充值或调高上限后重新发送消息即可继续"
             ),
         )
