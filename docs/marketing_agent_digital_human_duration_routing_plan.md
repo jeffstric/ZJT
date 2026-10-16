@@ -213,3 +213,11 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - `mcp_tool.py` / SOP / 本文档同步。
 
 **测试**：`tests/agents/test_digital_human_tts_tools.py` 27 项（新路由边界、分段 confirm 分派、真实 ffmpeg 切片）+ `tests/agents/` 138 项回归通过。
+
+### 附录 C.1 补充实测与修正（2026-10-16 下午）
+
+1. **15s 段长处于显存边界**：project 324 的段 1（15s/720P）在 RunningHub 默认实例上连续两次 `torch.OutOfMemoryError`（SamplerCustomAdvanced），此前 322/323 成功属实例运气。**段长回退生产稳定档 10 秒**（`DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS=10`），30s = 3×10s；切片函数重写为 N 段（均分点 ±2.5s 窗口内取静音中点）。
+2. **修复浏览器链路 confirm 崩溃**（用户实测 `too many values to unpack (expected 2)`）：`upload_files = list(files)` 把 dict 转成了 keys 列表，httpx multipart 编码时对字符串解包报错。改为 (name, (filename, bytes, content_type)) 列表。**单测补真实 httpx.Request 编码断言**防回归。
+3. **修复分段计费口径**：草案 ceil(28.5)=29 与切分后 15+15=30 不一致，被端点 sum==duration 校验拦截。confirm 改为按 sum(segment_durations) 下发；prepare 预估同口径（ceil(est/段长)×段长）。
+4. **端到端复验**：project 325（28.5s 音频 → 3×10s），三段全部成功、拼接成片 30.38s 落库正常；三段景别接近（固定镜头提示词正确下发时 H3 服从度良好）。
+5. **测试坑记录**：Windows curl.exe 对 `-F "text=中文"` 按 GBK 代码页编码，导致自测任务的提示词乱码下发（非系统 bug，浏览器/agent 链路 UTF-8 正常）；测试中文接口用 python requests。

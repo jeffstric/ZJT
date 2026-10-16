@@ -88,7 +88,7 @@ class TestResolveDigitalHumanModel(unittest.TestCase):
                          "15-30s 也走 H3（分段拼接），不再路由 LTX2.3")
         self.assertEqual(r["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(r["segment_mode"])
-        self.assertEqual(r["billable_duration"], 16)  # ceil(15.1)
+        self.assertEqual(r["billable_duration"], 20)  # 整数段口径 ceil(15.1/10)*10
 
     def test_30s_boundary_segmented(self):
         r = resolve_digital_human_model(30.0)
@@ -296,7 +296,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         self.assertEqual(draft["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(draft["segment_mode"])
-        self.assertEqual(draft["billable_duration"], 20)
+        self.assertEqual(draft["billable_duration"], 20)  # 整数段口径 ceil(20/10)*10
         self.assertEqual(draft["effective_motion_prompt"], SEGMENTED_MOTION_PROMPT,
                          "分段模式必须使用固定镜头统一提示词")
         self.assertIn("MiniMax H3", result["message"])
@@ -462,6 +462,9 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(captured["data"]["duration"], "5")
         # 存量草案（无 model_task_type）缺省按 H3 提交，兼容升级前数据
         self.assertEqual(result["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+        # 真实 httpx multipart 编码（防 files 结构错误漏过 mock）
+        import httpx as _httpx
+        _httpx.Request("POST", captured["url"], data=captured["data"], files=captured["files"])
         # 草案一次性消费
         self.assertIsNone(get_draft(draft_id))
 
@@ -505,10 +508,11 @@ class TestConfirmTool(_VoiceModelMockBase):
 
         fake_plan = {
             "segments": [
-                {"path": "upload/dh/seg_1.wav", "duration": 15},
-                {"path": "upload/dh/seg_2.wav", "duration": 15},
+                {"path": "upload/dh/seg_1.wav", "duration": 10},
+                {"path": "upload/dh/seg_2.wav", "duration": 10},
+                {"path": "upload/dh/seg_3.wav", "duration": 10},
             ],
-            "cut_at": 14.18, "total": 28.5,
+            "cuts": [9.5, 19.0], "total": 28.5,
         }
 
         cfg = MagicMock()
@@ -532,11 +536,14 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(captured["data"]["duration"], "30")
         self.assertEqual(captured["data"]["text"], SEGMENTED_MOTION_PROMPT,
                          "分段模式提交的提示词必须是固定镜头统一版本，不用 VL 生成的推近镜头")
-        self.assertEqual(json.loads(captured["data"]["segment_durations"]), [15, 15])
+        self.assertEqual(json.loads(captured["data"]["segment_durations"]), [10, 10, 10])
         seg_files = [f for f in captured["files"] if f[0] == 'segment_audio']
-        self.assertEqual(len(seg_files), 2, "两段音频文件应随 multipart 上传")
+        self.assertEqual(len(seg_files), 3, "三段音频文件应随 multipart 上传")
         self.assertEqual(result["model_used"], "MiniMax H3 数字人（分段拼接）")
         self.assertTrue(result["segment_mode"])
+        # 真实 httpx multipart 编码（防 files 结构错误漏过 mock）
+        import httpx as _httpx
+        _httpx.Request("POST", captured["url"], data=captured["data"], files=captured["files"])
         self.assertIsNone(get_draft(draft_id))
 
     def test_confirm_h3_error_propagates(self):
@@ -593,16 +600,17 @@ class TestSplitAudioSegments(unittest.TestCase):
         try:
             plan = split_audio_into_segments(src, 28.5, out_dir)
             segs = plan["segments"]
-            self.assertEqual(len(segs), 2, "28.5s 应切成 2 段")
+            self.assertEqual(len(segs), 3, "28.5s 按段长 10s 应切成 3 段")
             total = 0
             for s in segs:
-                self.assertLessEqual(s["duration"], 15, "每段不得超过 15s")
+                self.assertLessEqual(s["duration"], 10, "每段不得超过段长上限 10s")
                 self.assertGreaterEqual(s["duration"], 4, "每段不得低于 H3 最短 4s")
                 self.assertTrue(os.path.isfile(s["path"]))
                 total += s["duration"]
-            self.assertEqual(total, 29, "两段整数秒之和应等于 ceil(28.5)=29")
-            self.assertGreater(plan["cut_at"], 13.0)
-            self.assertLessEqual(plan["cut_at"], 15.0)
+            self.assertEqual(total, 30, "三段整数秒之和应等于 ceil(28.5/10)*10=30")
+            # 切点应落在均分点附近（±3s 窗口）
+            self.assertAlmostEqual(plan["cuts"][0], 9.5, delta=3.0)
+            self.assertAlmostEqual(plan["cuts"][1], 19.0, delta=3.0)
         finally:
             for p in (src,):
                 if os.path.isfile(p):

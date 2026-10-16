@@ -123,7 +123,10 @@ def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
         return {
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
             "routing_reason": "duration_gt_15s_h3_segmented",
-            "billable_duration": max(1, int(math.ceil(est_seconds))),
+            # 预估计费口径 = 整数段总长（15s 粒度向上取整），与 confirm 切分后的
+            # sum(segment_durations) 同口径，避免草案预估与实际扣费不一致
+            "billable_duration": int(math.ceil(est_seconds / DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS)
+                                     * DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS),
             "segment_mode": True,
         }
     return None
@@ -157,56 +160,66 @@ def _detect_silence_midpoints(audio_path: str) -> List[float]:
 
 def split_audio_into_segments(audio_path: str, total_seconds: float,
                               out_dir: str) -> Dict[str, Any]:
-    """把驱动音频切成 ≤15s 的段并各自对齐到整数秒，返回分段计划。
+    """把驱动音频切成 N 段（每段 ≤ 段长上限）并各自对齐到整数秒，返回分段计划。
 
-    切点优先取 [total-15, 15] 区间内最接近 15s 的静音中点（句子边界），
-    无静音点时硬切；每段 ffmpeg 截断/apad 对齐到整数秒（H3 duration 节点为整数）。
+    段数 = ceil(total / 段长上限)；每个目标切点（均分点）在 ±2.5s 窗口内找最近的
+    静音中点（句子边界），找不到用均分点硬切。每段 ffmpeg 截断/apad 对齐到整数秒
+    （H3 duration 节点为整数）。
 
     Returns:
-        {"segments": [{"path": wav, "duration": int}], "cut_at": float, "total": float}
+        {"segments": [{"path": wav, "duration": int}], "cuts": [float], "total": float}
     """
     max_seg = DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS
-    lower = max(4.0, total_seconds - max_seg)
-    upper = min(float(max_seg), total_seconds - 4.0)
-    candidates = [m for m in _detect_silence_midpoints(audio_path) if lower <= m <= upper]
-    if candidates:
-        cut = min(candidates, key=lambda m: abs(m - max_seg))
-    else:
-        cut = min(upper, max_seg)
-        logger.info(f"音频 {total_seconds:.2f}s 在区间 [{lower:.2f},{upper:.2f}] 无静音点，硬切于 {cut:.2f}s")
+    total_seconds = float(total_seconds)
+    seg_count = max(1, int(math.ceil(total_seconds / max_seg)))
+    silences = _detect_silence_midpoints(audio_path)
 
+    # 逐段确定切点：目标为均分点，窗口内优先静音（保证段最短 4s、不超段长上限）
+    cuts: List[float] = []
+    prev = 0.0
+    for i in range(1, seg_count):
+        target = total_seconds * i / seg_count
+        remaining_segs = seg_count - i
+        win_lo = max(prev + 4.0, target - 2.5)
+        win_hi = min(prev + max_seg, total_seconds - 4.0 * remaining_segs)
+        if win_lo > win_hi:
+            # 无合法窗口（极短音频等），按剩余一刀切
+            break
+        candidates = [m for m in silences if win_lo <= m <= win_hi]
+        cut = min(candidates, key=lambda m: abs(m - target)) if candidates \
+            else min(max(win_lo, target), win_hi)
+        cuts.append(round(cut, 3))
+        prev = cut
+
+    bounds = [0.0] + cuts + [total_seconds]
     os.makedirs(out_dir, exist_ok=True)
-    seg_specs = [(0.0, cut), (cut, total_seconds)]
-    segments = []
     ffmpeg = _get_ffmpeg_bin()
-    for idx, (start, end) in enumerate(seg_specs, start=1):
+    segments = []
+    for idx in range(len(bounds) - 1):
+        start, end = bounds[idx], bounds[idx + 1]
         seg_len = end - start
         seg_dur = max(4, min(max_seg, int(math.ceil(seg_len))))
-        raw = os.path.join(out_dir, f'seg_{idx}_raw.wav')
-        final = os.path.join(out_dir, f'seg_{idx}.wav')
-        if start > 0:
-            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-ss', f'{start:.3f}',
-                            '-i', audio_path, '-ar', '44100', '-ac', '2', raw],
-                           check=True, capture_output=True, timeout=120)
-        else:
-            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', audio_path,
-                            '-t', f'{end:.3f}', '-ar', '44100', '-ac', '2', raw],
-                           check=True, capture_output=True, timeout=120)
+        raw = os.path.join(out_dir, f'seg_{idx + 1}_raw.wav')
+        final = os.path.join(out_dir, f'seg_{idx + 1}.wav')
+        trim = ['-ss', f'{start:.3f}'] if start > 0 else []
+        subprocess.run([ffmpeg, '-y', '-loglevel', 'error', *trim, '-i', audio_path,
+                        '-t', f'{seg_len:.3f}', '-ar', '44100', '-ac', '2', raw],
+                       check=True, capture_output=True, timeout=120)
         if seg_len < seg_dur:
             # 不足整数秒：尾部补静音（无声收尾人物静止，自然）
             subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
                             '-af', f'apad=whole_dur={seg_dur}', final],
                            check=True, capture_output=True, timeout=120)
         else:
-            # 超出整数秒：在句间静音内截断
+            # 超出整数秒：截断到整数秒
             subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
                             '-t', str(seg_dur), '-c', 'copy', final],
                            check=True, capture_output=True, timeout=120)
         if os.path.isfile(raw):
             os.remove(raw)
         segments.append({"path": final, "duration": seg_dur})
-        logger.info(f"[分段] seg_{idx}: {seg_len:.2f}s -> duration={seg_dur}s, file={final}")
-    return {"segments": segments, "cut_at": round(cut, 3), "total": round(total_seconds, 3)}
+        logger.info(f"[分段] seg_{idx + 1}: {seg_len:.2f}s -> duration={seg_dur}s, file={final}")
+    return {"segments": segments, "cuts": cuts, "total": round(total_seconds, 3)}
 
 
 def _load_voice_candidates(language: str = "zh", provider: str = "volcengine") -> list:
@@ -704,10 +717,14 @@ async def confirm_digital_human(
 
         image_name, image_content_type = _detect_image_upload_meta(image_bytes)
         audio_name, audio_content_type = _detect_audio_upload_meta(audio_bytes)
-        files = {
-            'image': (image_name, image_bytes, image_content_type),
-            'audio': (audio_name, audio_bytes, audio_content_type),
-        }
+        # 分段模式（口播 15-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
+        # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致。
+        # files 用 (name, (filename, bytes, content_type)) 列表而非 dict：
+        # 分段时同一字段名 segment_audio 要重复出现，且 httpx 对 list 项要求二元组
+        upload_files: List[tuple] = [
+            ('image', (image_name, image_bytes, image_content_type)),
+            ('audio', (audio_name, audio_bytes, audio_content_type)),
+        ]
 
         # 按草案路由分派端点；存量草案（无 model_task_type）缺省 H3，行为与升级前一致
         model_task_type = draft.get("model_task_type") or TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
@@ -737,11 +754,15 @@ async def confirm_digital_human(
                 split_audio_into_segments, local_audio, float(probe_total), seg_dir)
             segment_paths = [s["path"] for s in plan["segments"]]
             segment_durations = [s["duration"] for s in plan["segments"]]
-            logger.info(f"[confirm] 分段切分完成: cut_at={plan['cut_at']}s "
+            logger.info(f"[confirm] 分段切分完成: cuts={plan['cuts']}s "
                         f"durations={segment_durations} paths={segment_paths}")
 
         api_url = f"{base_url.rstrip('/')}/api/digital-human-minimax-h3"
         model_used = 'MiniMax H3 数字人（分段拼接）' if segment_mode else 'MiniMax H3 数字人'
+        if segment_mode:
+            # 分段对齐后各段为整数秒，实际计费时长 = 各段之和（可能比草案 ceil 预估多 1s 档位）
+            billable = sum(segment_durations)
+            video_power = draft.get("video_computing_power") or video_power
         data = {
             # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
             'text': (SEGMENTED_MOTION_PROMPT if segment_mode else motion_text),
@@ -751,7 +772,6 @@ async def confirm_digital_human(
             'user_id': str(user_id),
             'auth_token': auth_token or '',
         }
-        upload_files = list(files)
         if segment_mode:
             data['segment_durations'] = json.dumps(segment_durations)
             for idx, spath in enumerate(segment_paths, start=1):

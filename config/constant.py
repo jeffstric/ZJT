@@ -590,14 +590,15 @@ H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
 # ===== 营销数字人时长自动路由（H3 单段/分段拼接，2026-10-16 v2）=====
-# 实测依据：MiniMax H3 官方规格 4-15 秒（RunningHub webapp 默认实例 15s/720P 出片验证通过），
-# 10 秒为历史自锁限制；LTX2.3 数字人因效果问题（画面假、尾部唇动无声）自营销路由撤下。
+# 实测依据：MiniMax H3 官方规格 4-15 秒；但 RunningHub webapp 默认实例 15s/720P 处于
+# 显存边界（torch.OutOfMemoryError 在 SamplerCustomAdvanced 偶发，同参数时成功时 OOM），
+# 分段段长采用生产长期验证的稳定档 10 秒；LTX2.3 数字人因效果问题自营销路由撤下。
 # H3 数字人单段时长上限，与 unified_config DIGITAL_HUMAN_MINIMAX_H3.supported_durations 上限一致
 DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
-# 分段拼接的口播时长上限（15s×2 段）；超出拒绝并提示拆分文案
+# 分段拼接的口播时长上限；超出拒绝并提示拆分文案
 DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 30
-# 每段目标时长（整数秒，H3 duration 节点粒度）
-DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
+# 每段目标时长（整数秒，H3 duration 节点粒度）。10s 为生产稳定档（15s 有 OOM 风险）
+DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 10
 # wan2.2 参考音色模式（generate_digital_human）适用的口播时长上限（秒）：
 # 超过则引导改走两段式 H3 链路
 DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10
