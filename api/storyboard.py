@@ -4478,7 +4478,7 @@ async def generate_scene_video(
                 )
             except StoryboardCliError:
                 scene_characters_ctx = None
-        if scene_characters_ctx is not None and not kfr_skip_voice_injection:
+        if scene_characters_ctx is not None and not h3_no_dialogue_skip_voice:
             prompt = append_voice_casting_note(
                 prompt,
                 build_voice_casting_note(scene_characters_ctx.get('characters')),

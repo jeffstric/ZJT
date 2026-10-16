@@ -4311,13 +4311,13 @@
                         let deleteButtonHtml = '';
                         let storyboardButtonHtml = '';
 
-                        // 角色、场景、道具显示图片预览图标
+                        // 角色、场景、道具显示图片预览图标（无图时也保持可点：角色打开参考图片快捷弹窗）
                         if (['characters', 'locations', 'props'].includes(fileType)) {
                             // reference_image 在 json_data 对象里
                             const referenceImage = file.json_data?.reference_image || file.reference_image;
                             const hasImage = referenceImage && referenceImage.trim() !== '';
                             const iconClass = hasImage ? 'has-image' : 'no-image';
-                            const iconTitle = hasImage ? '预览图片' : '暂无参考图';
+                            const iconTitle = hasImage ? '预览图片' : '暂无参考图，点击设置';
                             imageIconHtml = `
                                 <button class="file-btn image-preview-btn ${iconClass}" data-action="preview-image" data-file-type="${escapeHtmlAttr(fileType)}" data-file-name="${escapeHtmlAttr(file.name || '')}" title="${iconTitle}">
                                     ${IMAGE_PREVIEW_ICON_SVG}
@@ -4328,17 +4328,15 @@
                                 fileItem.classList.add('image-generating');
                             }
                         }
-                        
-                        // 角色显示音色播放按钮
+
+                        // 角色显示音色播放按钮（无声时也保持可点：打开参考音频快捷弹窗设置音色）
                         if (fileType === 'characters') {
                             const defaultVoice = file.json_data?.default_voice || '';
                             const hasVoice = defaultVoice && defaultVoice.trim() !== '';
                             const voiceClass = hasVoice ? 'has-voice' : 'no-voice';
-                            const voiceTitle = hasVoice ? '播放音色' : '暂无音色';
-                            const voiceDisabled = hasVoice ? '' : 'disabled';
-                            const voiceDataAttr = hasVoice ? `data-action="play-voice" data-file-name="${escapeHtmlAttr(file.name || '')}"` : 'data-action="play-voice"';
+                            const voiceTitle = hasVoice ? '播放音色' : '暂无音色，点击设置';
                             voiceIconHtml = `
-                                <button class="file-btn voice-play-btn ${voiceClass}" ${voiceDataAttr} title="${voiceTitle}" ${voiceDisabled}>
+                                <button class="file-btn voice-play-btn ${voiceClass}" data-action="play-voice" data-file-name="${escapeHtmlAttr(file.name || '')}" title="${voiceTitle}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                                         <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
@@ -4431,9 +4429,19 @@
                             if (!btn) return;
                             var action = btn.dataset.action;
                             if (action === 'preview-image') {
-                                previewItemImage(btn.dataset.fileType, btn.dataset.fileName);
+                                // 角色无参考图时：点击打开参考图片快捷弹窗（与编辑界面同构）；有图维持预览
+                                if (btn.dataset.fileType === 'characters' && btn.classList.contains('no-image')) {
+                                    openCharacterAssetModal(btn.dataset.fileName, 'image');
+                                } else {
+                                    previewItemImage(btn.dataset.fileType, btn.dataset.fileName);
+                                }
                             } else if (action === 'play-voice') {
-                                if (!btn.disabled) playCharacterVoice(btn.dataset.fileName);
+                                // 角色无声时：点击打开参考音频快捷弹窗（与编辑界面同构）；有声维持播放
+                                if (btn.classList.contains('no-voice')) {
+                                    openCharacterAssetModal(btn.dataset.fileName, 'voice');
+                                } else {
+                                    playCharacterVoice(btn.dataset.fileName);
+                                }
                             } else if (action === 'delete') {
                                 deleteStagingFile(btn.dataset.filePath);
                             } else if (action === 'open-storyboard') {
@@ -4441,6 +4449,7 @@
                             } else if (action === 'view') {
                                 viewFile(btn.dataset.fileType, btn.dataset.fileKey);
                             } else if (action === 'edit') {
+                                editModalSectionFocus = null;
                                 editFile(btn.dataset.fileType, btn.dataset.fileKey);
                             }
                         });
@@ -4841,8 +4850,32 @@
             }
         }
 
+        // 编辑弹窗区块聚焦模式：null=完整编辑弹窗；'voice'/'image'=角色资产快捷弹窗
+        // （复用编辑弹窗，仅显示参考音频/参考图片区块，交互与编辑界面完全一致）
+        let editModalSectionFocus = null;
+
+        async function openCharacterAssetModal(fileName, section) {
+            if (!fileName) return;
+            editModalSectionFocus = (section === 'image') ? 'image' : 'voice';
+            await editFile('characters', fileName);
+        }
+
+        function applyEditModalSectionFocus() {
+            const groups = document.querySelectorAll('#character-edit-form .form-group');
+            groups.forEach(function (g) { g.style.display = ''; });
+            if (!editModalSectionFocus) return;
+            const targetId = editModalSectionFocus === 'image' ? 'char-form-group-image' : 'char-form-group-voice';
+            groups.forEach(function (g) {
+                if (g.id !== targetId) g.style.display = 'none';
+            });
+            const modalBody = document.querySelector('#edit-modal .modal-body');
+            if (modalBody) modalBody.scrollTop = 0;
+        }
+
         function showCharacterEditor(fileName, data) {
-            document.getElementById('edit-modal-title').textContent = `✏️ 编辑角色 - ${fileName}`;
+            const focusTitle = editModalSectionFocus === 'voice' ? '🎙️ 参考音频'
+                : (editModalSectionFocus === 'image' ? '🖼️ 参考图片' : '✏️ 编辑角色');
+            document.getElementById('edit-modal-title').textContent = `${focusTitle} - ${fileName}`;
             document.getElementById('character-edit-form').style.display = 'block';
             document.getElementById('char-name').value = data.name || '';
             document.getElementById('char-age').value = data.age || '';
@@ -4873,6 +4906,9 @@
                     addCharMultiImageItem(multiImageList, img.label || '服装', img.url, img.id);
                 });
             }
+
+            // 快捷弹窗模式：仅显示目标区块（参考音频/参考图片）
+            applyEditModalSectionFocus();
         }
 
         function showCharacterDefaultVoicePreview(audioUrl) {
@@ -4899,6 +4935,225 @@
         function updateVoiceDescButtonState() {
             const hasVoice = !!document.getElementById('char-default-voice').value.trim();
             document.getElementById('generate-voice-desc-btn').disabled = !hasVoice;
+        }
+
+        // ==================== 公共音色库选择（角色参考音频） ====================
+        // 与 index.html 声音页「音色合成-参考音频-从音色库选择」同源（GET /api/tts/voices），
+        // 仅保留 provider='reference_audio' 的 AI 合成预置音色，火山（豆包）音色不展示、不可选。
+        let voiceLibraryVoices = [];
+        let voiceLibraryLoaded = false;
+        let voiceLibraryLoading = false;
+        let voiceLibraryPlayingAudio = null;
+        let voiceLibraryPlayingBtn = null;
+
+        function openCharacterVoiceLibrary() {
+            document.getElementById('voice-library-modal').classList.add('show');
+            if (!voiceLibraryLoaded && !voiceLibraryLoading) {
+                loadCharacterVoiceLibrary();
+            } else {
+                renderVoiceLibraryList();
+            }
+        }
+
+        function closeCharacterVoiceLibrary() {
+            document.getElementById('voice-library-modal').classList.remove('show');
+            stopVoiceLibraryPreview();
+        }
+
+        async function loadCharacterVoiceLibrary() {
+            const listEl = document.getElementById('voice-library-list');
+            voiceLibraryLoading = true;
+            listEl.innerHTML = '';
+            const loadingTip = document.createElement('div');
+            loadingTip.className = 'voice-lib-empty';
+            loadingTip.textContent = window.t ? window.t('voice_library_loading') : '正在加载音色库...';
+            listEl.appendChild(loadingTip);
+            try {
+                const response = await fetch('/api/tts/voices?page_size=300', {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    listEl.innerHTML = '';
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || data.detail || 'load failed');
+                }
+                voiceLibraryVoices = (data.voices || []).filter(function (v) {
+                    return v && v.provider === 'reference_audio' && v.audio_url;
+                });
+                voiceLibraryVoices.sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
+                voiceLibraryLoaded = true;
+                renderVoiceLibraryList();
+            } catch (error) {
+                listEl.innerHTML = '';
+                const failTip = document.createElement('div');
+                failTip.className = 'voice-lib-empty';
+                failTip.textContent = window.t ? window.t('error_voice_library_load_failed') : '音色库加载失败';
+                listEl.appendChild(failTip);
+            } finally {
+                voiceLibraryLoading = false;
+            }
+        }
+
+        function renderVoiceLibraryList() {
+            if (!voiceLibraryLoaded) return;
+            const listEl = document.getElementById('voice-library-list');
+            stopVoiceLibraryPreview();
+            const keyword = (document.getElementById('voice-library-search').value || '').trim().toLowerCase();
+            const gender = document.getElementById('voice-library-gender').value || '';
+            const filtered = voiceLibraryVoices.filter(function (v) {
+                if (gender && (v.gender || '') !== gender) return false;
+                if (keyword) {
+                    const haystack = ((v.name || '') + ' ' + (v.style || '')).toLowerCase();
+                    if (haystack.indexOf(keyword) === -1) return false;
+                }
+                return true;
+            });
+            listEl.innerHTML = '';
+            if (!filtered.length) {
+                const empty = document.createElement('div');
+                empty.className = 'voice-lib-empty';
+                empty.textContent = window.t ? window.t('voice_library_empty') : '没有匹配的音色';
+                listEl.appendChild(empty);
+                return;
+            }
+            filtered.forEach(function (voice) {
+                listEl.appendChild(buildVoiceLibraryItem(voice));
+            });
+        }
+
+        function buildVoiceLibraryItem(voice) {
+            const t = window.t ? window.t : function (k) { return k; };
+            const item = document.createElement('div');
+            item.className = 'voice-lib-item';
+
+            const info = document.createElement('div');
+            info.className = 'voice-lib-info';
+            const title = document.createElement('div');
+            title.className = 'voice-lib-title';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'voice-lib-name';
+            nameSpan.textContent = voice.name || '';
+            title.appendChild(nameSpan);
+            if (voice.style) {
+                const styleBadge = document.createElement('span');
+                styleBadge.className = 'voice-lib-style';
+                styleBadge.textContent = voice.style;
+                title.appendChild(styleBadge);
+            }
+            info.appendChild(title);
+            if (voice.description) {
+                const desc = document.createElement('div');
+                desc.className = 'voice-lib-desc';
+                desc.textContent = voice.description;
+                desc.title = voice.description;
+                info.appendChild(desc);
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'voice-lib-actions';
+
+            const previewBtn = document.createElement('button');
+            previewBtn.type = 'button';
+            previewBtn.className = 'btn btn-secondary btn-sm';
+            previewBtn.textContent = t('voice_library_preview');
+            previewBtn.onclick = function () { toggleVoiceLibraryPreview(voice, previewBtn); };
+
+            const selectBtn = document.createElement('button');
+            selectBtn.type = 'button';
+            selectBtn.className = 'btn btn-primary btn-sm';
+            selectBtn.textContent = t('voice_library_select');
+            selectBtn.onclick = function () { selectVoiceLibraryPreset(voice, selectBtn); };
+
+            actions.appendChild(previewBtn);
+            actions.appendChild(selectBtn);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            return item;
+        }
+
+        function stopVoiceLibraryPreview() {
+            if (voiceLibraryPlayingAudio) {
+                voiceLibraryPlayingAudio.pause();
+                voiceLibraryPlayingAudio = null;
+            }
+            if (voiceLibraryPlayingBtn) {
+                voiceLibraryPlayingBtn.textContent = window.t ? window.t('voice_library_preview') : '试听';
+                voiceLibraryPlayingBtn = null;
+            }
+        }
+
+        function toggleVoiceLibraryPreview(voice, btn) {
+            const audioUrl = voice.audio_url || voice.sample_url || '';
+            if (!audioUrl) return;
+            const absUrl = /^https?:\/\//.test(audioUrl) ? audioUrl : window.location.origin + audioUrl;
+            // 再次点击正在播放的同一试听 → 停止
+            if (voiceLibraryPlayingBtn === btn && voiceLibraryPlayingAudio) {
+                stopVoiceLibraryPreview();
+                return;
+            }
+            stopVoiceLibraryPreview();
+            const audio = new Audio(absUrl);
+            voiceLibraryPlayingAudio = audio;
+            voiceLibraryPlayingBtn = btn;
+            btn.textContent = window.t ? window.t('voice_library_stop') : '停止';
+            audio.addEventListener('ended', function () {
+                if (voiceLibraryPlayingAudio === audio) stopVoiceLibraryPreview();
+            });
+            audio.play().catch(function () {
+                stopVoiceLibraryPreview();
+            });
+        }
+
+        async function selectVoiceLibraryPreset(voice, btn) {
+            const t = window.t ? window.t : function (k) { return k; };
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = t('voice_library_selecting');
+            try {
+                const response = await fetch('/api/script-writer/characters/preset-voice', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        voice_id: voice.id,
+                        world_id: parseInt(WORLD_ID)
+                    })
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || 'select failed');
+                }
+                // 与「上传音频」同一入口契约：回填 readonly 输入框 + 刷新预览，由用户点「保存」落库
+                document.getElementById('char-default-voice').value = data.url;
+                showCharacterDefaultVoicePreview(data.url);
+                // 音色描述自动填入（后端按预置音色 style/gender 确定性推导，无需 LLM 识别）；
+                // 选中的音频即声音事实，指纹随之刷新，用户仍可手动修改
+                if (data.voice_desc) {
+                    document.getElementById('char-voice-desc').value = data.voice_desc;
+                }
+                updateVoiceDescButtonState();
+                closeCharacterVoiceLibrary();
+                showSuccess(t('success_preset_voice_applied'));
+            } catch (error) {
+                const prefix = t('error_voice_library_apply_failed');
+                showError(error && error.message ? prefix + ': ' + error.message : prefix);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         }
 
         // 按角色人设自动生成声学音色描述（character.voice_desc）。
@@ -5239,6 +5494,7 @@
         function closeEditModal() {
             document.getElementById('edit-modal').classList.remove('show');
             currentEditFile = { fileType: '', fileName: '' };
+            editModalSectionFocus = null;
         }
 
         // 多图预览全局状态
