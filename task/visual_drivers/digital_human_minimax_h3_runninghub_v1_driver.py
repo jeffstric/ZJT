@@ -33,8 +33,8 @@ SUPPORTED_MAX_EDGES = {720, 1280, 1920}
 DEFAULT_MAX_EDGE = 1280
 DEFAULT_DURATION = 10
 DEFAULT_START_SECOND = 0
-# 官方规格 4-15s（2026-10-16 实测 RunningHub webapp 默认实例 15s/720P 出片通过）
-SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+# 10s 为生产稳定档；11-15s 在 webapp 默认实例显存边界上随机 OOM，不放开
+SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10}
 
 # 分段编排（extra_config.dh_segments 存在时走 sync_mode 全流水线：
 # 逐段生成→下载→ffmpeg 拼接→本地落盘，见 docs/marketing_agent_digital_human_duration_routing_plan.md）

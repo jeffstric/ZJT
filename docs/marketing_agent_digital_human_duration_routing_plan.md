@@ -227,3 +227,13 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 应用户要求减少切割次数，段长恢复 15s（`DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS=15`）；同时实测确认 15s 段在 webapp 默认实例显存边界上**随机 OOM**（project 324/326 首选段连续失败，322/323 同参数成功）。落地**自动降档**：driver 流水线改为 `_run_segment_pipeline`（失败抛 `_SegmentedPipelineError`），任一段最终失败且段长 >10s 时，**用完整音频按 10s 稳定档自动重切重跑一次**（project 326 实测：15s 段 OOM → 自动降档 3×10s → 成片 28.25s 落库正常）。
 
 切片能力迁移至 `utils/audio_segment_util.py`（tts_tools 与 driver 共用，task 层不反向依赖 script_writer_core）；静音检测增强（-32dB/0.18s 捕捉标点停顿），切点优先句间静音、窗口放宽 ±3.5s 并有放宽兜底——避免词中硬切（如"高|效"）。
+
+### 附录 C.3 定稿：全部回退 10s 稳定档（2026-10-16 晚）
+
+15s 段 OOM 再现于 project 329（首选段 torch.OutOfMemoryError，RunningHub outputs failedReason 实锤），且用户给出 webapp 底层工作流 JSON **实锤帧对齐公式**（节点 131）：`帧数 = max(5, round(秒×24)) + (5 - max(5, round(秒×24)) % 17) % 17`，即输出帧数 ≡5 (mod 17)——15s→362 帧、10s→243 帧，与 11 条实测样本完全吻合，输出时长确定性问题排除。**用户拍板：不赌运气，全部回 10s 稳定档**——
+
+- 路由：≤10s H3 单段；10-30s 分段拼接（每段 10s，30s=3×10s）；>30s 拒绝。11-15s 不做单段（OOM 风险），并入分段。
+- **撤回 11-15s 算力外推档**（50988e89）：`MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER` 删除，数字人实现方回 `MINIMAX_H3_720P_COMPUTING_POWER`（4-10）；supported_durations 回 4-10；driver SUPPORTED_DURATIONS 回 4-10。
+- driver 内置的"段长>10s 失败自动降档 10s"逻辑保留（当前不触发，为段长将来上调预留）。
+- **切点窗口约束修复**（词中硬切"高|效"的根因之一）：切点窗口下限补 `total - max_seg×remaining`，保证任意切点下所有段 ≤ 段长上限——此前末段切片 10.966s 超过 duration=10，被 webapp 内部 AudioCrop（end=start+duration，工作流节点 224）裁掉尾部 0.97s 语音，即"片尾突然上升、听不清"的截断残句。修正后验证（28.5s 音频）：cuts=[9.854, 19.854]，三段 9.85/10.0/8.65s 全部 ≤ duration。
+- 测试 27 项 + agents 138 项回归通过。

@@ -589,18 +589,18 @@ H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
-# ===== 营销数字人时长自动路由（H3 单段/分段拼接，2026-10-16 v2）=====
-# 实测依据：MiniMax H3 官方规格 4-15 秒；但 RunningHub webapp 默认实例 15s/720P 处于
-# 显存边界（torch.OutOfMemoryError 在 SamplerCustomAdvanced 偶发，同参数时成功时 OOM），
-# 分段段长采用生产长期验证的稳定档 10 秒；LTX2.3 数字人因效果问题自营销路由撤下。
-# H3 数字人单段时长上限，与 unified_config DIGITAL_HUMAN_MINIMAX_H3.supported_durations 上限一致
-DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
+# ===== 营销数字人时长自动路由（H3 单段/分段拼接，2026-10-16 v3）=====
+# 实测依据：H3 webapp 默认实例上 15s/720P 处于显存边界（torch.OutOfMemoryError
+# 随机出现：322/323 同参数成功、324/326/329 首选段失败，见 RunningHub outputs
+# failedReason），10s 档长期生产稳定。营销路由与档位全部回到 10s 上限：
+# ≤10s H3 单段；10-30s 分段拼接（每段 10s，如 30s=3×10s）；>30s 拒绝提示拆分。
+# LTX2.3 数字人因效果问题自营销路由撤下。
+DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 10
 # 分段拼接的口播时长上限；超出拒绝并提示拆分文案
 DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 30
-# 每段目标时长（整数秒，H3 duration 节点粒度）。默认 15s（官方上限，切割次数最少）；
-# 该档位在 webapp 默认实例上有显存边界（偶发 torch.OutOfMemoryError），
-# driver 段生成最终失败时会自动降档按 10s 稳定档重切重跑（见 H3 分段 driver）
-DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
+# 每段目标时长（整数秒，H3 duration 节点粒度）。10s 为生产稳定档
+# （15s 段在默认实例显存边界上随机 OOM，driver 内置降档逻辑保留作兜底）
+DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 10
 # wan2.2 参考音色模式（generate_digital_human）适用的口播时长上限（秒）：
 # 超过则引导改走两段式 H3 链路
 DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10
