@@ -186,3 +186,15 @@ duration: int = Form(None, description="Billable duration in seconds (audio-driv
 | prepare 真实跑（35s 音频） | ✅ 拒绝并提示拆分文案 |
 
 **运维注意**：本地环境提交走的是 enterprise **RunningHub 密钥池**（`runninghub.key.1.api_key`，label=用户钱包），池内 key 优先于全局 `runninghub.api_key`——更换 key 时两处都要更新（自测时已把池槽位 1 与全局 key 均更新为用户提供的新 key，并清零该槽位 fail_count）。`get_computing_power(duration=...)` 计费通道已打通，数据库 `implementation_power` 暂无 LTX2.3 数字人按时长档位，当前兜底 6 算力，可在管理后台按档位补配。
+
+## 附录 B：浏览器 UI 端到端实测（2026-10-16）
+
+通过 `marketing_agent.html` 对话完整走通长口播链路：
+
+1. 用户在 UI 发长文案（~120 字）→ PM 委托 digital-human-creator；角色图经 Seedream 文生图（project 318）提供。
+2. 火山 TTS 未配置时专家提供降级选项，选 RunningHub 生成驱动音频成功。
+3. **音频实测 31.5s → prepare 按 >30s 上限拒绝**，专家如实转达并给出拆分方案（上限保护生效）。
+4. 接受拆分后第一段（实测 21s）草案显示「模型：LTX2.3（按时长自动路由）」，确认提交 → `ai_tools` type=32、duration=21，RunningHub 受理（taskId 2110913936210751490）。
+5. **成片验证**：`/upload/cache/2026-10-16/319_*.mp4`，ffprobe 实测 24.04s、960×1280、h264+aac（带音轨）；前端自动轮询并展示视频卡片（0:24）。
+
+**实测发现并修复的 bug**：`confirm_digital_human` 此前把图片/音频字节硬编码为 `.png`/`.mp3` 上传，角色图为 jpeg（Seedream 产物）时被 `/api/digital-human-v2` 落盘侧的扩展名+魔数一致性校验（`utils/media_upload.py`）拒绝。已修复为按字节魔数嗅探真实格式（`_detect_image_upload_meta` / `_detect_audio_upload_meta`，支持 png/jpg/webp/gif 与 mp3/wav/ogg/m4a）。该 bug 同样影响 H3 链路的非 png 角色图。

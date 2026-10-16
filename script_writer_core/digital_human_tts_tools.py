@@ -484,6 +484,36 @@ async def prepare_digital_human_draft(
         return {'success': False, 'error': f'准备数字人草案异常: {str(e)}'}
 
 
+def _detect_image_upload_meta(data: bytes) -> tuple:
+    """按字节魔数识别图片格式，返回 (filename, content_type)。
+
+    confirm 转传端点会做扩展名+魔数一致性校验（utils/media_upload.py），
+    硬编码 .png 会在角色图为 jpeg/webp 时被拒，必须按真实字节声明。
+    """
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return "digital_human_image.png", "image/png"
+    if data[:3] == b'\xff\xd8\xff':
+        return "digital_human_image.jpg", "image/jpeg"
+    if data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+        return "digital_human_image.webp", "image/webp"
+    if data[:4] in (b'GIF8',):
+        return "digital_human_image.gif", "image/gif"
+    return "digital_human_image.jpg", "image/jpeg"
+
+
+def _detect_audio_upload_meta(data: bytes) -> tuple:
+    """按字节魔数识别音频格式，返回 (filename, content_type)。"""
+    if data[:4] == b'RIFF' and data[8:12] == b'WAVE':
+        return "digital_human_audio.wav", "audio/wav"
+    if data[:4] == b'OggS':
+        return "digital_human_audio.ogg", "audio/ogg"
+    if data[:4] == b'ID3' or (len(data) > 2 and data[0] == 0xFF and (data[1] & 0xE0) == 0xE0):
+        return "digital_human_audio.mp3", "audio/mpeg"
+    if data[4:8] == b'ftyp':
+        return "digital_human_audio.m4a", "audio/mp4"
+    return "digital_human_audio.mp3", "audio/mpeg"
+
+
 async def confirm_digital_human(
     user_id: str,
     world_id: str,
@@ -551,11 +581,11 @@ async def confirm_digital_human(
             logger.error(f"数字人素材获取失败: {e}")
             return {'success': False, 'error': f'数字人素材获取失败: {str(e)}'}
 
-        image_name = "digital_human_image.png"
-        audio_name = "digital_human_audio.mp3"
+        image_name, image_content_type = _detect_image_upload_meta(image_bytes)
+        audio_name, audio_content_type = _detect_audio_upload_meta(audio_bytes)
         files = {
-            'image': (image_name, image_bytes, 'image/png'),
-            'audio': (audio_name, audio_bytes, 'audio/mpeg'),
+            'image': (image_name, image_bytes, image_content_type),
+            'audio': (audio_name, audio_bytes, audio_content_type),
         }
 
         # 按草案路由分派端点；存量草案（无 model_task_type）缺省 H3，行为与升级前一致
