@@ -6253,11 +6253,15 @@ async def apply_character_preset_voice(
 
         logger.info(f'角色参考音频选用公共音色库预置: voice_id={voice.id} name={voice.name} -> {url}')
 
+        # 指纹优先级：音色自己的 voice_desc（音频理解模型实听样本生成，能区分
+        # 同分类下的不同听感）> style 模板表兜底（新音色尚未回填时）
+        voice_desc = str(getattr(voice, 'voice_desc', '') or '').strip() or _build_preset_voice_desc(voice)
+
         return JSONResponse({
             'success': True,
             'url': url,
             'voice_name': voice.name,
-            'voice_desc': _build_preset_voice_desc(voice)
+            'voice_desc': voice_desc
         })
 
     except Exception as e:
