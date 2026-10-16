@@ -681,7 +681,7 @@
   "model_chart_mode_count": "Count",
   "model_chart_mode_both": "Mixed",
   "model_chart_dependency_missing": "Chart dependency failed to load, please refresh and try again",
-  "daily_power_title": "Daily Statistics",
+  "daily_power_title": "Daily User Statistics",
   "daily_power_total": "Total Power Consumed",
   "daily_power_users": "Consuming Users",
   "daily_power_avg_per_day": "Avg Daily Consumption",

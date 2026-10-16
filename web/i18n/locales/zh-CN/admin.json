@@ -681,7 +681,7 @@
   "model_chart_mode_count": "数量",
   "model_chart_mode_both": "混合",
   "model_chart_dependency_missing": "图表依赖加载失败，请刷新页面重试",
-  "daily_power_title": "每日统计",
+  "daily_power_title": "用户每日统计",
   "daily_power_total": "总消耗算力",
   "daily_power_users": "消耗用户数",
   "daily_power_avg_per_day": "日均消耗",

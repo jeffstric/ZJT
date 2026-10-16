@@ -1465,6 +1465,9 @@ const AdminApp = {
                     // 默认加载模型成功率分析
                     this.loadModelAnalysis();
 
+                    // 默认加载每日统计（各用户每日算力消耗）
+                    this.loadDailyPowerStats();
+
                     // 首页队列积压看板（15s 轮询，切走页面后停止）
                     this.loadQueueBacklog(false);
                     this.startQueueBacklogPoll();
