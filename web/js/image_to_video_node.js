@@ -1281,6 +1281,11 @@
               submitPrompt = appendVoiceReferencePrompt(submitPrompt, voiceRefs.promptNote);
               notifyVoiceReferences(voiceRefs.voiceUrls.length);
             }
+            // H3 系列：追加角色音色指纹（voice_desc）——须在 voiceCharacters 作用域内；
+            // 首帧模式无角色连线数据，暂不覆盖
+            if(typeof appendVoiceCastingIfH3 === 'function'){
+              submitPrompt = appendVoiceCastingIfH3(videoModel, submitPrompt, voiceCharacters);
+            }
           }
 
           // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖。

@@ -21,6 +21,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
+    strip_leading_json_object,
     parse_storyboard_dialogue_model,
     resolve_h3_prompt_variant,
     validate_h3_optimized_prompt,
@@ -190,6 +191,69 @@ def test_user_message_no_dialogue_note_for_timbre_only_prompt():
     assert "不得出现 <d> 标签" in message
     # 反幻觉提示位于指令区，原文仍完整附在消息末尾
     assert message.rstrip().endswith("角色说话时请保持相同音色。")
+
+
+def test_user_message_adds_voice_casting_instruction_with_fingerprint():
+    """原文携带「角色音色说明」（voice_desc 声学指纹）时追加配音规格指令"""
+    original = (
+        "赵志高瞪着李保国说：“你看看你扫得什么地！”\n\n"
+        "角色音色说明：赵志高的音色特征：45岁左右的男性，声音低沉沙哑，音量洪亮，语速缓慢。"
+    )
+    for variant in (
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    ):
+        message = build_h3_optimize_user_message(
+            original, variant, 5, template="GUIDE",
+            keyframe_slots=None, ref_counts={"images": 2, "videos": 0, "audios": 0},
+        )
+        assert "角色配音规格" in message, variant
+        assert "禁止增删或改写" in message, variant
+        assert "不要抄进最终提示词" in message, variant
+        # 原文（含指纹说明块）完整附在消息末尾
+        assert message.rstrip().endswith("语速缓慢。")
+
+
+def test_user_message_skips_voice_casting_instruction_without_fingerprint():
+    """原文没有指纹说明块时不追加配音指令（旧任务/非 H3 注入链路零变化）"""
+    message = build_h3_optimize_user_message(
+        "女主说：“原来是这样！”",
+        H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "角色配音规格" not in message
+
+
+def test_h3_templates_carry_voice_casting_rules():
+    """三个模板都有 Voice casting 段：指纹特征转写进说话句、说明块不抄进结果"""
+    for variant in (
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    ):
+        guide = load_h3_prompt_template(variant)
+        assert "Voice casting" in guide, variant
+        assert "never drop, soften, or invent traits" in guide, variant
+        assert "casting input only" in guide, variant
+
+
+def test_strip_leading_json_object_variants():
+    """非 KFRef 变体的防御剥离：模型偶发自发的判断性 JSON 前缀被剥掉，其余原样"""
+    # 首行 JSON 对象被剥，正文保留
+    assert strip_leading_json_object('{"has_dialogue": false}\n六段正文') == '六段正文'
+    # 无 JSON 前缀原样
+    assert strip_leading_json_object('六段正文') == '六段正文'
+    # 首行非法 JSON（非闭合）原样保留
+    assert strip_leading_json_object('{abc\n正文') == '{abc\n正文'
+    # 首行 JSON 数组（非对象）原样保留
+    assert strip_leading_json_object('[1, 2]\n正文') == '[1, 2]\n正文'
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
 
 
 def test_fidelity_note_language_tag_japanese_and_korean():

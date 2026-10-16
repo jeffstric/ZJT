@@ -1605,6 +1605,7 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
                          appearance: str = None, personality: str = None, behavior: str = None,
                          other_info: str = None, reference_image: str = None, default_voice: str = None,
+                         voice_desc: str = None,
                          _temp_filename: str = None, language: str = "zh-CN",
                          _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
@@ -1682,6 +1683,8 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
             character_data['reference_image'] = reference_image
         if default_voice is not None:
             character_data['default_voice'] = default_voice
+        if voice_desc is not None:
+            character_data['voice_desc'] = voice_desc
 
         # 添加额外字段
         for key, value in additional_fields.items():

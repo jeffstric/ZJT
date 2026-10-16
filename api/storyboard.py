@@ -83,7 +83,9 @@ from model.video_voice_replace import VideoVoiceReplaceJobModel
 from services.voice_replace.enqueue import enqueue_scene_job
 from services.storyboard_reference_prompt_service import (
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
+    build_voice_casting_note,
     collect_character_voice_references,
     extract_speaking_character_ids,
 )
@@ -4460,6 +4462,27 @@ async def generate_scene_video(
         if voice_items:
             audio_path = ','.join([item['url'] for item in voice_items])
             prompt = append_voice_reference_note(prompt, voice_items)
+
+    # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
+    # （character.voice_desc）：H3 的参考音频只是弱微调，音色一致性主要靠文字指纹
+    # 由提示词优化渲染成说话角色的声音描述（见 docs/storyboard/storyboard_reference_to_video.md）。
+    # 纯文本注入不占音频槽，仅 H3 任务生效，其他模型零变化。首帧链路
+    # （first_last_frame 模式）不加载 scene_characters_ctx，为指纹按需补加载一次。
+    # KFRef 无对白镜头与音色注入同口径跳过：音色说明会诱导模型给无对白镜头配音。
+    from task.pipeline_processor import PipelineProcessor
+    if PipelineProcessor.needs_h3_atomic_param_prepare(task_type):
+        if scene_characters_ctx is None:
+            try:
+                scene_characters_ctx = await asyncio.to_thread(
+                    cli.scene_context, scene_id, user_id
+                )
+            except StoryboardCliError:
+                scene_characters_ctx = None
+        if scene_characters_ctx is not None and not h3_no_dialogue_skip_voice:
+            prompt = append_voice_casting_note(
+                prompt,
+                build_voice_casting_note(scene_characters_ctx.get('characters')),
+            )
 
     duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
     video_duration = _resolve_storyboard_video_duration_seconds(

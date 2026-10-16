@@ -214,6 +214,12 @@ MAX_VOICE_REFERENCE_AUDIOS = 2
 # KFRef 优化步骤携带的「分镜画面构成」原料（生成分镜图所用提示词）截断上限：
 # 说话人绑定句的外观/站位信息主要在前段，超长截断以控制优化调用 token 预算。
 H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS = 600
+# 注入提示词的「角色音色说明」（voice_desc 声学指纹，仅 MiniMax H3）总长截断上限：
+# 指纹每条约几十至一二百字，超过上限说明数据异常，截断以保住靠前角色。
+H3_VOICE_CASTING_NOTE_MAX_CHARS = 1200
+# 「角色音色说明」块标记：注入侧（storyboard_reference_prompt_service）拼前缀，
+# 优化侧（h3_prompt_optimize_util）按它检测原文携带指纹并追加渲染指令。
+H3_VOICE_CASTING_NOTE_MARKER = "角色音色说明："
 
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，

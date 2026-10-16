@@ -90,6 +90,19 @@
 
 MiniMax H3 的提示词优化 pipeline（ref2va）改写时会统计 `ai_tool.audio_path` 参考音频数量并写为 `<audio_N>` 引用，注入的音色自然进入最终提示词。注入为提交期行为，不产生节点持久化状态，工作流重载复原不受影响。
 
+## 角色音色指纹（voice_desc，仅 MiniMax H3）
+
+> 背景：2026-10-14 消融实验（同 seed 删性别提示词即失效）证明 H3 的参考音频只是弱微调——音色的宏观属性（性别/年龄感）由提示词文字决定，音频只在文字划定的范围内微调。音色一致性因此改由**文字指纹**承担，参考音频降级为可选增强。
+
+- **字段**：`character.voice_desc`（varchar(1000)，迁移 `no_150_20261014_character_voice_desc`）——角色声学音色指纹，**只写恒定的声学基色**（性别年龄段/音高/质感/音量/语速，30~60 字）。严禁写入：体型外貌与肢体动作（"微胖""叉腰挺肚"）、录音质感（TTS 专用要素）、按对象/情境切换的说话方式（"对下属嗓门拔高、对领导谄媚"）、口头禅台词——这些交给每场戏的剧本与提示词现场决定；写进指纹会导致提示词冗长、注意力分散、跨镜头音色漂移
+- **生成**：与参考音频同源但**双字段解耦**。LLM 音色分析（`task/audio_task.py` `analyze_character_voice`）一次产出两份：`voice_description`（60~100 字 TTS 丰富版，含录音质感收尾，给 VoxCPM2 声音设计模型）与 `voice_desc`（30~60 字纯声学指纹，给 H3 注入）。① script_writer「生成参考音频」响应回填 `voice_desc`；② 角色编辑页「音色描述」字段的「自动生成」按钮（有参考音频才可点击，接口 `POST /script-writer/characters/reference-audio` 旁的 `/script-writer/characters/voice-desc`）；③ 用户可手动改，手改后不重新生成音频就不会被覆盖。两条红线贯穿两个字段：音色与外观一致、情绪克制
+- **情境语气分层**：指纹（基色，恒定）与情境语气（每场戏变化）是两层——"对下属拔高嗓门、对领导压低谄媚"这类按对象/情绪的说话方式，由提示词优化 LLM 拿着完整剧本在写台词句时现场判断叠加（如 `says in a deep hoarse voice, obsequious and fawning`），不进指纹。指纹若带情境变化，每场戏描述都变，音色一致性即漂移
+- **注入**（仅 H3 系列，`PipelineDriverFactory.is_h3_prompt_optimize_type` 门控）：提示词尾部追加「角色音色说明：XX的音色特征：…；…。描述这些角色说话的声音时必须遵循对应音色特征。」（`build_voice_casting_note`/`append_voice_casting_note`，幂等，`H3_VOICE_CASTING_NOTE_MAX_CHARS` 截断）。KFRef 无对白镜头与音频注入同口径跳过（音色说明会诱导模型给无对白镜头配音）。seedance 等其他模型零变化（它们的音频参考走 TTS 克隆，工作正常）
+- **渲染**：三个 H3 优化模板（I2VA/FL2VA base、Ref2VA、KFRef）都有 Voice casting 段：有台词角色的说话句必须融入其指纹特征的英文转写（全部声学特征语义保留、禁止增删改写——文本恒定是跨镜头音色一致性的根基），不说话的角色忽略其指纹；说明块本身不抄进最终提示词。原文带指纹块时优化指令再追加一条条件指令强化遵守
+- **与参考音频的关系**：并存不互斥。指纹是主保证；`default_voice` 音频照常上传（LoadAudio 槽）当盆地内微调——两者同源（指纹由生成音频时的同一分析产出），不会冲突。H3 参考音频每条 2–15s 的官方约束暂未实施裁剪（两个 H3 驱动有 TODO 注释：音频参考本身弱，裁剪也未必有效）
+- **链路覆盖**：分镜直连（`api/storyboard.py`）+ 批量补视频（`storyboard_agent_cli_service`）+ video_workflow 画布（`voice_reference.js` 的 `appendVoiceCastingIfH3`，生视频节点/分镜组/分镜帧生成器三个提交点，仅 H3 门控不限 multi_reference）均已注入；画布角色编辑弹窗带「音色描述」字段与「自动生成」按钮（`/api/characters/update` 支持 voice_desc，保存后 node.data 全量替换）；画布首尾帧分支无角色数据暂不覆盖（后续增强）；存量角色无指纹自然降级（注入为空跳过），点「自动生成」即可补
+- **一致性边界**：指纹是"描述性声音"而非克隆——同角色跨镜头一致靠文本逐字恒定；不能复刻某个特定真人的音色（那是 TTS/克隆的领域）
+
 ## 回退
 
 - 单镜全能参考且一张图都没有 → `text_to_video`，使用文生视频槽模型
@@ -97,8 +110,11 @@ MiniMax H3 的提示词优化 pipeline（ref2va）改写时会统计 `ai_tool.au
 
 ## 相关文件
 
-- `services/storyboard_agent_cli_service.py` — 收集、图例、批量规划、CLI `generate_video`（音色注入）
-- `api/storyboard.py` — 直连 generate-video、智能体上下文（音色注入）
+- `services/storyboard_agent_cli_service.py` — 收集、图例、批量规划、CLI `generate_video`（音色注入 + 指纹注入）
+- `api/storyboard.py` — 直连 generate-video、智能体上下文（音色注入 + 指纹注入）
 - `web/js/voice_reference.js` — 画布三类节点共用的角色音色注入工具（能力位门控）
+- `web/js/script_writer.js` / `web/script_writer.html` — 角色编辑页音色描述字段与「自动生成」按钮
+- `task/audio_task.py` — `analyze_character_voice`（音色指纹生成，与 TTS 风格提示词同源）
+- `api/script_writer.py` — `POST /script-writer/characters/voice-desc`（指纹生成接口）
 - `web/js/storyboard/events.js` / `auto_missing_videos_state.js` / `render.js`
 - `web/js/storyboard/state.js` — `getAvailableVideoImageModes`（模式下拉可选项并集）、`getSelectedVideoModel`（参考模式固定解析参考视频槽）
