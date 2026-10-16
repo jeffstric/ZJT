@@ -3168,7 +3168,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
         implementation=DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
         computing_power=0,
-        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        # 官方规格 4-15s；>15s 由营销链路分段拼接（见 digital_human_tts_tools）
+        supported_durations=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         default_duration=10,
         sort_order=42,
     ),

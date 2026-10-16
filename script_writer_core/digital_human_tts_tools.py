@@ -1,10 +1,13 @@
 """
-营销数字人口播工具：TTS 选音色 + 音频合成 + MiniMax H3 数字人提交
+营销数字人口播工具：TTS 选音色 + 音频合成 + MiniMax H3 数字人提交（单段/分段拼接）
 
 两段式（确认制）：
 - prepare_digital_human_draft：确定音色（VL 看图/指定/默认）→ 火山 TTS 合成
   驱动音频（扣 TTS 字符算力）→ 产出草案（draft_id），不提交视频
-- confirm_digital_human：draft_id → 提交 MiniMax H3（扣视频时长算力）
+- confirm_digital_human：draft_id → 按口播时长路由提交（扣视频时长算力）：
+  ≤15s 走 H3 单段；15-30s 走 H3 分段拼接（每段 15s，段间用角色图统一首帧+
+  固定镜头提示词，后端 driver 编排拼接）；>30s 拒绝并提示拆分文案。
+  LTX2.3 数字人因效果问题自 2026-10-16 起不再参与营销路由。
 
 草案存内存（TTL 30 分钟），会话内确认后即消费；服务重启失效可重新准备。
 SOP 场景判定规则见 agents/skills/marketing-pm/sops/sop-digital-human.md。
@@ -13,10 +16,12 @@ import asyncio
 import json
 import math
 import os
+import re
+import subprocess
 import threading
 import time
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -24,7 +29,8 @@ from config.config_util import get_config
 from config.constant import IMAGE_DESCRIBE_PREFERRED_MODEL, IMAGE_DESCRIBE_PREFERRED_VENDOR
 from config.constant import (
     DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
-    DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS,
+    DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS,
+    DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
     TaskTypeId,
     TaskTypeRegistry,
@@ -42,9 +48,12 @@ import logging
 
 logger = logging.getLogger(logger_name)
 
-# H3 视频时长档位（秒）与默认音色
-H3_ALLOWED_DURATIONS = tuple(range(4, 11))
+# H3 视频时长档位（秒）与默认音色。官方规格 4-15s（2026-10-16 实测放开）
+H3_ALLOWED_DURATIONS = tuple(range(4, 16))
 DEFAULT_VOICE_TYPE = "zh_female_vv_uranus_bigtts"  # Vivi 2.0
+
+# 分段模式每段统一动作提示词：固定镜头/固定景别，保证段间构图一致（拼接点不跳景别）
+SEGMENTED_MOTION_PROMPT = "角色面向镜头说话，固定镜头，景别保持一致，不推近不拉远。"
 
 # 草案内存存储：{draft_id: {"draft": {...}, "expires_at": ts}}
 _DRAFT_STORE: Dict[str, Dict[str, Any]] = {}
@@ -87,34 +96,117 @@ def consume_draft(draft_id: str) -> Optional[Dict[str, Any]]:
 
 
 def clamp_h3_duration(seconds: float) -> int:
-    """TTS 时长吸附到 H3 档位 4–10 秒（向上取整）"""
+    """TTS 时长吸附到 H3 档位 4–15 秒（向上取整）"""
     if seconds <= 0:
         return 4
-    return max(4, min(10, int(math.ceil(seconds))))
+    return max(4, min(15, int(math.ceil(seconds))))
 
 
 def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
-    """按口播时长路由数字人模型（营销链路，>10s 自动走 LTX2.3）。
+    """按口播时长路由数字人生成方式（营销链路，2026-10-16 v2：H3 单段/分段拼接）。
 
-    - ≤10s → MiniMax H3（35），时长吸附 4-10 档位；
-    - 10-30s → LTX2.3（32），时长=音频时长（向上取整，计费用）；
-    - >30s → 返回 None（超出 LTX2.3 建议上限），调用方须拒绝并提示拆分文案。
+    - ≤15s → MiniMax H3（35）单段，时长吸附 4-15 档位；
+    - 15-30s → H3 分段拼接（segment_mode=True，每段 15s，driver 侧编排拼接）；
+    - >30s → 返回 None（超出分段上限），调用方须拒绝并提示拆分文案。
 
-    返回 dict 含 model_task_type / routing_reason / billable_duration。
+    LTX2.3 数字人因效果问题（画面失真、尾部唇动无声）不再参与营销路由。
+    返回 dict 含 model_task_type / routing_reason / billable_duration / segment_mode。
     """
     if est_seconds <= DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS:
         return {
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-            "routing_reason": "duration_lte_10s_h3",
+            "routing_reason": "duration_lte_15s_h3_single",
             "billable_duration": clamp_h3_duration(est_seconds),
+            "segment_mode": False,
         }
-    if est_seconds <= DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS:
+    if est_seconds <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS:
         return {
-            "model_task_type": TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE,
-            "routing_reason": "duration_gt_10s_ltx2_3",
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+            "routing_reason": "duration_gt_15s_h3_segmented",
             "billable_duration": max(1, int(math.ceil(est_seconds))),
+            "segment_mode": True,
         }
     return None
+
+
+def _get_ffmpeg_bin() -> str:
+    """定位 ffmpeg 可执行文件（与 utils/audio_duration_util 同源约定）。"""
+    import sys
+    from utils.project_path import get_project_root
+    bundled = os.path.join(get_project_root(), 'bin', 'ffmpeg',
+                           'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')
+    if os.path.isfile(bundled):
+        return bundled
+    return 'ffmpeg'
+
+
+def _detect_silence_midpoints(audio_path: str) -> List[float]:
+    """用 ffmpeg silencedetect 返回静音区间中点列表（秒）。"""
+    try:
+        r = subprocess.run(
+            [_get_ffmpeg_bin(), '-hide_banner', '-i', audio_path,
+             '-af', 'silencedetect=noise=-35dB:d=0.25', '-f', 'null', '-'],
+            capture_output=True, text=True, timeout=60)
+        starts = [float(m) for m in re.findall(r'silence_start:\s*([\d.]+)', r.stderr)]
+        ends = [float(m) for m in re.findall(r'silence_end:\s*([\d.]+)', r.stderr)]
+        return [(s + e) / 2 for s, e in zip(starts, ends)]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"silencedetect 失败，退化为硬切: {e}")
+        return []
+
+
+def split_audio_into_segments(audio_path: str, total_seconds: float,
+                              out_dir: str) -> Dict[str, Any]:
+    """把驱动音频切成 ≤15s 的段并各自对齐到整数秒，返回分段计划。
+
+    切点优先取 [total-15, 15] 区间内最接近 15s 的静音中点（句子边界），
+    无静音点时硬切；每段 ffmpeg 截断/apad 对齐到整数秒（H3 duration 节点为整数）。
+
+    Returns:
+        {"segments": [{"path": wav, "duration": int}], "cut_at": float, "total": float}
+    """
+    max_seg = DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS
+    lower = max(4.0, total_seconds - max_seg)
+    upper = min(float(max_seg), total_seconds - 4.0)
+    candidates = [m for m in _detect_silence_midpoints(audio_path) if lower <= m <= upper]
+    if candidates:
+        cut = min(candidates, key=lambda m: abs(m - max_seg))
+    else:
+        cut = min(upper, max_seg)
+        logger.info(f"音频 {total_seconds:.2f}s 在区间 [{lower:.2f},{upper:.2f}] 无静音点，硬切于 {cut:.2f}s")
+
+    os.makedirs(out_dir, exist_ok=True)
+    seg_specs = [(0.0, cut), (cut, total_seconds)]
+    segments = []
+    ffmpeg = _get_ffmpeg_bin()
+    for idx, (start, end) in enumerate(seg_specs, start=1):
+        seg_len = end - start
+        seg_dur = max(4, min(max_seg, int(math.ceil(seg_len))))
+        raw = os.path.join(out_dir, f'seg_{idx}_raw.wav')
+        final = os.path.join(out_dir, f'seg_{idx}.wav')
+        if start > 0:
+            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-ss', f'{start:.3f}',
+                            '-i', audio_path, '-ar', '44100', '-ac', '2', raw],
+                           check=True, capture_output=True, timeout=120)
+        else:
+            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', audio_path,
+                            '-t', f'{end:.3f}', '-ar', '44100', '-ac', '2', raw],
+                           check=True, capture_output=True, timeout=120)
+        if seg_len < seg_dur:
+            # 不足整数秒：尾部补静音（无声收尾人物静止，自然）
+            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
+                            '-af', f'apad=whole_dur={seg_dur}', final],
+                           check=True, capture_output=True, timeout=120)
+        else:
+            # 超出整数秒：在句间静音内截断
+            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
+                            '-t', str(seg_dur), '-c', 'copy', final],
+                           check=True, capture_output=True, timeout=120)
+        if os.path.isfile(raw):
+            os.remove(raw)
+        segments.append({"path": final, "duration": seg_dur})
+        logger.info(f"[分段] seg_{idx}: {seg_len:.2f}s -> duration={seg_dur}s, file={final}")
+    return {"segments": segments, "cut_at": round(cut, 3), "total": round(total_seconds, 3)}
 
 
 def _load_voice_candidates(language: str = "zh", provider: str = "volcengine") -> list:
@@ -243,9 +335,9 @@ async def _pick_voice_by_image(
             "1. 判断图片中人物的性别（male=男性 / female=女性 / child=儿童）；\n"
             "2. 只在【与该性别一致的候选音色】中，挑选与人物年龄段、气质、场景感最匹配的一个——"
             "严禁挑选与人物性别不一致的音色（男性人物禁止选女声音色，反之亦然）；\n"
-            "3. 为该人物撰写数字人视频的动作提示词：描述人物如何说话（情绪/表情）"
-            "与镜头方式（如固定镜头/缓慢推近），参考格式："
-            "'角色面向镜头深情的说话，固定镜头。'，30 字以内，不要出现具体台词。\n"
+            "3. 为该人物撰写数字人视频的动作提示词：只描述人物如何说话（情绪/表情），"
+            "镜头必须写死为固定机位——不推近、不拉远、不切换景别（拼接分段时保证构图一致），"
+            "参考格式：'角色面向镜头深情的说话，固定镜头。'，30 字以内，不要出现具体台词。\n"
             '只输出 JSON：{"detected_gender": "<male|female|child>", '
             '"voice_id": <候选中的数字>, "reason": "<20字内理由>", '
             '"motion_prompt": "<动作提示词>"}'
@@ -413,8 +505,8 @@ async def prepare_digital_human_draft(
         if not tts.get('success'):
             return {'success': False, 'error': f"驱动音频合成失败：{tts.get('error')}"}
 
-        # 4. 口播时长与模型路由（≤10s 走 H3 档位；10-30s 走 LTX2.3；>30s 拒绝并提示拆分。
-        #    见 docs/marketing_agent_digital_human_duration_routing_plan.md）
+        # 4. 口播时长与生成方式路由（≤15s H3 单段；15-30s H3 分段拼接；>30s 拒绝并提示拆分。
+        #    LTX2.3 已自营销路由撤下，见 docs/marketing_agent_digital_human_duration_routing_plan.md）
         est_seconds = float(tts.get('duration') or 0)
         if not est_seconds and user_audio_url:
             # 用户直供驱动音频缺实测时长：补一次探测，路由与计费都依赖它
@@ -427,15 +519,18 @@ async def prepare_digital_human_draft(
             return {
                 'success': False,
                 'error': (f'口播时长约 {est_seconds:.1f} 秒，超出数字人支持上限 '
-                          f'{DIGITAL_HUMAN_LTX_MAX_DURATION_SECONDS} 秒（LTX2.3 数字人）。'
+                          f'{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒（MiniMax H3 分段拼接上限）。'
                           f'请把文案拆分成多段后分次生成。'),
             }
         model_task_type = routing["model_task_type"]
+        segment_mode = routing["segment_mode"]
         task_config = TaskTypeRegistry.get(model_task_type)
         model_name = task_config.name if task_config else str(model_task_type)
         billable = routing["billable_duration"]
         video_power = task_config.get_computing_power(duration=billable) if task_config else 0
-        is_h3 = model_task_type == TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+
+        # 分段模式下动作提示词统一为固定镜头版本：保证两段镜头/景别一致，拼接点不跳
+        effective_motion = SEGMENTED_MOTION_PROMPT if segment_mode else motion_prompt
 
         draft = {
             "draft_id": None,  # store 后回填
@@ -446,16 +541,18 @@ async def prepare_digital_human_draft(
             "voice_type": tts.get('voice_type'),
             "voice_selection_reason": selection_reason if not user_audio_url else "用户提供的驱动音频",
             "motion_prompt": motion_prompt,
+            "effective_motion_prompt": effective_motion,
             "audio_url": tts.get('audio_url'),
             "audio_duration": tts.get('duration'),
             "tts_computing_power": tts.get('computing_power'),
             "model_task_type": model_task_type,
             "routing_reason": routing["routing_reason"],
             "billable_duration": billable,
+            "segment_mode": segment_mode,
             "video_computing_power": video_power,
-            # 兼容旧字段：仅 H3 路由时填充，confirm 优先读新字段
-            "h3_duration": billable if is_h3 else None,
-            "h3_computing_power": video_power if is_h3 else 0,
+            # 兼容旧字段
+            "h3_duration": billable,
+            "h3_computing_power": video_power,
             "max_edge": max_edge if max_edge in (720, 1280, 1920) else 1280,
             "aspect_ratio": aspect_ratio,
         }
@@ -464,17 +561,18 @@ async def prepare_digital_human_draft(
 
         tts_cost_note = (f"已消耗 TTS 算力 {tts.get('computing_power')}；"
                          if not user_audio_url else "驱动音频由用户提供（无 TTS 消耗）；")
-        ratio_note = ("；LTX2.3 模式下画幅跟随首帧图" if not is_h3 else "")
+        mode_note = ("，将切分为 2 段各 15 秒生成后自动拼接（固定镜头保证段间构图一致）"
+                     if segment_mode else "")
         return {
             'success': True,
             'draft': draft,
             'message': (
                 f"数字人口播草案已就绪（draft_id: {draft_id}）。"
-                f"将使用模型：{model_name}（按口播时长自动路由）；"
+                f"将使用模型：{model_name}（按口播时长自动路由{mode_note}）；"
                 f"音色：{draft['voice_name'] or '用户音频'}（{draft['voice_selection_reason']}）；"
-                f"动作提示词：{motion_prompt}；"
+                f"动作提示词：{effective_motion}；"
                 f"音频时长 {draft['audio_duration'] or billable}s；{tts_cost_note}"
-                f"确认后生成视频将消耗 {video_power} 算力{ratio_note}。"
+                f"确认后生成视频将消耗 {video_power} 算力。"
                 f"请向用户展示草案（文案/音色/试听链接 {draft['audio_url']}）并等待用户确认，"
                 f"用户确认后调用 confirm_digital_human 提交生成。"
             ),
@@ -482,6 +580,29 @@ async def prepare_digital_human_draft(
     except Exception as e:  # noqa: BLE001
         logger.error(f"prepare_digital_human_draft error: {e}", exc_info=True)
         return {'success': False, 'error': f'准备数字人草案异常: {str(e)}'}
+
+
+def _resolve_local_media_path(url: str) -> Optional[str]:
+    """把本服务产出的素材 URL（/upload、/voice_presets 等）解析为本地文件路径。
+
+    分段切分需要 ffmpeg 直读文件；解析不到（纯外链）时返回 None。
+    """
+    if not url:
+        return None
+    from utils.image_upload_utils import try_map_url_to_local_file
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_path = try_map_url_to_local_file(url, get_config(), project_root)
+    if local_path and os.path.isfile(local_path):
+        return local_path
+    if url.startswith('/'):
+        for base in ('upload', 'web'):
+            cand = os.path.join(project_root, base, url.lstrip('/')) if base == 'web' \
+                else os.path.join(project_root, url.lstrip('/'))
+            if os.path.isfile(cand):
+                return cand
+    if os.path.isfile(url):
+        return url
+    return None
 
 
 def _detect_image_upload_meta(data: bytes) -> tuple:
@@ -593,36 +714,54 @@ async def confirm_digital_human(
         billable = draft.get("billable_duration") or draft.get("h3_duration") or 10
         video_power = (draft.get("video_computing_power")
                        or draft.get("h3_computing_power") or 0)
-        motion_text = (draft.get("motion_prompt")
+        segment_mode = bool(draft.get("segment_mode"))
+        motion_text = (draft.get("effective_motion_prompt")
+                       or draft.get("motion_prompt")
                        or "角色面向镜头深情的说话，固定镜头。")[:1000]
 
-        if model_task_type == TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE:
-            # LTX2.3 数字人：音频驱动，时长=音频时长；text 同样是动作提示词；
-            # duration 供端点按时长计费（端点缺省时保持旧固定费率行为）
-            api_url = f"{base_url.rstrip('/')}/api/digital-human-v2"
-            model_used = 'LTX2.3 数字人'
-            data = {
-                'text': motion_text,
-                'duration': str(billable),
-                'user_id': str(user_id),
-                'auth_token': auth_token or '',
-            }
-        else:
-            api_url = f"{base_url.rstrip('/')}/api/digital-human-minimax-h3"
-            model_used = 'MiniMax H3 数字人'
-            data = {
-                # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
-                'text': motion_text,
-                'duration': str(billable),
-                'max_edge': str(draft.get("max_edge") or 1280),
-                'start_second': '0',
-                'user_id': str(user_id),
-                'auth_token': auth_token or '',
-            }
+        # 分段模式（口播 15-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
+        # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致
+        segment_paths: List[str] = []
+        segment_durations: List[int] = []
+        if segment_mode:
+            draft_audio = draft.get("audio_url") or ''
+            local_audio = _resolve_local_media_path(draft_audio)
+            if not local_audio:
+                return {'success': False,
+                        'error': f'分段生成需要本地驱动音频，无法解析: {draft_audio}'}
+            probe_total = await probe_audio_duration(local_audio)
+            if not probe_total:
+                return {'success': False, 'error': '驱动音频时长探测失败，无法切分分段'}
+            seg_dir = os.path.join('upload', 'digital_human_segments', draft_id.replace('dh-', ''))
+            plan = await asyncio.to_thread(
+                split_audio_into_segments, local_audio, float(probe_total), seg_dir)
+            segment_paths = [s["path"] for s in plan["segments"]]
+            segment_durations = [s["duration"] for s in plan["segments"]]
+            logger.info(f"[confirm] 分段切分完成: cut_at={plan['cut_at']}s "
+                        f"durations={segment_durations} paths={segment_paths}")
+
+        api_url = f"{base_url.rstrip('/')}/api/digital-human-minimax-h3"
+        model_used = 'MiniMax H3 数字人（分段拼接）' if segment_mode else 'MiniMax H3 数字人'
+        data = {
+            # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
+            'text': (SEGMENTED_MOTION_PROMPT if segment_mode else motion_text),
+            'duration': str(billable),
+            'max_edge': str(draft.get("max_edge") or 1280),
+            'start_second': '0',
+            'user_id': str(user_id),
+            'auth_token': auth_token or '',
+        }
+        upload_files = list(files)
+        if segment_mode:
+            data['segment_durations'] = json.dumps(segment_durations)
+            for idx, spath in enumerate(segment_paths, start=1):
+                with open(spath, 'rb') as sf:
+                    upload_files.append(
+                        ('segment_audio', (f'seg_{idx}.wav', sf.read(), 'audio/wav')))
 
         try:
             resp = await asyncio.to_thread(
-                httpx.post, api_url, data=data, files=files,
+                httpx.post, api_url, data=data, files=upload_files,
                 headers=headers, timeout=120, verify=False, trust_env=False,
             )
             resp.raise_for_status()
@@ -648,10 +787,14 @@ async def confirm_digital_human(
             'status': 'submitted',
             'model_used': model_used,
             'model_task_type': model_task_type,
+            'segment_mode': segment_mode,
+            'segment_durations': segment_durations,
             'computing_power_required': video_power,
             'message': (
                 f"数字人视频生成已提交（project_id: {project_id}，模型: {model_used}），"
                 f"时长 {billable}s，已消耗视频算力 {video_power}。"
+                + ("后端将逐段生成并自动拼接，请耐心等待。"
+                   if segment_mode else "")
             ),
         }
     except Exception as e:  # noqa: BLE001

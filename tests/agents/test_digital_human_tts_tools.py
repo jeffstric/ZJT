@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from config.constant import TaskTypeId  # noqa: E402
 from script_writer_core.digital_human_tts_tools import (  # noqa: E402
+    SEGMENTED_MOTION_PROMPT,
     _DRAFT_STORE,
     _pick_voice_by_image,
     _store_draft,
@@ -25,6 +26,7 @@ from script_writer_core.digital_human_tts_tools import (  # noqa: E402
     get_draft,
     prepare_digital_human_draft,
     resolve_digital_human_model,
+    split_audio_into_segments,
 )
 
 
@@ -60,33 +62,37 @@ class TestClampDuration(unittest.TestCase):
         self.assertEqual(clamp_h3_duration(4), 4)
         self.assertEqual(clamp_h3_duration(5.6), 6)
         self.assertEqual(clamp_h3_duration(10), 10)
-        self.assertEqual(clamp_h3_duration(99), 10)
+        self.assertEqual(clamp_h3_duration(14.2), 15)
+        self.assertEqual(clamp_h3_duration(99), 15)
 
 
 class TestResolveDigitalHumanModel(unittest.TestCase):
-    """时长路由边界：≤10s→H3，10-30s→LTX2.3（ceil 计费），>30s→拒绝"""
+    """时长路由边界（2026-10-16 v2）：≤15s→H3 单段，15-30s→H3 分段拼接，>30s→拒绝"""
 
-    def test_lte_10s_routes_h3(self):
-        for sec in (0, 4.0, 9.9, 10.0):
+    def test_lte_15s_routes_h3_single(self):
+        for sec in (0, 4.0, 10.0, 14.9, 15.0):
             r = resolve_digital_human_model(sec)
             self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
                              f"{sec}s 应路由 H3")
-            self.assertEqual(r["routing_reason"], "duration_lte_10s_h3")
+            self.assertEqual(r["routing_reason"], "duration_lte_15s_h3_single")
+            self.assertFalse(r["segment_mode"])
 
     def test_h3_billable_clamps_to_grid(self):
         self.assertEqual(resolve_digital_human_model(5.2)["billable_duration"], 6)
         self.assertEqual(resolve_digital_human_model(0)["billable_duration"], 4)
-        self.assertEqual(resolve_digital_human_model(10.0)["billable_duration"], 10)
+        self.assertEqual(resolve_digital_human_model(15.0)["billable_duration"], 15)
 
-    def test_gt_10s_routes_ltx(self):
-        r = resolve_digital_human_model(10.1)
-        self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
-        self.assertEqual(r["routing_reason"], "duration_gt_10s_ltx2_3")
-        self.assertEqual(r["billable_duration"], 11)  # ceil(10.1)
+    def test_gt_15s_routes_segmented(self):
+        r = resolve_digital_human_model(15.1)
+        self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+                         "15-30s 也走 H3（分段拼接），不再路由 LTX2.3")
+        self.assertEqual(r["routing_reason"], "duration_gt_15s_h3_segmented")
+        self.assertTrue(r["segment_mode"])
+        self.assertEqual(r["billable_duration"], 16)  # ceil(15.1)
 
-    def test_30s_boundary_ltx(self):
+    def test_30s_boundary_segmented(self):
         r = resolve_digital_human_model(30.0)
-        self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertTrue(r["segment_mode"])
         self.assertEqual(r["billable_duration"], 30)
 
     def test_gt_30s_rejected(self):
@@ -258,17 +264,18 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["h3_duration"], 6)  # 5.2s → ceil 6
         self.assertEqual(draft["tts_computing_power"], 2)
         self.assertIn("固定镜头", draft["motion_prompt"])
-        # ≤10s 路由 H3，新字段与旧字段一致
+        # ≤15s 路由 H3 单段，新字段与旧字段一致
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
-        self.assertEqual(draft["routing_reason"], "duration_lte_10s_h3")
+        self.assertEqual(draft["routing_reason"], "duration_lte_15s_h3_single")
+        self.assertFalse(draft["segment_mode"])
         self.assertEqual(draft["billable_duration"], 6)
         self.assertEqual(draft["video_computing_power"], draft["h3_computing_power"])
         self.assertIn("MiniMax H3", result["message"])
         # 草案已入库存
         self.assertIsNotNone(get_draft(draft["draft_id"]))
 
-    def test_long_speech_routes_ltx(self):
-        """TTS 实测 20s（>10s）→ 路由 LTX2.3，billable=ceil(20)"""
+    def test_long_speech_routes_segmented_h3(self):
+        """TTS 实测 20s（>15s）→ H3 分段拼接模式，billable=ceil(20)"""
         voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
                           voice_type="zh_female_vv_uranus_bigtts")
 
@@ -286,12 +293,14 @@ class TestPrepareTool(_VoiceModelMockBase):
 
         self.assertTrue(result["success"])
         draft = result["draft"]
-        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
-        self.assertEqual(draft["routing_reason"], "duration_gt_10s_ltx2_3")
+        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+        self.assertEqual(draft["routing_reason"], "duration_gt_15s_h3_segmented")
+        self.assertTrue(draft["segment_mode"])
         self.assertEqual(draft["billable_duration"], 20)
-        self.assertIsNone(draft["h3_duration"], "LTX 路由不应填充 h3_duration")
-        self.assertIn("LTX2.3", result["message"])
-        self.assertIn("首帧图", result["message"], "LTX 路由须提示画幅跟随首帧")
+        self.assertEqual(draft["effective_motion_prompt"], SEGMENTED_MOTION_PROMPT,
+                         "分段模式必须使用固定镜头统一提示词")
+        self.assertIn("MiniMax H3", result["message"])
+        self.assertIn("拼接", result["message"])
 
     def test_over_30s_rejected_with_split_hint(self):
         """TTS 实测 35s → 拒绝并提示拆分文案，不产生草案"""
@@ -316,7 +325,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(len(_DRAFT_STORE), 0)
 
     def test_user_audio_duration_probed_for_routing(self):
-        """用户直供音频缺时长时补 probe：15s → LTX2.3"""
+        """用户直供音频缺时长时补 probe：15s → H3 单段（边界值）"""
         probed = {}
 
         async def fake_probe(url):
@@ -341,7 +350,8 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertTrue(result["success"])
         self.assertEqual(probed["url"], "http://x/user_audio.mp3")
         draft = result["draft"]
-        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
+        self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
+        self.assertFalse(draft["segment_mode"])
         self.assertEqual(draft["billable_duration"], 15)
 
 
@@ -455,19 +465,21 @@ class TestConfirmTool(_VoiceModelMockBase):
         # 草案一次性消费
         self.assertIsNone(get_draft(draft_id))
 
-    def test_confirm_dispatches_ltx(self):
-        """LTX2.3 草案 → 提交 /api/digital-human-v2：duration=billable，
-        不带 max_edge/start_second（LTX2.3 不消费这两个参数）"""
+    def test_confirm_dispatches_segmented(self):
+        """分段草案 → 提交 /api/digital-human-minimax-h3：
+        text 强制固定镜头提示词、segment_durations JSON、segment_audio 文件随 multipart 上传"""
         draft_id = _store_draft({
             "script_text": "长文案", "image_url": "http://x/img.png",
-            "audio_url": "http://x/a.mp3", "voice_name": "v",
-            "motion_prompt": "角色面向镜头深情的说话，固定镜头。",
-            "model_task_type": TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE,
-            "routing_reason": "duration_gt_10s_ltx2_3",
-            "billable_duration": 15,
-            "video_computing_power": 6,
-            "h3_duration": None, "h3_computing_power": 0,
-            "max_edge": 1280,
+            "audio_url": "/upload/character/voice/local.mp3", "voice_name": "v",
+            "motion_prompt": "角色面向镜头深情的说话，缓慢推近。",
+            "effective_motion_prompt": SEGMENTED_MOTION_PROMPT,
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+            "routing_reason": "duration_gt_15s_h3_segmented",
+            "segment_mode": True,
+            "billable_duration": 30,
+            "video_computing_power": 12,
+            "h3_duration": 30, "h3_computing_power": 12,
+            "max_edge": 720,
         })
 
         class FakeResp:
@@ -491,24 +503,40 @@ class TestConfirmTool(_VoiceModelMockBase):
             captured["files"] = kw.get("files")
             return FakeResp({"success": True, "project_id": 777})
 
+        fake_plan = {
+            "segments": [
+                {"path": "upload/dh/seg_1.wav", "duration": 15},
+                {"path": "upload/dh/seg_2.wav", "duration": 15},
+            ],
+            "cut_at": 14.18, "total": 28.5,
+        }
+
         cfg = MagicMock()
         cfg.get.return_value = {"host": "http://localhost:13003"}
         with patch("script_writer_core.digital_human_tts_tools.get_config", return_value=cfg), \
              patch("script_writer_core.digital_human_tts_tools.httpx.AsyncClient.get", fake_get), \
-             patch("script_writer_core.digital_human_tts_tools.httpx.post", side_effect=fake_post):
+             patch("script_writer_core.digital_human_tts_tools.httpx.post", side_effect=fake_post), \
+             patch("script_writer_core.digital_human_tts_tools._resolve_local_media_path",
+                   return_value="/local/voice.mp3"), \
+             patch("script_writer_core.digital_human_tts_tools.probe_audio_duration",
+                   async_fn(lambda: 28.5)), \
+             patch("script_writer_core.digital_human_tts_tools.split_audio_into_segments",
+                   return_value=fake_plan), \
+             patch("builtins.open", MagicMock()):
             result = asyncio.run(confirm_digital_human(
                 user_id="1", world_id="w", auth_token="tok", draft_id=draft_id))
 
         self.assertTrue(result["success"])
         self.assertEqual(result["project_ids"], ["777"])
-        self.assertIn("digital-human-v2", captured["url"])
-        self.assertEqual(captured["data"]["duration"], "15")
-        self.assertEqual(captured["data"]["text"], "角色面向镜头深情的说话，固定镜头。")
-        self.assertNotIn("max_edge", captured["data"])
-        self.assertNotIn("start_second", captured["data"])
-        self.assertEqual(result["model_used"], "LTX2.3 数字人")
-        self.assertEqual(result["model_task_type"], TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE)
-        self.assertEqual(result["computing_power_required"], 6)
+        self.assertIn("digital-human-minimax-h3", captured["url"])
+        self.assertEqual(captured["data"]["duration"], "30")
+        self.assertEqual(captured["data"]["text"], SEGMENTED_MOTION_PROMPT,
+                         "分段模式提交的提示词必须是固定镜头统一版本，不用 VL 生成的推近镜头")
+        self.assertEqual(json.loads(captured["data"]["segment_durations"]), [15, 15])
+        seg_files = [f for f in captured["files"] if f[0] == 'segment_audio']
+        self.assertEqual(len(seg_files), 2, "两段音频文件应随 multipart 上传")
+        self.assertEqual(result["model_used"], "MiniMax H3 数字人（分段拼接）")
+        self.assertTrue(result["segment_mode"])
         self.assertIsNone(get_draft(draft_id))
 
     def test_confirm_h3_error_propagates(self):
@@ -546,6 +574,42 @@ class TestConfirmTool(_VoiceModelMockBase):
 
         self.assertFalse(result["success"])
         self.assertIn("算力不足", result["error"])
+
+
+class TestSplitAudioSegments(unittest.TestCase):
+    """split_audio_into_segments 真实 ffmpeg 切分：切点在句间静音、两段各 ≤15s 且对齐整数秒"""
+
+    def test_split_28_5s_audio(self):
+        import subprocess
+        ff = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), 'bin', 'ffmpeg', 'ffmpeg.exe')
+        if not os.path.isfile(ff):
+            self.skipTest("bin/ffmpeg 不可用")
+        src = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_tmp_seg_src.wav')
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_tmp_seg_out')
+        subprocess.run([ff, '-y', '-loglevel', 'error',
+                        '-f', 'lavfi', '-i', 'sine=frequency=440:duration=28.5',
+                        '-ar', '44100', '-ac', '2', src], check=True, capture_output=True)
+        try:
+            plan = split_audio_into_segments(src, 28.5, out_dir)
+            segs = plan["segments"]
+            self.assertEqual(len(segs), 2, "28.5s 应切成 2 段")
+            total = 0
+            for s in segs:
+                self.assertLessEqual(s["duration"], 15, "每段不得超过 15s")
+                self.assertGreaterEqual(s["duration"], 4, "每段不得低于 H3 最短 4s")
+                self.assertTrue(os.path.isfile(s["path"]))
+                total += s["duration"]
+            self.assertEqual(total, 29, "两段整数秒之和应等于 ceil(28.5)=29")
+            self.assertGreater(plan["cut_at"], 13.0)
+            self.assertLessEqual(plan["cut_at"], 15.0)
+        finally:
+            for p in (src,):
+                if os.path.isfile(p):
+                    os.remove(p)
+            if os.path.isdir(out_dir):
+                import shutil
+                shutil.rmtree(out_dir, ignore_errors=True)
 
 
 if __name__ == '__main__':

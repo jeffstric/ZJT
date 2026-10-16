@@ -1,8 +1,8 @@
 # 营销数字人时长路由方案：>10 秒自动切换 LTX2.3
 
 > 分支：`develop_1019`（基于 origin/develop @ 0d06a3e8）
-> 状态：**已实施**（2026-10-15，单测 26 项覆盖路由边界/分派/兼容；端到端自测见文末附录）
-> 日期：2026-10-15
+> 状态：**v2 已实施**（2026-10-16：H3 单段放开至 15s + 15-30s 分段拼接，LTX2.3 撤下营销路由；本文 §3-§4 的 LTX 路由方案已被 v2 取代，见文末附录 C）
+> 日期：2026-10-15（v1）/ 2026-10-16（v2）
 
 ## 1. 背景与调查结论
 
@@ -198,3 +198,18 @@ duration: int = Form(None, description="Billable duration in seconds (audio-driv
 5. **成片验证**：`/upload/cache/2026-10-16/319_*.mp4`，ffprobe 实测 24.04s、960×1280、h264+aac（带音轨）；前端自动轮询并展示视频卡片（0:24）。
 
 **实测发现并修复的 bug**：`confirm_digital_human` 此前把图片/音频字节硬编码为 `.png`/`.mp3` 上传，角色图为 jpeg（Seedream 产物）时被 `/api/digital-human-v2` 落盘侧的扩展名+魔数一致性校验（`utils/media_upload.py`）拒绝。已修复为按字节魔数嗅探真实格式（`_detect_image_upload_meta` / `_detect_audio_upload_meta`，支持 png/jpg/webp/gif 与 mp3/wav/ogg/m4a）。该 bug 同样影响 H3 链路的非 png 角色图。
+
+## 附录 C：v2 实施（2026-10-16）——H3 分段拼接取代 LTX2.3 路由
+
+LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部约 1 秒唇动无声——其 webapp 输出时长略长于驱动音频且无时长控制参数），自营销路由撤下；模型与 `/api/digital-human-v2` 端点保留供画布使用。
+
+**新路由规则**（常量 `config/constant.py`）：≤15s → H3 单段（官方规格 4-15s，RunningHub webapp 默认实例 15s/720P 实测出片，历史 10s 为自锁限制）；15-30s → **H3 分段拼接**；>30s → 拒绝并提示拆分。
+
+**改动点**：
+- `digital_human_tts_tools.py`：`resolve_digital_human_model` v2（segment_mode）；`split_audio_into_segments` 静音切分+整数秒对齐（`_detect_silence_midpoints`）；confirm 分段提交（multipart 带 `segment_audio` 多文件）；`SEGMENTED_MOTION_PROMPT` 固定镜头统一提示词（分段模式强制使用，VL 选音色的提示词要求同步收紧为固定机位）。
+- `server.py` `/api/digital-human-minimax-h3`：`duration` 放开 4-15；新增 `segment_audio: List[UploadFile]` + `segment_durations` JSON（各段 4-15 整数、之和=总时长），分段计费=各段档位之和，段音频路径写入 `extra_config.dh_segments/dh_segment_durations`。
+- `digital_human_minimax_h3_runninghub_v1_driver.py`：`SUPPORTED_DURATIONS` 4-15；`_submit_segmented_sync` 分段全流水线（逐段提交[失败自动重提]→并行轮询→下载→ffmpeg concat→`/upload/cache` 落盘），以 `sync_mode` 返回本地成片，visual_task 直接落库。
+- `unified_config.py`：H3 数字人 `supported_durations` 4-15。
+- `mcp_tool.py` / SOP / 本文档同步。
+
+**测试**：`tests/agents/test_digital_human_tts_tools.py` 27 项（新路由边界、分段 confirm 分派、真实 ffmpeg 切片）+ `tests/agents/` 138 项回归通过。
