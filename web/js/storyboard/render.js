@@ -53,6 +53,7 @@ import {
     getAutoVideoCompleteButtonViewModel,
     getAutoVideoCompleteSummary,
 } from './auto_missing_videos_state.js';
+import { hasSpatialLayout } from './spatial_3d_preview.js';
 import {
     onDomWillRerender,
     updatePlayheadPosition,
@@ -609,6 +610,7 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
                         ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} ${i18nT('btn_edit', '编辑')}</button>
+                            ${hasSpatialLayout(scene) ? `<button data-action="open-spatial-preview" data-id="${scene.id}" title="${i18nT('title_open_spatial_preview', '3D 空间布局预览（three.js 场景代码）')}">3D</button>` : ''}
                             <button data-action="duplicate-scene" data-id="${scene.id}"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)} ${i18nT('btn_duplicate', '复制')}</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} ${i18nT('btn_delete', '删除')}</button>
                         </div>`}

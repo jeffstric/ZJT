@@ -1,0 +1,345 @@
+/* 分镜 3D 空间布局预览弹窗（three.js 渲染，数据来自 /spatial-previews） */
+
+.spatial3d-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1200;
+    background: rgba(15, 23, 42, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: spatial3d-fade-in 0.16s ease-out;
+}
+
+@keyframes spatial3d-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.spatial3d-dialog {
+    width: min(1080px, calc(100vw - 48px));
+    height: min(720px, calc(100vh - 48px));
+    background: #f8fafc;
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.35);
+    display: grid;
+    grid-template-rows: auto 1fr;
+    grid-template-columns: 1fr 300px;
+    grid-template-areas:
+        "header header"
+        "viewport side";
+    overflow: hidden;
+}
+
+.spatial3d-header {
+    grid-area: header;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 18px;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.spatial3d-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1e293b;
+    min-width: 0;
+}
+
+.spatial3d-title > span:first-child {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.spatial3d-diag-badge {
+    flex-shrink: 0;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.spatial3d-diag-badge.has-error {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+.spatial3d-diag-badge.has-warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.spatial3d-nav {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.spatial3d-nav .btn-ghost {
+    border: 1px solid #cbd5e1;
+    background: #fff;
+    border-radius: 8px;
+    padding: 5px 12px;
+    font-size: 13px;
+    color: #334155;
+    cursor: pointer;
+}
+
+.spatial3d-nav .btn-ghost:hover:not(:disabled) {
+    border-color: #94a3b8;
+    background: #f1f5f9;
+}
+
+.spatial3d-nav .btn-ghost:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
+.spatial3d-nav-pos {
+    font-size: 13px;
+    color: #64748b;
+    min-width: 44px;
+    text-align: center;
+}
+
+.spatial3d-close {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    font-size: 20px;
+    line-height: 1;
+    color: #64748b;
+    cursor: pointer;
+}
+
+.spatial3d-close:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+}
+
+.spatial3d-viewport {
+    grid-area: viewport;
+    position: relative;
+    min-width: 0;
+    background: linear-gradient(180deg, #eef2f7 0%, #e2e8f0 100%);
+    cursor: grab;
+}
+
+.spatial3d-viewport:active {
+    cursor: grabbing;
+}
+
+.spatial3d-viewport canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.spatial3d-loading {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #64748b;
+    font-size: 14px;
+    pointer-events: none;
+}
+
+/* hidden 属性会被上面的 display:flex 覆盖，必须显式声明 */
+.spatial3d-loading[hidden] {
+    display: none;
+}
+
+/* 镜头视角画中画取景器边框（渲染由 WebGL setScissor 完成，DOM 只画框与标题） */
+.spatial3d-pip-frame {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    width: 30%;
+    aspect-ratio: 16 / 9;
+    min-width: 120px;
+    border: 2px solid #f76f5e;
+    border-radius: 8px;
+    pointer-events: none;
+    box-shadow: 0 4px 18px rgba(15, 23, 42, 0.35);
+}
+
+.spatial3d-pip-frame span {
+    position: absolute;
+    top: -2px;
+    left: -2px;
+    transform: translateY(-100%);
+    padding: 2px 8px;
+    border-radius: 6px 6px 0 0;
+    background: #f76f5e;
+    color: #fff;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.spatial3d-pip-frame[hidden] {
+    display: none;
+}
+
+/* 本镜 three.js 代码面板 */
+.spatial3d-chain-note {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+}
+
+.spatial3d-code {
+    margin: 0;
+    padding: 10px;
+    background: #0f172a;
+    color: #e2e8f0;
+    border-radius: 8px;
+    font-family: Consolas, "JetBrains Mono", Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 320px;
+    overflow: auto;
+}
+
+.spatial3d-side {
+    grid-area: side;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 14px;
+    background: #ffffff;
+    border-left: 1px solid #e2e8f0;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.spatial3d-section h4 {
+    margin: 0 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #475569;
+}
+
+.spatial3d-entity-list,
+.spatial3d-diag-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.spatial3d-entity-list li {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 10px;
+    background: #f8fafc;
+    border: 1px solid #e6ebf2;
+    border-radius: 8px;
+}
+
+.spatial3d-entity-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.spatial3d-entity-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.spatial3d-diag-list li {
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+.spatial3d-diag-list li b {
+    margin-right: 4px;
+}
+
+.spatial3d-diag.severity-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+}
+
+.spatial3d-diag.severity-warning {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    color: #92400e;
+}
+
+.spatial3d-ok {
+    margin: 0;
+    font-size: 12.5px;
+    color: #047857;
+}
+
+.spatial3d-empty {
+    margin: 0;
+    font-size: 12.5px;
+    color: #94a3b8;
+}
+
+.spatial3d-legend {
+    margin-top: auto;
+    padding-top: 10px;
+    border-top: 1px dashed #e2e8f0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.spatial3d-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.spatial3d-legend i {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+@media (max-width: 900px) {
+    .spatial3d-dialog {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "header"
+            "viewport"
+            "side";
+        grid-template-rows: auto minmax(260px, 1fr) auto;
+    }
+
+    .spatial3d-side {
+        border-left: none;
+        border-top: 1px solid #e2e8f0;
+        max-height: 200px;
+    }
+}

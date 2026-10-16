@@ -739,6 +739,9 @@ async def step_generate_segment(
         # 依赖感知：优先用 build_runtime_segment_context（按依赖类型注入真实 handoff，
         # 见设计文档 §9.2/§20.2）。仅当策略未提供该方法（如非 quality）时回退到旧逻辑。
         if _all_segments is not None and hasattr(strategy, "build_runtime_segment_context"):
+            # handoff 是 previous_three_scene_code 的唯一真源；依赖未满足时清空
+            # 串行兜底值，避免无关段代码污染 three.js 代码链 prompt。
+            segment_context.pop("previous_three_scene_code", None)
             segment_context.update(
                 strategy.build_runtime_segment_context(plan, seg, _all_segments)
             )
@@ -2123,6 +2126,7 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
     """构建传给 parse_script_to_shots 的 segment_context。"""
     # 上一段尾部镜头摘要
     tail = []
+    previous_three_code = ""
     prev_segs = ScriptSplitSegmentModel.get_completed(task.id)
     if prev_segs:
         last = prev_segs[-1]
@@ -2130,8 +2134,11 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
         groups = last_parsed.get("shot_groups", []) or []
         shots = [s for g in groups for s in (g.get("shots", []) or [])]
         tail = shots[-ScriptSplitConstants.HISTORY_TAIL_SHOTS:] if shots else []
+        # 上一镜 three.js 空间代码：本段首镜基于它增量调整（效果模式代码链）
+        if shots:
+            previous_three_code = str(shots[-1].get("three_scene_code") or "").strip()
 
-    return {
+    context = {
         "task_id": task.id,
         "segment_id": seg.segment_id,
         "segment_index": seg.segment_index,
@@ -2142,6 +2149,9 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
         "id_reservations": registry.id_reservations(),
         "source_block_ids": seg.get_block_ids(),
     }
+    if previous_three_code:
+        context["previous_three_scene_code"] = previous_three_code
+    return context
 
 
 async def _run_enabled_segment_qc(

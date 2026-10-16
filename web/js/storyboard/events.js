@@ -1967,6 +1967,14 @@ async function handleAction(action, target) {
         return;
     }
 
+    if (action === 'open-spatial-preview') {
+        // 3D 空间布局预览（效果模式 spatial_layout）：弹窗与渲染循环由
+        // spatial_3d_preview.js 自管理，不进 rerenderModals，避免重建 canvas。
+        const { openSpatial3dPreview } = await import('./spatial_3d_preview.js');
+        await openSpatial3dPreview(parseInt(target.dataset.id, 10));
+        return;
+    }
+
     if (action === 'duplicate-scene') {
         const sceneId = parseInt(target.dataset.id, 10);
         // in-flight 守卫：复制请求飞行中再次点击（连点/鼠标抖动）直接忽略，

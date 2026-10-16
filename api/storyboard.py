@@ -120,7 +120,13 @@ from services.storyboard_voiceover_bootstrap_service import (
     StoryboardVoiceoverBootstrapService,
 )
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
-from services.storyboard_spatial import build_spatial_prompt_context
+from services.storyboard_spatial import (
+    build_spatial_prompt_context,
+    build_three_scene,
+    build_three_code_preview,
+    normalize_three_scene_code,
+)
+from services.storyboard_spatial.exceptions import StoryboardEnterpriseFeatureRequired
 from services.media_generation_preference_service import (
     MediaGenerationErrorCode,
     MediaGenerationPreferenceError,
@@ -1027,6 +1033,11 @@ def build_storyboard_scenes_from_parsed_script(
                 prompt_payload['spatial_world'] = spatial_world
             if isinstance(shot.get('spatial_layout'), dict):
                 prompt_payload['spatial_layout'] = shot.get('spatial_layout')
+            # three.js 空间代码（效果模式 LLM 直出）：规范化围栏后透传，
+            # 3D 空间预览按序重放执行（见 docs/storyboard/spatial_3d_preview_design.md）
+            three_scene_code = normalize_three_scene_code(shot.get('three_scene_code'))
+            if three_scene_code:
+                prompt_payload['three_scene_code'] = three_scene_code
             # 角色形象变化：已生成的变体直接作为分镜生图参考选择
             reference_selections = _build_reference_selections(
                 shot, character_db_map, character_variants)
@@ -3490,6 +3501,87 @@ async def get_storyboard(
         'storyboard': sb.to_dict(),
         'scenes': scenes,
     })
+
+
+def _build_spatial_scene_preview(scene: Dict) -> Optional[Dict]:
+    """单个分镜的 3D 空间预览载荷；无空间数据的分镜返回 None。
+
+    优先返回 LLM 直出的 three.js 场景代码（three_scene_code，新方案：首镜
+    startScene 构建、后续镜增量调整、每镜 setCamera）；存量分镜只有结构化
+    spatial_layout 时回退旧 JSON 转换（企业版空间引擎）。
+    """
+    prompt = scene.get('prompt_json') if isinstance(scene.get('prompt_json'), dict) else {}
+    three_code = build_three_code_preview(prompt.get('three_scene_code'))
+    if three_code is not None:
+        diagnostics = three_code.get('diagnostics') or []
+        error_count = sum(1 for d in diagnostics if d.get('severity') == 'error')
+        warning_count = sum(1 for d in diagnostics if d.get('severity') != 'error')
+        return {
+            'scene_id': scene.get('id'),
+            'title': scene.get('title') or '',
+            'sort_order': scene.get('sort_order'),
+            'perspective': (prompt.get('perspective') or ''),
+            'three_scene': three_code,
+            'diagnostic_summary': {'errors': error_count, 'warnings': warning_count},
+        }
+    spatial_layout = prompt.get('spatial_layout')
+    if not isinstance(spatial_layout, dict) or not spatial_layout:
+        return None
+    spatial_world = prompt.get('spatial_world') if isinstance(prompt.get('spatial_world'), dict) else None
+    three_scene = build_three_scene(spatial_layout, spatial_world)
+    error_count = sum(1 for d in three_scene.get('diagnostics') or [] if d.get('severity') == 'error')
+    warning_count = sum(1 for d in three_scene.get('diagnostics') or [] if d.get('severity') != 'error')
+    return {
+        'scene_id': scene.get('id'),
+        'title': scene.get('title') or '',
+        'sort_order': scene.get('sort_order'),
+        'perspective': (prompt.get('perspective') or ''),
+        'three_scene': three_scene,
+        'diagnostic_summary': {'errors': error_count, 'warnings': warning_count},
+    }
+
+
+@router.get('/{storyboard_id:int}/spatial-previews')
+@require_permission("storyboard:view")
+async def get_storyboard_spatial_previews(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """按分镜顺序返回每个分镜的 3D 空间预览载荷与一致性诊断。
+
+    数据源优先为分镜 prompt_json 里的 three_scene_code（效果模式拆分时 LLM
+    直出的 three.js 场景代码：空间序列首镜 startScene 构建场景与角色站位，
+    后续镜增量调整，每镜 setCamera 确定机位），预览端按序重放执行；
+    存量分镜回退结构化 spatial_layout 的确定性场景 JSON。诊断（如缺相机、
+    代码缺失）为信息性信号展示，质检侧按 error 阻断。
+    """
+    user_id = get_user_id_from_header(user_id)
+    sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    if not sb:
+        return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+
+    ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
+
+    try:
+        scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
+    except Exception:
+        logger.exception("storyboard %s spatial previews: list scenes failed", storyboard_id)
+        return JSONResponse(status_code=500, content={'error': '读取分镜失败'})
+
+    previews = []
+    for scene in scenes:
+        try:
+            preview = await asyncio.to_thread(_build_spatial_scene_preview, scene)
+        except StoryboardEnterpriseFeatureRequired as exc:
+            return JSONResponse(
+                status_code=403,
+                content={'error': exc.message, 'code': exc.error_code},
+            )
+        if preview is not None:
+            previews.append(preview)
+
+    return JSONResponse({'success': True, 'previews': previews})
 
 
 @router.put('/{storyboard_id:int}')

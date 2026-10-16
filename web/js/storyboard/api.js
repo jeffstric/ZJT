@@ -155,6 +155,14 @@ export async function fetchCurrentUserRole() {
 export async function getStoryboard(storyboardId) {
     return request(`/${storyboardId}`);
 }
+/**
+ * 分镜 3D 空间布局预览（效果模式 LLM 直出 three.js 场景代码 + 投影诊断）。
+ * 优先返回每镜 three_scene_code 代码载荷；存量分镜回退 spatial_layout JSON
+ * 转换（该回退分支为商业版专属，无许可证时后端 403）。
+ */
+export async function getSpatialPreviews(storyboardId) {
+    return request(`/${storyboardId}/spatial-previews`);
+}
 export async function updateStoryboard(storyboardId, data) {
     return request(`/${storyboardId}`, { method: 'PUT', body: JSON.stringify(data) });
 }
