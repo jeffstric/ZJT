@@ -410,7 +410,16 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                     raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {err}")
             seg_files.append(seg_file)
 
-        # 3. 拼接（重编码保证时间戳/参数一致）
+        # 3. 拼接（重编码保证时间戳/参数一致；webapp 每次运行的输出分辨率随机
+        #    （实测同参数出现过 960×1280 与 512×704），先统一缩放到首段尺寸再 concat）
+        probe = subprocess.run(
+            ['bin/ffmpeg/ffprobe', '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=width,height', '-of', 'json', seg_files[0]],
+            capture_output=True, text=True, timeout=60)
+        vstream = (json.loads(probe.stdout or '{}').get('streams') or [{}])[0]
+        out_w = int(vstream.get('width') or 960)
+        out_h = int(vstream.get('height') or 1280)
+        out_h += out_h % 2
         date_str = time.strftime('%Y-%m-%d')
         out_dir = os.path.join('upload', 'cache', date_str)
         os.makedirs(out_dir, exist_ok=True)
@@ -419,8 +428,11 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         inputs = []
         for f in seg_files:
             inputs += ['-i', f]
-        concat_filter = ''.join(f'[{i}:v][{i}:a]' for i in range(len(seg_files))) \
-            + f'concat=n={len(seg_files)}:v=1:a=1[v][a]'
+        scale_chain = ';'.join(
+            f'[{i}:v]scale={out_w}:{out_h}[v{i}]' for i in range(len(seg_files)))
+        concat_filter = scale_chain + ';' \
+            + ''.join(f'[v{i}][{i}:a]' for i in range(len(seg_files))) \
+            + f'concat=n={len(seg_files)}:v=1:a=1,format=yuv420p[v][a]'
         r = subprocess.run(
             [_get_ffmpeg_path(), '-y', '-loglevel', 'error', *inputs,
              '-filter_complex', concat_filter, '-map', '[v]', '-map', '[a]',
@@ -428,7 +440,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             capture_output=True, text=True, timeout=600)
         if r.returncode != 0 or not os.path.isfile(out_path):
             raise _SegmentedPipelineError(f"分段视频拼接失败: {r.stderr[-300:]}")
-        self.logger.info(f"[分段] 拼接完成: {out_path}")
+        self.logger.info(f"[分段] 拼接完成: {out_path} ({out_w}x{out_h})")
 
         # 4. sync_mode 返回本地路径（visual_task 检测 /upload/ 前缀直接落库）
         return {
