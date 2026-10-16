@@ -67,8 +67,12 @@ volcengine_tts:
 - **退款**：火山调用失败 / 落盘失败 → 立即退款，流水号 `refund-{原流水号}` 幂等。
 - **流水绑定**：`ai_audio.transaction_id` 保存预扣流水；`engine`/`voice_id`
   记录引擎与所用音色。
-- **免费路径**：无 Authorization 头或算力 0 时跳过扣费；试听永远免费
+- **计费凭证**：与登录同一来源。`Authorization` 为空时使用 `?auth_token=`。
+  两者都空时合成服务才跳过扣费（仅内部无登录调用）；HTTP 入口没有凭证会先 401。
+- **免费路径**：算力 0 时跳过扣费；试听永远免费
   （固定示例句 + 按音色缓存 `preview_{voice_type}.mp3`）。
+- **预置音色 voice_type**：`reference_audio` 行必须是 SQL NULL，不能是字符串 `NULL`。
+  `no_152` 种子插入 `None`；已升级库由 `no_153` 把误写成 `'NULL'` 的行改回。
 
 ## 五、代码结构
 

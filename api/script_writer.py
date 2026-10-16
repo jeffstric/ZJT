@@ -1292,6 +1292,14 @@ class CharacterVoiceDescRequest(BaseModel):
     model_id: Optional[int] = None
     vendor_id: Optional[int] = None
 
+def _request_auth_token(request: Request, header_token: Optional[str] = None) -> str:
+    """与 require_permission 同一来源的裸 token，供 LLM 计费使用。"""
+    token = normalize_authorization_token(header_token or request.headers.get("authorization"))
+    if token:
+        return token
+    return normalize_authorization_token(request.query_params.get("auth_token"))
+
+
 class CharacterPresetVoiceRequest(BaseModel):
     voice_id: int
     world_id: int
@@ -3532,17 +3540,18 @@ async def generate_character_reference_audio(
     提交后立即返回任务 ID，前端通过 GET /script-writer/characters/reference-audio-status/{task_id} 轮询结果
     """
     try:
-        if not user_id:
-            body = await request.json()
-            user_id = body.get('user_id')
-        if not user_id:
-            return JSONResponse({'success': False, 'error': '缺少用户ID'}, status_code=400)
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse({'success': False, 'error': '未获取到登录身份，请重新登录'}, status_code=401)
+        claimed_error = check_claimed_user_id(user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
         character = None
         if audio_request.character_id:
             character = await asyncio.to_thread(CharacterModel.get_by_id, audio_request.character_id)
         elif audio_request.character_name:
             character = await asyncio.to_thread(CharacterModel.get_by_name, audio_request.world_id, audio_request.character_name)
-        if character and (character.world_id != audio_request.world_id or character.user_id != int(user_id)):
+        if character and (character.world_id != audio_request.world_id or str(character.user_id) != str(auth_user_id)):
             return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
         character_data = character.to_dict() if character else (audio_request.character_data or {})
         if not character_data:
@@ -3554,7 +3563,10 @@ async def generate_character_reference_audio(
         # TTS 风格提示词与角色声学音色指纹（随响应返回给前端落 voice_desc）
         voice_analysis = await analyze_character_voice(
             character_data,
-            model=audio_request.model, vendor_id=audio_request.vendor_id
+            model=audio_request.model,
+            vendor_id=audio_request.vendor_id,
+            model_id=audio_request.model_id,
+            auth_token=_request_auth_token(request, auth_token),
         )
         style_prompt = (audio_request.style_prompt or '').strip() or str(
             voice_analysis.get('voice_description') or ''
@@ -3571,7 +3583,7 @@ async def generate_character_reference_audio(
 
         task_id = AsyncTasksModel.create_and_schedule(
             implementation=AsyncTaskImplementationId.RUNNINGHUB_AUDIO,
-            user_id=int(user_id),
+            user_id=int(auth_user_id),
             params={'style_prompt': style_prompt, 'text': text}
         )
 
@@ -3643,11 +3655,12 @@ async def generate_character_voice_desc(
     只返回文本，不落库——前端填进音色描述输入框，随角色卡保存链路持久化。
     """
     try:
-        if not user_id:
-            body = await request.json()
-            user_id = body.get('user_id')
-        if not user_id:
-            return JSONResponse({'success': False, 'error': '缺少用户ID'}, status_code=400)
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse({'success': False, 'error': '未获取到登录身份，请重新登录'}, status_code=401)
+        claimed_error = check_claimed_user_id(user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
         character = None
         if voice_request.character_id:
             character = await asyncio.to_thread(CharacterModel.get_by_id, voice_request.character_id)
@@ -3655,7 +3668,7 @@ async def generate_character_voice_desc(
             character = await asyncio.to_thread(
                 CharacterModel.get_by_name, voice_request.world_id, voice_request.character_name
             )
-        if character and (character.world_id != voice_request.world_id or character.user_id != int(user_id)):
+        if character and (character.world_id != voice_request.world_id or str(character.user_id) != str(auth_user_id)):
             return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
         character_data = character.to_dict() if character else (voice_request.character_data or {})
         if not character_data:
@@ -3665,8 +3678,13 @@ async def generate_character_voice_desc(
 
         voice_analysis = await analyze_character_voice(
             character_data,
-            model=voice_request.model, vendor_id=voice_request.vendor_id
+            model=voice_request.model,
+            vendor_id=voice_request.vendor_id,
+            model_id=voice_request.model_id,
+            auth_token=_request_auth_token(request, auth_token),
         )
+        if voice_analysis.get('analysis_failed'):
+            return JSONResponse({'success': False, 'error': '音色描述生成失败，请重试'}, status_code=502)
         # voice_desc 是给 H3 视频提示词的纯声学指纹（30~60字）；旧模型输出缺该字段时回退 voice_description
         voice_desc = str(voice_analysis.get('voice_desc') or voice_analysis.get('voice_description') or '').strip()
         if not voice_desc:

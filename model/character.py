@@ -219,7 +219,7 @@ class CharacterModel:
                 reference_image = VALUES(reference_image),
                 reference_images = VALUES(reference_images),
                 default_voice = VALUES(default_voice),
-                voice_desc = VALUES(voice_desc),
+                voice_desc = IF(VALUES(voice_desc) IS NULL, voice_desc, VALUES(voice_desc)),
                 emotion_voices = VALUES(emotion_voices),
                 sora_character = VALUES(sora_character),
                 user_id = VALUES(user_id)

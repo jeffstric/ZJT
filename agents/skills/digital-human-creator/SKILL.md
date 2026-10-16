@@ -14,7 +14,7 @@ allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confir
 
 1. 生成数字人前必须先调用 `get_user_computing_power()` 查询算力。
 2. 如果对话中已有 `[音频N]（URL: ...）`，必须直接使用该真实 URL 作为 `audio_url`。
-3. 如果用户没有提供音频，**优先走 TTS 驱动路径**：调用 `prepare_digital_human_draft(image_url, script_text, voice_requirement)` 一次完成「选音色（视觉模型看图挑选）+ 合成驱动音频」，产出草案 draft_id；随后必须把草案（音色/试听链接/算力消耗）展示给用户并等待明确确认，确认后才调用 `confirm_digital_human(draft_id)` 提交视频。草案 30 分钟过期；用户要求修改文案或换声音时重新 prepare。
+3. 如果用户没有提供音频，**优先走 TTS 驱动路径**：调用 `prepare_digital_human_draft(image_url, script_text, voice_requirement)` 一次完成「选音色（视觉模型看图挑选）+ 合成驱动音频」，产出草案 draft_id；随后必须把草案（音色/试听链接/算力消耗）展示给用户并等待明确确认，确认后才调用 `confirm_digital_human(draft_id)` 提交视频。草案 30 分钟过期；确认失败可沿用同一 draft_id 再确认。用户要求修改文案或换声音时重新 prepare。
    仅当用户明确要求使用参考音频风格（generate_reference_audio 通道）时才走旧路径。
    ⚠️ TTS 未配置或合成失败时的降级规则见下方「TTS 不可用时的降级规则」——严禁自行静默切换到 wan2.2 链路。
 4. `image_url` 必须是对话中出现的真实图片 URL，**严禁臆造路径**（如按 project_id 拼出 `/upload/project/xxx.png` 这类编造路径）。用户说"用之前生成的图"但上下文没有真实 URL 时，先调用 `check_image_status(project_id)` 拿到真实 `image_url` 再提交。
@@ -70,7 +70,7 @@ allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confir
 准备数字人口播草案：确定音色（用户指定 voice_id > 视觉模型看角色图挑选 > 默认音色）→ 火山 TTS 合成驱动音频（立即消耗字符算力）→ 返回 draft_id 与草案明细（音色/选择理由/试听 URL/时长/两段算力）。**不提交视频**。script_text 必须是最终口播文案。
 
 ### `confirm_digital_human(draft_id)`
-用户明确确认草案后调用：提交 MiniMax H3 生成视频（消耗时长算力），返回 project_ids。草案一次性消费（防重复提交），30 分钟过期。提交后旧规则第 5/6 条同样适用（必须拿到非空 project_ids 才算提交成功）。
+用户明确确认草案后调用：提交 MiniMax H3 生成视频（消耗时长算力），返回 project_ids。拿到 project_id 后草案才消费，防止重复出片。确认失败（配置、素材、H3 错误）沿用同一 draft_id 再确认，不要为此重新 prepare。草案 30 分钟过期；用户要改文案或换声音时才重新 prepare。提交后旧规则第 5/6 条同样适用（必须拿到非空 project_ids 才算提交成功）。
 
 ### `generate_digital_human(image_url, text, audio_url, aspect_ratio)`
 

@@ -4,7 +4,8 @@ Voice Model - Database operations for voice table
 
 provider 维度：
 - volcengine      火山引擎（豆包语音）预置音色，voice_type 为火山音色 ID（如 BV700_streaming）
-- reference_audio 参考音频克隆音色（预留给 IndexTTS 链路，audio_url 为克隆源音频）
+- reference_audio 参考音频克隆音色（预留给 IndexTTS 链路，audio_url 为克隆源音频）。
+  预置行的 voice_type 是 SQL NULL，不能写成字符串 NULL。
 
 user_id=0 为系统预置（种子来自 config/volcengine_tts_constants.py 的
 VOLCENGINE_TTS_VOICES，由迁移 no_145 幂等插入）；user_id>0 为用户私有（二期）。
