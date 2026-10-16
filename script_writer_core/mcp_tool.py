@@ -4952,8 +4952,8 @@ def generate_digital_human(
                 'success': False,
                 'error': (f'口播文案约 {est_seconds:.0f} 秒，超过 10 秒，不适合 wan2.2 参考音色模式。'
                           f'请改用 prepare_digital_human_draft + confirm_digital_human'
-                          f'（将按口播时长自动路由 MiniMax H3，15-30 秒走分段拼接，最长支持 30 秒），'
-                          f'或把文案缩短到约 {DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS * DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND} 字以内。'),
+                          f'（将按口播时长自动路由 MiniMax H3，10-30 秒走分段拼接，最长支持 30 秒），'
+                          f'或把文案缩短到约 {DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS * DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND} 字以内。'),
             }
 
         if not audio_url:

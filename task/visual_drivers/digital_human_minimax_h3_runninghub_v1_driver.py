@@ -49,6 +49,10 @@ class _SegmentedPipelineError(Exception):
     """分段流水线内部失败（携带用户可读原因），由降档/失败出口统一处理。"""
 
 
+class _SegmentedCongestedError(Exception):
+    """上游拥堵（api queue limit / TASK_QUEUE_MAXED）：应回队延迟重试而非降档重跑。"""
+
+
 class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
     """
     MiniMax H3 数字人 RunningHub v1 版本驱动
@@ -288,6 +292,16 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         """
         try:
             return self._run_segment_pipeline(ai_tool, segment_paths, extra_config)
+        except _SegmentedCongestedError as e:
+            # 上游拥堵：与单段路径同款可重试结果（调度器回队，不降档、不退款）
+            self.logger.warning(f"[分段] 上游拥堵，交回调度器延迟重试: {e}")
+            return {
+                "success": False,
+                "error": "上游服务繁忙，正在自动排队重试…",
+                "error_type": "USER",
+                "retry": True,
+                "retry_reason": "UPSTREAM_CONGESTED",
+            }
         except _SegmentedPipelineError as e:
             durations = extra_config.get("dh_segment_durations") or []
             if durations and max(durations) > 10:
@@ -463,24 +477,32 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         error_code = result.get("errorCode", "")
         error_message = result.get("errorMessage", "")
         if error_code or error_message:
+            if is_upstream_congested_error(error_code):
+                # 上游拥堵：交由调度器释放槽位回队延迟重试，不走降档重跑
+                raise _SegmentedCongestedError(f"{error_message or error_code}")
             return None, f"{error_message or error_code}"
         task_id = result.get("taskId")
         if not task_id:
             return None, "响应未返回 taskId"
         return task_id, ""
 
-    def _poll_segment_status(self, task_id: str) -> str:
-        """查询单段状态，返回 SUCCESS/FAILED/RUNNING。"""
+    def _poll_segment_status(self, task_id: str) -> tuple:
+        """查询单段状态，返回 (SUCCESS/FAILED/RUNNING, 错误信息)。"""
         result = self._request(**self.build_check_query(task_id))
         if result.get("code") != 0:
-            return "RUNNING"  # 查询瞬断按未完成处理，等下一轮
+            # 业务错误（鉴权/参数类）：立即失败，不空转到轮询超时
+            return "FAILED", result.get("msg") or "查询状态失败"
         data = result.get("data")
         status = data.get("status") if isinstance(data, dict) else data
         if status == "SUCCESS":
-            return "SUCCESS"
+            return "SUCCESS", ""
         if status == "FAILED":
-            return "FAILED"
-        return "RUNNING"
+            failed_reason = ""
+            if isinstance(data, dict):
+                fr = data.get("failedReason") or {}
+                failed_reason = str(fr.get("exception_type") or "")
+            return "FAILED", failed_reason or "上游任务失败"
+        return "RUNNING", ""
 
     def _fetch_segment_video_url(self, task_id: str) -> Optional[str]:
         result = self._request(
@@ -500,7 +522,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         video_url = None
         for _ in range(SEGMENT_POLL_MAX_TRIES):
             time.sleep(SEGMENT_POLL_INTERVAL_SECONDS)
-            status = self._poll_segment_status(task_id)
+            status, poll_err = self._poll_segment_status(task_id)
             self.logger.info(f"[分段] {tag} taskId={task_id} status={status}")
             if status == "SUCCESS":
                 video_url = self._fetch_segment_video_url(task_id)
@@ -508,7 +530,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                     return False, "任务成功但 outputs 无 mp4"
                 break
             if status == "FAILED":
-                return False, "上游任务失败"
+                return False, poll_err or "上游任务失败"
         else:
             return False, "轮询超时"
         os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)

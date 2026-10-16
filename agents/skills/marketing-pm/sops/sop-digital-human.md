@@ -88,7 +88,7 @@ description: 数字人视频流程，适用于让图片中的人物开口说话�
 用户明确要求"用这段音频的音色，让它说新的文案"（音频只作音色参考）时：
 1. 调用 `generate_reference_audio` 生成参考音频 URL
 2. 调用 `generate_digital_human`（wan2.2 优先）提交，并向用户说明该模式下口播内容由文案驱动
-- **⚠️ 该模式仅支持短文案**：口播估算超 10 秒（约 40 字以上）时工具会拒绝提交并引导改走两段式（自动路由 LTX2.3）；长文案直接走两段式，不要硬调 `generate_digital_human`
+- **⚠️ 该模式仅支持短文案**：口播估算超 10 秒（约 40 字以上）时工具会拒绝提交并引导改走两段式（MiniMax H3，10-30 秒自动分段拼接）；长文案直接走两段式，不要硬调 `generate_digital_human`
 - **人物图片必须写真实图片 URL**（http(s) 或对话中出现过的 `/upload/...` 路径）：用户说"用之前生成的图"时，不得只写"project_id:xxx 的图"这类引用——直接写"使用 project_id xxx 生成的图，请先调用 check_image_status(project_id) 获取真实图片 URL"，由专家查询后再提交；禁止在任务描述中编造图片路径
 - 专家必须实际调用 `generate_digital_human` 提交任务；严禁只返回"参数已准备完成，可以提交"
 - 专家返回结果必须包含非空 `project_ids`，否则视为未提交成功

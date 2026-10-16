@@ -101,6 +101,18 @@ def clamp_h3_duration(seconds: float) -> int:
     return max(4, min(10, int(math.ceil(seconds))))
 
 
+def estimate_segment_durations(total_seconds: float) -> List[int]:
+    """按分段规则预估各段整数秒（纯数学均分口径，与实际静音切分可能 ±1s 档位差）。
+
+    段数 = ceil(total/段长上限)，各段 = clamp(均分时长, 4, 段长上限) 向上取整。
+    """
+    max_seg = DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS
+    total_seconds = float(total_seconds)
+    seg_count = max(1, int(math.ceil(total_seconds / max_seg)))
+    seg_len = total_seconds / seg_count
+    return [max(4, min(max_seg, int(math.ceil(seg_len)))) for _ in range(seg_count)]
+
+
 def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
     """按口播时长路由数字人生成方式（营销链路，2026-10-16 v3：H3 单段/分段拼接）。
 
@@ -118,15 +130,17 @@ def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
             "routing_reason": "duration_lte_10s_h3",
             "billable_duration": clamp_h3_duration(est_seconds),
             "segment_mode": False,
+            "segment_durations_est": [clamp_h3_duration(est_seconds)],
         }
     if est_seconds <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS:
+        durations_est = estimate_segment_durations(est_seconds)
         return {
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
             "routing_reason": "duration_gt_10s_h3_segmented",
-            # 预估计费口径 = 整数段总长（15s 粒度向上取整），与 confirm 切分后的
-            # sum(segment_durations) 同口径，避免草案预估与实际扣费不一致
-            "billable_duration": int(math.ceil(est_seconds / DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS)
-                                     * DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS),
+            # 预估计费口径 = 预估各段档位之和（与 confirm 实际静音切分可能 ±1 档位差，
+            # confirm 会按实际切分结果重算）
+            "billable_duration": sum(durations_est),
+            "segment_durations_est": durations_est,
             "segment_mode": True,
         }
     return None
@@ -450,7 +464,14 @@ async def prepare_digital_human_draft(
         task_config = TaskTypeRegistry.get(model_task_type)
         model_name = task_config.name if task_config else str(model_task_type)
         billable = routing["billable_duration"]
-        video_power = task_config.get_computing_power(duration=billable) if task_config else 0
+        segment_durations_est = routing.get("segment_durations_est") or [billable]
+        if segment_mode:
+            # 分段计费 = 预估各段档位之和（与端点实扣同口径；confirm 按实际切分重算）
+            video_power = sum(
+                task_config.get_computing_power(duration=d) for d in segment_durations_est
+            ) if task_config else 0
+        else:
+            video_power = task_config.get_computing_power(duration=billable) if task_config else 0
 
         # 分段模式下动作提示词统一为固定镜头版本：保证两段镜头/景别一致，拼接点不跳
         effective_motion = SEGMENTED_MOTION_PROMPT if segment_mode else motion_prompt
@@ -472,6 +493,7 @@ async def prepare_digital_human_draft(
             "routing_reason": routing["routing_reason"],
             "billable_duration": billable,
             "segment_mode": segment_mode,
+            "segment_durations_est": segment_durations_est,
             "video_computing_power": video_power,
             # 兼容旧字段
             "h3_duration": billable,
@@ -564,10 +586,11 @@ async def confirm_digital_human(
     auth_token: str,
     draft_id: str,
 ) -> Dict[str, Any]:
-    """确认数字人口播草案：按草案路由提交 H3 / LTX2.3 生成视频（扣视频时长算力）。
+    """确认数字人口播草案：按草案路由提交 H3 单段 / H3 分段拼接（扣视频时长算力）。
 
-    路由规则见 prepare_digital_human_draft：≤10s → MiniMax H3（/api/digital-human-minimax-h3），
-    10-30s → LTX2.3（/api/digital-human-v2）。存量草案缺 model_task_type 时按 H3 处理。
+    路由规则见 prepare_digital_human_draft：≤10s → MiniMax H3 单段，
+    10-30s → MiniMax H3 分段拼接（均走 /api/digital-human-minimax-h3）。
+    存量草案缺 model_task_type 时按 H3 处理。
     仅在用户明确确认后调用。草案一次性消费，重复调用返回失败。
 
     Args:
@@ -646,25 +669,46 @@ async def confirm_digital_human(
                        or draft.get("motion_prompt")
                        or "角色面向镜头深情的说话，固定镜头。")[:1000]
 
-        # 分段模式（口播 15-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
-        # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致
+        # 分段模式（口播 10-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
+        # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致。
+        # 驱动音频优先本地映射；外链等无法落地时，用上方已下载的 audio_bytes 落临时
+        # 文件再切（切分失败不阻塞提交——分段文件缺失时按单段提交的异常路径上报）
         segment_paths: List[str] = []
         segment_durations: List[int] = []
         if segment_mode:
             draft_audio = draft.get("audio_url") or ''
             local_audio = _resolve_local_media_path(draft_audio)
+            temp_audio_file = None
             if not local_audio:
-                return {'success': False,
-                        'error': f'分段生成需要本地驱动音频，无法解析: {draft_audio}'}
+                temp_audio_file = os.path.join(
+                    'temp', f"dhseg_audio_{draft_id.replace('dh-', '')}"
+                    + ('.wav' if audio_name.endswith('wav') else '.mp3'))
+                os.makedirs(os.path.dirname(temp_audio_file) or '.', exist_ok=True)
+                with open(temp_audio_file, 'wb') as f:
+                    f.write(audio_bytes)
+                local_audio = temp_audio_file
+                logger.info(f"[confirm] 驱动音频为外链，已落盘临时文件用于切分: {local_audio}")
             probe_total = await probe_audio_duration(local_audio)
             if not probe_total:
+                if temp_audio_file and os.path.isfile(temp_audio_file):
+                    os.remove(temp_audio_file)
                 return {'success': False, 'error': '驱动音频时长探测失败，无法切分分段'}
             seg_dir = os.path.join('upload', 'digital_human_segments', draft_id.replace('dh-', ''))
-            plan = await asyncio.to_thread(
-                split_audio_into_segments, local_audio, float(probe_total), seg_dir,
-                max_seg=DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS)
+            try:
+                plan = await asyncio.to_thread(
+                    split_audio_into_segments, local_audio, float(probe_total), seg_dir,
+                    max_seg=DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS)
+            finally:
+                if temp_audio_file and os.path.isfile(temp_audio_file):
+                    os.remove(temp_audio_file)
             segment_paths = [s["path"] for s in plan["segments"]]
             segment_durations = [s["duration"] for s in plan["segments"]]
+            # 实际计费时长与算力按切分结果重算（各段档位之和），与端点实扣同口径
+            billable = sum(segment_durations)
+            seg_task_config = TaskTypeRegistry.get(model_task_type)
+            video_power = sum(
+                seg_task_config.get_computing_power(duration=d) for d in segment_durations
+            ) if seg_task_config else 0
             logger.info(f"[confirm] 分段切分完成: cuts={plan['cuts']}s "
                         f"durations={segment_durations} paths={segment_paths}")
 

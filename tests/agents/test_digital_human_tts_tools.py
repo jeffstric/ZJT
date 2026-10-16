@@ -88,7 +88,9 @@ class TestResolveDigitalHumanModel(unittest.TestCase):
                          "10-30s 也走 H3（分段拼接），不再路由 LTX2.3；11-15s 不做单段（OOM）")
         self.assertEqual(r["routing_reason"], "duration_gt_10s_h3_segmented")
         self.assertTrue(r["segment_mode"])
-        self.assertEqual(r["billable_duration"], 20)  # 整数段口径 ceil(10.1/10)*10
+        # 计费口径 = 预估各段档位之和口径（estimate: 2 段各 ceil(5.05)=6 → 6+6）
+        self.assertEqual(r["billable_duration"], 12)
+        self.assertEqual(r["segment_durations_est"], [6, 6])
 
     def test_30s_boundary_segmented(self):
         r = resolve_digital_human_model(30.0)
@@ -352,7 +354,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         draft = result["draft"]
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         self.assertTrue(draft["segment_mode"], "15s 音频应走分段（单段 11-15s 有 OOM 风险）")
-        self.assertEqual(draft["billable_duration"], 20)
+        self.assertEqual(draft["billable_duration"], 16)  # estimate(15)=[8,8]
 
 
 class TestConfirmTool(_VoiceModelMockBase):
