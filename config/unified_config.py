@@ -186,6 +186,13 @@ SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 # MiniMax H3 720P 按时长算力（秒 -> 算力）。视频去水印与此表共用同一对象。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+# H3 数字人按时长算力：4-10 与上表同价；11-15 为官方时长放宽后的外推档
+# （约 +1.5 算力/秒），后台 implementation_power 可覆盖。勿与去水印表混用
+# （去水印 supported_durations 引用上表对象，扩档会连带放开其时长范围）。
+MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
+    4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13,
+    11: 14, 12: 16, 13: 17, 14: 18, 15: 20,
+}
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -3954,7 +3961,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='digital_human_minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='DigitalHumanMinimaxH3RunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,
