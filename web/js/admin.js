@@ -588,7 +588,8 @@ const AdminApp = {
                     startDate: '',
                     endDate: '',
                     selectedTypes: [],
-                    chartMode: 'rate',
+                    // 趋势图默认展示数量（可选 both 混合 / rate 成功率 / count 数量）
+                    chartMode: 'count',
                     loading: false,
                     models: [],
                     daily: [],
@@ -597,6 +598,18 @@ const AdminApp = {
                         trend: null,
                         stacked: null,
                         rose: null
+                    }
+                },
+                // 每日统计：各用户每日算力消耗
+                dailyPowerStats: {
+                    days: 7,
+                    startDate: '',
+                    endDate: '',
+                    loading: false,
+                    daily: [],
+                    expandedUsers: {},
+                    charts: {
+                        trend: null
                     }
                 },
                 queues: {
@@ -1276,6 +1289,7 @@ const AdminApp = {
     mounted() {
         this.initI18n().then(() => {
             this.initModelAnalysisDates();
+            this.initDailyPowerStatsDates();
             window.addEventListener('resize', this.resizeModelAnalysisCharts);
             this.initAuth();
             this.fetchServerConfig();
@@ -1293,6 +1307,9 @@ const AdminApp = {
         if (this.licensePollTimer) clearInterval(this.licensePollTimer);
         this.stopQueueBacklogPoll();
         Object.values(this.dashboard.modelAnalysis.charts || {}).forEach(chart => {
+            if (chart) chart.dispose();
+        });
+        Object.values(this.dashboard.dailyPowerStats.charts || {}).forEach(chart => {
             if (chart) chart.dispose();
         });
     },
@@ -2043,6 +2060,7 @@ const AdminApp = {
 
             // 同步加载模型成功率分析、队列积压
             this.loadModelAnalysis();
+            this.loadDailyPowerStats();
             this.loadQueueBacklog(false);
         },
 
@@ -2197,6 +2215,200 @@ const AdminApp = {
             }
             this.dashboard.modelAnalysis.expandedTypes = {};
             this.loadModelAnalysis();
+        },
+
+        // 加载每日统计（各用户每日算力消耗）
+        async loadDailyPowerStats() {
+            this.dashboard.dailyPowerStats.loading = true;
+            let shouldRenderChart = false;
+            try {
+                const params = { days: this.dashboard.dailyPowerStats.days };
+                if (this.dashboard.dailyPowerStats.startDate) {
+                    params.start_date = this.dashboard.dailyPowerStats.startDate;
+                }
+                if (this.dashboard.dailyPowerStats.endDate) {
+                    params.end_date = this.dashboard.dailyPowerStats.endDate;
+                }
+
+                const response = await axios.get('/api/admin/dashboard/daily-power-stats', {
+                    params,
+                    headers: { 'Authorization': `Bearer ${this.authToken}` }
+                });
+
+                if (response.data.code === 0) {
+                    this.dashboard.dailyPowerStats.daily = response.data.data.daily || [];
+                    this.dashboard.dailyPowerStats.expandedUsers = {};
+                    shouldRenderChart = true;
+                }
+            } catch (error) {
+                console.error('Load daily power stats failed:', error);
+                this.showToast(this.t('daily_power_load_failed'), 'error');
+            } finally {
+                this.dashboard.dailyPowerStats.loading = false;
+            }
+
+            // 在 loading 设为 false 之后渲染图表，使用 setTimeout 确保 v-else 的 DOM 已完全就绪
+            if (shouldRenderChart) {
+                setTimeout(() => this.renderDailyPowerChart(), 100);
+            }
+        },
+
+        // 切换每日统计时间范围
+        setDailyPowerDays(days) {
+            this.dashboard.dailyPowerStats.days = days;
+            this.setDailyPowerDateRangeFromDays(days);
+            this.dashboard.dailyPowerStats.expandedUsers = {};
+            this.dashboard.dailyPowerStats.daily = [];
+            this.loadDailyPowerStats();
+        },
+
+        initDailyPowerStatsDates() {
+            this.setDailyPowerDateRangeFromDays(this.dashboard.dailyPowerStats.days || 7);
+        },
+
+        setDailyPowerDateRangeFromDays(days) {
+            const end = new Date();
+            const start = new Date();
+            start.setDate(end.getDate() - Math.max(days - 1, 0));
+            this.dashboard.dailyPowerStats.startDate = this.formatDateInput(start);
+            this.dashboard.dailyPowerStats.endDate = this.formatDateInput(end);
+        },
+
+        handleDailyPowerDateChange() {
+            const { startDate, endDate } = this.dashboard.dailyPowerStats;
+            if (startDate && endDate) {
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                if (start > end) {
+                    this.dashboard.dailyPowerStats.endDate = startDate;
+                } else {
+                    const diffMs = end.getTime() - start.getTime();
+                    this.dashboard.dailyPowerStats.days = Math.min(Math.floor(diffMs / 86400000) + 1, 30);
+                }
+            }
+            this.dashboard.dailyPowerStats.expandedUsers = {};
+            this.loadDailyPowerStats();
+        },
+
+        // 按用户聚合的算力消耗汇总（由每日明细计算，按总消耗降序）
+        getDailyPowerUserSummary() {
+            const map = new Map();
+            (this.dashboard.dailyPowerStats.daily || []).forEach(day => {
+                (day.users || []).forEach(item => {
+                    let user = map.get(item.user_id);
+                    if (!user) {
+                        user = {
+                            user_id: item.user_id,
+                            nickname: item.nickname,
+                            total_power: 0,
+                            record_count: 0,
+                            active_days: 0,
+                            daily: {}
+                        };
+                        map.set(item.user_id, user);
+                    }
+                    user.total_power += item.power || 0;
+                    user.record_count += item.count || 0;
+                    user.active_days += 1;
+                    user.daily[day.date] = (user.daily[day.date] || 0) + (item.power || 0);
+                });
+            });
+            return Array.from(map.values()).sort((a, b) => b.total_power - a.total_power);
+        },
+
+        getDailyPowerSummary() {
+            const daily = this.dashboard.dailyPowerStats.daily || [];
+            const totalPower = daily.reduce((sum, day) => sum + (day.total_power || 0), 0);
+            return {
+                totalPower,
+                totalUsers: this.getDailyPowerUserSummary().length,
+                avgPerDay: daily.length ? Math.round(totalPower / daily.length) : 0
+            };
+        },
+
+        toggleDailyPowerUserExpand(userId) {
+            this.dashboard.dailyPowerStats.expandedUsers[userId] = !this.dashboard.dailyPowerStats.expandedUsers[userId];
+        },
+
+        ensureDailyPowerChart() {
+            if (!window.echarts) {
+                this.showToast(this.t('model_chart_dependency_missing'), 'error');
+                return null;
+            }
+            const el = this.$refs.dailyPowerChart;
+            if (!el) return null;
+            const cached = this.dashboard.dailyPowerStats.charts.trend;
+            if (cached && cached.getDom() !== el) {
+                cached.dispose();
+                this.dashboard.dailyPowerStats.charts.trend = null;
+            }
+            if (!this.dashboard.dailyPowerStats.charts.trend) {
+                const chart = window.echarts.init(el);
+                this.dashboard.dailyPowerStats.charts.trend = Vue.markRaw ? Vue.markRaw(chart) : chart;
+            }
+            return this.dashboard.dailyPowerStats.charts.trend;
+        },
+
+        // 每日用户算力消耗堆叠柱状图：Top10 用户 + 其他用户
+        renderDailyPowerChart() {
+            const chart = this.ensureDailyPowerChart();
+            if (!chart) return;
+            const daily = this.dashboard.dailyPowerStats.daily || [];
+            const userSummary = this.getDailyPowerUserSummary();
+            const topUsers = userSummary.slice(0, 10);
+            const topIds = new Set(topUsers.map(user => user.user_id));
+            const series = topUsers.map((user, index) => ({
+                name: user.nickname,
+                type: 'bar',
+                stack: 'power',
+                barMaxWidth: 42,
+                itemStyle: { color: this.getModelColor(index), borderRadius: [3, 3, 0, 0] },
+                data: daily.map(day => {
+                    const item = (day.users || []).find(u => u.user_id === user.user_id);
+                    return item ? (item.power || 0) : 0;
+                })
+            }));
+
+            if (userSummary.length > topUsers.length) {
+                series.push({
+                    name: this.t('daily_power_other_users'),
+                    type: 'bar',
+                    stack: 'power',
+                    barMaxWidth: 42,
+                    itemStyle: { color: '#cbd5e1', borderRadius: [3, 3, 0, 0] },
+                    data: daily.map(day => (day.users || [])
+                        .filter(u => !topIds.has(u.user_id))
+                        .reduce((sum, u) => sum + (u.power || 0), 0))
+                });
+            }
+
+            chart.setOption({
+                ...this.getModelChartBaseOption(),
+                tooltip: {
+                    trigger: 'axis',
+                    axisPointer: { type: 'shadow' },
+                    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                    borderWidth: 0,
+                    textStyle: { color: '#fff' }
+                },
+                xAxis: {
+                    type: 'category',
+                    data: daily.map(day => day.date),
+                    axisLine: { lineStyle: { color: '#cbd5e1' } },
+                    axisLabel: { color: '#64748b' }
+                },
+                yAxis: {
+                    type: 'value',
+                    name: this.t('daily_power_unit'),
+                    splitLine: { lineStyle: { color: '#e2e8f0' } }
+                },
+                series
+            }, true);
+        },
+
+        resizeDailyPowerChart() {
+            const chart = this.dashboard?.dailyPowerStats?.charts?.trend;
+            if (chart) chart.resize();
         },
 
         setModelAnalysisChartMode(mode) {
@@ -2493,6 +2705,7 @@ const AdminApp = {
             Object.values(charts).forEach(chart => {
                 if (chart) chart.resize();
             });
+            this.resizeDailyPowerChart();
         },
 
         // 格式化耗时（毫秒 → 可读字符串）

@@ -8,7 +8,7 @@ import logging
 import httpx
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from model.users import UsersModel, User
 from model.user_tokens import UserTokensModel
@@ -401,6 +401,76 @@ async def admin_model_analysis(
         raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
     except Exception as e:
         logger.error(f"Failed to get model analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/dashboard/daily-power-stats")
+async def admin_daily_power_stats(
+    days: int = Query(7, ge=1, le=30),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    每日统计 - 各用户每日算力消耗（behavior='deduct' 聚合）
+    返回每日各用户消耗算力明细，供图表与表格展示
+    """
+    await require_admin(auth_token)
+
+    try:
+        if not start_date or not end_date:
+            end = datetime.now()
+            start = end - timedelta(days=days - 1)
+            start_date = start_date or start.strftime("%Y-%m-%d")
+            end_date = end_date or end.strftime("%Y-%m-%d")
+
+        parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        if parsed_start > parsed_end:
+            raise HTTPException(status_code=400, detail="start_date must be earlier than or equal to end_date")
+
+        rows = await asyncio.to_thread(
+            ComputingPowerLogModel.get_daily_user_power_stats,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        daily_groups: Dict[str, dict] = {}
+        for row in rows:
+            stat_date = row['stat_date']
+            if isinstance(stat_date, datetime):
+                stat_date = stat_date.strftime("%Y-%m-%d")
+            day_group = daily_groups.get(stat_date)
+            if not day_group:
+                day_group = {'date': stat_date, 'total_power': 0, 'users': []}
+                daily_groups[stat_date] = day_group
+
+            power = int(row['total_power'] or 0)
+            day_group['total_power'] += power
+            user_id = row['user_id']
+            day_group['users'].append({
+                'user_id': user_id,
+                'nickname': row.get('nickname') or f'用户{user_id}',
+                'power': power,
+                'count': int(row['record_count'] or 0)
+            })
+
+        daily = sorted(daily_groups.values(), key=lambda x: x['date'])
+        return {
+            "code": 0,
+            "data": {
+                "days": days,
+                "start_date": start_date,
+                "end_date": end_date,
+                "daily": daily
+            }
+        }
+    except HTTPException:
+        raise
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format, expected YYYY-MM-DD")
+    except Exception as e:
+        logger.error(f"Failed to get daily power stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

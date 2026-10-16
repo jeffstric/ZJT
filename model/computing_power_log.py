@@ -285,6 +285,54 @@ class ComputingPowerLogModel:
             raise
 
 
+    @staticmethod
+    def get_daily_user_power_stats(
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        按日+用户聚合算力消耗（behavior='deduct'）统计
+
+        Args:
+            start_date: 开始日期（含），格式 YYYY-MM-DD；为空表示不限制
+            end_date: 结束日期（含），格式 YYYY-MM-DD；为空表示不限制
+
+        Returns:
+            [{stat_date, user_id, nickname, total_power, record_count}]
+            按日期升序、当日消耗降序排列
+        """
+        sql = """
+            SELECT
+                DATE(c.created_at) AS stat_date,
+                c.user_id AS user_id,
+                u.nickname AS nickname,
+                SUM(c.computing_power) AS total_power,
+                COUNT(*) AS record_count
+            FROM computing_power_log c
+            LEFT JOIN users u ON u.id = c.user_id
+            WHERE c.behavior = 'deduct'
+        """
+        params: List[Any] = []
+
+        if start_date:
+            sql += " AND c.created_at >= %s"
+            params.append(start_date)
+        if end_date:
+            # end_date 为当日，右开区间取到次日零点
+            sql += " AND c.created_at < DATE_ADD(%s, INTERVAL 1 DAY)"
+            params.append(end_date)
+
+        sql += " GROUP BY DATE(c.created_at), c.user_id, u.nickname"
+        sql += " ORDER BY stat_date ASC, total_power DESC"
+
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return results or []
+        except Exception as e:
+            logger.error(f"Failed to get daily user power stats: {e}")
+            raise
+
+
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `computing_power_log` (
   `id` int NOT NULL AUTO_INCREMENT,
