@@ -79,6 +79,7 @@
 - ai-tools 7 个工具页（text_to_image/image_edit/video_enhance/ai_video_gen/digital_human/ai_script_gen/image_to_video）history 查询 + `index.html` timeline 弹窗：query `auth_token` → header。
 - storyboard 前端 SSE 已带 Bearer，无需改动。
 - `script_writer.js`（2026-09-15 补丁）：文件系列端点（`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files`）约 13 处 `fetch` 原本不带 `Authorization` 头（POST 保存仅把 `auth_token` 放 body，装饰器不读 body），后端真鉴权上线后返回 401 → 前端 `checkTokenExpired` 把**任何** 401 都当 token 过期 → 整页跳登录页（e2e `test_script_writer.py` 批量失败）。已全部补 `Authorization: Bearer ${AUTH_TOKEN}` 头。
+- `DELETE /api/staging-file`（2026-10-16）：右侧暂存栏的角色卡、场景、道具、剧本删除是同一个按钮函数 `deleteStagingFile()`，都打到这个接口，只带 `Authorization` 头，不把 token 放进 URL。该接口曾把 `auth_token` 设为必填 query，四类删除在进函数前都被 FastAPI 打成 422 `Field required`（`loc: ["query", "auth_token"]`），函数体内也从未读取这个参数。已去掉 query 必填，登录身份仍由 `require_permission` 从 Authorization 头解析，query `user_id` 必须与登录用户一致。
 - 同族漏头补丁（2026-09-15，e2e 复现定位）：
   - `marketing_agent.js`：`GET /api/session/{id}/latest-task`（页面刷新恢复活跃任务流）裸 `fetch` 无头，401 → 整页跳登录（e2e `test_marketing_agent.py` 29 例批量失败）。已补 `Authorization: Bearer`。
   - `workflow.js`：`GET /api/computing-power-config`（驱动状态，TaskConfig 主路径与回退路径共 2 处）裸 `fetch` 无头，401 导致驱动状态/模型选项加载失败（e2e `test_node_operations.py` 模型/时长选项为空）。已补 `Authorization: Bearer`（`getAuthToken()`）。

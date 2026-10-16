@@ -6369,21 +6369,26 @@ async def delete_staging_file(
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
     relative_path: str = QueryParam(...),
-    auth_token: str = QueryParam(...)
 ):
     """
-    删除暂存区的角色、场景、道具、剧本文件
-    
+    删除暂存区的角色、场景、道具、剧本文件。
+
+    登录凭证只认 Authorization 头（由 require_permission 校验）。
+    不要把 auth_token 放进 query：浏览器历史、Referer 和访问日志会泄漏。
+
     Args:
-        user_id: 用户ID
+        user_id: 用户ID（须与登录身份一致）
         world_id: 世界ID
         relative_path: 文件相对路径（从 script_writer 目录开始，如：2/130/props/prop_xxx.json）
-        auth_token: 认证令牌
-    
+
     Returns:
         删除结果
     """
     try:
+        claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+        if claimed_error:
+            return claimed_error
+
         # 验证相对路径格式，防止路径遍历攻击
         if '..' in relative_path or relative_path.startswith('/'):
             logger.warning(f'检测到可疑路径: {relative_path}')
