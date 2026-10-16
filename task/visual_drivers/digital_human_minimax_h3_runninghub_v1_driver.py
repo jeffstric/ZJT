@@ -429,10 +429,11 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         for f in seg_files:
             inputs += ['-i', f]
         scale_chain = ';'.join(
-            f'[{i}:v]scale={out_w}:{out_h}[v{i}]' for i in range(len(seg_files)))
+            f'[{i}:v]scale={out_w}:{out_h},format=yuv420p[v{i}]'
+            for i in range(len(seg_files)))
         concat_filter = scale_chain + ';' \
             + ''.join(f'[v{i}][{i}:a]' for i in range(len(seg_files))) \
-            + f'concat=n={len(seg_files)}:v=1:a=1,format=yuv420p[v][a]'
+            + f'concat=n={len(seg_files)}:v=1:a=1[v][a]'
         r = subprocess.run(
             [_get_ffmpeg_path(), '-y', '-loglevel', 'error', *inputs,
              '-filter_complex', concat_filter, '-map', '[v]', '-map', '[a]',
