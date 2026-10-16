@@ -165,6 +165,7 @@
       "model": "gemini/gemini-3-flash-preview",
       "allowed_tools": [
         "create_script_json",
+        "update_script_json",
         "read_script_json",
         "list_script_jsons",
         "read_character_json",
