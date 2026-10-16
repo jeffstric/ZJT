@@ -147,6 +147,8 @@ Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版�
 
 页面初始化时调用 `GET /api/sessions?user_id=xxx&world_id=1&session_type=2&limit=50` 从后端加载，失败时回退到 `localStorage` 缓存。
 
+> 注意（2026-10-12 鉴权收紧）：该接口要求登录，且 `user_id` 必须与登录身份一致（不一致返回 403，不再返回他人会话列表）。营销页 URL 带他人 `user_id` 时列表会回退到本地缓存；新建会话归属以登录身份为准。
+
 ### 消息交互
 
 #### 消息类型
@@ -482,7 +484,7 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 | 端点 | 方法 | 说明 | 请求参数 |
 |------|------|------|----------|
 | `/api/session/create` | POST | 创建新会话 | `{ user_id, world_id, auth_token, session_type: 2 }` |
-| `/api/sessions` | GET | 获取会话列表 | `?user_id=&world_id=&session_type=2&limit=50` |
+| `/api/sessions` | GET | 获取会话列表（须登录，user_id 与登录身份一致，否则 403） | `?user_id=&world_id=&session_type=2&limit=50` |
 | `/api/session/{session_id}/history` | GET | 获取会话历史 | Headers: `Authorization`, `X-User-Id` |
 | `/api/session/{session_id}/message` | POST | 追加消息到会话 | `{ role, content }` |
 | `/api/session/{session_id}/title` | PUT | 更新会话标题 | `{ title }` |
