@@ -728,6 +728,23 @@ body {
     height: 360px;
 }
 
+/* 每日统计（用户算力消耗） */
+.daily-power-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.daily-power-detail-item {
+    background: #f1f5f9;
+    border-radius: 4px;
+    padding: 2px 8px;
+    white-space: nowrap;
+}
+
 .model-rate-chart,
 .model-usage-chart {
     display: flex;

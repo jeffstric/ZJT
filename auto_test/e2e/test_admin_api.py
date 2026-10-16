@@ -36,6 +36,36 @@ def test_api_admin_model_analysis(api_client):
     assert data.get("code") == 0, f"响应异常: {data}"
 
 
+@pytest.mark.admin
+def test_api_admin_daily_power_stats(api_client):
+    """admin_api_004 - GET /api/admin/dashboard/daily-power-stats 每日用户算力消耗统计"""
+    resp = api_client.get("/api/admin/dashboard/daily-power-stats", params={"days": 7})
+    assert resp.status_code == 200, f"获取每日统计失败: {resp.status_code} {resp.text}"
+    data = resp.json()
+    assert data.get("code") == 0, f"响应异常: {data}"
+    payload = data.get("data", {})
+    assert "daily" in payload, "应包含 daily"
+    assert payload.get("start_date"), "应包含 start_date"
+    assert payload.get("end_date"), "应包含 end_date"
+
+
+@pytest.mark.admin
+def test_api_admin_daily_power_stats_date_range(api_client):
+    """admin_api_005 - GET /api/admin/dashboard/daily-power-stats 指定日期范围"""
+    resp = api_client.get(
+        "/api/admin/dashboard/daily-power-stats",
+        params={"start_date": "2026-10-01", "end_date": "2026-10-07"},
+    )
+    assert resp.status_code == 200, f"获取每日统计失败: {resp.status_code} {resp.text}"
+    data = resp.json()
+    assert data.get("code") == 0, f"响应异常: {data}"
+    for day in data.get("data", {}).get("daily", []):
+        assert "date" in day and "total_power" in day and "users" in day, f"日明细字段缺失: {day}"
+        for user in day.get("users", []):
+            assert "user_id" in user and "nickname" in user and "power" in user, f"用户明细字段缺失: {user}"
+            assert "display_name" in user, f"用户明细缺少 display_name: {user}"
+
+
 # ═══════════════════════════════════════════════════════════════
 # 用户管理 API
 # ═══════════════════════════════════════════════════════════════
