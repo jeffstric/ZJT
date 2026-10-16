@@ -745,7 +745,9 @@
                     },
                     body: JSON.stringify({
                         system_prompt: systemPrompt,
-                        user_id: USER_ID,
+                        // 会话归属以登录身份为准（服务端按 token 校验），不回传 URL user_id：
+                        // 链接里的 user_id 可能是他人的（2026-10-12 课堂事故），回传会触发
+                        // user_mismatch 403，导致无法自愈建会话。
                         world_id: WORLD_ID,
                         auth_token: AUTH_TOKEN,
                         session_type: 1
@@ -796,6 +798,52 @@
                 }
             } catch (error) {
                 showError((window.t ? window.t('error_create_session_failed', {error: error.message}) : '创建会话失败: ' + error.message));
+            }
+        }
+
+        // 会话失效自愈：创建任务返回 404（会话不存在/非本人会话，例如页面链接带了他人的
+        // user_id 导致复用了别人的会话、或会话已被清理）时，丢弃旧会话、新建会话并重发当前消息。
+        // 只允许 sendMessage 的 404 分支进入；重试请求带 skipSessionRecovery，最多自愈一次。
+        async function recoverBrokenSession(message, isSystemMessage) {
+            hideTypingIndicator();
+            hideToolCalls();
+            updateStatus(window.t ? window.t('status_session_recreating') : '会话不可用，正在新建会话...');
+            console.warn('[会话自愈] 创建任务返回 404，丢弃不可用会话并重建:', sessionId);
+            sessionId = null;
+            try {
+                await createSession();
+            } catch (error) {
+                console.error('[会话自愈] 新建会话失败:', error);
+            }
+            if (!sessionId) {
+                // 重建失败：把消息放回输入框（系统触发的 customMessage 无输入框可回填），交还用户
+                isProcessing = false;
+                const sendBtn = document.getElementById('send-btn');
+                if (sendBtn) {
+                    sendBtn.disabled = false;
+                    sendBtn.classList.remove('sending');
+                }
+                if (!isSystemMessage) {
+                    const input = document.getElementById('message-input');
+                    if (input && !input.value.trim()) {
+                        input.value = message;
+                        syncSendBtnLayout();
+                    }
+                }
+                showError(window.t ? window.t('error_session_recreate_failed') : '会话重建失败，消息已放回输入框，请稍后重试');
+                return;
+            }
+            // 移除刚才失败尝试的用户气泡，重发时重新入列，避免气泡重复
+            removeLastUserBubble();
+            isProcessing = false;
+            await sendMessage(message, isSystemMessage, { skipSessionRecovery: true });
+        }
+
+        function removeLastUserBubble() {
+            const messagesDiv = document.getElementById('chat-messages');
+            const bubbles = messagesDiv.querySelectorAll('.message.user-message');
+            if (bubbles.length > 0) {
+                bubbles[bubbles.length - 1].remove();
             }
         }
 
@@ -1334,7 +1382,8 @@
             }, 400);
         }
 
-        async function sendMessage(customMessage = null, isSystemMessage = false) {
+        // recoveryOptions.skipSessionRecovery：会话自愈重发的请求不再二次自愈，防止递归
+        async function sendMessage(customMessage = null, isSystemMessage = false, recoveryOptions = null) {
             console.log('sendMessage called, isProcessing:', isProcessing, 'pendingVerificationId:', pendingVerificationId);
 
             // Disable send button immediately to prevent multiple clicks
@@ -1523,6 +1572,13 @@
                         isProcessing = false;
                         const sendBtn = document.getElementById('send-btn');
                         if (sendBtn) { sendBtn.disabled = false; sendBtn.classList.remove('sending'); }
+                        return;
+                    }
+                    // 会话不可用（404：会话不存在或非本人会话——例如复用了他人会话、会话已被清理）：
+                    // 自愈一次，新建会话并原样重发当前消息；重试请求不再自愈，避免循环
+                    if (taskResponse.status === 404 && !(recoveryOptions && recoveryOptions.skipSessionRecovery)) {
+                        clearTimeout(timeoutId); // 本次请求已结束，防止旧的超时定时器稍后误报
+                        await recoverBrokenSession(message, isSystemMessage);
                         return;
                     }
                     // 其他错误

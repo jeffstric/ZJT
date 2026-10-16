@@ -50,7 +50,7 @@
     - `ref_audio`: 参考音频文件（可选）
     - `emo_ref_audio`: 情感参考音频文件（可选）
     - `emo_weight`: 情感权重（可选，0-1.6）
-    - `auth_token`: 认证令牌
+    - 认证：`Authorization: Bearer <token>` 请求头（服务端 `require_permission` 只读头/query，不读 form 字段；前端统一走 `web/js/api.js` 的 `authPostForm`）
 
 - **状态查询接口**：`GET /api/audio-status/{audio_id}`
   - 返回音频生成状态和结果

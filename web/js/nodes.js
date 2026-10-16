@@ -3433,21 +3433,16 @@
             apiUrl = '/api/text-to-image';
           }
           
-          res = await fetch(apiUrl, {
-            method: 'POST',
-            body: form
-          });
-          
+          res = await authPostForm(apiUrl, form);
+
           const resText4 = await res.text();
           let data;
           try { data = JSON.parse(resText4); } catch(e) {
             throw new Error(`API返回异常 (HTTP ${res.status}): ${resText4.slice(0, 200) || '空响应'}`);
           }
-          
+
           if(!res.ok) {
-            const errorMsg = typeof data.detail === 'string' ? data.detail :
-                             typeof data.message === 'string' ? data.message :
-                           JSON.stringify(data.detail || data.message || '提交任务失败');
+            const errorMsg = extractApiErrorMessage(data, res);
             throw new Error(errorMsg);
           }
           
@@ -4254,7 +4249,7 @@
           }
           appendAuthToForm(form);
 
-          res = await fetch('/api/ai-app-run', { method: 'POST', body: form });
+          res = await authPostForm('/api/ai-app-run', form);
         } else if(videoGenMode === 'multi_reference') {
           // ===== 参考生视频模式 =====
           const refTaskId = TaskConfig.getTaskIdByKey(videoModel || 'wan22', 'image_to_video');
@@ -4295,7 +4290,7 @@
 
           appendAuthToForm(form);
 
-          res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
+          res = await authPostForm('/api/ai-app-run-image', form);
         } else {
           // ===== 首尾帧模式（原有逻辑） =====
           const taskId9 = TaskConfig.getTaskIdByKey(videoModel || 'wan22', 'image_to_video');
@@ -4319,9 +4314,9 @@
           }
           appendAuthToForm(form);
 
-          res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
+          res = await authPostForm('/api/ai-app-run-image', form);
         }
-        
+
         const resText5 = await res.text();
         let data;
         try { data = JSON.parse(resText5); } catch(e) {
@@ -4329,7 +4324,7 @@
         }
         
         if(!data.project_ids || data.project_ids.length === 0){
-          throw new Error(data.detail || data.message || '提交任务失败');
+          throw new Error(extractApiErrorMessage(data, res));
         }
         
         const projectIds = data.project_ids;
