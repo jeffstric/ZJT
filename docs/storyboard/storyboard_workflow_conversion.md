@@ -24,6 +24,8 @@
 
 `api/storyboard_conversion.py`（router 前缀 `/api/storyboard`，注册见 `server.py`）。
 
+身份以登录态为准。`X-User-Id` 可省略；若携带则必须与登录用户一致，否则 403。新建故事板或画布记在登录用户名下。
+
 ### POST /api/storyboard/from-workflow
 
 Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（新建时附 `scene_count`）。

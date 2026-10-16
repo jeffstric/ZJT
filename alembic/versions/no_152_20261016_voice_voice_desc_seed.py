@@ -35,7 +35,7 @@ depends_on: Union[str, Sequence[str], None] = None
 VOICE_SEED = [
     {
         "name": "小武", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_001.mp3", "audio_url": "/voice_presets/preset_001.mp3",
         "sort_order": 1, "is_active": 1,
@@ -45,7 +45,7 @@ VOICE_SEED = [
     },
     {
         "name": "林渊", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_002.mp3", "audio_url": "/voice_presets/preset_002.mp3",
         "sort_order": 2, "is_active": 1,
@@ -55,7 +55,7 @@ VOICE_SEED = [
     },
     {
         "name": "林砚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_003.mp3", "audio_url": "/voice_presets/preset_003.mp3",
         "sort_order": 3, "is_active": 1,
@@ -65,7 +65,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏晚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_004.mp3", "audio_url": "/voice_presets/preset_004.mp3",
         "sort_order": 4, "is_active": 1,
@@ -75,7 +75,7 @@ VOICE_SEED = [
     },
     {
         "name": "小月", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_005.mp3", "audio_url": "/voice_presets/preset_005.mp3",
         "sort_order": 5, "is_active": 1,
@@ -85,7 +85,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏清月", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_006.mp3", "audio_url": "/voice_presets/preset_006.mp3",
         "sort_order": 6, "is_active": 1,
@@ -95,7 +95,7 @@ VOICE_SEED = [
     },
     {
         "name": "小胖", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_007.mp3", "audio_url": "/voice_presets/preset_007.mp3",
         "sort_order": 7, "is_active": 1,
@@ -105,7 +105,7 @@ VOICE_SEED = [
     },
     {
         "name": "陈宇", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_008.mp3", "audio_url": "/voice_presets/preset_008.mp3",
         "sort_order": 8, "is_active": 1,
@@ -115,7 +115,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏婉", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_009.mp3", "audio_url": "/voice_presets/preset_009.mp3",
         "sort_order": 9, "is_active": 1,
@@ -125,7 +125,7 @@ VOICE_SEED = [
     },
     {
         "name": "拳王", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_010.mp3", "audio_url": "/voice_presets/preset_010.mp3",
         "sort_order": 10, "is_active": 1,
@@ -135,7 +135,7 @@ VOICE_SEED = [
     },
     {
         "name": "周启明", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_011.mp3", "audio_url": "/voice_presets/preset_011.mp3",
         "sort_order": 11, "is_active": 1,
@@ -145,7 +145,7 @@ VOICE_SEED = [
     },
     {
         "name": "萧慕寒", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_012.mp3", "audio_url": "/voice_presets/preset_012.mp3",
         "sort_order": 12, "is_active": 1,
@@ -155,7 +155,7 @@ VOICE_SEED = [
     },
     {
         "name": "陈屿", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_013.mp3", "audio_url": "/voice_presets/preset_013.mp3",
         "sort_order": 13, "is_active": 1,
@@ -165,7 +165,7 @@ VOICE_SEED = [
     },
     {
         "name": "顾言", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_014.mp3", "audio_url": "/voice_presets/preset_014.mp3",
         "sort_order": 14, "is_active": 1,
@@ -175,7 +175,7 @@ VOICE_SEED = [
     },
     {
         "name": "寒霜", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_015.mp3", "audio_url": "/voice_presets/preset_015.mp3",
         "sort_order": 15, "is_active": 1,
@@ -185,7 +185,7 @@ VOICE_SEED = [
     },
     {
         "name": "陆沉", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_016.mp3", "audio_url": "/voice_presets/preset_016.mp3",
         "sort_order": 16, "is_active": 1,
@@ -195,7 +195,7 @@ VOICE_SEED = [
     },
     {
         "name": "孟泽阳", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_017.mp3", "audio_url": "/voice_presets/preset_017.mp3",
         "sort_order": 17, "is_active": 1,
@@ -205,7 +205,7 @@ VOICE_SEED = [
     },
     {
         "name": "傅云深", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_018.mp3", "audio_url": "/voice_presets/preset_018.mp3",
         "sort_order": 18, "is_active": 1,
@@ -215,7 +215,7 @@ VOICE_SEED = [
     },
     {
         "name": "陆沉", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_019.mp3", "audio_url": "/voice_presets/preset_019.mp3",
         "sort_order": 19, "is_active": 1,
@@ -225,7 +225,7 @@ VOICE_SEED = [
     },
     {
         "name": "辰", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_020.mp3", "audio_url": "/voice_presets/preset_020.mp3",
         "sort_order": 20, "is_active": 1,
@@ -235,7 +235,7 @@ VOICE_SEED = [
     },
     {
         "name": "带教者", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_021.mp3", "audio_url": "/voice_presets/preset_021.mp3",
         "sort_order": 21, "is_active": 1,
@@ -245,7 +245,7 @@ VOICE_SEED = [
     },
     {
         "name": "丝绸美女", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_022.mp3", "audio_url": "/voice_presets/preset_022.mp3",
         "sort_order": 22, "is_active": 1,
@@ -255,7 +255,7 @@ VOICE_SEED = [
     },
     {
         "name": "林向南", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_023.mp3", "audio_url": "/voice_presets/preset_023.mp3",
         "sort_order": 23, "is_active": 1,
@@ -265,7 +265,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏晚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_024.mp3", "audio_url": "/voice_presets/preset_024.mp3",
         "sort_order": 24, "is_active": 1,
@@ -275,7 +275,7 @@ VOICE_SEED = [
     },
     {
         "name": "沈玉婉", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_025.mp3", "audio_url": "/voice_presets/preset_025.mp3",
         "sort_order": 25, "is_active": 1,
@@ -285,7 +285,7 @@ VOICE_SEED = [
     },
     {
         "name": "林夏", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_026.mp3", "audio_url": "/voice_presets/preset_026.mp3",
         "sort_order": 26, "is_active": 1,
@@ -295,7 +295,7 @@ VOICE_SEED = [
     },
     {
         "name": "传旨太监", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_027.mp3", "audio_url": "/voice_presets/preset_027.mp3",
         "sort_order": 27, "is_active": 1,
@@ -305,7 +305,7 @@ VOICE_SEED = [
     },
     {
         "name": "严正", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_028.mp3", "audio_url": "/voice_presets/preset_028.mp3",
         "sort_order": 28, "is_active": 1,
@@ -315,7 +315,7 @@ VOICE_SEED = [
     },
     {
         "name": "李总", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_029.mp3", "audio_url": "/voice_presets/preset_029.mp3",
         "sort_order": 29, "is_active": 1,
@@ -325,7 +325,7 @@ VOICE_SEED = [
     },
     {
         "name": "周八琵", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_030.mp3", "audio_url": "/voice_presets/preset_030.mp3",
         "sort_order": 30, "is_active": 1,
@@ -335,7 +335,7 @@ VOICE_SEED = [
     },
     {
         "name": "旁白", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_031.mp3", "audio_url": "/voice_presets/preset_031.mp3",
         "sort_order": 31, "is_active": 1,
@@ -345,7 +345,7 @@ VOICE_SEED = [
     },
     {
         "name": "领导", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_032.mp3", "audio_url": "/voice_presets/preset_032.mp3",
         "sort_order": 32, "is_active": 1,
@@ -355,7 +355,7 @@ VOICE_SEED = [
     },
     {
         "name": "李卫国", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_033.mp3", "audio_url": "/voice_presets/preset_033.mp3",
         "sort_order": 33, "is_active": 1,
@@ -365,7 +365,7 @@ VOICE_SEED = [
     },
     {
         "name": "何队", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_034.mp3", "audio_url": "/voice_presets/preset_034.mp3",
         "sort_order": 34, "is_active": 1,
@@ -375,7 +375,7 @@ VOICE_SEED = [
     },
     {
         "name": "队长", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_035.mp3", "audio_url": "/voice_presets/preset_035.mp3",
         "sort_order": 35, "is_active": 1,
@@ -385,7 +385,7 @@ VOICE_SEED = [
     },
     {
         "name": "韩敬文", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_036.mp3", "audio_url": "/voice_presets/preset_036.mp3",
         "sort_order": 36, "is_active": 1,
@@ -395,7 +395,7 @@ VOICE_SEED = [
     },
     {
         "name": "方鹤年", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_037.mp3", "audio_url": "/voice_presets/preset_037.mp3",
         "sort_order": 37, "is_active": 1,
@@ -405,7 +405,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵铭", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_038.mp3", "audio_url": "/voice_presets/preset_038.mp3",
         "sort_order": 38, "is_active": 1,
@@ -415,7 +415,7 @@ VOICE_SEED = [
     },
     {
         "name": "同事乙", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_039.mp3", "audio_url": "/voice_presets/preset_039.mp3",
         "sort_order": 39, "is_active": 1,
@@ -425,7 +425,7 @@ VOICE_SEED = [
     },
     {
         "name": "林默", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_040.mp3", "audio_url": "/voice_presets/preset_040.mp3",
         "sort_order": 40, "is_active": 1,
@@ -435,7 +435,7 @@ VOICE_SEED = [
     },
     {
         "name": "顾楠", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_041.mp3", "audio_url": "/voice_presets/preset_041.mp3",
         "sort_order": 41, "is_active": 1,
@@ -445,7 +445,7 @@ VOICE_SEED = [
     },
     {
         "name": "沈曼音", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_042.mp3", "audio_url": "/voice_presets/preset_042.mp3",
         "sort_order": 42, "is_active": 1,
@@ -455,7 +455,7 @@ VOICE_SEED = [
     },
     {
         "name": "刘姐", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_043.mp3", "audio_url": "/voice_presets/preset_043.mp3",
         "sort_order": 43, "is_active": 1,
@@ -465,7 +465,7 @@ VOICE_SEED = [
     },
     {
         "name": "周曼", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_044.mp3", "audio_url": "/voice_presets/preset_044.mp3",
         "sort_order": 44, "is_active": 1,
@@ -475,7 +475,7 @@ VOICE_SEED = [
     },
     {
         "name": "陈总", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_045.mp3", "audio_url": "/voice_presets/preset_045.mp3",
         "sort_order": 45, "is_active": 1,
@@ -485,7 +485,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵总", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_046.mp3", "audio_url": "/voice_presets/preset_046.mp3",
         "sort_order": 46, "is_active": 1,
@@ -495,7 +495,7 @@ VOICE_SEED = [
     },
     {
         "name": "林国栋", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_047.mp3", "audio_url": "/voice_presets/preset_047.mp3",
         "sort_order": 47, "is_active": 1,
@@ -505,7 +505,7 @@ VOICE_SEED = [
     },
     {
         "name": "银发老人", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_048.mp3", "audio_url": "/voice_presets/preset_048.mp3",
         "sort_order": 48, "is_active": 1,
@@ -515,7 +515,7 @@ VOICE_SEED = [
     },
     {
         "name": "王大爷", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_049.mp3", "audio_url": "/voice_presets/preset_049.mp3",
         "sort_order": 49, "is_active": 1,
@@ -525,7 +525,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵云", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_050.mp3", "audio_url": "/voice_presets/preset_050.mp3",
         "sort_order": 50, "is_active": 1,
@@ -535,7 +535,7 @@ VOICE_SEED = [
     },
     {
         "name": "远房叔", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_051.mp3", "audio_url": "/voice_presets/preset_051.mp3",
         "sort_order": 51, "is_active": 1,
@@ -545,7 +545,7 @@ VOICE_SEED = [
     },
     {
         "name": "老年陆永宝", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_052.mp3", "audio_url": "/voice_presets/preset_052.mp3",
         "sort_order": 52, "is_active": 1,
@@ -555,7 +555,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵三", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_053.mp3", "audio_url": "/voice_presets/preset_053.mp3",
         "sort_order": 53, "is_active": 1,
@@ -565,7 +565,7 @@ VOICE_SEED = [
     },
     {
         "name": "李医师", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_054.mp3", "audio_url": "/voice_presets/preset_054.mp3",
         "sort_order": 54, "is_active": 1,
@@ -575,7 +575,7 @@ VOICE_SEED = [
     },
     {
         "name": "CEO", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_055.mp3", "audio_url": "/voice_presets/preset_055.mp3",
         "sort_order": 55, "is_active": 1,
@@ -585,7 +585,7 @@ VOICE_SEED = [
     },
     {
         "name": "婆婆", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "老年女声",
         "sample_url": "/voice_presets/preset_056.mp3", "audio_url": "/voice_presets/preset_056.mp3",
         "sort_order": 56, "is_active": 1,
@@ -595,7 +595,7 @@ VOICE_SEED = [
     },
     {
         "name": "外祖母", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "老年女声",
         "sample_url": "/voice_presets/preset_057.mp3", "audio_url": "/voice_presets/preset_057.mp3",
         "sort_order": 57, "is_active": 1,
@@ -605,7 +605,7 @@ VOICE_SEED = [
     },
     {
         "name": "顾小满", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_058.mp3", "audio_url": "/voice_presets/preset_058.mp3",
         "sort_order": 58, "is_active": 1,
@@ -615,7 +615,7 @@ VOICE_SEED = [
     },
     {
         "name": "小团子", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_059.mp3", "audio_url": "/voice_presets/preset_059.mp3",
         "sort_order": 59, "is_active": 1,
@@ -625,7 +625,7 @@ VOICE_SEED = [
     },
     {
         "name": "阿禾", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_060.mp3", "audio_url": "/voice_presets/preset_060.mp3",
         "sort_order": 60, "is_active": 1,
@@ -635,7 +635,7 @@ VOICE_SEED = [
     },
     {
         "name": "小陇", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_061.mp3", "audio_url": "/voice_presets/preset_061.mp3",
         "sort_order": 61, "is_active": 1,
@@ -645,7 +645,7 @@ VOICE_SEED = [
     },
     {
         "name": "白猫", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_062.mp3", "audio_url": "/voice_presets/preset_062.mp3",
         "sort_order": 62, "is_active": 1,
@@ -655,7 +655,7 @@ VOICE_SEED = [
     },
     {
         "name": "奶牛猫", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_063.mp3", "audio_url": "/voice_presets/preset_063.mp3",
         "sort_order": 63, "is_active": 1,
@@ -665,7 +665,7 @@ VOICE_SEED = [
     },
     {
         "name": "小朋友", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_064.mp3", "audio_url": "/voice_presets/preset_064.mp3",
         "sort_order": 64, "is_active": 1,
@@ -675,7 +675,7 @@ VOICE_SEED = [
     },
     {
         "name": "林灵汐", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_065.mp3", "audio_url": "/voice_presets/preset_065.mp3",
         "sort_order": 65, "is_active": 1,
@@ -685,7 +685,7 @@ VOICE_SEED = [
     },
     {
         "name": "小翠", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_066.mp3", "audio_url": "/voice_presets/preset_066.mp3",
         "sort_order": 66, "is_active": 1,
@@ -695,7 +695,7 @@ VOICE_SEED = [
     },
     {
         "name": "莉亚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_067.mp3", "audio_url": "/voice_presets/preset_067.mp3",
         "sort_order": 67, "is_active": 1,
@@ -705,7 +705,7 @@ VOICE_SEED = [
     },
     {
         "name": "电商学员", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_068.mp3", "audio_url": "/voice_presets/preset_068.mp3",
         "sort_order": 68, "is_active": 1,
@@ -715,7 +715,7 @@ VOICE_SEED = [
     },
     {
         "name": "白漓", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_069.mp3", "audio_url": "/voice_presets/preset_069.mp3",
         "sort_order": 69, "is_active": 1,
@@ -725,7 +725,7 @@ VOICE_SEED = [
     },
     {
         "name": "林婉儿", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_070.mp3", "audio_url": "/voice_presets/preset_070.mp3",
         "sort_order": 70, "is_active": 1,
@@ -735,7 +735,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏晚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_071.mp3", "audio_url": "/voice_presets/preset_071.mp3",
         "sort_order": 71, "is_active": 1,
@@ -745,7 +745,7 @@ VOICE_SEED = [
     },
     {
         "name": "柳如烟", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_072.mp3", "audio_url": "/voice_presets/preset_072.mp3",
         "sort_order": 72, "is_active": 1,
@@ -755,7 +755,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏棠", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_073.mp3", "audio_url": "/voice_presets/preset_073.mp3",
         "sort_order": 73, "is_active": 1,
@@ -765,7 +765,7 @@ VOICE_SEED = [
     },
     {
         "name": "王太利", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_074.mp3", "audio_url": "/voice_presets/preset_074.mp3",
         "sort_order": 74, "is_active": 1,
@@ -775,7 +775,7 @@ VOICE_SEED = [
     },
     {
         "name": "李弱水", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_075.mp3", "audio_url": "/voice_presets/preset_075.mp3",
         "sort_order": 75, "is_active": 1,
@@ -785,7 +785,7 @@ VOICE_SEED = [
     },
     {
         "name": "苏清月", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "青年女声",
         "sample_url": "/voice_presets/preset_076.mp3", "audio_url": "/voice_presets/preset_076.mp3",
         "sort_order": 76, "is_active": 1,
@@ -795,7 +795,7 @@ VOICE_SEED = [
     },
     {
         "name": "沈妍", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_077.mp3", "audio_url": "/voice_presets/preset_077.mp3",
         "sort_order": 77, "is_active": 1,
@@ -805,7 +805,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵明轩", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_078.mp3", "audio_url": "/voice_presets/preset_078.mp3",
         "sort_order": 78, "is_active": 1,
@@ -815,7 +815,7 @@ VOICE_SEED = [
     },
     {
         "name": "肖央", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_079.mp3", "audio_url": "/voice_presets/preset_079.mp3",
         "sort_order": 79, "is_active": 1,
@@ -825,7 +825,7 @@ VOICE_SEED = [
     },
     {
         "name": "林爽", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_080.mp3", "audio_url": "/voice_presets/preset_080.mp3",
         "sort_order": 80, "is_active": 1,
@@ -835,7 +835,7 @@ VOICE_SEED = [
     },
     {
         "name": "周倩", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "中年女声",
         "sample_url": "/voice_presets/preset_081.mp3", "audio_url": "/voice_presets/preset_081.mp3",
         "sort_order": 81, "is_active": 1,
@@ -845,7 +845,7 @@ VOICE_SEED = [
     },
     {
         "name": "小慧", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_082.mp3", "audio_url": "/voice_presets/preset_082.mp3",
         "sort_order": 82, "is_active": 1,
@@ -855,7 +855,7 @@ VOICE_SEED = [
     },
     {
         "name": "乐乐", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_083.mp3", "audio_url": "/voice_presets/preset_083.mp3",
         "sort_order": 83, "is_active": 1,
@@ -865,7 +865,7 @@ VOICE_SEED = [
     },
     {
         "name": "大雄", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_084.mp3", "audio_url": "/voice_presets/preset_084.mp3",
         "sort_order": 84, "is_active": 1,
@@ -875,7 +875,7 @@ VOICE_SEED = [
     },
     {
         "name": "悦悦", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "儿童女声",
         "sample_url": "/voice_presets/preset_085.mp3", "audio_url": "/voice_presets/preset_085.mp3",
         "sort_order": 85, "is_active": 1,
@@ -885,7 +885,7 @@ VOICE_SEED = [
     },
     {
         "name": "云清络", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "未知女声",
         "sample_url": "/voice_presets/preset_086.mp3", "audio_url": "/voice_presets/preset_086.mp3",
         "sort_order": 86, "is_active": 1,
@@ -895,7 +895,7 @@ VOICE_SEED = [
     },
     {
         "name": "帕提古丽", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "未知女声",
         "sample_url": "/voice_presets/preset_087.mp3", "audio_url": "/voice_presets/preset_087.mp3",
         "sort_order": 87, "is_active": 1,
@@ -905,7 +905,7 @@ VOICE_SEED = [
     },
     {
         "name": "云甄夫人", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "未知女声",
         "sample_url": "/voice_presets/preset_088.mp3", "audio_url": "/voice_presets/preset_088.mp3",
         "sort_order": 88, "is_active": 1,
@@ -915,7 +915,7 @@ VOICE_SEED = [
     },
     {
         "name": "赵德厚老伴", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "female",
+        "voice_type": None, "gender": "female",
         "language": "zh", "style": "未知女声",
         "sample_url": "/voice_presets/preset_089.mp3", "audio_url": "/voice_presets/preset_089.mp3",
         "sort_order": 89, "is_active": 1,
@@ -925,7 +925,7 @@ VOICE_SEED = [
     },
     {
         "name": "皇帝", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_090.mp3", "audio_url": "/voice_presets/preset_090.mp3",
         "sort_order": 90, "is_active": 1,
@@ -935,7 +935,7 @@ VOICE_SEED = [
     },
     {
         "name": "沈孤鸿", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_091.mp3", "audio_url": "/voice_presets/preset_091.mp3",
         "sort_order": 91, "is_active": 1,
@@ -945,7 +945,7 @@ VOICE_SEED = [
     },
     {
         "name": "爸爸", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_092.mp3", "audio_url": "/voice_presets/preset_092.mp3",
         "sort_order": 92, "is_active": 1,
@@ -955,7 +955,7 @@ VOICE_SEED = [
     },
     {
         "name": "父亲", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_093.mp3", "audio_url": "/voice_presets/preset_093.mp3",
         "sort_order": 93, "is_active": 1,
@@ -965,7 +965,7 @@ VOICE_SEED = [
     },
     {
         "name": "陈默", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_094.mp3", "audio_url": "/voice_presets/preset_094.mp3",
         "sort_order": 94, "is_active": 1,
@@ -975,7 +975,7 @@ VOICE_SEED = [
     },
     {
         "name": "陈默", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_095.mp3", "audio_url": "/voice_presets/preset_095.mp3",
         "sort_order": 95, "is_active": 1,
@@ -985,7 +985,7 @@ VOICE_SEED = [
     },
     {
         "name": "幸存者甲", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "中年男声",
         "sample_url": "/voice_presets/preset_096.mp3", "audio_url": "/voice_presets/preset_096.mp3",
         "sort_order": 96, "is_active": 1,
@@ -995,7 +995,7 @@ VOICE_SEED = [
     },
     {
         "name": "首领", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_097.mp3", "audio_url": "/voice_presets/preset_097.mp3",
         "sort_order": 97, "is_active": 1,
@@ -1005,7 +1005,7 @@ VOICE_SEED = [
     },
     {
         "name": "秦澈", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_098.mp3", "audio_url": "/voice_presets/preset_098.mp3",
         "sort_order": 98, "is_active": 1,
@@ -1015,7 +1015,7 @@ VOICE_SEED = [
     },
     {
         "name": "沈砚", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_099.mp3", "audio_url": "/voice_presets/preset_099.mp3",
         "sort_order": 99, "is_active": 1,
@@ -1025,7 +1025,7 @@ VOICE_SEED = [
     },
     {
         "name": "霍沉", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "青年男声",
         "sample_url": "/voice_presets/preset_100.mp3", "audio_url": "/voice_presets/preset_100.mp3",
         "sort_order": 100, "is_active": 1,
@@ -1035,7 +1035,7 @@ VOICE_SEED = [
     },
     {
         "name": "旧书店老板", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_101.mp3", "audio_url": "/voice_presets/preset_101.mp3",
         "sort_order": 101, "is_active": 1,
@@ -1045,7 +1045,7 @@ VOICE_SEED = [
     },
     {
         "name": "麦大叔", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_102.mp3", "audio_url": "/voice_presets/preset_102.mp3",
         "sort_order": 102, "is_active": 1,
@@ -1055,7 +1055,7 @@ VOICE_SEED = [
     },
     {
         "name": "藤堂", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "老年男声",
         "sample_url": "/voice_presets/preset_103.mp3", "audio_url": "/voice_presets/preset_103.mp3",
         "sort_order": 103, "is_active": 1,
@@ -1065,7 +1065,7 @@ VOICE_SEED = [
     },
     {
         "name": "韩立", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "未知男声",
         "sample_url": "/voice_presets/preset_104.mp3", "audio_url": "/voice_presets/preset_104.mp3",
         "sort_order": 104, "is_active": 1,
@@ -1075,7 +1075,7 @@ VOICE_SEED = [
     },
     {
         "name": "君无涯", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "未知男声",
         "sample_url": "/voice_presets/preset_105.mp3", "audio_url": "/voice_presets/preset_105.mp3",
         "sort_order": 105, "is_active": 1,
@@ -1085,7 +1085,7 @@ VOICE_SEED = [
     },
     {
         "name": "黑衣人", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "未知男声",
         "sample_url": "/voice_presets/preset_106.mp3", "audio_url": "/voice_presets/preset_106.mp3",
         "sort_order": 106, "is_active": 1,
@@ -1095,7 +1095,7 @@ VOICE_SEED = [
     },
     {
         "name": "侍卫", "provider": "reference_audio",
-        "voice_type": "NULL", "gender": "male",
+        "voice_type": None, "gender": "male",
         "language": "zh", "style": "未知男声",
         "sample_url": "/voice_presets/preset_107.mp3", "audio_url": "/voice_presets/preset_107.mp3",
         "sort_order": 107, "is_active": 1,
@@ -1105,8 +1105,9 @@ VOICE_SEED = [
     },
 ]
 
-# 已存在行的同步字段（不含 sort_order/is_active/user_id——运营字段不覆盖）
-_SYNC_FIELDS = ("name", "voice_type", "gender", "language", "style",
+# 已存在行的同步字段。不含 voice_type：预置音色的 voice_type 是 SQL NULL，
+# 不能把种子值写回去覆盖各环境可能已绑定的 speaker id。
+_SYNC_FIELDS = ("name", "gender", "language", "style",
                 "sample_url", "description", "voice_desc")
 
 

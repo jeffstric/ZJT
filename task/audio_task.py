@@ -531,10 +531,51 @@ async def generate_audio_task(app=None):
 
 
 
+def _parse_voice_analysis_json(result_text: str) -> Optional[dict]:
+    """从 LLM 原文取出音色分析 JSON。容忍 ```json 围栏和前后说明文字。"""
+    text = (result_text or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _voice_analysis_fallback(character_data: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM 失败时的通用指纹。analysis_failed 让「自动生成」接口返回失败，不把兜底文案当成功。"""
+    return {
+        "can_speak_human_language": True,
+        "voice_type": "human",
+        "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
+        "voice_desc": "一位成年人的自然声音，音色干净清晰，语速适中，语气平静。",
+        "sample_text": f"大家好，我是{character_data.get('name', '角色')}。",
+        "analysis_failed": True,
+    }
+
+
 async def _analyze_character_voice_capability(
     character_data: Dict[str, Any],
     model: Optional[str] = None,
-    vendor_id: Optional[int] = None
+    vendor_id: Optional[int] = None,
+    auth_token: Optional[str] = None,
+    model_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     使用 LLM 智能分析角色发声能力和音色特征
@@ -651,7 +692,6 @@ async def _analyze_character_voice_capability(
 
     try:
         from llm.llm_client_factory import get_llm_client
-        import asyncio
 
         llm_client = get_llm_client(model, vendor_id=vendor_id)
         response = await asyncio.to_thread(
@@ -660,35 +700,29 @@ async def _analyze_character_voice_capability(
             messages=messages,
             temperature=0.3,
             max_tokens=1500,
+            auth_token=auth_token,
+            vendor_id=vendor_id,
+            model_id=model_id,
         )
 
         result_text = response.choices[0].message.content.strip() if response and response.choices else ""
-
-        if result_text:
-            try:
-                result_json = json.loads(result_text)
-                logger.info(f"LLM 生成角色音色分析成功: {result_json}")
-                return result_json
-            except json.JSONDecodeError:
-                logger.warning(f"LLM 返回的不是有效JSON: {result_text}")
-        else:
-            logger.warning("LLM 返回空内容")
+        result_json = _parse_voice_analysis_json(result_text)
+        if result_json:
+            logger.info(f"LLM 生成角色音色分析成功: {result_json}")
+            return result_json
+        logger.warning(f"LLM 返回的不是有效JSON: {result_text}")
 
     except Exception as e:
         logger.warning(f"LLM 生成音色分析失败: {e}")
 
-    return {
-        "can_speak_human_language": True,
-        "voice_type": "human",
-        "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
-            "voice_desc": "一位成年人的自然声音，音色干净清晰，语速适中，语气平静。",
-        "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
-    }
+    return _voice_analysis_fallback(character_data)
 
 
 async def analyze_character_voice(character_data: Dict[str, Any],
                                   model: Optional[str] = None,
-                                  vendor_id: Optional[int] = None) -> Dict[str, Any]:
+                                  vendor_id: Optional[int] = None,
+                                  auth_token: Optional[str] = None,
+                                  model_id: Optional[int] = None) -> Dict[str, Any]:
     """公开封装：按角色人设做 LLM 音色分析。
 
     「生成参考音频」与「自动生成音色描述」共用同一次分析结果：
@@ -696,7 +730,13 @@ async def analyze_character_voice(character_data: Dict[str, Any],
     调用方持有多消费需求时应调用本函数一次自行派生，避免分别调
     build_character_audio_style_prompt / build_character_audio_text 造成重复 LLM 调用。
     """
-    return await _analyze_character_voice_capability(character_data, model=model, vendor_id=vendor_id)
+    return await _analyze_character_voice_capability(
+        character_data,
+        model=model,
+        vendor_id=vendor_id,
+        auth_token=auth_token,
+        model_id=model_id,
+    )
 
 
 async def build_character_audio_text(

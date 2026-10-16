@@ -73,6 +73,7 @@ with stub_modules({
     'config.config_util': MagicMock(),
 }):
     from task.audio_task import (
+        _parse_voice_analysis_json,
         analyze_character_voice,
         build_character_audio_text,
         calculate_next_retry_delay,
@@ -82,6 +83,21 @@ with stub_modules({
 def _run_async(coro):
     """辅助函数：在测试中运行异步函数"""
     return asyncio.run(coro)
+
+
+class TestVoiceAnalysisJson(unittest.TestCase):
+
+    def test_fenced_json_parses(self):
+        raw = '```json\n{"voice_desc": "青年男声，音高清亮。", "voice_type": "human"}\n```'
+        parsed = _parse_voice_analysis_json(raw)
+        self.assertEqual(parsed["voice_desc"], "青年男声，音高清亮。")
+
+    def test_plain_json_parses(self):
+        parsed = _parse_voice_analysis_json('{"voice_desc": "ok"}')
+        self.assertEqual(parsed["voice_desc"], "ok")
+
+    def test_prose_returns_none(self):
+        self.assertIsNone(_parse_voice_analysis_json("不是 JSON"))
 
 
 class TestBuildCharacterAudioText(unittest.TestCase):
@@ -125,7 +141,11 @@ class TestBuildCharacterAudioText(unittest.TestCase):
             '三十岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢，语气威严。',
         )
         mock_analyze.assert_called_once_with(
-            {"name": "张伟", "age": "30"}, model="test-model", vendor_id=7
+            {"name": "张伟", "age": "30"},
+            model="test-model",
+            vendor_id=7,
+            auth_token=None,
+            model_id=None,
         )
 
     @patch('task.audio_task._analyze_character_voice_capability')

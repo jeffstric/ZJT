@@ -6524,7 +6524,16 @@ async def extract_script_create(
     参数，用户可按视频内容与目标模型自行调整。
     """
     try:
-        user_id_val = _get_user_id_from_header(user_id)
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"},
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
+        user_id_val = auth_user_id
         video_url = (body.video_url or "").strip()
         if not video_url:
             return JSONResponse(status_code=400, content={"code": -1, "message": "缺少视频 url"})
@@ -6554,9 +6563,9 @@ async def extract_script_create(
                 content={"code": -1, "message": "视频文件不存在，请重新上传"}
             )
 
-        token = (auth_token or '').strip()
-        if token.lower().startswith('bearer '):
-            token = token[7:].strip()
+        token = normalize_authorization_token(auth_token)
+        if not token:
+            token = normalize_authorization_token(request.query_params.get('auth_token'))
 
         task_id, err = await create_extract_task(
             video_path=video_path,
@@ -6588,7 +6597,16 @@ async def extract_script_status(
 ):
     """查询剧本提取任务状态（前端轮询，3s 间隔）。任务过期/服务重启后返回 404。"""
     try:
-        user_id_val = _get_user_id_from_header(user_id)
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"},
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
+        user_id_val = auth_user_id
         task = get_extract_task(task_id)
         if task is None or (user_id_val is not None and task.get("user_id") not in (None, user_id_val)):
             return JSONResponse(
@@ -8928,10 +8946,12 @@ async def update_character(
             'personality': personality.strip() if personality else None,
             'behavior': behavior.strip() if behavior else None,
             'other_info': other_info.strip() if other_info else None,
-            'voice_desc': voice_desc.strip() if voice_desc else None,
             'sora_character': sora_character.strip() if sora_character else None,
         }
-        
+        # 未提交该字段时保留库里的指纹；显式空字符串仍清空。
+        if voice_desc is not None:
+            update_fields['voice_desc'] = voice_desc.strip() or None
+
         if image_path:
             update_fields['reference_image'] = image_path
         if voice_path:

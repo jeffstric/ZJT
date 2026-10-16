@@ -1702,6 +1702,9 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         if not _temp_filename:
             old_json = file_manager.get_character_json(validated_name, user_id, world_id)
             FileManager._archive_character_image_history(old_json, character_data)
+            # agent 整文件重写通常不带 voice_desc，缺省时沿用旧指纹。
+            if voice_desc is None and isinstance(old_json, dict) and old_json.get('voice_desc'):
+                character_data['voice_desc'] = old_json.get('voice_desc')
 
         success = file_manager.save_json_content(user_id, world_id, "characters", filename, character_data)
         
