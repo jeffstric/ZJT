@@ -21,6 +21,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
+    strip_leading_json_object,
     parse_storyboard_dialogue_model,
     resolve_h3_prompt_variant,
     validate_h3_optimized_prompt,
@@ -237,6 +238,22 @@ def test_h3_templates_carry_voice_casting_rules():
         assert "Voice casting" in guide, variant
         assert "never drop, soften, or invent traits" in guide, variant
         assert "casting input only" in guide, variant
+
+
+def test_strip_leading_json_object_variants():
+    """非 KFRef 变体的防御剥离：模型偶发自发的判断性 JSON 前缀被剥掉，其余原样"""
+    # 首行 JSON 对象被剥，正文保留
+    assert strip_leading_json_object('{"has_dialogue": false}\n六段正文') == '六段正文'
+    # 无 JSON 前缀原样
+    assert strip_leading_json_object('六段正文') == '六段正文'
+    # 首行非法 JSON（非闭合）原样保留
+    assert strip_leading_json_object('{abc\n正文') == '{abc\n正文'
+    # 首行 JSON 数组（非对象）原样保留
+    assert strip_leading_json_object('[1, 2]\n正文') == '[1, 2]\n正文'
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
 
 
 def test_fidelity_note_language_tag_japanese_and_korean():

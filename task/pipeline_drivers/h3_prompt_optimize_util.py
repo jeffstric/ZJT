@@ -591,6 +591,27 @@ def build_h3_optimize_user_message(
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
 
 
+def strip_leading_json_object(text: str) -> str:
+    """剥掉模型自作主张输出的首行 JSON 对象（如 {"has_dialogue": false}）。
+
+    JSON 头是 KFRef 变体专属协议，但非 KFRef 变体的请求偶尔也会诱导模型输出
+    判断性 JSON 前缀（线上案例：Ref2VA 短提示词任务输出以 {"has_dialogue": false}
+    开头，六段校验被它带挂导致 fallback）。首行是合法 JSON 对象时删除该行；
+    其余内容原样保留。
+    """
+    cleaned = (text or "").strip()
+    if not cleaned.startswith("{"):
+        return cleaned
+    first_line, _, rest = cleaned.partition("\n")
+    try:
+        parsed = json.loads(first_line.strip())
+    except (json.JSONDecodeError, ValueError):
+        return cleaned
+    if not isinstance(parsed, dict):
+        return cleaned
+    return rest.strip()
+
+
 def strip_prompt_fences(text: str) -> str:
     cleaned = (text or "").strip()
     if cleaned.startswith("```"):
