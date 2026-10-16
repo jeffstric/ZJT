@@ -2299,7 +2299,8 @@ const AdminApp = {
                     if (!user) {
                         user = {
                             user_id: item.user_id,
-                            nickname: item.nickname,
+                            // 有管理员备注时优先展示备注（后端 display_name 已做回退）
+                            nickname: item.display_name || item.nickname,
                             total_power: 0,
                             record_count: 0,
                             active_days: 0,

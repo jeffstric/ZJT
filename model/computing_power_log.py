@@ -298,7 +298,7 @@ class ComputingPowerLogModel:
             end_date: 结束日期（含），格式 YYYY-MM-DD；为空表示不限制
 
         Returns:
-            [{stat_date, user_id, nickname, total_power, record_count}]
+            [{stat_date, user_id, nickname, remark, total_power, record_count}]
             按日期升序、当日消耗降序排列
         """
         sql = """
@@ -306,6 +306,7 @@ class ComputingPowerLogModel:
                 DATE(c.created_at) AS stat_date,
                 c.user_id AS user_id,
                 u.nickname AS nickname,
+                u.remark AS remark,
                 SUM(c.computing_power) AS total_power,
                 COUNT(*) AS record_count
             FROM computing_power_log c
@@ -322,7 +323,7 @@ class ComputingPowerLogModel:
             sql += " AND c.created_at < DATE_ADD(%s, INTERVAL 1 DAY)"
             params.append(end_date)
 
-        sql += " GROUP BY DATE(c.created_at), c.user_id, u.nickname"
+        sql += " GROUP BY DATE(c.created_at), c.user_id, u.nickname, u.remark"
         sql += " ORDER BY stat_date ASC, total_power DESC"
 
         try:

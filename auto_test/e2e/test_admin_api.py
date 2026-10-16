@@ -63,6 +63,7 @@ def test_api_admin_daily_power_stats_date_range(api_client):
         assert "date" in day and "total_power" in day and "users" in day, f"日明细字段缺失: {day}"
         for user in day.get("users", []):
             assert "user_id" in user and "nickname" in user and "power" in user, f"用户明细字段缺失: {user}"
+            assert "display_name" in user, f"用户明细缺少 display_name: {user}"
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -448,9 +448,13 @@ async def admin_daily_power_stats(
             power = int(row['total_power'] or 0)
             day_group['total_power'] += power
             user_id = row['user_id']
+            nickname = row.get('nickname') or f'用户{user_id}'
+            remark = (row.get('remark') or '').strip()
             day_group['users'].append({
                 'user_id': user_id,
-                'nickname': row.get('nickname') or f'用户{user_id}',
+                'nickname': nickname,
+                # 有管理员备注时优先展示备注，便于管理员识别用户
+                'display_name': remark or nickname,
                 'power': power,
                 'count': int(row['record_count'] or 0)
             })

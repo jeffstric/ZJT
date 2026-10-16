@@ -86,7 +86,7 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 
 仪表盘末尾展示各用户每日算力消耗统计，供管理员分析算力开销分布：
 
-- **数据来源**：`computing_power_log` 中 `behavior='deduct'` 的扣减记录，JOIN `users` 表取昵称，按「日期 + 用户」聚合消耗算力与扣减次数。
+- **数据来源**：`computing_power_log` 中 `behavior='deduct'` 的扣减记录，JOIN `users` 表取昵称/备注，按「日期 + 用户」聚合消耗算力与扣减次数；有管理员备注的用户优先展示备注，便于识别。
 - **时间筛选**：支持今天、3 天、7 天快捷筛选，也支持开始/结束日期自定义筛选（与模型分析一致）。
 - **汇总卡片**：展示总消耗算力、消耗用户数、日均消耗。
 - **每日消耗堆积柱状图**：按日期展示各用户算力消耗堆积，取总消耗 Top10 用户，其余归入「其他用户」。
@@ -420,7 +420,7 @@ GET /api/admin/dashboard/daily-power-stats?days=7&start_date=2026-10-10&end_date
 }
 ```
 
-`daily[].users` 已按当日消耗降序排列；`nickname` 为空时后端回退为 `用户{user_id}`。前端据此渲染每日消耗堆积柱状图（Top10 用户 + 其他用户）与用户消耗汇总表格。
+`daily[].users` 已按当日消耗降序排列；`nickname` 为空时后端回退为 `用户{user_id}`；`display_name` 为展示名——有管理员备注（`users.remark`）时优先返回备注，否则回退昵称。前端据此渲染每日消耗堆积柱状图（Top10 用户 + 其他用户）与用户消耗汇总表格。
 
 ### 队列积压
 
