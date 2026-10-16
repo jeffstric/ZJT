@@ -221,3 +221,9 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 3. **修复分段计费口径**：草案 ceil(28.5)=29 与切分后 15+15=30 不一致，被端点 sum==duration 校验拦截。confirm 改为按 sum(segment_durations) 下发；prepare 预估同口径（ceil(est/段长)×段长）。
 4. **端到端复验**：project 325（28.5s 音频 → 3×10s），三段全部成功、拼接成片 30.38s 落库正常；三段景别接近（固定镜头提示词正确下发时 H3 服从度良好）。
 5. **测试坑记录**：Windows curl.exe 对 `-F "text=中文"` 按 GBK 代码页编码，导致自测任务的提示词乱码下发（非系统 bug，浏览器/agent 链路 UTF-8 正常）；测试中文接口用 python requests。
+
+### 附录 C.2 段长恢复 15s + OOM 自动降档（2026-10-16 傍晚）
+
+应用户要求减少切割次数，段长恢复 15s（`DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS=15`）；同时实测确认 15s 段在 webapp 默认实例显存边界上**随机 OOM**（project 324/326 首选段连续失败，322/323 同参数成功）。落地**自动降档**：driver 流水线改为 `_run_segment_pipeline`（失败抛 `_SegmentedPipelineError`），任一段最终失败且段长 >10s 时，**用完整音频按 10s 稳定档自动重切重跑一次**（project 326 实测：15s 段 OOM → 自动降档 3×10s → 成片 28.25s 落库正常）。
+
+切片能力迁移至 `utils/audio_segment_util.py`（tts_tools 与 driver 共用，task 层不反向依赖 script_writer_core）；静音检测增强（-32dB/0.18s 捕捉标点停顿），切点优先句间静音、窗口放宽 ±3.5s 并有放宽兜底——避免词中硬切（如"高|效"）。

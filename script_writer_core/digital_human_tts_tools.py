@@ -16,8 +16,6 @@ import asyncio
 import json
 import math
 import os
-import re
-import subprocess
 import threading
 import time
 import uuid
@@ -39,6 +37,7 @@ from model.voice import VoiceModel
 from services.volcengine_tts_service import synthesize_speech_for_user
 from services.vl_gateway import call_vl, image_url_to_base64, pick_vl_model
 from utils.audio_duration_util import probe_audio_duration
+from utils.audio_segment_util import split_audio_into_segments  # noqa: F401  (re-export)
 from utils.index_tts_util import generate_audio as indextts_generate_audio
 from utils.volcengine_tts_util import get_volcengine_tts_config, is_tts_configured
 
@@ -130,96 +129,6 @@ def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
             "segment_mode": True,
         }
     return None
-
-
-def _get_ffmpeg_bin() -> str:
-    """定位 ffmpeg 可执行文件（与 utils/audio_duration_util 同源约定）。"""
-    import sys
-    from utils.project_path import get_project_root
-    bundled = os.path.join(get_project_root(), 'bin', 'ffmpeg',
-                           'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')
-    if os.path.isfile(bundled):
-        return bundled
-    return 'ffmpeg'
-
-
-def _detect_silence_midpoints(audio_path: str) -> List[float]:
-    """用 ffmpeg silencedetect 返回静音区间中点列表（秒）。"""
-    try:
-        r = subprocess.run(
-            [_get_ffmpeg_bin(), '-hide_banner', '-i', audio_path,
-             '-af', 'silencedetect=noise=-35dB:d=0.25', '-f', 'null', '-'],
-            capture_output=True, text=True, timeout=60)
-        starts = [float(m) for m in re.findall(r'silence_start:\s*([\d.]+)', r.stderr)]
-        ends = [float(m) for m in re.findall(r'silence_end:\s*([\d.]+)', r.stderr)]
-        return [(s + e) / 2 for s, e in zip(starts, ends)]
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"silencedetect 失败，退化为硬切: {e}")
-        return []
-
-
-def split_audio_into_segments(audio_path: str, total_seconds: float,
-                              out_dir: str) -> Dict[str, Any]:
-    """把驱动音频切成 N 段（每段 ≤ 段长上限）并各自对齐到整数秒，返回分段计划。
-
-    段数 = ceil(total / 段长上限)；每个目标切点（均分点）在 ±2.5s 窗口内找最近的
-    静音中点（句子边界），找不到用均分点硬切。每段 ffmpeg 截断/apad 对齐到整数秒
-    （H3 duration 节点为整数）。
-
-    Returns:
-        {"segments": [{"path": wav, "duration": int}], "cuts": [float], "total": float}
-    """
-    max_seg = DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS
-    total_seconds = float(total_seconds)
-    seg_count = max(1, int(math.ceil(total_seconds / max_seg)))
-    silences = _detect_silence_midpoints(audio_path)
-
-    # 逐段确定切点：目标为均分点，窗口内优先静音（保证段最短 4s、不超段长上限）
-    cuts: List[float] = []
-    prev = 0.0
-    for i in range(1, seg_count):
-        target = total_seconds * i / seg_count
-        remaining_segs = seg_count - i
-        win_lo = max(prev + 4.0, target - 2.5)
-        win_hi = min(prev + max_seg, total_seconds - 4.0 * remaining_segs)
-        if win_lo > win_hi:
-            # 无合法窗口（极短音频等），按剩余一刀切
-            break
-        candidates = [m for m in silences if win_lo <= m <= win_hi]
-        cut = min(candidates, key=lambda m: abs(m - target)) if candidates \
-            else min(max(win_lo, target), win_hi)
-        cuts.append(round(cut, 3))
-        prev = cut
-
-    bounds = [0.0] + cuts + [total_seconds]
-    os.makedirs(out_dir, exist_ok=True)
-    ffmpeg = _get_ffmpeg_bin()
-    segments = []
-    for idx in range(len(bounds) - 1):
-        start, end = bounds[idx], bounds[idx + 1]
-        seg_len = end - start
-        seg_dur = max(4, min(max_seg, int(math.ceil(seg_len))))
-        raw = os.path.join(out_dir, f'seg_{idx + 1}_raw.wav')
-        final = os.path.join(out_dir, f'seg_{idx + 1}.wav')
-        trim = ['-ss', f'{start:.3f}'] if start > 0 else []
-        subprocess.run([ffmpeg, '-y', '-loglevel', 'error', *trim, '-i', audio_path,
-                        '-t', f'{seg_len:.3f}', '-ar', '44100', '-ac', '2', raw],
-                       check=True, capture_output=True, timeout=120)
-        if seg_len < seg_dur:
-            # 不足整数秒：尾部补静音（无声收尾人物静止，自然）
-            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
-                            '-af', f'apad=whole_dur={seg_dur}', final],
-                           check=True, capture_output=True, timeout=120)
-        else:
-            # 超出整数秒：截断到整数秒
-            subprocess.run([ffmpeg, '-y', '-loglevel', 'error', '-i', raw,
-                            '-t', str(seg_dur), '-c', 'copy', final],
-                           check=True, capture_output=True, timeout=120)
-        if os.path.isfile(raw):
-            os.remove(raw)
-        segments.append({"path": final, "duration": seg_dur})
-        logger.info(f"[分段] seg_{idx + 1}: {seg_len:.2f}s -> duration={seg_dur}s, file={final}")
-    return {"segments": segments, "cuts": cuts, "total": round(total_seconds, 3)}
 
 
 def _load_voice_candidates(language: str = "zh", provider: str = "volcengine") -> list:
@@ -751,7 +660,8 @@ async def confirm_digital_human(
                 return {'success': False, 'error': '驱动音频时长探测失败，无法切分分段'}
             seg_dir = os.path.join('upload', 'digital_human_segments', draft_id.replace('dh-', ''))
             plan = await asyncio.to_thread(
-                split_audio_into_segments, local_audio, float(probe_total), seg_dir)
+                split_audio_into_segments, local_audio, float(probe_total), seg_dir,
+                max_seg=DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS)
             segment_paths = [s["path"] for s in plan["segments"]]
             segment_durations = [s["duration"] for s in plan["segments"]]
             logger.info(f"[confirm] 分段切分完成: cuts={plan['cuts']}s "

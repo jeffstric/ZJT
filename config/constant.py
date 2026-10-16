@@ -597,8 +597,10 @@ WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
 # 分段拼接的口播时长上限；超出拒绝并提示拆分文案
 DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 30
-# 每段目标时长（整数秒，H3 duration 节点粒度）。10s 为生产稳定档（15s 有 OOM 风险）
-DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 10
+# 每段目标时长（整数秒，H3 duration 节点粒度）。默认 15s（官方上限，切割次数最少）；
+# 该档位在 webapp 默认实例上有显存边界（偶发 torch.OutOfMemoryError），
+# driver 段生成最终失败时会自动降档按 10s 稳定档重切重跑（见 H3 分段 driver）
+DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
 # wan2.2 参考音色模式（generate_digital_human）适用的口播时长上限（秒）：
 # 超过则引导改走两段式 H3 链路
 DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10

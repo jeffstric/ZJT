@@ -88,7 +88,7 @@ class TestResolveDigitalHumanModel(unittest.TestCase):
                          "15-30s 也走 H3（分段拼接），不再路由 LTX2.3")
         self.assertEqual(r["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(r["segment_mode"])
-        self.assertEqual(r["billable_duration"], 20)  # 整数段口径 ceil(15.1/10)*10
+        self.assertEqual(r["billable_duration"], 30)  # 段长 15s 口径 ceil(15.1/15)*15
 
     def test_30s_boundary_segmented(self):
         r = resolve_digital_human_model(30.0)
@@ -296,7 +296,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         self.assertEqual(draft["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(draft["segment_mode"])
-        self.assertEqual(draft["billable_duration"], 20)  # 整数段口径 ceil(20/10)*10
+        self.assertEqual(draft["billable_duration"], 30)  # 段长 15s 口径 ceil(20/15)*15
         self.assertEqual(draft["effective_motion_prompt"], SEGMENTED_MOTION_PROMPT,
                          "分段模式必须使用固定镜头统一提示词")
         self.assertIn("MiniMax H3", result["message"])
@@ -598,7 +598,7 @@ class TestSplitAudioSegments(unittest.TestCase):
                         '-f', 'lavfi', '-i', 'sine=frequency=440:duration=28.5',
                         '-ar', '44100', '-ac', '2', src], check=True, capture_output=True)
         try:
-            plan = split_audio_into_segments(src, 28.5, out_dir)
+            plan = split_audio_into_segments(src, 28.5, out_dir, max_seg=10)
             segs = plan["segments"]
             self.assertEqual(len(segs), 3, "28.5s 按段长 10s 应切成 3 段")
             total = 0
