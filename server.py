@@ -455,7 +455,7 @@ MP_VERIFY_ROUTE = "/MP_verify_lXQewBFqjUipl3B8.txt"
 
 
 # Load server configuration
-from config.config_util import get_config_value, get_dynamic_config_value
+from config.config_util import get_config_value, get_dynamic_config_value, get_config
 
 # cache_bust 配置：控制是否给静态资源加版本号，关闭时对静态资源禁用浏览器缓存
 CACHE_BUST_ENABLED = get_config_value("frontend", "cache_bust", "enabled", default=True)
@@ -932,6 +932,66 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
     return file_path
 
 
+async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
+    """
+    把"本站域名的 /upload/... 媒体 URL"改写为 CDN 域名 URL，交给后续
+    CDN 重签名分支（302 / format=json），媒体字节流量直走 CDN、不过本服务。
+
+    cdn_redirect_middleware 对已注册映射的 /upload/ 媒体本就 302 到七牛
+    （<audio>/<img> 播放即走此通道，协议 http/https 无关）。/api/download
+    若不识别本站 /upload/ URL，会落入代理下载分支：服务器从 CDN 拉回整个
+    文件再吐给浏览器，白占 frp 隧道带宽，且 httpx 默认不跟随 302 直接报错
+    （火山 TTS 音频下载 302 即此因）。
+
+    判定与 cdn_redirect_middleware 同款：path 以 /upload/ 开头、host 属于
+    本站（server.host 或请求 Host 头，协议无关）、media_file_mapping 存在
+    且已上传（cloud_path 非空）。其余 URL 原样返回，保持原有本地/代理兜底。
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    if not parsed.netloc or not parsed.path.startswith("/upload/"):
+        return url
+
+    site_hostnames = set()
+    configured_base = str((get_config().get("server", {}) or {}).get("host", "") or "")
+    if configured_base:
+        normalized = configured_base if "//" in configured_base else f"http://{configured_base}"
+        configured_hostname = urlparse(normalized).hostname
+        if configured_hostname:
+            site_hostnames.add(configured_hostname.lower())
+    request_hostname = (request.headers.get("host") or "").split(":")[0].strip().lower()
+    if request_hostname:
+        site_hostnames.add(request_hostname)
+    if (parsed.hostname or "").lower() not in site_hostnames:
+        return url
+
+    cdn_domain = str(get_dynamic_config_value(
+        "file_storage", "qiniu_long_term", "cdn_domain", default="") or "")
+    if not cdn_domain:
+        return url
+
+    local_path = parsed.path.lstrip("/")
+    try:
+        from model.media_file_mapping import MediaFileMappingModel
+
+        def _lookup_mapping():
+            return MediaFileMappingModel.get_by_local_path_hash(
+                MediaFileMappingModel._compute_local_path_hash(local_path)
+            )
+
+        mapping = await asyncio.to_thread(_lookup_mapping)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[download] 本站 /upload/ CDN 映射查询失败，保持原 URL: {e}")
+        return url
+    if not mapping or not mapping.cloud_path:
+        # 未注册映射或 CDN 上传未完成：不改写，走原有兜底（本地/代理）
+        return url
+
+    return f"https://{cdn_domain}/{str(mapping.cloud_path).lstrip('/')}"
+
+
 @app.get("/api/download")
 @require_permission("file:download")
 async def download_image(
@@ -947,11 +1007,16 @@ async def download_image(
     """
     媒体文件下载接口，支持三种模式：
     1. 本地路径 /upload/cache/ → FileResponse 直接返回
-    2. CDN 域名匹配 → 302 重定向（不占服务器带宽）；format=json 时改为返回签名 URL
+    2. CDN 域名匹配（含本站域名 /upload/ 媒体，先改写为 CDN 域名）→ 302 重定向
+       （不占服务器带宽）；format=json 时改为返回签名 URL
     3. 其他外部 URL → 代理下载 StreamingResponse（format=json 同样降级走代理，
        前端对非 JSON 响应按 blob 处理，避免外链下载从"能下"变"必败"）
     """
     try:
+        # 本站域名的 /upload/ 媒体 URL → 改写为 CDN 域名（走下方 CDN 签名重定向，
+        # 媒体流量不过本服务；火山 TTS 等本地落盘类产物由此不再走代理）
+        url = await _rewrite_site_upload_url_to_cdn(request, url)
+
         # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
         file_path = _resolve_local_upload_path(url, '/upload/cache/')
         if file_path is not None:
@@ -1007,7 +1072,9 @@ async def download_image(
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
         # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
         # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # follow_redirects：外链可能 301/302（如 http→https、本站 /upload/ 未注册
+        # CDN 映射时被 cdn_redirect_middleware 302），httpx 默认不跟随会直接报错。
+        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
             
@@ -1088,7 +1155,8 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
                 logger.warning(f"[proxy-image] CDN 签名URL生成失败，降级到代理: url={url[:100]}")
 
         # ========== 模式3: 其他远程 URL → 代理请求 ==========
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # follow_redirects：外链/未注册 CDN 映射的本站路径可能 302，默认不跟随会报错
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             response = await client.get(url)
             response.raise_for_status()
 
