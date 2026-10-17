@@ -67,8 +67,13 @@ def split_audio_into_segments(audio_path: str, total_seconds: float, out_dir: st
     for i in range(1, seg_count):
         target = total_seconds * i / seg_count
         remaining_segs = seg_count - i
-        win_lo = max(prev + min_seg, target - 3.5)
-        win_hi = min(prev + max_seg, total_seconds - min_seg * remaining_segs)
+        # 窗口下限必须含 total - max_seg*remaining：否则前面段切晚会导致
+        # 后续段切片超过 max_seg，而 H3 按 duration(=ceil 段长) 输出会把
+        # 超长部分的语音截断（表现为片尾残句/变调怪声）
+        win_lo = max(prev + min_seg, target - 3.5,
+                     total_seconds - max_seg * remaining_segs)
+        win_hi = min(prev + max_seg, total_seconds - min_seg * remaining_segs,
+                     target + 3.5)
         if win_lo > win_hi:
             break  # 剩余时长不足再切，合并进末段
         # 优先窗口内静音；否则放宽到 (prev, total-min_seg*remaining) 内任意静音
