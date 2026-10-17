@@ -51,11 +51,11 @@ logger = logging.getLogger(logger_name)
 H3_ALLOWED_DURATIONS = tuple(range(4, 11))
 DEFAULT_VOICE_TYPE = "zh_female_vv_uranus_bigtts"  # Vivi 2.0
 
-# 分段模式每段统一动作提示词：固定镜头/固定景别，保证段间构图一致（拼接点不跳景别）。
-# 2026-10-16 A/B 实测：钉死具体景别（中景/胸部以上居中）+ 强调全程静止，
-# 段间景别一致性显著优于模糊的"景别保持一致"表述（webapp 内部 QwenVL 随机
-# 描述会拼进 prompt，具体景别指令能压制其构图漂移）
-SEGMENTED_MOTION_PROMPT = ('固定机位中景：人物胸部以上居中构图，面向镜头自然说话。'
+# 分段模式每段统一动作提示词：固定镜头/景别跟随参考图，保证段间构图一致（拼接点不跳景别）。
+# 2026-10-16 A/B 实测：强调"固定机位+全程静止+不推拉摇移"能显著压制段间构图漂移
+# （webapp 内部 QwenVL 随机描述会拼进 prompt）；景别不写死——跟随用户给的
+# 数字人图片（全身/半身/特写均可），避免图片与景别要求不符
+SEGMENTED_MOTION_PROMPT = ('固定机位拍摄：景别与参考图片保持一致，人物面向镜头自然说话。'
                            '镜头完全静止，全程不推近、不拉远、不摇移、不切换景别。')
 
 # 草案内存存储：{draft_id: {"draft": {...}, "expires_at": ts}}
