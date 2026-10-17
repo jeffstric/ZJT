@@ -490,8 +490,9 @@ class TestConfirmTool(_VoiceModelMockBase):
             "audio_url": "/upload/character/voice/local.mp3", "voice_name": "v",
             "motion_prompt": "角色面向镜头深情的说话，缓慢推近。",
             "effective_motion_prompt": SEGMENTED_MOTION_PROMPT,
+            "h3_locked_prompt": "integrated_multimodal_description: [Shot 1] A static medium shot of a test subject.",
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-            "routing_reason": "duration_gt_15s_h3_segmented",
+            "routing_reason": "duration_gt_10s_h3_segmented",
             "segment_mode": True,
             "billable_duration": 30,
             "video_computing_power": 12,
@@ -548,8 +549,10 @@ class TestConfirmTool(_VoiceModelMockBase):
         self.assertEqual(result["project_ids"], ["777"])
         self.assertIn("digital-human-minimax-h3", captured["url"])
         self.assertEqual(captured["data"]["duration"], "30")
-        self.assertEqual(captured["data"]["text"], SEGMENTED_MOTION_PROMPT,
-                         "分段模式提交的提示词必须是固定镜头统一版本，不用 VL 生成的推近镜头")
+        self.assertEqual(
+            captured["data"]["text"],
+            "integrated_multimodal_description: [Shot 1] A static medium shot of a test subject.",
+            "锁镜头 webapp 的 214 必须下发英文 integrated_multimodal_description 提示词")
         self.assertEqual(json.loads(captured["data"]["segment_durations"]), [10, 10, 10])
         seg_files = [f for f in captured["files"] if f[0] == 'segment_audio']
         self.assertEqual(len(seg_files), 3, "三段音频文件应随 multipart 上传")

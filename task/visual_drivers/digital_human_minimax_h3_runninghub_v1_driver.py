@@ -67,7 +67,11 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")
         self._host = get_dynamic_config_value("runninghub", "host", default="")
-        self._webapp_id = "2087200340012785665"  # MiniMax H3 数字人 webapp ID
+        # 2026-10-16 更换为锁镜头版工作流（fixed camera，见
+        # docs/marketing_agent_digital_human_duration_routing_plan.md）：
+        # 214 提示词须为英文 integrated_multimodal_description 格式
+        # （由 prepare 侧 VL 生成，经 confirm 透传）
+        self._webapp_id = "2111473047642398722"  # MiniMax H3 数字人 webapp ID（锁镜头版）
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)

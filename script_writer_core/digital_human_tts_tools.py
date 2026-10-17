@@ -59,6 +59,68 @@ DEFAULT_VOICE_TYPE = "zh_female_vv_uranus_bigtts"  # Vivi 2.0
 SEGMENTED_MOTION_PROMPT = ('固定机位拍摄：景别与参考图片保持一致，人物面向镜头自然说话。'
                            '镜头完全静止，全程不推近、不拉远、不摇移、不切换景别。')
 
+# ===== H3 锁镜头 webapp(2111473047642398722)的英文提示词 =====
+# 该工作流要求 214 节点满足 h3 ref2 提示词格式(integrated_multimodal_description),
+# 由 VL 看角色图提取人物细节后按模板生成;镜头指令已写死在模板中,保证画面完全静止。
+H3_LOCKED_CAMERA_WEBAPP_ID = '2111473047642398722'
+
+LOCKED_CAMERA_PROMPT_TEMPLATE = (
+    'integrated_multimodal_description: [Shot 1] A static medium shot of {scene}, '
+    'The camera is strictly locked on a tripod, maintaining a perfectly still, frozen frame '
+    'with zero camera movement. No zooming, no panning, no tilting. '
+    'The subject is looking directly at the camera, speaking continuously and naturally '
+    'with a subtle smile, lips moving constantly, while the body position remains fixed '
+    'in the center of the frame.\n'
+    'overall_soundscape: gentle ambient sounds.\n'
+    'non_diegetic_music: [leave empty]')
+
+LOCKED_CAMERA_PROMPT_FALLBACK = LOCKED_CAMERA_PROMPT_TEMPLATE.format(
+    scene='a person facing the camera directly')
+
+VL_LOCKED_CAMERA_INSTRUCTION = (
+    '你是一个专业的AI视频提示词生成专家。请观察这张参考图，提取人物的性别、发型、'
+    '服装细节以及背景环境。然后，严格按照以下英文模板输出（把模板中"在此处替换为'
+    '提取到的画面描述"替换为提取内容的英文翻译，模板其余部分逐字保留，根据人物实际'
+    '性别使用 he/she），不要输出任何多余的解释或中文：\n'
+    'integrated_multimodal_description: [Shot 1] A static medium shot of {在此处替换为'
+    '提取到的画面描述，翻译成英文}, The camera is strictly locked on a tripod, maintaining '
+    'a perfectly still, frozen frame with zero camera movement. No zooming, no panning, '
+    'no tilting. The subject is looking directly at the camera, speaking continuously and '
+    'naturally with a subtle smile, lips moving constantly, while her body position remains '
+    'fixed in the center of the frame.\n'
+    'overall_soundscape: gentle ambient sounds.\n'
+    'non_diegetic_music: [leave empty]')
+
+
+async def _generate_locked_camera_prompt(image_url: str, user_id: str) -> Dict[str, Any]:
+    """VL 看角色图生成 H3 锁镜头英文提示词(integrated_multimodal_description 格式)。
+
+    失败时返回 success=False，调用方降级使用不含人物细节的英文兜底模板。
+    """
+    try:
+        ok, data_url, err = await image_url_to_base64(
+            image_url, compress_timeout=15, allow_remote=True,
+            remote_timeout=30, user_id=int(user_id or 0))
+        if not ok or not data_url:
+            raise RuntimeError(f'角色图读取失败: {err}')
+        picked = await pick_vl_model(IMAGE_DESCRIBE_PREFERRED_VENDOR,
+                                     IMAGE_DESCRIBE_PREFERRED_MODEL)
+        if not picked:
+            raise RuntimeError('无可用视觉模型')
+        v_ok, content, v_err = await call_vl(
+            VL_LOCKED_CAMERA_INSTRUCTION, '', data_url,
+            model=picked.get('name'), vendor_id=picked.get('vendor_id'),
+            llm_timeout=90, temperature=0.2, max_tokens=500)
+        if not v_ok or not content:
+            raise RuntimeError(f'VL 描述生成失败: {v_err}')
+        prompt = content.strip()
+        if 'integrated_multimodal_description' not in prompt:
+            raise RuntimeError('VL 输出不符合 integrated_multimodal_description 模板')
+        return {'success': True, 'prompt': prompt}
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"锁镜头英文提示词生成失败，将使用兜底模板: {e}")
+        return {'success': False, 'error': str(e)}
+
 # 草案内存存储：{draft_id: {"draft": {...}, "expires_at": ts}}
 _DRAFT_STORE: Dict[str, Dict[str, Any]] = {}
 _DRAFT_LOCK = threading.Lock()
@@ -499,6 +561,17 @@ async def prepare_digital_human_draft(
         # 分段模式下动作提示词统一为固定镜头版本：保证两段镜头/景别一致，拼接点不跳
         effective_motion = SEGMENTED_MOTION_PROMPT if segment_mode else motion_prompt
 
+        # H3 锁镜头 webapp 要求 214 为英文 integrated_multimodal_description 格式：
+        # VL 看角色图提取人物/背景细节生成；失败降级为无细节英文兜底模板（画面能跑但细节少）
+        locked_prompt = None
+        locked_note = ''
+        vl_result = await _generate_locked_camera_prompt(image_url, user_id)
+        if vl_result.get('success'):
+            locked_prompt = vl_result['prompt']
+        else:
+            locked_prompt = LOCKED_CAMERA_PROMPT_FALLBACK
+            locked_note = '（人物细节提示词生成失败，已用通用描述兜底）'
+
         draft = {
             "draft_id": None,  # store 后回填
             "script_text": script_text,
@@ -509,6 +582,7 @@ async def prepare_digital_human_draft(
             "voice_selection_reason": selection_reason if not user_audio_url else "用户提供的驱动音频",
             "motion_prompt": motion_prompt,
             "effective_motion_prompt": effective_motion,
+            "h3_locked_prompt": locked_prompt,
             "audio_url": tts.get('audio_url'),
             "audio_duration": tts.get('duration'),
             "tts_computing_power": tts.get('computing_power'),
@@ -529,8 +603,10 @@ async def prepare_digital_human_draft(
 
         tts_cost_note = (f"已消耗 TTS 算力 {tts.get('computing_power')}；"
                          if not user_audio_url else "驱动音频由用户提供（无 TTS 消耗）；")
-        mode_note = ("，将切分为 2 段各 15 秒生成后自动拼接（固定镜头保证段间构图一致）"
+        mode_note = ("，将分段生成后自动拼接（锁镜头工作流，画面完全静止）"
                      if segment_mode else "")
+        if locked_note:
+            mode_note += locked_note
         return {
             'success': True,
             'draft': draft,
@@ -691,9 +767,10 @@ async def confirm_digital_human(
         video_power = (draft.get("video_computing_power")
                        or draft.get("h3_computing_power") or 0)
         segment_mode = bool(draft.get("segment_mode"))
-        motion_text = (draft.get("effective_motion_prompt")
-                       or draft.get("motion_prompt")
-                       or "角色面向镜头深情的说话，固定镜头。")[:1000]
+        # H3 锁镜头 webapp 的 214 要求英文 integrated_multimodal_description 格式
+        # （prepare 阶段 VL 生成，存于 h3_locked_prompt；旧草案无此字段时用兜底模板）
+        motion_text = (draft.get("h3_locked_prompt")
+                       or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000]
 
         # 分段模式（口播 10-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
         # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致。
@@ -745,8 +822,11 @@ async def confirm_digital_human(
             billable = sum(segment_durations)
             video_power = draft.get("video_computing_power") or video_power
         data = {
-            # H3 的 text 是「动作/镜头提示词」（口播内容在 audio 里，勿传口播文案）
-            'text': (SEGMENTED_MOTION_PROMPT if segment_mode else motion_text),
+            # H3 锁镜头 webapp 的 214 要求英文 integrated_multimodal_description
+            # 格式（prepare 阶段 VL 生成，存于 h3_locked_prompt；旧草案无此字段
+            # 时用英文兜底模板）。口播内容在 audio 里，勿传口播文案
+            'text': (draft.get("h3_locked_prompt")
+                     or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000],
             'duration': str(billable),
             'max_edge': str(draft.get("max_edge") or 1280),
             'start_second': '0',
