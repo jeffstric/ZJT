@@ -43,9 +43,15 @@ class TtsSynthesizeRequest(BaseModel):
 
 
 def _normalize_authorization(request: Request) -> str:
-    """取标准化的 Authorization 头；开源/无登录态场景返回空串（跳过算力扣减）。"""
+    """取与登录相同的凭证，供算力预检/预扣使用。
+
+    require_permission 在 header 为空时接受 ?auth_token=。计费必须用同一份凭证，
+    否则查询参数登录会跳过扣费。header 与 query 都空时返回空串（内部无登录调用跳过扣费）。
+    """
     token = request.headers.get('Authorization') or ''
-    if token and not token.startswith('Bearer '):
+    if not str(token).strip():
+        token = (request.query_params.get('auth_token') or '').strip()
+    if token and not str(token).lower().startswith('bearer '):
         token = f'Bearer {token}'
     return token
 

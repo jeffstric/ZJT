@@ -39,6 +39,7 @@ from services.vl_gateway import call_vl, image_url_to_base64, pick_vl_model
 from utils.audio_duration_util import probe_audio_duration
 from utils.audio_segment_util import split_audio_into_segments  # noqa: F401  (re-export)
 from utils.index_tts_util import generate_audio as indextts_generate_audio
+from utils.project_path import get_project_root
 from utils.volcengine_tts_util import get_volcengine_tts_config, is_tts_configured
 
 logger_name = "digital_human_tts_tools"
@@ -91,11 +92,28 @@ def get_draft(draft_id: str) -> Optional[Dict[str, Any]]:
 
 def consume_draft(draft_id: str) -> Optional[Dict[str, Any]]:
     """取出并移除草案（确认后一次性消费，防止重复提交）"""
+    claimed = claim_draft(draft_id)
+    if not claimed:
+        return None
+    draft, _expires_at = claimed
+    return draft
+
+
+def claim_draft(draft_id: str) -> Optional[tuple]:
+    """弹出草案及其原过期时间。确认尚未成功时用 restore_draft 放回。"""
     with _DRAFT_LOCK:
         entry = _DRAFT_STORE.pop(draft_id, None)
         if not entry or entry["expires_at"] < time.time():
             return None
-        return dict(entry["draft"])
+        return dict(entry["draft"]), entry["expires_at"]
+
+
+def restore_draft(draft_id: str, draft: Dict[str, Any], expires_at: float) -> None:
+    """确认失败时放回原草案。已过期或同 id 已被占用则不放回。"""
+    with _DRAFT_LOCK:
+        if expires_at < time.time() or draft_id in _DRAFT_STORE:
+            return
+        _DRAFT_STORE[draft_id] = {"draft": dict(draft), "expires_at": expires_at}
 
 
 def clamp_h3_duration(seconds: float) -> int:
@@ -184,10 +202,11 @@ def _default_reference_voice_id() -> Optional[int]:
 
 
 def _resolve_preset_local_path(audio_url: str) -> str:
-    """预置音色站内相对路径（/voice_presets/x.mp3）→ 本地绝对路径"""
-    from utils.project_path import get_project_root
-    rel = audio_url.lstrip("/")
-    return os.path.join(get_project_root(), rel.replace("/", os.sep))
+    """预置音色站内相对路径（/voice_presets/x.mp3）→ web 静态目录下的本地文件。"""
+    parts = (audio_url or "").lstrip("/").split("/")
+    if not parts or any(part in ("", ".", "..") for part in parts):
+        return ""
+    return os.path.join(get_project_root(), "web", *parts)
 
 
 async def _synthesize_via_indextts(user_id: int, text: str, ref_voice: Dict[str, Any]) -> Dict[str, Any]:
@@ -595,7 +614,8 @@ async def confirm_digital_human(
     路由规则见 prepare_digital_human_draft：≤10s → MiniMax H3 单段，
     10-30s → MiniMax H3 分段拼接（均走 /api/digital-human-minimax-h3）。
     存量草案缺 model_task_type 时按 H3 处理。
-    仅在用户明确确认后调用。草案一次性消费，重复调用返回失败。
+    仅在用户明确确认后调用。拿到 project_id 后草案才消费，防止重复出片；
+    配置、素材、切分或 H3 失败时放回原草案，同一 draft_id 可再确认，不必重新 prepare。
 
     Args:
         draft_id: prepare_digital_human_draft 返回的草案 ID
@@ -603,11 +623,13 @@ async def confirm_digital_human(
     Returns:
         dict: success=True 时含 project_ids 与视频任务信息
     """
+    draft_key = str(draft_id)
+    claimed = claim_draft(draft_key)
+    if not claimed:
+        return {'success': False, 'error': '草案不存在、已提交或已过期（30分钟有效）。请重新调用 prepare_digital_human_draft 准备'}
+    draft, expires_at = claimed
+    submitted = False
     try:
-        draft = consume_draft(str(draft_id))
-        if not draft:
-            return {'success': False, 'error': '草案不存在、已提交或已过期（30分钟有效）。请重新调用 prepare_digital_human_draft 准备'}
-
         server_config = get_config().get("server", {})
         base_url = server_config.get("comfyui_base_url_inner") or server_config.get("host", "")
         if not base_url:
@@ -760,6 +782,7 @@ async def confirm_digital_human(
         if not project_id:
             return {'success': False, 'error': '数字人生成请求成功但未返回 project_id'}
 
+        submitted = True
         return {
             'success': True,
             'project_ids': [str(project_id)],
@@ -779,3 +802,6 @@ async def confirm_digital_human(
     except Exception as e:  # noqa: BLE001
         logger.error(f"confirm_digital_human error: {e}", exc_info=True)
         return {'success': False, 'error': f'确认数字人生成异常: {str(e)}'}
+    finally:
+        if not submitted:
+            restore_draft(draft_key, draft, expires_at)

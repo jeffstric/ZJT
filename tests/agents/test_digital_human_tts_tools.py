@@ -19,6 +19,7 @@ from script_writer_core.digital_human_tts_tools import (  # noqa: E402
     SEGMENTED_MOTION_PROMPT,
     _DRAFT_STORE,
     _pick_voice_by_image,
+    _resolve_preset_local_path,
     _store_draft,
     clamp_h3_duration,
     confirm_digital_human,
@@ -28,6 +29,17 @@ from script_writer_core.digital_human_tts_tools import (  # noqa: E402
     resolve_digital_human_model,
     split_audio_into_segments,
 )
+
+
+class TestPresetLocalPath(unittest.TestCase):
+
+    def test_preset_mp3_resolves_under_web(self):
+        path = _resolve_preset_local_path("/voice_presets/preset_001.mp3")
+        self.assertTrue(path.endswith(os.path.join("web", "voice_presets", "preset_001.mp3")))
+        self.assertTrue(os.path.isfile(path))
+
+    def test_path_traversal_rejected(self):
+        self.assertEqual(_resolve_preset_local_path("/voice_presets/../secret.mp3"), "")
 
 
 class TestDraftStore(unittest.TestCase):
@@ -583,6 +595,22 @@ class TestConfirmTool(_VoiceModelMockBase):
 
         self.assertFalse(result["success"])
         self.assertIn("算力不足", result["error"])
+        self.assertIsNotNone(get_draft(draft_id), "确认失败应放回草案，同一 draft_id 可再试")
+
+    def test_confirm_missing_server_keeps_draft(self):
+        draft_id = _store_draft({
+            "script_text": "测试", "image_url": "http://x/i.png",
+            "audio_url": "http://x/a.mp3", "h3_duration": 5,
+            "h3_computing_power": 6, "max_edge": 1280,
+        })
+        cfg = MagicMock()
+        cfg.get.return_value = {}
+        with patch("script_writer_core.digital_human_tts_tools.get_config", return_value=cfg):
+            result = asyncio.run(confirm_digital_human(
+                user_id="1", world_id="w", auth_token="t", draft_id=draft_id))
+        self.assertFalse(result["success"])
+        self.assertIn("服务器地址", result["error"])
+        self.assertEqual(get_draft(draft_id)["audio_url"], "http://x/a.mp3")
 
 
 class TestSplitAudioSegments(unittest.TestCase):

@@ -126,6 +126,28 @@ def test_synthesize_voice_not_found(client, monkeypatch):
     assert res.status_code == 404
 
 
+def test_synthesize_query_token_is_billed(client, monkeypatch):
+    """?auth_token= 已通过登录时，计费必须带上这份凭证，不能因 Authorization 为空跳过扣费。"""
+    _patch_tts_config(monkeypatch)
+    import services.volcengine_tts_service as svc
+
+    monkeypatch.setattr(svc.VoiceModel, "get_by_id", staticmethod(lambda rid: _voice_record()))
+    seen = {}
+
+    async def _fake_check(auth_header, power):
+        seen["auth"] = auth_header
+        return False, "您的算力不足，需要 1 算力，当前仅有 0 算力"
+
+    monkeypatch.setattr(svc, "check_power_sufficient", _fake_check)
+
+    res = client.post(
+        "/api/tts/synthesize?auth_token=query-token",
+        json={"text": "你好世界", "voice_id": 9},
+    )
+    assert res.status_code == 400
+    assert seen["auth"] == "Bearer query-token"
+
+
 def test_synthesize_insufficient_power_rejected(client, monkeypatch):
     _patch_tts_config(monkeypatch)
     import services.volcengine_tts_service as svc

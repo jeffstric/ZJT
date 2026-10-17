@@ -7,6 +7,7 @@ import os
 import re
 import json
 import time
+import shutil
 import logging
 import threading
 import uuid
@@ -55,7 +56,8 @@ from perseids_server.utils.auth_identity import (
 )
 from config.model_catalog import ModelScene, annotate_llm_models, build_tracks_payload
 from utils.resource_access import get_user_id_from_header, ensure_world_access
-from task.audio_task import build_character_audio_text, build_character_audio_style_prompt
+from task.audio_task import analyze_character_voice
+from task.async_drivers.runninghub_audio_driver import RunningHubAudioConfig
 from llm.llm_client_factory import get_available_models, get_llm_client
 
 # ==================== 加载 API 配置 ====================
@@ -857,6 +859,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
+                    voice_desc=char.get('voice_desc'),
                     _temp_filename=temp_filename,
                     _skip_image_validation=True
                 )
@@ -883,6 +886,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                                         other_info=sync_other_info,
                                         reference_image=char.get('reference_image'),
                                         default_voice=char.get('default_voice'),
+                                        voice_desc=char.get('voice_desc'),
                                         _skip_image_validation=True
                                     )
                                     if not overwrite_result.get('success'):
@@ -911,6 +915,7 @@ def sync_database_to_files(user_id: str, world_id: str, auth_token: str, force_o
                     other_info=sync_other_info,
                     reference_image=char.get('reference_image'),
                     default_voice=char.get('default_voice'),
+                    voice_desc=char.get('voice_desc'),
                     _skip_image_validation=True
                 )
                 if not create_result.get('success'):
@@ -1276,6 +1281,68 @@ class CharacterReferenceAudioRequest(BaseModel):
     model: Optional[str] = None
     model_id: Optional[int] = None
     vendor_id: Optional[int] = None
+
+class CharacterVoiceDescRequest(BaseModel):
+    world_id: int
+    character_id: Optional[int] = None
+    character_name: Optional[str] = None
+    character_data: Optional[Dict[str, Any]] = None
+    # LLM 模型信息（从前端 model-selector 获取）
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+def _request_auth_token(request: Request, header_token: Optional[str] = None) -> str:
+    """与 require_permission 同一来源的裸 token，供 LLM 计费使用。"""
+    token = normalize_authorization_token(header_token or request.headers.get("authorization"))
+    if token:
+        return token
+    return normalize_authorization_token(request.query_params.get("auth_token"))
+
+
+class CharacterPresetVoiceRequest(BaseModel):
+    voice_id: int
+    world_id: int
+
+# 公共预置音色（reference_audio）的 style 标签 → 声学音色指纹（voice_desc）。
+# 与 LLM 音色分析（task/audio_task.py 的六维模板）保持同一套要素与语序：
+# 人口属性→音色质感→个性气质→说话风格→录音质感收尾；未被 style 覆盖的维度
+# （音高质感/气质/语速）取该年龄段的中性默认值——确定性模板，无需 LLM 识别。
+# 纯声学基色口径（30~60 字）：与 LLM 音色分析的 voice_desc 字段同构——
+# 不含录音质感（TTS 专用要素）、不含体型外貌与情境化说话方式，
+# 指纹会注入 MiniMax H3 视频提示词，冗长会稀释注意力、跨镜头漂移
+PRESET_VOICE_DESC_BY_STYLE = {
+    '青年男声': '二十岁左右的青年男性，声音清亮自然、富有朝气，音量适中，语速适中，语气亲和。',
+    '青年女声': '二十岁左右的青年女性，声音清亮柔美、自然干净，音量适中，语速适中，语气亲和。',
+    '中年男声': '四十岁左右的中年男性，声音沉稳醇厚、有磁性，音量适中，语速平稳，语气从容。',
+    '中年女声': '四十岁左右的中年女性，声音温婉圆润、自然醇厚，音量适中，语速平稳，语气从容亲和。',
+    '老年男声': '六七十岁的老年男性，声音低沉浑厚、略带沙哑，语速偏慢，吐字清晰，语气沉稳。',
+    '老年女声': '六七十岁的老年女性，声音低沉温和、略显沙哑，语速偏慢，语气慈祥。',
+    '儿童男声': '约十岁的男童，声音清亮稚嫩、活泼天真，语速轻快，语气可爱。',
+    '儿童女声': '约十岁的女童，声音清亮稚嫩、甜美天真，语速轻快，语气可爱。',
+    '未知男声': '一位成年男性，声音自然干净、平稳亲和，音量适中，语速适中。',
+    '未知女声': '一位成年女性，声音自然柔和、平稳亲和，音量适中，语速适中。',
+}
+
+PRESET_VOICE_DESC_BY_GENDER = {
+    'male': PRESET_VOICE_DESC_BY_STYLE['未知男声'],
+    'female': PRESET_VOICE_DESC_BY_STYLE['未知女声'],
+    'child': PRESET_VOICE_DESC_BY_STYLE['儿童女声'],
+}
+
+PRESET_VOICE_DESC_FALLBACK = '一位成年人的自然声音，音色干净清晰，语速适中，语气平静。'
+
+
+def _build_preset_voice_desc(voice) -> str:
+    """由预置音色的 style/gender 推导声学音色指纹（voice_desc），无需 LLM。
+
+    style 命中模板表时按年龄段声部取值；否则按 gender 退化；再无则通用兜底。
+    """
+    style = str(getattr(voice, 'style', '') or '').strip()
+    if style in PRESET_VOICE_DESC_BY_STYLE:
+        return PRESET_VOICE_DESC_BY_STYLE[style]
+    gender = str(getattr(voice, 'gender', '') or '').strip()
+    return PRESET_VOICE_DESC_BY_GENDER.get(gender, PRESET_VOICE_DESC_FALLBACK)
 
 class ScriptSaveRequest(BaseModel):
     content: Dict[str, Any]
@@ -3138,6 +3205,7 @@ async def submit_to_database(request: Request, submit_request: SubmitDatabaseReq
                         reference_image = char_data.get('reference_image')
                         reference_images = char_data.get('reference_images')
                         default_voice = char_data.get('default_voice')
+                        voice_desc = char_data.get('voice_desc')
 
                         # 使用 create_or_update 避免并发竞态导致的重复创建
                         char_id = CharacterModel.create_or_update(
@@ -3152,7 +3220,8 @@ async def submit_to_database(request: Request, submit_request: SubmitDatabaseReq
                             other_info=other_info,
                             reference_image=reference_image,
                             reference_images=reference_images,
-                            default_voice=default_voice
+                            default_voice=default_voice,
+                            voice_desc=voice_desc
                         )
                         # 确保 CDN mapping（图片 + 音频）
                         try:
@@ -3471,17 +3540,18 @@ async def generate_character_reference_audio(
     提交后立即返回任务 ID，前端通过 GET /script-writer/characters/reference-audio-status/{task_id} 轮询结果
     """
     try:
-        if not user_id:
-            body = await request.json()
-            user_id = body.get('user_id')
-        if not user_id:
-            return JSONResponse({'success': False, 'error': '缺少用户ID'}, status_code=400)
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse({'success': False, 'error': '未获取到登录身份，请重新登录'}, status_code=401)
+        claimed_error = check_claimed_user_id(user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
         character = None
         if audio_request.character_id:
             character = await asyncio.to_thread(CharacterModel.get_by_id, audio_request.character_id)
         elif audio_request.character_name:
             character = await asyncio.to_thread(CharacterModel.get_by_name, audio_request.world_id, audio_request.character_name)
-        if character and (character.world_id != audio_request.world_id or character.user_id != int(user_id)):
+        if character and (character.world_id != audio_request.world_id or str(character.user_id) != str(auth_user_id)):
             return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
         character_data = character.to_dict() if character else (audio_request.character_data or {})
         if not character_data:
@@ -3489,15 +3559,23 @@ async def generate_character_reference_audio(
         if audio_request.character_name and not character_data.get('name'):
             character_data['name'] = audio_request.character_name
 
-        # 构建参数
-        style_prompt = await build_character_audio_style_prompt(
-            character_data, audio_request.style_prompt,
-            model=audio_request.model, vendor_id=audio_request.vendor_id
+        # 构建参数：音色分析只跑一次 LLM，voice_description 同时充当
+        # TTS 风格提示词与角色声学音色指纹（随响应返回给前端落 voice_desc）
+        voice_analysis = await analyze_character_voice(
+            character_data,
+            model=audio_request.model,
+            vendor_id=audio_request.vendor_id,
+            model_id=audio_request.model_id,
+            auth_token=_request_auth_token(request, auth_token),
         )
-        text = await build_character_audio_text(
-            character_data, audio_request.text,
-            model=audio_request.model, vendor_id=audio_request.vendor_id
-        )
+        style_prompt = (audio_request.style_prompt or '').strip() or str(
+            voice_analysis.get('voice_description') or ''
+        ).strip() or RunningHubAudioConfig.AUDIO_STYLE_DEFAULT_PROMPT
+        text = (audio_request.text or '').strip() or str(
+            voice_analysis.get('sample_text') or ''
+        ).strip() or f"大家好，我是{character_data.get('name', '角色')}。"
+        # voice_desc 是给 H3 视频提示词的纯声学指纹（30~60字）；旧模型输出缺该字段时回退 voice_description
+        voice_desc = str(voice_analysis.get('voice_desc') or voice_analysis.get('voice_description') or '').strip()
 
         # 写入异步任务表，由 scheduler 后台统一处理提交
         from model import AsyncTasksModel
@@ -3505,13 +3583,14 @@ async def generate_character_reference_audio(
 
         task_id = AsyncTasksModel.create_and_schedule(
             implementation=AsyncTaskImplementationId.RUNNINGHUB_AUDIO,
-            user_id=int(user_id),
+            user_id=int(auth_user_id),
             params={'style_prompt': style_prompt, 'text': text}
         )
 
         return JSONResponse({
             'success': True,
             'task_id': task_id,
+            'voice_desc': voice_desc,
             'message': '音频生成任务已提交，请通过 task_id 查询状态'
         })
     except Exception as e:
@@ -3559,6 +3638,64 @@ async def get_reference_audio_status(request: Request, task_id: int):
             })
     except Exception as e:
         logger.error(f'查询音频任务状态失败: {str(e)}')
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
+
+@router.post('/script-writer/characters/voice-desc')
+@require_permission("character:edit")
+async def generate_character_voice_desc(
+    request: Request,
+    voice_request: CharacterVoiceDescRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """按角色人设自动生成声学音色描述（voice_desc，角色声学音色指纹）。
+
+    与「生成参考音频」共用同一套 LLM 音色分析；此接口供角色编辑页的
+    「自动生成」按钮单独重生成指纹（存量角色补生成、用户改完人设后刷新）。
+    只返回文本，不落库——前端填进音色描述输入框，随角色卡保存链路持久化。
+    """
+    try:
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse({'success': False, 'error': '未获取到登录身份，请重新登录'}, status_code=401)
+        claimed_error = check_claimed_user_id(user_id, auth_user_id)
+        if claimed_error:
+            return claimed_error
+        character = None
+        if voice_request.character_id:
+            character = await asyncio.to_thread(CharacterModel.get_by_id, voice_request.character_id)
+        elif voice_request.character_name:
+            character = await asyncio.to_thread(
+                CharacterModel.get_by_name, voice_request.world_id, voice_request.character_name
+            )
+        if character and (character.world_id != voice_request.world_id or str(character.user_id) != str(auth_user_id)):
+            return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
+        character_data = character.to_dict() if character else (voice_request.character_data or {})
+        if not character_data:
+            return JSONResponse({'success': False, 'error': '缺少角色数据'}, status_code=400)
+        if voice_request.character_name and not character_data.get('name'):
+            character_data['name'] = voice_request.character_name
+
+        voice_analysis = await analyze_character_voice(
+            character_data,
+            model=voice_request.model,
+            vendor_id=voice_request.vendor_id,
+            model_id=voice_request.model_id,
+            auth_token=_request_auth_token(request, auth_token),
+        )
+        if voice_analysis.get('analysis_failed'):
+            return JSONResponse({'success': False, 'error': '音色描述生成失败，请重试'}, status_code=502)
+        # voice_desc 是给 H3 视频提示词的纯声学指纹（30~60字）；旧模型输出缺该字段时回退 voice_description
+        voice_desc = str(voice_analysis.get('voice_desc') or voice_analysis.get('voice_description') or '').strip()
+        if not voice_desc:
+            return JSONResponse({'success': False, 'error': '音色描述生成失败，请重试'}, status_code=502)
+        return JSONResponse({
+            'success': True,
+            'voice_desc': voice_desc,
+            'voice_type': str(voice_analysis.get('voice_type') or ''),
+        })
+    except Exception as e:
+        logger.error(f'生成角色音色描述失败: {str(e)}', exc_info=True)
         return JSONResponse({'success': False, 'error': str(e)}, status_code=500)
 
 @router.get('/world-files')
@@ -6056,6 +6193,103 @@ async def upload_character_audio(
         }, status_code=500)
 
 
+@router.post('/script-writer/characters/preset-voice')
+@require_permission("script_writer:upload_image")
+async def apply_character_preset_voice(
+    request: Request,
+    payload: CharacterPresetVoiceRequest
+):
+    """从公共音色库选择预置音色，复制为角色参考音频。
+
+    公共音色库 = voice 表中 provider='reference_audio' 的 AI 合成预置音色
+    （web/voice_presets/preset_*.mp3，与声音页「参考音频-从音色库选择」同源）。
+    明确拒绝火山（豆包）音色（provider='volcengine'），规避音色授权法律风险。
+
+    预置音频复制到 upload/character/voice/ 并按上传音频同等规则裁剪（≤20s），
+    返回与 /upload-character-audio 相同的 URL 结构——角色 default_voice 的
+    全部下游消费（H3 参考音频槽 / IndexTTS 配音克隆）零改动可用，且不受
+    预置文件后续增删影响。
+
+    响应同时携带 voice_desc：由预置音色的 style/gender 确定性推导的声学音色
+    指纹（与 LLM 音色分析同构，无需大模型识别），前端自动回填音色描述框。
+    """
+    from model.voice import PROVIDER_REFERENCE_AUDIO, VoiceModel
+    from config.constant import CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT
+
+    try:
+        voice = await asyncio.to_thread(VoiceModel.get_by_id, int(payload.voice_id))
+        if not voice or not voice.is_active:
+            return JSONResponse({
+                'success': False,
+                'error': '音色不存在或已下线'
+            }, status_code=404)
+
+        # 硬限制：仅公共预置音色（AI 合成）；火山豆包音色一律不接（法律风险）
+        if voice.provider != PROVIDER_REFERENCE_AUDIO:
+            return JSONResponse({
+                'success': False,
+                'error': '公共音色库仅支持预置音色，不支持第三方音色库音色'
+            }, status_code=400)
+
+        audio_url = str(voice.audio_url or '').strip()
+        # 预置音色 audio_url 约定为站内相对路径 /voice_presets/preset_*.mp3；
+        # 仅放行该前缀，并拒绝路径穿越片段（去掉前导 / 后任何空段/点段均非法）
+        if not audio_url.startswith('/voice_presets/') or '\\' in audio_url:
+            return JSONResponse({
+                'success': False,
+                'error': '预置音色音频路径不合法'
+            }, status_code=400)
+        url_parts = audio_url.lstrip('/').split('/')
+        if any(part in ('', '.', '..') for part in url_parts):
+            return JSONResponse({
+                'success': False,
+                'error': '预置音色音频路径不合法'
+            }, status_code=400)
+
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        source_path = os.path.join(app_dir, 'web', *url_parts)
+        if not os.path.isfile(source_path):
+            return JSONResponse({
+                'success': False,
+                'error': '预置音色音频文件缺失'
+            }, status_code=404)
+
+        upload_dir = os.path.join('upload', 'character', 'voice')
+        full_upload_dir = os.path.join(app_dir, upload_dir)
+        os.makedirs(full_upload_dir, exist_ok=True)
+
+        file_extension = os.path.splitext(source_path)[1].lower() or '.mp3'
+        filename = f"character_voice_preset_{int(voice.id)}_{uuid.uuid4().hex[:8]}{file_extension}"
+        file_path = os.path.join(full_upload_dir, filename)
+
+        await asyncio.to_thread(shutil.copyfile, source_path, file_path)
+        # 与上传音频同一套契约：超过 20 秒自动裁剪（部分预置样例达 20-44s）
+        await asyncio.to_thread(_trim_character_audio, file_path, CHARACTER_VOICE_MAX_DURATION, CHARACTER_VOICE_TRIM_TIMEOUT)
+
+        server_host = get_config()["server"]["host"]
+        url = f"{server_host.rstrip('/')}/{upload_dir.replace(os.sep, '/')}/{filename}"
+
+        logger.info(f'角色参考音频选用公共音色库预置: voice_id={voice.id} name={voice.name} -> {url}')
+
+        # 指纹优先级：音色自己的 voice_desc（音频理解模型实听样本生成，能区分
+        # 同分类下的不同听感）> style 模板表兜底（新音色尚未回填时）
+        voice_desc = str(getattr(voice, 'voice_desc', '') or '').strip() or _build_preset_voice_desc(voice)
+
+        return JSONResponse({
+            'success': True,
+            'url': url,
+            'voice_name': voice.name,
+            'voice_desc': voice_desc
+        })
+
+    except Exception as e:
+        logger.error(f'选用公共音色库预置音色失败: {str(e)}')
+        return JSONResponse({
+            'success': False,
+            'error': f'选择音色失败: {str(e)}'
+        }, status_code=500)
+
+
 def _trim_character_audio(audio_path: str, max_duration: float, timeout: int) -> None:
     """
     检查音频时长，超过 max_duration 则用 ffmpeg 裁剪。
@@ -6135,21 +6369,26 @@ async def delete_staging_file(
     user_id: str = QueryParam(...),
     world_id: str = QueryParam(...),
     relative_path: str = QueryParam(...),
-    auth_token: str = QueryParam(...)
 ):
     """
-    删除暂存区的角色、场景、道具、剧本文件
-    
+    删除暂存区的角色、场景、道具、剧本文件。
+
+    登录凭证只认 Authorization 头（由 require_permission 校验）。
+    不要把 auth_token 放进 query：浏览器历史、Referer 和访问日志会泄漏。
+
     Args:
-        user_id: 用户ID
+        user_id: 用户ID（须与登录身份一致）
         world_id: 世界ID
         relative_path: 文件相对路径（从 script_writer 目录开始，如：2/130/props/prop_xxx.json）
-        auth_token: 认证令牌
-    
+
     Returns:
         删除结果
     """
     try:
+        claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+        if claimed_error:
+            return claimed_error
+
         # 验证相对路径格式，防止路径遍历攻击
         if '..' in relative_path or relative_path.startswith('/'):
             logger.warning(f'检测到可疑路径: {relative_path}')

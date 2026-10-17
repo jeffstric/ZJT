@@ -1103,6 +1103,14 @@
             <label class="label" style="color: #0f172a;">其他信息</label>
             <textarea id="editCharacterOtherInfoInput" class="compact-textarea" placeholder="请输入其他信息..." rows="2" style="width: 100%; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
           </div>
+          <div class="field">
+            <label class="label" style="color: #0f172a;">音色描述</label>
+            <div style="display: flex; gap: 8px; align-items: flex-start;">
+              <textarea id="editCharacterVoiceDescInput" rows="2" placeholder="角色声音的声学特征（性别年龄段/音高/质感/音量/语速），用于视频生成的音色一致性" style="flex: 1; background: #ffffff; color: #0f172a; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; outline: none; font-size: 14px; resize: vertical;"></textarea>
+              <button type="button" id="editCharacterVoiceDescBtn" style="background: #3b82f6; color: white; border: none; border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; white-space: nowrap;" onclick="generateCanvasCharacterVoiceDesc()">自动生成</button>
+            </div>
+            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">由 AI 根据角色人设自动生成，可手动修改；仅 MiniMax H3 系列视频模型使用</div>
+          </div>
           <div class="field-row media-field-row">
             <div class="field">
               <label class="label" style="color: #0f172a;">参考图</label>

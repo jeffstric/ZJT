@@ -531,10 +531,51 @@ async def generate_audio_task(app=None):
 
 
 
+def _parse_voice_analysis_json(result_text: str) -> Optional[dict]:
+    """从 LLM 原文取出音色分析 JSON。容忍 ```json 围栏和前后说明文字。"""
+    text = (result_text or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(text[start:end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _voice_analysis_fallback(character_data: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM 失败时的通用指纹。analysis_failed 让「自动生成」接口返回失败，不把兜底文案当成功。"""
+    return {
+        "can_speak_human_language": True,
+        "voice_type": "human",
+        "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
+        "voice_desc": "一位成年人的自然声音，音色干净清晰，语速适中，语气平静。",
+        "sample_text": f"大家好，我是{character_data.get('name', '角色')}。",
+        "analysis_failed": True,
+    }
+
+
 async def _analyze_character_voice_capability(
     character_data: Dict[str, Any],
     model: Optional[str] = None,
-    vendor_id: Optional[int] = None
+    vendor_id: Optional[int] = None,
+    auth_token: Optional[str] = None,
+    model_id: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     使用 LLM 智能分析角色发声能力和音色特征
@@ -557,6 +598,7 @@ async def _analyze_character_voice_capability(
             "can_speak_human_language": True,
             "voice_type": "human",
             "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
+            "voice_desc": "一位成年人的自然声音，音色干净清晰，语速适中，语气平静。",
             "sample_text": "大家好，我是角色。"
         }
 
@@ -584,6 +626,7 @@ async def _analyze_character_voice_capability(
             "can_speak_human_language": True,
             "voice_type": "human",
             "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
+            "voice_desc": "一位成年人的自然声音，音色干净清晰，语速适中，语气平静。",
             "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
         }
 
@@ -593,7 +636,8 @@ async def _analyze_character_voice_capability(
         "{\n"
         '  "can_speak_human_language": true/false,\n'
         '  "voice_type": "human" | "dog" | "cat" | "bird" | "other_animal" | "machine" | "nature",\n'
-        '  "voice_description": "音色描述（用于TTS提示词）",\n'
+        '  "voice_description": "音色描述（用于TTS提示词，60~100字）",\n'
+        '  "voice_desc": "角色声学音色指纹（用于视频生成提示词，30~60字）",\n'
         '  "sample_text": "示例文本（人话或动物叫声）"\n'
         "}\n\n"
         "判断规则：\n"
@@ -610,12 +654,28 @@ async def _analyze_character_voice_capability(
         "   - 个性气质：性格带来的说话感觉（如\"透着长者的沉稳和蔼\"\"俏皮灵动、爱撒娇\"\"威严不容置疑\"）\n"
         "   - 说话风格：语速快慢、音量、说话方式（如\"语速偏慢，字字清晰像在讲往事\"\"语速轻快像闺蜜聊天\"）\n"
         "   - 录音质感：以\"录音干净清晰，像在耳边近距离说话\"收尾，保证生成音质稳定\n"
+        "   - 音色必须与角色外观、年龄、身份一致（壮硕粗犷的角色配低沉厚重的声音，"
+        "瘦弱年轻的角色配清亮轻快的声音），不能与形象矛盾\n"
         "   - 总体语气保持平静自然：参考音频用于后续声音克隆，不要描述激烈起伏的情绪\n"
         "   ✅ 合格示例：\"一位六十岁左右的北方老先生，说话带明显的东北口音，声音低沉浑厚、略带沙哑，"
         "透着长者的沉稳和蔼，语速偏慢，字字清晰像在讲往事，录音干净清晰，像在耳边近距离说话。\"\n"
         "   ❌ 禁止示例：\"30岁左右的成熟男性，声音沉稳有力\"（过短，缺少口音/质感/个性/语速/录音要素）\n"
         "   - 不能说人话的动物角色：voice_description 简要描述声音特点即可（如\"小型犬的清脆叫声\"）\n\n"
-        "5. sample_text 生成规则：\n"
+        "5. voice_desc（能说人话的角色）是注入视频生成提示词的角色音色指纹，与 voice_description 的区别：\n"
+        "   - 只写【恒定的声学基色】：性别与年龄段、音高、音色质感、音量、语速，30~60字一句话\n"
+        "   - 音色必须与角色外观、年龄、身份一致（声音是画面人物发出来的）\n"
+        "   - 严禁写入以下内容（它们由每场戏的剧本和视频提示词现场决定，写进指纹会导致"
+        "提示词冗长、注意力分散、跨镜头音色漂移）：\n"
+        "     * 体型外貌与肢体动作（如\"微胖\"\"叉腰挺肚\"）\n"
+        "     * 录音质感（如\"录音干净清晰\"——那是 TTS 专用要素）\n"
+        "     * 按对象/情境切换的说话方式（如\"对下属嗓门拔高、对领导压低谄媚\"——情境语气"
+        "由视频提示词按剧情现场叠加，指纹只管基色）\n"
+        "     * 口头禅、称呼语、台词内容\n"
+        "   - 情绪克制：只写语气习惯（如\"威严\"\"急躁\"），不写具体情绪状态（如\"愤怒地\"）\n"
+        "   ✅ 合格示例：\"四十岁出头的北方中年男性，声音洪亮粗厚、略带沙哑，音量偏大，"
+        "语速偏快，语气习惯性强硬命令。\"\n"
+        "   - 不能说人话的动物角色：voice_desc 简要描述叫声特点即可\n\n"
+        "6. sample_text 生成规则：\n"
         "   - 能说人话（人类/会说话的动物）→ 必须包含年龄和性别信息的自我介绍（20-40字）\n"
         "     * 格式参考：\"大家好，我是{角色名}，今年{年龄}岁，是一位{性别}，是{身份}。很高兴在这个故事里与你相遇。\"\n"
         "     * 如果角色信息中没有明确年龄，根据身份和外貌推断（如少年约15-18岁，青年约20-30岁）\n"
@@ -632,7 +692,6 @@ async def _analyze_character_voice_capability(
 
     try:
         from llm.llm_client_factory import get_llm_client
-        import asyncio
 
         llm_client = get_llm_client(model, vendor_id=vendor_id)
         response = await asyncio.to_thread(
@@ -641,29 +700,43 @@ async def _analyze_character_voice_capability(
             messages=messages,
             temperature=0.3,
             max_tokens=1500,
+            auth_token=auth_token,
+            vendor_id=vendor_id,
+            model_id=model_id,
         )
 
         result_text = response.choices[0].message.content.strip() if response and response.choices else ""
-
-        if result_text:
-            try:
-                result_json = json.loads(result_text)
-                logger.info(f"LLM 生成角色音色分析成功: {result_json}")
-                return result_json
-            except json.JSONDecodeError:
-                logger.warning(f"LLM 返回的不是有效JSON: {result_text}")
-        else:
-            logger.warning("LLM 返回空内容")
+        result_json = _parse_voice_analysis_json(result_text)
+        if result_json:
+            logger.info(f"LLM 生成角色音色分析成功: {result_json}")
+            return result_json
+        logger.warning(f"LLM 返回的不是有效JSON: {result_text}")
 
     except Exception as e:
         logger.warning(f"LLM 生成音色分析失败: {e}")
 
-    return {
-        "can_speak_human_language": True,
-        "voice_type": "human",
-        "voice_description": "一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，录音干净清晰，像在耳边近距离说话",
-        "sample_text": f"大家好，我是{character_data.get('name', '角色')}。"
-    }
+    return _voice_analysis_fallback(character_data)
+
+
+async def analyze_character_voice(character_data: Dict[str, Any],
+                                  model: Optional[str] = None,
+                                  vendor_id: Optional[int] = None,
+                                  auth_token: Optional[str] = None,
+                                  model_id: Optional[int] = None) -> Dict[str, Any]:
+    """公开封装：按角色人设做 LLM 音色分析。
+
+    「生成参考音频」与「自动生成音色描述」共用同一次分析结果：
+    voice_description 既是 TTS 风格提示词，也是角色声学音色指纹（character.voice_desc）。
+    调用方持有多消费需求时应调用本函数一次自行派生，避免分别调
+    build_character_audio_style_prompt / build_character_audio_text 造成重复 LLM 调用。
+    """
+    return await _analyze_character_voice_capability(
+        character_data,
+        model=model,
+        vendor_id=vendor_id,
+        auth_token=auth_token,
+        model_id=model_id,
+    )
 
 
 async def build_character_audio_text(

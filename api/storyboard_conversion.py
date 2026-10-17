@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request, Header
 from fastapi.responses import JSONResponse
+from perseids_server.utils.auth_identity import check_claimed_user_id, get_auth_user_id
 from perseids_server.utils.permission import require_permission
 
 from api.storyboard import (
@@ -46,7 +47,6 @@ from model.character import CharacterModel
 from model.world import WorldModel
 from model.script import ScriptModel
 from utils.resource_access import (
-    get_user_id_from_header,
     ensure_resource_access,
     ensure_world_access,
 )
@@ -54,6 +54,17 @@ from utils.resource_access import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storyboard", tags=["storyboard"])
+
+
+def _resolve_login_user_id(request: Request, claimed_user_id: Optional[int]):
+    """登录身份为属主。X-User-Id 可省略；携带时必须与登录用户一致。"""
+    auth_user_id = get_auth_user_id(request)
+    if auth_user_id is None:
+        return None, JSONResponse(status_code=401, content={'error': '未获取到登录身份，请重新登录'})
+    mismatch = check_claimed_user_id(claimed_user_id, auth_user_id)
+    if mismatch is not None:
+        return None, mismatch
+    return auth_user_id, None
 
 
 class StoryboardConversionError(Exception):
@@ -494,7 +505,9 @@ async def storyboard_from_workflow(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """工作流画布 → 故事板（一次性：已有关联故事板时直接返回，不重复转换）。"""
-    user_id = get_user_id_from_header(user_id)
+    user_id, auth_error = _resolve_login_user_id(request, user_id)
+    if auth_error is not None:
+        return auth_error
     data = await request.json()
 
     workflow_id = _resolve_int(data.get('workflow_id'))
@@ -918,7 +931,9 @@ async def storyboard_to_workflow(
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
     """故事板 → 工作流画布（一次性：已关联画布时直接返回，不覆盖画布内容）。"""
-    user_id = get_user_id_from_header(user_id)
+    user_id, auth_error = _resolve_login_user_id(request, user_id)
+    if auth_error is not None:
+        return auth_error
     storyboard = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
     if not storyboard:
         return JSONResponse(status_code=404, content={'error': '故事板不存在'})

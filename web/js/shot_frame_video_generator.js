@@ -441,6 +441,21 @@ async function generateShotFrameVideo(nodeId, node){
           }
         }
 
+        // H3 系列：先追加角色音色指纹（voice_desc），音频说明在其上叠加（两块共存，防覆盖）
+        if(typeof appendVoiceCastingIfH3 === 'function'){
+          videoPrompt = appendVoiceCastingIfH3(videoModel, videoPrompt, voiceCharacters || []);
+        }
+        if(typeof collectVoiceReferences === 'function'){
+          const voiceRefs = collectVoiceReferences(videoModel, voiceCharacters || [], '');
+          if(voiceRefs.enabled){
+            form.append('audio_urls', voiceRefs.voiceUrls.join(','));
+            form.set('prompt', appendVoiceReferencePrompt(videoPrompt, voiceRefs.promptNote));
+            notifyVoiceReferences(voiceRefs.voiceUrls.length);
+          } else {
+            form.set('prompt', videoPrompt);
+          }
+        }
+
         if(useH3KeyframeRef) {
           showToast(`本次使用 MiniMax H3 首帧参考混合模型，共 ${referenceImageUrls.length} 张参考图`, 'info');
         } else {

@@ -4,7 +4,8 @@ Voice Model - Database operations for voice table
 
 provider 维度：
 - volcengine      火山引擎（豆包语音）预置音色，voice_type 为火山音色 ID（如 BV700_streaming）
-- reference_audio 参考音频克隆音色（预留给 IndexTTS 链路，audio_url 为克隆源音频）
+- reference_audio 参考音频克隆音色（预留给 IndexTTS 链路，audio_url 为克隆源音频）。
+  预置行的 voice_type 是 SQL NULL，不能写成字符串 NULL。
 
 user_id=0 为系统预置（种子来自 config/volcengine_tts_constants.py 的
 VOLCENGINE_TTS_VOICES，由迁移 no_145 幂等插入）；user_id>0 为用户私有（二期）。
@@ -30,6 +31,7 @@ class Voice:
         self.voice_type = kwargs.get('voice_type')
         self.name = kwargs.get('name')
         self.description = kwargs.get('description')
+        self.voice_desc = kwargs.get('voice_desc')
         self.gender = kwargs.get('gender')
         self.language = kwargs.get('language')
         self.style = kwargs.get('style')
@@ -49,6 +51,7 @@ class Voice:
             'voice_type': self.voice_type,
             'name': self.name,
             'description': self.description,
+            'voice_desc': self.voice_desc,
             'gender': self.gender,
             'language': self.language,
             'style': self.style,
@@ -239,7 +242,7 @@ class VoiceModel:
             record_id: Record ID
             **kwargs: Fields to update
         """
-        allowed_fields = ['user_id', 'provider', 'voice_type', 'name', 'description',
+        allowed_fields = ['user_id', 'provider', 'voice_type', 'name', 'description', 'voice_desc',
                           'sample_url', 'audio_url', 'gender', 'language', 'style',
                           'sort_order', 'is_active']
 
@@ -292,6 +295,7 @@ CREATE TABLE IF NOT EXISTS `voice` (
   `voice_type` varchar(128) DEFAULT NULL COMMENT '提供方音色ID，如 BV700_streaming',
   `name` varchar(128) NOT NULL COMMENT '显示名',
   `description` varchar(512) DEFAULT NULL COMMENT '一句话人设描述',
+  `voice_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '声学音色指纹（音频理解模型听预置样本生成，角色选用该音色时作为文字指纹）',
   `gender` varchar(16) DEFAULT NULL COMMENT 'female/male/child',
   `language` varchar(32) DEFAULT NULL COMMENT 'zh/zh-dialect/en 等',
   `style` varchar(64) DEFAULT NULL COMMENT '风格标签，如 温柔知性',

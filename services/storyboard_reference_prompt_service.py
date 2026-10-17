@@ -10,7 +10,11 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from config.constant import MAX_VOICE_REFERENCE_AUDIOS
+from config.constant import (
+    H3_VOICE_CASTING_NOTE_MARKER,
+    H3_VOICE_CASTING_NOTE_MAX_CHARS,
+    MAX_VOICE_REFERENCE_AUDIOS,
+)
 
 
 ROLE_TAG_RE = re.compile(r"【【([^】]+)】】")
@@ -554,6 +558,47 @@ def build_voice_reference_note(voice_items: List[Dict[str, str]], start_index: i
 def append_voice_reference_note(prompt: str, voice_items: List[Dict[str, str]], start_index: int = 1) -> str:
     """把音色说明追加到提示词尾部；已包含同一说明时幂等跳过。"""
     note = build_voice_reference_note(voice_items, start_index=start_index)
+    if not note or note in str(prompt or ""):
+        return str(prompt or "")
+    return f"{str(prompt or '').rstrip()}\n\n{note}"
+
+
+def build_voice_casting_note(characters: Optional[List[Dict[str, Any]]]) -> str:
+    """把角色声学音色指纹（character.voice_desc）拼成「角色音色说明」提示词段。
+
+    仅 MiniMax H3（KFRef / Ref2VA）调用——指纹是纯文本不占音频槽，随原文进入
+    提示词优化，由优化 LLM 渲染为说话角色的声音描述；其他模型零变化。
+    voice_desc 为空的角色跳过（存量角色未生成指纹时自然降级为无指纹注入）。
+    不在此处过滤说话人：是否开口由优化 LLM 语义判断（has_dialogue / 说话人绑定），
+    指令与模板明确「不说话的角色忽略其音色说明」。
+    """
+    parts: List[str] = []
+    for character in characters or []:
+        if not isinstance(character, dict):
+            continue
+        name = _clean_name(character.get("name"))
+        desc = str(character.get("voice_desc") or "").strip()
+        if not name or not desc:
+            continue
+        parts.append(f"{name}的音色特征：{desc}")
+    if not parts:
+        return ""
+    # 指纹文本可能自带句号，拼接处避免出现「命令。。描述」双句号
+    joined = "；".join(
+        part if part.rstrip().endswith(("。", ".", "！", "？")) else part + "。"
+        for part in parts
+    )
+    note = (
+        H3_VOICE_CASTING_NOTE_MARKER
+        + joined
+        + "描述这些角色说话的声音时必须遵循对应音色特征。"
+    )
+    return note[:H3_VOICE_CASTING_NOTE_MAX_CHARS]
+
+
+def append_voice_casting_note(prompt: str, note: str) -> str:
+    """把「角色音色说明」追加到提示词尾部；空说明或已包含时幂等跳过。"""
+    note = str(note or "").strip()
     if not note or note in str(prompt or ""):
         return str(prompt or "")
     return f"{str(prompt or '').rstrip()}\n\n{note}"

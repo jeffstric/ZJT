@@ -27,6 +27,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
     resolve_h3_prompt_variant,
+    strip_leading_json_object,
     strip_prompt_fences,
     validate_h3_optimized_prompt,
 )
@@ -136,7 +137,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                         last_error = "output missing dialogue header"
                         continue
                 else:
-                    cleaned = strip_prompt_fences(raw)
+                    # I2VA/FL2VA 无 JSON 头协议，防御性剥离模型偶发自发的
+                    # 判断性 JSON 前缀（Ref2VA/KFRef 的首行 JSON 头走上方正规解析）
+                    cleaned = strip_leading_json_object(strip_prompt_fences(raw))
                 if isinstance(has_dialogue, bool):
                     last_flag = has_dialogue
                 # 无台词判定：LLM 语义标记优先（KFRef/Ref2VA），I2VA/FL2VA 与

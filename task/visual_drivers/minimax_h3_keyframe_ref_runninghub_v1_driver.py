@@ -88,6 +88,12 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
         # LLM 语义判断（extra_config.h3_prompt_optimize.has_dialogue，能识别无引号
         # 台词、排除引号店名），旧任务/优化禁用/回退原文时回退正则引号判断。
         audios = self._split_reference_paths(getattr(ai_tool, "audio_path", None))
+        # TODO(音色裁剪，优先级低)：MiniMax 官方约束参考音频每条 2–15 秒，音色库
+        # 存在 20–44s 超长文件（疑似被模型静默丢弃）。但 2026-10-14 消融实验已证明
+        # H3 的音频参考本身极弱（音色一致性实际由文字指纹 voice_desc 承担，见
+        # docs/storyboard/storyboard_reference_to_video.md），裁剪到 15s 内也未必
+        # 改善音色效果，故暂不实施；若后续重新强化音频参考，参照 seedance 驱动的
+        # 时长预算截断模式（临时文件裁剪，不改角色原音频）实施。
         if len(audios) > MAX_VOICE_REFERENCE_AUDIOS:
             self.logger.warning(
                 "MiniMax H3 首帧参考混合模型最多保留 %s 个参考音频，已忽略其余 %s 个",
