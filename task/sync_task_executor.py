@@ -406,26 +406,44 @@ class SyncTaskExecutor:
     def _get_worker_start_method() -> str:
         """worker 进程池启动方式（spawn/fork），默认 spawn。
 
-        动态配置 sync_task.worker_start_method；非法值/平台不支持（Windows 无
-        fork）时回退 spawn。每次建池（start/rebuild）读取，改配置重启或等下次
-        池重建后生效。
+        优先级：环境变量 SYNC_TASK_WORKER_START_METHOD（部署层应急开关，DB
+        不可达时也能切；值非法时忽略并回退动态配置）> 动态配置
+        sync_task.worker_start_method > 代码默认 SYNC_WORKER_DEFAULT_START_METHOD。
+        非法值/平台不支持（Windows 无 fork）时回退 spawn 并告警。每次建池
+        （start/rebuild）读取，改配置重启或等下次池重建后生效。
         """
         method = SYNC_WORKER_DEFAULT_START_METHOD
-        try:
-            from config.config_util import get_dynamic_config_value
-
-            raw = get_dynamic_config_value(
-                "sync_task", "worker_start_method", default=SYNC_WORKER_DEFAULT_START_METHOD,
-            )
-            if isinstance(raw, str) and raw.strip().lower() in ("spawn", "fork"):
-                method = raw.strip().lower()
-            elif raw not in (None, "", SYNC_WORKER_DEFAULT_START_METHOD):
+        raw = None
+        source = "default"
+        env_raw = os.environ.get("SYNC_TASK_WORKER_START_METHOD")
+        if isinstance(env_raw, str) and env_raw.strip().lower() in ("spawn", "fork"):
+            raw = env_raw
+            source = "env:SYNC_TASK_WORKER_START_METHOD"
+        else:
+            if env_raw:
                 logger.warning(
-                    "[SyncTaskExecutor] 无效的 sync_task.worker_start_method=%r，回退 %s",
-                    raw, SYNC_WORKER_DEFAULT_START_METHOD,
+                    "[SyncTaskExecutor] 无效的环境变量 SYNC_TASK_WORKER_START_METHOD=%r，"
+                    "忽略并回退动态配置",
+                    env_raw,
                 )
-        except Exception:
-            pass
+            try:
+                from config.config_util import get_dynamic_config_value
+
+                value = get_dynamic_config_value(
+                    "sync_task", "worker_start_method", default=SYNC_WORKER_DEFAULT_START_METHOD,
+                )
+                if value is not None:
+                    raw = value
+                    source = "config:sync_task.worker_start_method"
+            except Exception:
+                pass
+        if isinstance(raw, str) and raw.strip().lower() in ("spawn", "fork"):
+            method = raw.strip().lower()
+        elif raw not in (None, "", SYNC_WORKER_DEFAULT_START_METHOD):
+            logger.warning(
+                "[SyncTaskExecutor] 无效的 worker 启动方式 %s=%r，回退 %s",
+                source, raw, SYNC_WORKER_DEFAULT_START_METHOD,
+            )
         if method == "fork" and "fork" not in multiprocessing.get_all_start_methods():
             logger.warning(
                 "[SyncTaskExecutor] 当前平台不支持 fork 启动方式，回退 %s",

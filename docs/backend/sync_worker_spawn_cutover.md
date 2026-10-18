@@ -4,9 +4,10 @@
 
 ## 结论
 
-`SyncTaskExecutor` 的两处 `ProcessPoolExecutor`（`start()` 与 `_rebuild_pool_locked()`，`task/sync_task_executor.py`）显式传入 `mp_context=multiprocessing.get_context("spawn")`，默认 spawn，可用动态配置回退：
+`SyncTaskExecutor` 的两处 `ProcessPoolExecutor`（`start()` 与 `_rebuild_pool_locked()`，`task/sync_task_executor.py`）显式传入 `mp_context=multiprocessing.get_context("spawn")`，默认 spawn，两级开关可回退：
 
-- 配置键：`sync_task.worker_start_method`，取值 `spawn`（默认）/ `fork`；
+- **动态配置**：`sync_task.worker_start_method`，取值 `spawn`（默认）/ `fork`；
+- **环境变量**：`SYNC_TASK_WORKER_START_METHOD`（部署层应急开关，优先级最高，DB 不可达时也能切；值非法时忽略并回退动态配置）；
 - 非法值回退 spawn；Windows 不支持 fork，配了 fork 也自动回落 spawn；
 - 读取时机：每次建池（启动 / 池重建）各读一次——改配置后**重启生效**，或等下次池自然重建（broken/stale 触发）后生效；
 - 默认值收口在 `config/constant.py` 的 `SYNC_WORKER_DEFAULT_START_METHOD = "spawn"`。
@@ -50,9 +51,40 @@ spawn worker 是全新解释器，不继承任何父进程内存状态，上述�
 
 fork 模式下其余盲区（`media_cache` 单例持有的 storage 引用、`image_upload_utils._SYNC_WRAPPER_EXECUTOR`）仍靠 initializer 的 `reset_file_storage()` + 使用路径侥幸；长期回退 fork 不建议。
 
+## 模块级副作用审查（切换前已执行，2026-10-18）
+
+spawn worker 会重新执行 `task.sync_task_executor` 依赖链的模块级代码，按迁移方案第四节做了两项审计：
+
+1. **`python -X importtime -c "import task.sync_task_executor"`**：累计 ~129ms（最重链路 `utils.file_storage.qiniu_storage` → `qiniu`/`requests` 合计 ~79ms，均为纯定义无副作用）；spawn worker 导入成本亚秒级。
+2. **进程内实证**（import 后检查）：零新增线程（仅 MainThread）；`model.database._pool is None`（DB 池惰性，且有 pid 守卫）；fd 增量 +2~3（config YAML 读取，随即释放）；`VideoDriverFactory` 注册表 import 时为 0（注册是显式函数，2026-09-20 设计）。
+
+结论：导入链无 DB 连接/线程启动/网络拉取类副作用，spawn 安全。已知例外：`utils/cdn_util.py` 等模块级 `ThreadPoolExecutor(...)`——对象创建本身不启动线程、spawn worker 各自新建无继承问题，无需改造。
+
+## 上线验证清单（staging/生产手工项）
+
+自动测试之外，spawn 生效需在真实环境逐项确认：
+
+- [ ] **worker 形态证据**：`pgrep -f spawn_main` 能看到 worker 进程（fork worker 的 cmdline 与父进程相同，spawn 一眼可辨）；
+- [ ] **首任务延迟**：记录池创建/重建后首个 sync 任务冷启动耗时（本机测试环境实测导入 ~50ms，生产含 initializer 全量引导预期秒级），确认任务 SLA 可接受；
+- [ ] **七牛上传路径回归**：带参考图的生图任务连续通过（2026-09-13 事故 47603 同路径，≥3 例）；
+- [ ] **seedream 下载路径回归**：Seedream 任务 result_url 落 `/upload/cache/...` 本地缓存（2026-10-18 事故路径）；
+- [ ] **异常路径**：并发 > `max_workers` 排队正常；人为 kill -9 一个 worker 观察补位；stale 强杀（配合 develop_f1040 的动态配置压阈值法）走完 退款+整池重建+宫格重试 链路；
+- [ ] **三平台**：Linux 生产、macOS/Windows 开发各过一轮（后两者本就 spawn，应零变化）。
+
+**灰度顺序建议**（迁移方案第六节，默认值直接 spawn 时的替代节奏）：测试环境全量验证 → 生产低峰时段单实例重启 → 观察一个完整任务周期（含生图+生视频+数字人）→ 全量实例。回退抓手：环境变量 `SYNC_TASK_WORKER_START_METHOD=fork`（无需 DB）或动态配置同值，重启即生效。
+
+## 观察期后的退役清单（后续独立 PR，本次不做）
+
+spawn 稳定运行一个观察周期（建议 ≥2 周，覆盖各类任务路径）后可退役 fork 专属防御，纯删代码：
+
+- `_reset_inherited_logging_locks()` 及 logging 锁重建；
+- worker initializer 内的 `reset_file_storage()`（保留 `media_cache` pid 守卫）；
+- scheduler 的 `register_at_fork` 信号重置分支；
+- 事故文档中 fork"残余风险"章节改写为历史记录；届时 `sync_task.worker_start_method` 默认值与配置项本身也可评估移除。
+
 ## 回归测试
 
-- `tests/task/test_sync_task_start_method.py`（新增 11 用例）：配置解析（spawn/fork/规范化/非法回退/无 fork 平台回退）；`start()`/`_rebuild_pool_locked()` 的 mp_context 传递（fake seam）；**真实 spawn worker 内 download_io_pool submit 秒回**（事故场景端到端回归）；
+- `tests/task/test_sync_task_start_method.py`（12 用例）：配置解析（spawn/fork/规范化/非法回退/无 fork 平台回退）；环境变量优先级（覆盖动态配置/非法值忽略/未设置走动态配置）；`start()`/`_rebuild_pool_locked()` 的 mp_context 传递（fake seam）；**真实 spawn worker 内 download_io_pool submit 秒回**（事故场景端到端回归）；
 - `tests/utils/test_download_io_pool_pid_guard.py`（新增 3 用例）：同 pid 复用；pid 漂移重建；**真实 fork 子进程内（父进程用热池后）submit 秒回**（事故机制直接复现）；
 - 存量回归：`tests/task/`（394 passed；`test_mock_channels` 2 个失败为存量环境问题，干净树上同样失败）；`temp/verify_spawn_download_pool.py` 为独立验证脚本（不入库），实测 spawn worker 冷启动 ~50ms、pid 隔离、submit 即时。
 

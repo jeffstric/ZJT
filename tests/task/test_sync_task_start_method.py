@@ -102,6 +102,39 @@ class TestWorkerStartMethodResolution(TestCase):
             self.assertEqual(ste.SyncTaskExecutor._get_worker_start_method(), "spawn")
 
 
+class TestEnvVarOverride(TestCase):
+    """环境变量 SYNC_TASK_WORKER_START_METHOD：部署层应急开关，优先级最高。"""
+
+    ENV_KEY = "SYNC_TASK_WORKER_START_METHOD"
+
+    def test_env_overrides_dynamic_config(self):
+        if "fork" not in multiprocessing.get_all_start_methods():
+            self.skipTest("平台不支持 fork")
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {self.ENV_KEY: "fork"}), \
+                _fake_dynamic_config("spawn"):
+            self.assertEqual(ste.SyncTaskExecutor._get_worker_start_method(), "fork")
+
+    def test_invalid_env_falls_back_to_default(self):
+        from unittest import mock
+
+        with mock.patch.dict(os.environ, {self.ENV_KEY: "bogus"}), \
+                _fake_dynamic_config("fork"):
+            # 环境变量非法时不吃掉合法的动态配置值
+            self.assertEqual(
+                ste.SyncTaskExecutor._get_worker_start_method(), "fork"
+            )
+
+    def test_unset_env_uses_dynamic_config(self):
+        from unittest import mock
+
+        env = {k: v for k, v in os.environ.items() if k != self.ENV_KEY}
+        with mock.patch.dict(os.environ, env, clear=True), \
+                _fake_dynamic_config("spawn"):
+            self.assertEqual(ste.SyncTaskExecutor._get_worker_start_method(), "spawn")
+
+
 class TestPoolConstructionPassesContext(TestCase):
 
     def setUp(self):
