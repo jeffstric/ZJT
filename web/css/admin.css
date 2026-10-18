@@ -2081,6 +2081,30 @@ body {
     font-size: 13px;
 }
 
+/* 签到奖励预览表（两列：天数区间 / 当日奖励） */
+.streak-preview-table {
+    border: 1px solid var(--admin-border);
+    border-radius: 8px;
+    padding: 12px;
+    max-width: 420px;
+}
+
+.streak-preview-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.streak-preview-row.header {
+    font-size: 12px;
+    color: var(--admin-muted);
+    font-weight: 500;
+    margin-bottom: 10px;
+}
+
 /* ==================== 快速配置弹窗 - 两栏布局 ==================== */
 
 .modal.qc-modal-wide {

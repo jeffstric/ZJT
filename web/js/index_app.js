@@ -2284,8 +2284,9 @@
             // 刷新算力
             this.fetchComputingPower();
             // 显示 Toast
+            // next_reward_amount 是"每日额外奖励"，不是当日总额，文案需写明"额外"避免误读
             const nextRewardText = (this.checkinStatus.days_to_next_reward)
-              ? `再签${this.checkinStatus.days_to_next_reward}天领${this.checkinStatus.next_reward_amount}算力`
+              ? `再签${this.checkinStatus.days_to_next_reward}天，每日额外+${this.checkinStatus.next_reward_amount}算力`
               : '';
             this.checkinToast = {
               show: true,
