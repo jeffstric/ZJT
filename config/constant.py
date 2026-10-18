@@ -404,6 +404,14 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
     DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
 }
 
+# SyncTask worker 进程池默认启动方式。spawn：worker 为全新解释器，结构性根治
+# 整类 fork 继承问题——线程池假空闲 token 假超时（2026-09-13 七牛上传 / 2026-10-18
+# seedream 下载写盘，均为 fork 继承的模块级 ThreadPoolExecutor 在子进程"有账无线程"）、
+# 继承锁死锁（2026-09-08）、管道/FD 继承放大（2026-09-12）。Windows/macOS 默认本就是
+# spawn，此处仅改变 Linux 行为（worker 冷启动毫秒→秒级，长寿池摊销）。可用动态配置
+# sync_task.worker_start_method=fork 回退（Windows 不支持 fork，自动回落 spawn）。
+SYNC_WORKER_DEFAULT_START_METHOD = "spawn"
+
 # ProcessPool worker initializer 看门狗超时（秒）。
 # fork 只复制调用线程，但会复制所有锁的当前状态：若 fork 瞬间父进程其他线程
 # 正持有某把锁，子进程会继承一把永远无人释放的锁，initializer 卡死后该 worker
