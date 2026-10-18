@@ -185,6 +185,8 @@ SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 # MiniMax H3 720P 按时长算力（秒 -> 算力）。视频去水印与此表共用同一对象。
+# 仅 4-10 档：H3 webapp 默认实例上 11-15s 段处于显存边界（随机 OOM），
+# 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
@@ -3168,6 +3170,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
         implementation=DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
         computing_power=0,
+        # 10s 为生产稳定档；11-15s 在 webapp 默认实例显存边界上随机 OOM，不放开
         supported_durations=[4, 5, 6, 7, 8, 9, 10],
         default_duration=10,
         sort_order=42,
@@ -3958,6 +3961,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,
         required_config_keys=['runninghub.api_key'],
+        sync_mode=True,  # 分段流水线在 submit_task 内长跑，须分流 SyncTaskExecutor 进程池
         # 分辨率经分镜偏好下发；驱动侧映射为 max_edge（480P→720, 720P→1280, 1080P→1920）
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},

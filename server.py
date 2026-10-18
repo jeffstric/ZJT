@@ -160,6 +160,7 @@ from services.video_script_extract_service import (
 from config.constant import (
     VideoScriptExtractConstants,
     MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+    DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
 )
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -1325,6 +1326,17 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
         saved_name = os.path.basename(file_path)
 
     return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, saved_name, host=SERVER_HOST)
+
+def _save_uploaded_audio_file(upload_file: UploadFile, index: int) -> str:
+    """
+    保存数字人分段音频到 upload/temp/date 目录并返回 URL。
+
+    复用 _save_uploaded_image 的安全链路（扩展名白名单 + 魔数校验 + 分块上限），
+    仅在文件名前加段序号避免同批多段互相覆盖。
+    """
+    original_name = upload_file.filename or f"segment_{index}.wav"
+    upload_file.filename = f"seg_{index}_{original_name}"
+    return _save_uploaded_image(upload_file)
 
 def _get_request_host(request: Request) -> str:
     """
@@ -4999,6 +5011,7 @@ async def digital_human_v2_generate(
     image: UploadFile = File(..., description="Input image for digital human"),
     text: str = Form(..., description="Text content for digital human to speak (max 1000 characters)"),
     audio: UploadFile = File(..., description="Reference audio file"),
+    duration: int = Form(None, description="Billable duration in seconds for audio-driven billing (LTX2.3); omit to keep legacy flat-rate behavior"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -5013,6 +5026,12 @@ async def digital_human_v2_generate(
                 detail="文本内容不能超过1000个字"
             )
 
+        if duration is not None and duration < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="时长参数无效（须为正整数秒）"
+            )
+
         # Save uploaded image
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
 
@@ -5022,7 +5041,12 @@ async def digital_human_v2_generate(
         # Task type for digital human v2
         task_type = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.get_computing_power()
+        # 传 duration 时按音频时长档位计费（数据库 implementation_power 优先，兜底实现方默认值）；
+        # 缺省保持旧固定费率行为，向后兼容未携带 duration 的调用方
+        if task_config and duration:
+            computing_power = task_config.get_computing_power(duration=duration)
+        else:
+            computing_power = task_config.get_computing_power() if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -5078,6 +5102,7 @@ async def digital_human_v2_generate(
                     type=task_type,
                     image_path=image_url,
                     audio_path=audio_url,  # v2 uses audio_path field
+                    duration=duration,  # billable seconds (None keeps legacy NULL)
                     transaction_id=transaction_id,
                     status=AI_TOOL_STATUS_PENDING
                 )
@@ -5121,14 +5146,21 @@ async def digital_human_minimax_h3_generate(
     image: UploadFile = File(..., description="Input image for digital human"),
     text: str = Form(..., description="Prompt text for digital human motion (max 1000 characters)"),
     audio: UploadFile = File(..., description="Speaking audio file"),
-    duration: int = Form(10, description="Video duration in seconds (4-10)"),
+    duration: int = Form(10, description="Total video duration in seconds (4-15 single; 16-30 segmented)"),
     max_edge: int = Form(1280, description="Video max edge length: 720, 1280, 1920"),
     start_second: int = Form(0, description="Second when digital human starts speaking"),
+    segment_audio: List[UploadFile] = File(None, description="Segment audio files for >15s split pipeline (each 4-15s)"),
+    segment_durations: str = Form(None, description="JSON list of per-segment integer durations, e.g. [15,15]"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
     Generate MiniMax H3 digital human video (image + audio + prompt)
+
+    duration <= 15: single-segment generation.
+    16 <= duration <= 30 with segment_audio: split pipeline — driver generates one
+    video per segment (image as shared first frame, fixed-camera prompt) and
+    concatenates them into the final result.
     """
     try:
         if len(text) > 1000:
@@ -5137,11 +5169,47 @@ async def digital_human_minimax_h3_generate(
                 detail="文本内容不能超过1000个字"
             )
 
-        allowed_durations = {4, 5, 6, 7, 8, 9, 10}
-        if duration not in allowed_durations:
+        segment_files = list(segment_audio) if segment_audio else []
+        parsed_segment_durations: list = []
+        if segment_files:
+            try:
+                parsed_segment_durations = json.loads(segment_durations) if segment_durations else []
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="segment_durations 须为 JSON 整数数组")
+            if not isinstance(parsed_segment_durations, list) or \
+                    len(parsed_segment_durations) != len(segment_files):
+                raise HTTPException(
+                    status_code=400,
+                    detail="segment_durations 数量须与 segment_audio 文件数一致"
+                )
+            for sd in parsed_segment_durations:
+                if not isinstance(sd, int) or sd < 4 or sd > 15:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"分段时长须为 4-15 的整数，收到: {sd}"
+                    )
+            if sum(parsed_segment_durations) != duration:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"分段时长之和 {sum(parsed_segment_durations)} 须等于总时长 {duration}"
+                )
+        elif duration > 15:
             raise HTTPException(
                 status_code=400,
-                detail=f"视频时长仅支持 {sorted(allowed_durations)} 秒"
+                detail="超过 15 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
+            )
+
+        # 分段模式总时长允许 16-30（各段 4-15）；单段模式 4-15
+        if segment_files:
+            if not (16 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"分段拼接模式总时长须为 16-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒，收到 {duration}"
+                )
+        elif duration not in set(range(4, 16)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 4-15 秒（16-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
             )
 
         allowed_max_edges = {720, 1280, 1920}
@@ -5160,9 +5228,21 @@ async def digital_human_minimax_h3_generate(
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
         audio_url = await asyncio.to_thread(_save_uploaded_image, audio)
 
+        # 分段音频落盘（wav/mp3 白名单由 media_upload 校验；路径写入 extra_config 供 driver 编排）
+        segment_paths: list = []
+        for idx, seg in enumerate(segment_files, start=1):
+            seg_url = await asyncio.to_thread(_save_uploaded_audio_file, seg, idx)
+            segment_paths.append(seg_url)
+
         task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
+        if segment_files:
+            # 分段计费 = 各段档位之和
+            computing_power = sum(
+                task_config.get_computing_power(duration=sd) for sd in parsed_segment_durations
+            ) if task_config else 0
+        else:
+            computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -5208,10 +5288,14 @@ async def digital_human_minimax_h3_generate(
 
         if user_id:
             try:
-                extra_config = json.dumps({
+                extra_data = {
                     "max_edge": max_edge,
                     "start_second": start_second,
-                }, ensure_ascii=False)
+                }
+                if segment_files:
+                    extra_data["dh_segments"] = segment_paths
+                    extra_data["dh_segment_durations"] = parsed_segment_durations
+                extra_config = json.dumps(extra_data, ensure_ascii=False)
 
                 id = AIToolsModel.create(
                     prompt=text,
