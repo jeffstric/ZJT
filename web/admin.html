@@ -1043,6 +1043,20 @@
                                 <button class="action-btn primary" @click="addStreakBonus" style="margin-top: 8px;">{{ t('btn_add_reward_tier') }}</button>
                             </div>
                             <p class="form-hint">{{ t('checkin_streak_hint') }}</p>
+                            <div class="form-group" v-if="checkinPreviewSegments.length" style="margin-top: 12px;">
+                                <label class="form-label">{{ t('checkin_preview_title') }}</label>
+                                <div class="streak-preview-table">
+                                    <div class="streak-preview-row header">
+                                        <span>{{ t('checkin_preview_col_days') }}</span>
+                                        <span>{{ t('checkin_preview_col_reward') }}</span>
+                                    </div>
+                                    <div v-for="(seg, idx) in checkinPreviewSegments" :key="idx" class="streak-preview-row">
+                                        <span>{{ seg.to ? t('checkin_preview_day_range', { from: seg.from, to: seg.to }) : t('checkin_preview_day_from', { n: seg.from }) }}</span>
+                                        <span>{{ seg.reward }}{{ seg.bonus > 0 ? t('checkin_preview_bonus_suffix', { base: seg.base, bonus: seg.bonus }) : '' }}</span>
+                                    </div>
+                                </div>
+                                <p class="form-hint">{{ t('checkin_preview_hint') }}</p>
+                            </div>
                         </div>
                     </div>
                 </div>

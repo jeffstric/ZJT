@@ -282,7 +282,9 @@ POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
 | 启用签到 | 开关签到功能 |
 | 基础奖励 | 每次签到获得的算力值 |
 | 连续签到奖励 | 开关连续签到额外奖励 |
-| 奖励阶梯 | 配置连续签到天数与对应额外奖励 |
+| 奖励阶梯 | 配置连续签到天数与对应每日额外奖励 |
+
+**奖励阶梯语义**：达到第 N 天（含当天）起，每日奖励 = 基础奖励 + 该档每日额外奖励，持续到断签归零（非一次性奖励）。例如基础 8、阶梯 `3/18`：第 1~2 天每天 8，第 3、4、5…天每天 26。管理页「奖励预览」表格按当前填写内容实时展示各区间奖励，保存前可核对跳档日。
 
 ### 7. 媒体缓存管理
 
@@ -610,7 +612,7 @@ PUT /api/admin/config/batch              # 批量修改配置
 - `checkin.enabled` - 是否启用签到功能
 - `checkin.base_reward` - 每次签到基础奖励算力
 - `checkin.streak_bonus_enabled` - 是否启用连续签到奖励
-- `checkin.streak_bonus_config` - 连续签到阶梯奖励配置（JSON）
+- `checkin.streak_bonus_config` - 连续签到阶梯奖励配置（JSON）。语义：达到第 N 天（含当天）起每日发放 `base_reward` + 该档额外奖励，直至断签归零。如 `{"3":18,"7":28}` 表示第 3~6 天每日额外 +18、第 7 天起每日额外 +28；与 `services/checkin_service.py` 的发放及签到状态预览接口（`next_bonus`/`days_to_next_reward`）语义一致
 
 ### 实现方管理
 

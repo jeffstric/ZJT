@@ -1047,6 +1047,36 @@ const AdminApp = {
             return Math.ceil(this.users.total / this.users.pageSize);
         },
 
+        // 签到奖励阶梯预览：与后端 checkin_service 的发放语义保持一致——
+        // 达到第 N 天（含当天）起，每日奖励 = 基础 + 该档每日额外奖励，直至断签。
+        // 纯前端实时计算，供管理员保存前核对跳档日，避免"一次性奖励"误读。
+        checkinPreviewSegments() {
+            if (!this.checkin.streakBonusEnabled) return [];
+            const base = Number(this.checkin.baseReward) || 0;
+            const tierMap = {};
+            (this.checkin.streakBonuses || []).forEach(item => {
+                const days = parseInt(item.days, 10);
+                if (Number.isFinite(days) && days >= 1) {
+                    const reward = parseInt(item.reward, 10);
+                    tierMap[days] = Number.isFinite(reward) ? reward : 0;
+                }
+            });
+            const thresholds = Object.keys(tierMap).map(Number).sort((a, b) => a - b);
+            if (!thresholds.length) return [];
+            const segments = [];
+            let lower = 1;
+            let bonus = 0;
+            thresholds.forEach(day => {
+                if (day > lower) {
+                    segments.push({ from: lower, to: day - 1, reward: base + bonus, bonus, base });
+                }
+                bonus = tierMap[day];
+                lower = day;
+            });
+            segments.push({ from: lower, to: null, reward: base + bonus, bonus, base });
+            return segments;
+        },
+
         // 激活用户数超过上限时在仪表盘顶部展示警告条：未激活商业版本（社区版
         // 上限 1 人）存量超限、或许可证过期回落社区口径后存量仍超上限。
         // 注意用严格大于：等于上限是"满员"（新增已被注册/启用卡点拦截，
