@@ -10,54 +10,32 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 from config.constant import (
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
     AGENT_POWER_CONFIRM_THRESHOLD,
+    GENERATION_TOOLS_BILLABLE,
+    GENERATION_TOOLS_ESTIMATE_DIGITAL_HUMAN,
+    GENERATION_TOOLS_IMAGE,
+    GENERATION_TOOLS_VIDEO,
+    GENERATION_TOOL_LABELS,
     PREF_WORLD_ID_GLOBAL,
 )
+
 from config.unified_config import TaskCategory, UnifiedConfigRegistry
 
 logger = logging.getLogger(__name__)
 
-BILLABLE_GENERATION_TOOLS: Set[str] = {
-    "generate_text_to_image",
-    "edit_image",
-    "generate_text_to_video",
-    "image_to_video",
-    "generate_digital_human",
-    "generate_4grid_character_images",
-    "generate_4grid_location_images",
-    "generate_4grid_prop_images",
-    "generate_character_variant_image",
-}
+# 生成工具清单统一由 config.constant.GENERATION_TOOL_REGISTRY 派生（单一数据
+# 源），新增生成工具在注册表登记即可，禁止在此手写工具名集合。
+BILLABLE_GENERATION_TOOLS = GENERATION_TOOLS_BILLABLE
 
-IMAGE_TOOLS = {
-    "generate_text_to_image",
-    "edit_image",
-    "generate_4grid_character_images",
-    "generate_4grid_location_images",
-    "generate_4grid_prop_images",
-    "generate_character_variant_image",
-}
+IMAGE_TOOLS = GENERATION_TOOLS_IMAGE
 
-VIDEO_TOOLS = {
-    "generate_text_to_video",
-    "image_to_video",
-}
+VIDEO_TOOLS = GENERATION_TOOLS_VIDEO
 
-TOOL_LABELS = {
-    "generate_text_to_image": "文生图",
-    "edit_image": "图片编辑",
-    "generate_text_to_video": "文生视频",
-    "image_to_video": "图生视频",
-    "generate_digital_human": "数字人",
-    "generate_4grid_character_images": "角色四宫格",
-    "generate_4grid_location_images": "场景四宫格",
-    "generate_4grid_prop_images": "道具四宫格",
-    "generate_character_variant_image": "角色变体图",
-}
+TOOL_LABELS = GENERATION_TOOL_LABELS
 
 OPTION_APPROVE = "确认生成"
 OPTION_REJECT = "取消本次生成"
@@ -270,7 +248,7 @@ def estimate_tool_computing_power(
             return _estimate_image(tool_name, args, user_id, world_id, label)
         if tool_name in VIDEO_TOOLS:
             return _estimate_video(tool_name, args, user_id, world_id, label)
-        if tool_name == "generate_digital_human":
+        if tool_name in GENERATION_TOOLS_ESTIMATE_DIGITAL_HUMAN:
             return _estimate_digital_human(label)
     except Exception as e:
         logger.warning("预估算力失败: tool=%s err=%s", tool_name, e, exc_info=True)
