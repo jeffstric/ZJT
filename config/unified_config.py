@@ -188,6 +188,13 @@ MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 # 仅 4-10 档：H3 webapp 默认实例上 11-15s 段处于显存边界（随机 OOM），
 # 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+# H3 数字人按时长算力：4-10 与上表同价；11-15 为显存充裕后恢复的档位
+# （2026-10-19 起分段段长 15s，11-15s 单段重新可用），按既有梯度外推。
+# 独立成表避免扩档连带放开去水印任务的时长范围。后台 implementation_power 可覆盖。
+MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
+    4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13,
+    11: 14, 12: 16, 13: 17, 14: 18, 15: 20,
+}
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -3170,8 +3177,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.DIGITAL_HUMAN_MINIMAX_H3,
         implementation=DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
         computing_power=0,
-        # 10s 为生产稳定档；11-15s 在 webapp 默认实例显存边界上随机 OOM，不放开
-        supported_durations=[4, 5, 6, 7, 8, 9, 10],
+        # 显存充裕后恢复 4-15（官方规格）；>15s 走营销分段拼接
+        supported_durations=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
         default_duration=10,
         sort_order=42,
     ),
@@ -3956,7 +3963,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='digital_human_minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='DigitalHumanMinimaxH3RunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,

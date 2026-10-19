@@ -53,11 +53,11 @@ def _get_ffprobe_bin() -> str:
         return 'ffprobe'
 
 
-def _detect_silence_midpoints(audio_path: str, noise_db: str = '-32dB',
-                              min_duration: str = '0.18') -> List[float]:
-    """用 ffmpeg silencedetect 返回静音区间中点列表（秒）。
+def _detect_silence_midpoints(audio_path: str, noise_db: str = '-30dB',
+                              min_duration: str = '0.10') -> List[tuple]:
+    """用 ffmpeg silencedetect 返回 (静音中点, 静音时长) 列表（秒）。
 
-    参数比默认更灵敏（-32dB / 0.18s），以捕捉 TTS 标点停顿；
+    灵敏参数（-30dB / 0.10s）捕捉 TTS 顿号/逗号的短停顿；
     识别失败返回空列表，由调用方硬切兜底。
     """
     try:
@@ -67,7 +67,7 @@ def _detect_silence_midpoints(audio_path: str, noise_db: str = '-32dB',
             capture_output=True, text=True, timeout=60)
         starts = [float(m) for m in re.findall(r'silence_start:\s*([\d.]+)', r.stderr)]
         ends = [float(m) for m in re.findall(r'silence_end:\s*([\d.]+)', r.stderr)]
-        return [(s + e) / 2 for s, e in zip(starts, ends)]
+        return [((s + e) / 2, e - s) for s, e in zip(starts, ends)]
     except Exception:
         return []
 
@@ -102,14 +102,16 @@ def split_audio_into_segments(audio_path: str, total_seconds: float, out_dir: st
         if win_lo > win_hi:
             break  # 剩余时长不足再切，合并进末段
         # 优先窗口内静音；否则放宽到 (prev, total-min_seg*remaining) 内任意静音
-        candidates = [m for m in silences if win_lo <= m <= win_hi]
+        candidates = [(m, d) for m, d in silences if win_lo <= m <= win_hi]
         if not candidates:
             loose_lo, loose_hi = prev + 0.5, total_seconds - min_seg * remaining_segs
-            candidates = [m for m in silences if loose_lo <= m <= loose_hi]
+            candidates = [(m, d) for m, d in silences if loose_lo <= m <= loose_hi]
         if candidates:
-            # 放宽后可能偏离均分点较远：仍取离目标最近者，并夹回硬约束窗口
-            cut = min(candidates, key=lambda m: abs(m - target))
-            cut = min(max(cut, win_lo), win_hi)
+            # 评分：优先停顿更长的（≈句号/问号边界），同分取离均分点最近者，
+            # 并夹回硬约束窗口（保证所有段 ≤ max_seg）
+            best = min(candidates,
+                       key=lambda cd: (-cd[1], abs(cd[0] - target)))
+            cut = min(max(best[0], win_lo), win_hi)
         else:
             cut = min(max(win_lo, target), win_hi)
         cuts.append(round(cut, 3))

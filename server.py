@@ -5183,10 +5183,10 @@ async def digital_human_minimax_h3_generate(
                     detail="segment_durations 数量须与 segment_audio 文件数一致"
                 )
             for sd in parsed_segment_durations:
-                if not isinstance(sd, int) or sd < 4 or sd > 10:
+                if not isinstance(sd, int) or sd < 4 or sd > 15:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"分段时长须为 4-10 的整数（10s 为生产稳定档），收到: {sd}"
+                        detail=f"分段时长须为 4-15 的整数，收到: {sd}"
                     )
             if sum(parsed_segment_durations) != duration:
                 raise HTTPException(
