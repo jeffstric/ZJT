@@ -540,8 +540,8 @@ async def prepare_digital_human_draft(
         if routing is None:
             return {
                 'success': False,
-                'error': (f'口播时长约 {est_seconds:.1f} 秒，超出数字人支持上限 '
-                          f'{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒（MiniMax H3 分段拼接上限）。'
+                'error': (f'口播时长约 {est_seconds:.1f} 秒，超出数字人分段拼接的'
+                          f'{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒处理上限（异常超长）。'
                           f'请把文案拆分成多段后分次生成。'),
             }
         model_task_type = routing["model_task_type"]
@@ -603,8 +603,12 @@ async def prepare_digital_human_draft(
 
         tts_cost_note = (f"已消耗 TTS 算力 {tts.get('computing_power')}；"
                          if not user_audio_url else "驱动音频由用户提供（无 TTS 消耗）；")
-        mode_note = ("，将分段生成后自动拼接（锁镜头工作流，画面完全静止）"
-                     if segment_mode else "")
+        mode_note = ""
+        if segment_mode:
+            seg_count = len(segment_durations_est)
+            est_minutes = max(3, seg_count * 3)
+            mode_note = (f"，将切分为 {seg_count} 段（每段 ≤10 秒）生成后自动拼接，"
+                         f"预计耗时约 {est_minutes} 分钟，画面全程固定镜头")
         if locked_note:
             mode_note += locked_note
         return {
