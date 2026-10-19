@@ -16,16 +16,41 @@ import subprocess
 import sys
 from typing import Any, Dict, List
 
+from utils.audio_duration_util import _get_ffprobe_path
 from utils.project_path import get_project_root
 
 
 def _get_ffmpeg_bin() -> str:
-    """定位 ffmpeg：优先项目内置 bin/ffmpeg（不依赖环境配置），回退 PATH。"""
+    """定位 ffmpeg：优先环境配置（config bin.ffmpeg，如 Linux /usr/bin/ffmpeg），
+    回退项目内置 bin/ffmpeg，最后 PATH。
+
+    注意不能只用项目内相对路径：scheduler/sync executor 子进程的 cwd 可能
+    不是项目根（dev2 环境曾因此 FileNotFoundError）。
+    """
+    try:
+        from utils.audio_duration_util import _get_ffmpeg_path
+        configured = _get_ffmpeg_path()
+        if configured and (os.path.isabs(configured) or os.path.isfile(configured)):
+            return configured
+    except Exception:
+        pass
     bundled = os.path.join(get_project_root(), 'bin', 'ffmpeg',
                            'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg')
     if os.path.isfile(bundled):
         return bundled
     return 'ffmpeg'
+
+
+def _get_ffprobe_bin() -> str:
+    """定位 ffprobe：同 _get_ffmpeg_bin 的定位顺序。"""
+    try:
+        return _get_ffprobe_path()
+    except Exception:
+        bundled = os.path.join(get_project_root(), 'bin', 'ffmpeg',
+                               'ffprobe.exe' if sys.platform == 'win32' else 'ffprobe')
+        if os.path.isfile(bundled):
+            return bundled
+        return 'ffprobe'
 
 
 def _detect_silence_midpoints(audio_path: str, noise_db: str = '-32dB',

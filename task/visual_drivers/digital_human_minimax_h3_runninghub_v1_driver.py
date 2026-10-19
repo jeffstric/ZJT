@@ -416,8 +416,9 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
         # 3. 拼接（重编码保证时间戳/参数一致；webapp 每次运行的输出分辨率随机
         #    （实测同参数出现过 960×1280 与 512×704），先统一缩放到首段尺寸再 concat）
+        from utils.audio_duration_util import _get_ffprobe_path
         probe = subprocess.run(
-            ['bin/ffmpeg/ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            [_get_ffprobe_path(), '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'stream=width,height', '-of', 'json', seg_files[0]],
             capture_output=True, text=True, timeout=60)
         vstream = (json.loads(probe.stdout or '{}').get('streams') or [{}])[0]
