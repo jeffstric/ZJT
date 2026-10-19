@@ -5157,8 +5157,8 @@ async def digital_human_minimax_h3_generate(
     """
     Generate MiniMax H3 digital human video (image + audio + prompt)
 
-    duration <= 15: single-segment generation.
-    16 <= duration <= 30 with segment_audio: split pipeline — driver generates one
+    duration <= 10: single-segment generation.
+    10 < duration <= 30 with segment_audio: split pipeline — driver generates one
     video per segment (image as shared first frame, fixed-camera prompt) and
     concatenates them into the final result.
     """
@@ -5183,33 +5183,33 @@ async def digital_human_minimax_h3_generate(
                     detail="segment_durations 数量须与 segment_audio 文件数一致"
                 )
             for sd in parsed_segment_durations:
-                if not isinstance(sd, int) or sd < 4 or sd > 15:
+                if not isinstance(sd, int) or sd < 4 or sd > 10:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"分段时长须为 4-15 的整数，收到: {sd}"
+                        detail=f"分段时长须为 4-10 的整数（10s 为生产稳定档），收到: {sd}"
                     )
             if sum(parsed_segment_durations) != duration:
                 raise HTTPException(
                     status_code=400,
                     detail=f"分段时长之和 {sum(parsed_segment_durations)} 须等于总时长 {duration}"
                 )
-        elif duration > 15:
+        elif duration > 10:
             raise HTTPException(
                 status_code=400,
-                detail="超过 15 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
+                detail="超过 10 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
             )
 
-        # 分段模式总时长允许 16-30（各段 4-15）；单段模式 4-15
+        # 单段 4-10（10s 生产稳定档）；分段模式总时长允许 8-30（≥2 段各 4s）
         if segment_files:
-            if not (16 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
+            if not (8 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"分段拼接模式总时长须为 16-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒，收到 {duration}"
+                    detail=f"分段拼接模式总时长须为 8-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒，收到 {duration}"
                 )
-        elif duration not in set(range(4, 16)):
+        elif duration not in set(range(4, 11)):
             raise HTTPException(
                 status_code=400,
-                detail=f"视频时长仅支持 4-15 秒（16-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
+                detail=f"视频时长仅支持 4-10 秒（10-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
             )
 
         allowed_max_edges = {720, 1280, 1920}
