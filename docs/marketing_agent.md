@@ -269,6 +269,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 图片轮询间隔：5 秒（启动后立即查询一次，不必等待第一个周期）
 - 视频轮询间隔：10 秒（启动后立即查询一次）
 - 任务完成后将结果（图片/视频 URL）渲染到消息气泡中
+- 生成进行中的进度文案不再以纯文本展示：`renderMarkdown` 入口的 `buildGeneratingPendingCard` 识别已知进度文案（`image_generating_progress` / `video_generating_progress` / `generating_placeholder` / `generating_image` / `generating_video` 及提交后缀 `image_task_suffix` / `video_task_suffix`），渲染为「生成中」可视化卡片（图片/视频图标 + 缩略图扫光动画 + 进度条 + done/total 计数徽章）。匹配正则由当前语言的 i18n 模板动态构造（`{done}` 兼容数字与错误退避的 `?`，按 locale 缓存、语言切换自动重建），未命中的文案原样走 Markdown 管线；done/total 均为数字时进度条按比例填充，否则走不定进度滑块动画。卡片标题用独立键 `image_generating_label` / `video_generating_label`（generic 占位复用 `generating_placeholder`），样式位于 `web/css/marketing_agent.css` 的 `.gen-pending-*` 段（含 `prefers-reduced-motion` 降级）。渲染层拦截同时覆盖提交初始气泡、轮询错误退避与刷新后的历史恢复占位，这些场景都只写纯文本 content
 - 使用 `sessionTaskRegistry` 注册表跟踪所有活跃任务，支持会话切换后恢复
 - 直接图片/视频生成使用 `directGenerationTasks` 为每次提交创建独立任务实例，实例内绑定 `type`、`project_ids`、`msgUid`、`sessionId` 和 `intervalId`。轮询只读取实例内的 `projectIds`，避免多轮对话中后提交的图片任务覆盖先提交的视频任务。
 - 直接生成任务完成后优先调用 `replacePendingTask(sessionId, task_type, project_ids, content)` 精确替换原 `__PENDING_TASK__` 历史行；只有匹配失败时才 fallback 追加 assistant 消息，且追加到任务所属的原 session。未找到 pending 行时后端会做服务端判重（见「任务恢复机制」第 2 条），历史中已有同批 project 的结果卡片时返回 `duplicate: true`，前端跳过追加。

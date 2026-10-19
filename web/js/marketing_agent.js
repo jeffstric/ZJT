@@ -1687,9 +1687,109 @@
                 return rawUrl;
             }
 
+            // ===== 生成中占位卡片（图片/视频生成进度可视化）=====
+            // 图片/视频生成轮询、提交初始气泡、历史恢复占位都只往 msg.content 写纯文本
+            // 进度文案（image_generating_progress 等 i18n 键）。渲染层在此统一识别这些
+            // 已知文案，替换为带图标与动画的「生成中」卡片；未命中时原样走 Markdown 管线。
+            let generatingPendingMatchers = null;
+
+            function escapeRegExpString(text) {
+                return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+
+            // 匹配器由当前语言的 i18n 模板动态构造（window.t 不传参数时 {done}/{total}
+            // 保留原样，可拿到模板原文），语言切换后按 locale 缓存键自动重建
+            function getGeneratingPendingMatchers() {
+                const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : '';
+                if (generatingPendingMatchers && generatingPendingMatchers.locale === locale) {
+                    return generatingPendingMatchers.matchers;
+                }
+                const progressPattern = (key) => '^' + escapeRegExpString(window.t(key))
+                    .replace('\\{done\\}', '(\\d+|\\?)')
+                    .replace('\\{total\\}', '(\\d+)') + '$';
+                const exactPattern = (key) => '^' + escapeRegExpString(window.t(key)) + '$';
+                const suffixPattern = (key) => escapeRegExpString(window.t(key)) + '$';
+                generatingPendingMatchers = {
+                    locale,
+                    matchers: {
+                        imageProgress: new RegExp(progressPattern('image_generating_progress')),
+                        videoProgress: new RegExp(progressPattern('video_generating_progress')),
+                        imageWaiting: new RegExp(exactPattern('generating_image')),
+                        videoWaiting: new RegExp(exactPattern('generating_video')),
+                        placeholder: new RegExp(exactPattern('generating_placeholder')),
+                        imageSuffix: new RegExp(suffixPattern('image_task_suffix')),
+                        videoSuffix: new RegExp(suffixPattern('video_task_suffix'))
+                    }
+                };
+                return generatingPendingMatchers.matchers;
+            }
+
+            const GEN_PENDING_ICONS = {
+                image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.8" cy="10" r="1.7"/><path d="M4.5 17.5l4.7-4.7 3.4 3.4 3-3 3.9 3.9"/></svg>',
+                video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10.2 9.3l5.2 2.7-5.2 2.7z" fill="currentColor" stroke="none"/></svg>',
+                generic: '<svg class="gen-pending-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+            };
+
+            // 识别进度文案并返回卡片 HTML；非进度文案返回 null（继续走 Markdown 管线）。
+            // 卡片为硬编码模板 + i18n 文案（escapeHtml）+ 纯数字捕获组，内容全部可信
+            function buildGeneratingPendingCard(text) {
+                if (!text || typeof text !== 'string' || text.length > 300) return null;
+                const matchers = getGeneratingPendingMatchers();
+                let type = null;
+                let done = null;
+                let total = null;
+
+                let match = text.match(matchers.imageProgress);
+                if (match) {
+                    type = 'image'; done = match[1]; total = match[2];
+                }
+                if (!type) {
+                    match = text.match(matchers.videoProgress);
+                    if (match) {
+                        type = 'video'; done = match[1]; total = match[2];
+                    }
+                }
+                if (!type && matchers.imageWaiting.test(text)) type = 'image';
+                if (!type && matchers.videoWaiting.test(text)) type = 'video';
+                if (!type && matchers.placeholder.test(text)) type = 'generic';
+                // 提交初始气泡：后端 message + 「，图片/视频生成中...」后缀
+                if (!type && matchers.imageSuffix.test(text)) type = 'image';
+                if (!type && matchers.videoSuffix.test(text)) type = 'video';
+                if (!type) return null;
+
+                const labelKey = type === 'image' ? 'image_generating_label'
+                    : (type === 'video' ? 'video_generating_label' : 'generating_placeholder');
+                const label = escapeHtml(window.t(labelKey));
+
+                // done/total 均为数字时展示确定进度；'?'（轮询错误退避）或无计数
+                // （提交初始气泡/占位文案）走不定进度动画
+                const hasNumericProgress = /^\d+$/.test(done) && /^\d+$/.test(total);
+                let countHtml = '';
+                let fillHtml = '<span class="gen-pending-fill gen-pending-fill--indeterminate"></span>';
+                if (hasNumericProgress) {
+                    const totalNum = parseInt(total, 10);
+                    const pct = totalNum > 0 ? Math.min(100, Math.round((parseInt(done, 10) / totalNum) * 100)) : 0;
+                    countHtml = `<span class="gen-pending-count">${escapeHtml(done)}/${escapeHtml(total)}</span>`;
+                    fillHtml = `<span class="gen-pending-fill" style="width:${pct}%"></span>`;
+                } else if (done && total) {
+                    countHtml = `<span class="gen-pending-count">${escapeHtml(done)}/${escapeHtml(total)}</span>`;
+                }
+
+                return `<div class="gen-pending-card" data-gen-type="${type}">` +
+                    `<div class="gen-pending-thumb">${GEN_PENDING_ICONS[type]}</div>` +
+                    '<div class="gen-pending-body">' +
+                    `<div class="gen-pending-title"><span class="gen-pending-label">${label}</span>${countHtml}</div>` +
+                    `<div class="gen-pending-track">${fillHtml}</div>` +
+                    '</div></div>';
+            }
+
             // 渲染 Markdown
             function renderMarkdown(text) {
                 if (!text) return '';
+
+                // 「生成中」进度文案（图片/视频生成轮询写入）替换为可视化卡片
+                const pendingCard = buildGeneratingPendingCard(text);
+                if (pendingCard !== null) return pendingCard;
 
                 // 图文转视频：脚本 JSON 渲染为结构化确认卡（article-to-video）
                 if (window.MarketingArticleCard) {
@@ -2741,7 +2841,7 @@
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
+                                window.t('image_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
                             if (interval) {
                                 trackedClearInterval(interval);
