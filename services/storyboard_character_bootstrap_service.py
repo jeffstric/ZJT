@@ -14,6 +14,7 @@
     ``【【短名】】`` 标记替换为 ``【【完整名】】``，使生图按名查找能命中；
   - 其余新角色用 ``CharacterModel.create(source=script_split)`` 建库
     （缺参考图，other_info 带提示文案），回填真实 db_id；
+    属主取世界属主（而非拆分任务发起人），与手动建角色口径一致；
   - 单角色失败仅记 warning 不阻塞发布（该角色保持幽灵，前端按"未入库"警示展示）。
 
 幂等性：按 ``(world_id, name)`` 先查后建，重复发布/恢复重跑时复用既有行；
@@ -29,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from config.constant import CharacterConstants
 from model.character import CharacterModel
+from model.world import WorldModel
 from services.script_split_character_contract import _controlled_alias
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,7 @@ class StoryboardCharacterBootstrapService:
                          characters[i].character_db_id/name、
                          shot_groups[].shots[] 文本中的角色标记）。
             world_id: 世界观 DB id。
-            user_id: 用户 DB id。
+            user_id: 拆分任务发起人 DB id（仅作世界行缺失时的属主回退）。
 
         Returns:
             {
@@ -79,6 +81,12 @@ class StoryboardCharacterBootstrapService:
         renamed: Dict[str, str] = {}
         created_count = 0
         reused_count = 0
+
+        # 入库属主取世界属主而非拆分任务发起人：admin/课堂代跑场景下任务发起人
+        # 不是世界主人，若按任务属主落库，世界主人在按属主校验的角色接口
+        # （voice-desc/reference-audio）会被误拦 403；世界行缺失时回退任务属主
+        world = WorldModel.get_by_id(int(world_id)) if world_id is not None else None
+        owner_user_id = getattr(world, "user_id", None) or user_id
 
         characters = parsed_data.get("characters")
         if not isinstance(characters, list):
@@ -107,7 +115,7 @@ class StoryboardCharacterBootstrapService:
 
             try:
                 db_id, resolved_name, created = self._resolve_or_create(
-                    world_id, int(user_id), character, name, alias_index, warnings,
+                    world_id, int(owner_user_id), character, name, alias_index, warnings,
                 )
             except Exception as exc:
                 # 单角色失败不阻塞发布：该角色保持"幽灵"，前端按未入库警示展示

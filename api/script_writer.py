@@ -3551,8 +3551,14 @@ async def generate_character_reference_audio(
             character = await asyncio.to_thread(CharacterModel.get_by_id, audio_request.character_id)
         elif audio_request.character_name:
             character = await asyncio.to_thread(CharacterModel.get_by_name, audio_request.world_id, audio_request.character_name)
-        if character and (character.world_id != audio_request.world_id or str(character.user_id) != str(auth_user_id)):
-            return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
+        # 仅在 DB 行属主为当前登录用户且属于请求世界时采用该行；属主为他人时
+        # （剧本拆分自动入库以任务发起人为属主，admin 代跑场景下不是世界主人）
+        # 忽略该行、改用请求方提交的数据生成——与查无此行同路径，不泄露他人数据
+        if character and (
+            str(character.user_id) != str(auth_user_id)
+            or (audio_request.world_id is not None and character.world_id != audio_request.world_id)
+        ):
+            character = None
         character_data = character.to_dict() if character else (audio_request.character_data or {})
         if not character_data:
             return JSONResponse({'success': False, 'error': '缺少角色数据'}, status_code=400)
@@ -3668,8 +3674,14 @@ async def generate_character_voice_desc(
             character = await asyncio.to_thread(
                 CharacterModel.get_by_name, voice_request.world_id, voice_request.character_name
             )
-        if character and (character.world_id != voice_request.world_id or str(character.user_id) != str(auth_user_id)):
-            return JSONResponse({'success': False, 'error': '无权限访问该角色'}, status_code=403)
+        # 仅在 DB 行属主为当前登录用户且属于请求世界时采用该行；属主为他人时
+        # （剧本拆分自动入库以任务发起人为属主，admin 代跑场景下不是世界主人）
+        # 忽略该行、改用请求方提交的数据生成——与查无此行同路径，不泄露他人数据
+        if character and (
+            str(character.user_id) != str(auth_user_id)
+            or (voice_request.world_id is not None and character.world_id != voice_request.world_id)
+        ):
+            character = None
         character_data = character.to_dict() if character else (voice_request.character_data or {})
         if not character_data:
             return JSONResponse({'success': False, 'error': '缺少角色数据'}, status_code=400)
