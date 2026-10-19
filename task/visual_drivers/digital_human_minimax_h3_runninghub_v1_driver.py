@@ -287,21 +287,37 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 f.write(resp.content)
         return self._storage._sync_upload_file(local_file)
 
+    def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
+        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
+        r = subprocess.run(
+            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
+             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
+            return out_jpg
+        self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
+        return None
+
     def _submit_segments_async(self, ai_tool, segment_paths: list,
                                extra_config: Dict[str, Any]) -> Dict[str, Any]:
-        """分段快速提交（同步，运行于 to_thread）：逐段提交 RunningHub（每段
-        失败自动重提一次；上游拥堵抛 _SegmentedCongestedError 由入口转回队），
-        段 taskId 列表写入 extra_config 后返回 project_id=ai_tools.id，
-        后续由 check_status 聚合各段状态并在全部完成时拼接。"""
+        """末帧接力串行链式生成（同步，运行于 to_thread）：段 1 用角色图，
+        段 i+1 用段 i 末帧作首帧（画面衔接）；逐段生成→提取末帧→链式提交；
+        全部完成后下载拼接、落盘 /upload/cache 并返回最终 result_url。
+
+        失败语义：段提交/生成失败自动重试一次（换新 RunningHub 任务），
+        仍失败抛 _SegmentedPipelineError（入口转统一失败处理）。
+        上游拥堵（is_upstream_congested_error）抛 _SegmentedCongestedError，
+        由 submit_task 入口转回队延迟重试。"""
         motion_prompt = (ai_tool.prompt or "").strip() or "角色面向镜头说话，固定镜头。"
         max_edge = self._resolve_max_edge(extra_config)
         segment_durations = extra_config.get("dh_segment_durations") or []
 
+        # 角色图（段 1 首帧）上传
         image_path = ai_tool.image_path
         if image_path:
             if "," in image_path:
                 image_path = image_path.split(",")[0].strip()
-            self.logger.info(f"[分段] 上传角色图（各段共用首帧）: {image_path}")
+            self.logger.info(f"[接力] 上传角色图（段 1 首帧）: {image_path}")
             result = self._upload_to_runninghub_sync(image_path)
             if not result.success:
                 raise _SegmentedPipelineError(f"角色图上传到 RunningHub 失败: {result.error}")
@@ -309,38 +325,64 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         else:
             raise _SegmentedPipelineError("分段任务缺少角色图")
 
-        task_ids: list = []
+        seg_files: list = []  # 各段成片本地路径
         for idx, seg_path in enumerate(segment_paths, start=1):
             seg_duration = int(segment_durations[idx - 1]) if idx - 1 < len(segment_durations) \
                 else DEFAULT_DURATION
             audio_key = self._upload_segment_audio(seg_path)
             if not audio_key:
                 raise _SegmentedPipelineError(f"第 {idx} 段音频上传 RunningHub 失败")
+
+            # 提交（失败自动重试一次）
             last_err = ""
+            task_id = None
             for attempt in range(1 + SEGMENT_SUBMIT_RETRY):
                 task_id, last_err = self._submit_one_segment(
                     image_url, audio_key, seg_duration, motion_prompt, max_edge)
                 if task_id:
-                    task_ids.append(task_id)
-                    self.logger.info(f"[分段] seg_{idx} 提交成功 taskId={task_id} "
-                                     f"duration={seg_duration} attempt={attempt}")
                     break
-                self.logger.warning(f"[分段] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
+                self.logger.warning(f"[接力] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
                 time.sleep(5)
-            else:
+            if not task_id:
                 raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
 
-        # 段 taskId 写回 extra_config（check_status 聚合用），保留其他字段
-        merged = dict(extra_config)
-        merged["dh_segment_task_ids"] = task_ids
-        try:
-            from model.ai_tools import AIToolsModel
-            AIToolsModel.update(ai_tool.id,
-                                extra_config=json.dumps(merged, ensure_ascii=False))
-        except Exception as e:  # noqa: BLE001
-            self.logger.warning(f"[分段] 段 taskId 写回 extra_config 失败: {e}")
+            # 等待出片并下载
+            seg_file = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
+            self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
+            seg_files.append(seg_file)
 
-        return {"success": True, "project_id": str(ai_tool.id)}
+            # 末帧接力：提取本段末帧，作为下一段首帧输入图重新上传
+            if idx < len(segment_paths):
+                last_frame = self._extract_last_frame(
+                    seg_file, os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}_last.jpg"))
+                if last_frame:
+                    img = self._upload_to_runninghub_sync(last_frame)
+                    if img.success:
+                        image_url = img.url if img.url else img.key
+                        self.logger.info(f"[接力] seg_{idx} 末帧已上传，作为 seg_{idx + 1} 首帧")
+                    else:
+                        self.logger.warning(
+                            f"[接力] seg_{idx} 末帧上传失败，下一段回退角色图: {img.error}")
+                        image_url = result_url_role  # 回退角色图
+
+        # 全部段完成：统一缩放拼接
+        result_url = self._concat_and_store(ai_tool.id, seg_files)
+        return {
+            "success": True,
+            "sync_mode": True,
+            "result_url": result_url,
+        }
+
+    def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
+        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
+        r = subprocess.run(
+            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
+             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
+            return out_jpg
+        self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
+        return None
 
     def _lookup_segment_task_ids(self, project_id: str) -> Optional[list]:
         """project_id 为 ai_tools.id 且 extra_config 含 dh_segment_task_ids → 分段任务。
