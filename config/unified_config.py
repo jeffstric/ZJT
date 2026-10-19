@@ -3968,7 +3968,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='RunningHub MiniMax H3 数字人接口（图片+音频+提示词）',
         sort_order=7002.0,
         required_config_keys=['runninghub.api_key'],
-        sync_mode=True,  # 分段流水线在 submit_task 内长跑，须分流 SyncTaskExecutor 进程池
+        # 分段任务走轮询模式：submit 快速下发各段并把段 taskId 写入 extra_config，
+        # check_status 聚合各段状态、全部完成时拼接返回（RunningHub 原生异步习惯）
         # 分辨率经分镜偏好下发；驱动侧映射为 max_edge（480P→720, 720P→1280, 1080P→1920）
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
