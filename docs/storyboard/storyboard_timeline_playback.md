@@ -28,8 +28,25 @@
 | 无可用音源 | `silence` | 静音 | 不播放 |
 | 偏好视频原声但当前没有视频 | `tts` / `silence` | 无 | 有配音则降级 TTS，否则静音 |
 
-- 无对话配音时自动视频原声；**TTS 生成后**若偏好仍是「对话配音」，有效音源**自动回 TTS**。
-- 前端 UI 按**有效音源**高亮；自动兜底时「视频原声」旁显示「自动」标记。后端持久化字段仍为 `storyboard_scene.audio_embedded`。
+- 前端 UI 按**有效音源**高亮；存量自动兜底时「视频原声」旁显示「自动」标记。后端持久化字段仍为 `storyboard_scene.audio_embedded`。
+
+### 音源口径（2026-10-19 起：视频原声优先）
+
+**不变式：`audio_embedded=0` 当且仅当「分镜有配音 且 用户显式选了 TTS」。** 由以下规则共同维持：
+
+| 规则 | 触发时机 | 行为 | 实现位置 |
+|------|----------|------|----------|
+| 默认值 | 新建/剧本拆分建分镜 | `audio_embedded=1`（视频原声；数字人同此） | `model/storyboard.py` 默认推导 + `api/storyboard.py`、`services/storyboard_agent_cli_service.py` 拆分两处显式 `True` |
+| R1 锁定 | 首条配音落地（分镜此前**无任何**配音资产，资产总数==1） | `0 → 1`：配音生成后**保持视频原声**，不自动切 TTS。重新生成配音（旧资产记录仍在、总数≥2）不翻转，保留用户显式 TTS 选择 | `task/audio_task.py::_lock_scene_video_audio_on_first_voiceover`（正常链路与 E2E mock 短路两处调用；单测 `tests/task/test_audio_source_lock_rules.py`） |
+| R2 归位 | 删除对话后分镜已无落地配音（选中且有 URL 的配音数==0） | `0 → 1`：TTS 已不可选，音频来源归位视频原声 | `api/storyboard.py::delete_dialogue` |
+| UI 禁选 | 分镜无配音 | 「对话配音（TTS）」按钮 `disabled`（`renderDialogueAudioSource`），配音落地瞬间由 `updateDialogueAudioSourcePanel` 局部刷新解除禁用 | `web/js/storyboard/render.js` |
+
+配套：
+
+- 拆分后的**自动配音流程**（`storyboard_auto_voiceover_after_split_design.md`）生成的配音同样不自动生效（分镜保持视频原声），需用户手动切换 TTS。
+- 轮询接口 `GET /scene/{id}/task-status` 返回 `audio_embedded`，前端 `polling.applyTaskStatus` 即时同步 `scene.audioEmbedded`（R1 锁定后播放口径立刻一致）。
+- `resolveSceneAudioMode` 的「未选视频原声、无配音、有视频 → `video`（自动）」分支保留，覆盖存量 `0` 值分镜的过渡态；这类分镜在首条配音落地时由 R1 收敛为 `1`。
+- 导出侧 `resolve_scene_keep_video_audio`（`services/storyboard_export_service.py`）逻辑未动，口径自动跟随：`audio_embedded=1` 保留视频音轨；视频文件实际无音轨时仍降级混 TTS/静音（ffprobe 实探测）。
 
 ### 单镜占用时长（权威）
 

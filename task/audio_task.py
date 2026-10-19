@@ -164,6 +164,42 @@ async def _finalize_scene_duration_if_completed(ai_audio_id: int, audio_url: str
 
 
 
+async def _lock_scene_video_audio_on_first_voiceover(ai_audio_id: int) -> None:
+    """
+    配音落地后，若该分镜此前没有任何配音资产（本条是首条配音），锁定 audio_embedded=1（视频原声）。
+
+    新音源口径（docs/storyboard/storyboard_timeline_playback.md）：audio_embedded=0 仅在
+    「有配音且用户显式选了 TTS」时成立。首条配音落地即分镜从「无配音（视频原声）」进入
+    「有配音」，保持视频原声、不自动切 TTS；用「配音资产总数==1」区分首条与重新生成
+    （重新生成时旧资产记录仍在、总数≥2，保留用户的显式 TTS 选择）。
+    best-effort：任何步骤失败只记日志，不影响配音任务的成功结果。
+    """
+    try:
+        dialogue_audio = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.get_by_ai_audio_id, ai_audio_id
+        )
+        dialogue_id = getattr(dialogue_audio, 'dialogue_id', None) if dialogue_audio else None
+        if not dialogue_id:
+            return
+        dialogue = await asyncio.to_thread(StoryboardDialogueModel.get_by_id, dialogue_id)
+        scene_id = getattr(dialogue, 'scene_id', None) if dialogue else None
+        if not scene_id:
+            return
+        scene = await asyncio.to_thread(StoryboardSceneModel.get_by_id, scene_id)
+        if not scene or bool(getattr(scene, 'audio_embedded', False)):
+            return
+        asset_count = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.count_assets_by_scene, scene_id
+        )
+        if asset_count == 1:
+            await asyncio.to_thread(StoryboardSceneModel.update, scene_id, audio_embedded=True)
+            logger.info(
+                f"[audio-source] scene={scene_id} 首条配音落地，锁定视频原声 audio_embedded=1"
+            )
+    except Exception as e:
+        logger.warning(f"[audio-source] ai_audio={ai_audio_id} 首条配音锁定视频原声失败: {e}")
+
+
 async def _submit_new_task(ai_audio):
     """
     Submit a new audio generation task (status == AI_AUDIO_STATUS_PENDING)
@@ -193,6 +229,10 @@ async def _submit_new_task(ai_audio):
                 await _finalize_scene_duration_if_completed(task_id, url)
             except Exception as e:
                 logger.warning(f"[MOCK] task={task_id}: 分镜时长联动失败: {e}")
+            try:
+                await _lock_scene_video_audio_on_first_voiceover(task_id)
+            except Exception as e:
+                logger.warning(f"[MOCK] task={task_id}: 音源锁定联动失败: {e}")
             return True
     # =====================================================================
 
@@ -334,6 +374,12 @@ async def _submit_new_task(ai_audio):
             await _finalize_scene_duration_if_completed(task_id, result_url)
         except Exception as e:
             logger.warning(f"Task {task_id}: 分镜时长联动失败, 不影响音频结果: {e}")
+
+        # 音源口径联动：首条配音落地时锁定视频原声（不自动切 TTS）
+        try:
+            await _lock_scene_video_audio_on_first_voiceover(task_id)
+        except Exception as e:
+            logger.warning(f"Task {task_id}: 音源锁定联动失败, 不影响音频结果: {e}")
 
         logger.info(f"Task {task_id}: Audio generation completed successfully")
         return True

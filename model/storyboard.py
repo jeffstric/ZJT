@@ -566,13 +566,15 @@ class StoryboardModel:
                 prompt_str = json.dumps(prompt, ensure_ascii=False) if prompt else None
                 video_config = scene_data.get('video_config')
                 video_config_str = json.dumps(video_config, ensure_ascii=False) if video_config else None
-                # audio_embedded：调用方未显式提供时，按 video_type 推导
-                # （digital_human 产物已含口型音轨，默认声音同出）。
+                # audio_embedded：调用方未显式提供时默认 1（视频原声）。
+                # 音源口径：无配音分镜一律视频原声，TTS 仅在用户显式选择时生效；
+                # 数字人分镜同为 1（口型音轨内嵌，声音同出）。
+                # 见 docs/storyboard/storyboard_timeline_playback.md
                 video_type_val = scene_data.get('video_type', SceneVideoType.VIDEO)
                 if 'audio_embedded' in scene_data and scene_data.get('audio_embedded') is not None:
                     audio_embedded_val = 1 if scene_data.get('audio_embedded') else 0
                 else:
-                    audio_embedded_val = 1 if video_type_val == SceneVideoType.DIGITAL_HUMAN else 0
+                    audio_embedded_val = 1
                 # 发布幂等：source_shot_key 稳定标识每个最终 shot
                 source_shot_key = scene_data.get('source_shot_key') if script_split_task_id else None
                 scene_params = (

@@ -49,7 +49,7 @@ web/js/storyboard/
 | `prompt_json.character_desc` | `scene.promptJson.character_desc` | 角色描述 |
 | `video_prompt` | `scene.videoPrompt` | 视频提示词（生视频/数字人动作描述） |
 | `video_type` | `scene.videoType` | 分镜类型 image/video/digital_human |
-| `audio_embedded` | `scene.audioEmbedded` | 音频来源**偏好**：1=强制视频原声并跳过 TTS，0=优先对话配音；无可用对话配音时预览/导出自动兜底视频原声，配音就绪后自动回 TTS；digital_human 默认 1 |
+| `audio_embedded` | `scene.audioEmbedded` | 音频来源**偏好**：1=视频原声（**默认**，配音落地后保持、不自动切 TTS），0=对话配音（仅在「有配音且用户显式选择」时成立，无配音时前端禁选 TTS；见 `storyboard_timeline_playback.md` 音源口径） |
 | `video_config_json` | `scene.videoConfigJson` | 视频生成参数偏好 |
 | `difficulty` | `scene.difficulty` | 分镜难易程度 易/中/难（见 2.3.1.1），卡片 badge 展示 |
 | `act_name` | `scene.actName` | 所属幕/分镜组名称（见 2.3.1.2），卡片标签展示 |
