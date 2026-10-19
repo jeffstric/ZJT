@@ -327,3 +327,12 @@ database:
 # 由 run_prod.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
 script_split:
   worker_total: 0  # 0=主调度器单进程(兼容旧行为)；>0=由 N 个独立 worker 进程分片接管(id MOD N = index)
+
+# 同步任务进程池启动方式（兜底默认值；本段与用户文件 config_prod.yml 的 sync_task: 深度合并）
+# spawn=全新解释器 worker，根治 fork 继承线程池/锁导致的假超时（事故 2026-09-13/2026-10-18，
+# 见 docs/backend/sync_worker_spawn_cutover.md）；fork=应急回退（环境变量 SYNC_TASK_WORKER_START_METHOD
+# 优先级更高，无需 DB/配置文件）。
+# 存在于 YAML 是后台「初始化配置」能种入可编辑行的前提（default_configs 仅从 YAML 取值入库，
+# 已有环境合入后需在后台再执行一次初始化配置）。
+sync_task:
+  worker_start_method: spawn

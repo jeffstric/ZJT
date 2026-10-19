@@ -399,6 +399,7 @@ media_cache:
 sync_task:
   max_workers: 4                   # 进程池最大并发数
   check_interval: 5                # 结果检查间隔（秒）
+  worker_start_method: spawn       # worker 启动方式：spawn（默认，根治 fork 继承假超时）/ fork（回退）；环境变量 SYNC_TASK_WORKER_START_METHOD 优先级更高
   stale_detection_enabled: true     # 是否启用同步任务 stale future 检测与 worker 回收
   stale_timeout:
     seedream5_volcengine_v1: 180    # Seedream 国内同步任务 stale 超时；Seedance 等提交后轮询任务不要加入

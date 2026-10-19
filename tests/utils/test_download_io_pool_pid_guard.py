@@ -11,9 +11,12 @@ token + _threads 死对象使首个 submit 永不被执行，下载写盘连续�
 """
 import multiprocessing
 import os
+import sys
 import time
 import unittest
 from unittest import mock
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import utils.download_io_pool as pool_mod
 from utils.download_io_pool import get_download_io_executor

@@ -11,8 +11,12 @@ worker 内"有账无线程"，造成 2026-09-13 七牛上传 / 2026-10-18 seedre
 """
 import multiprocessing
 import os
+import sys
+import unittest
 from concurrent.futures import ProcessPoolExecutor
 from unittest import TestCase
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import task.sync_task_executor as ste
 from config.constant import SYNC_WORKER_DEFAULT_START_METHOD

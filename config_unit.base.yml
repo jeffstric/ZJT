@@ -199,6 +199,7 @@ pay:
 sync_task:
   max_workers: 4
   check_interval: 5
+  worker_start_method: spawn  # spawn（默认）/ fork（回退）；env SYNC_TASK_WORKER_START_METHOD 优先
   stale_detection_enabled: true
   stale_timeout:
     seedream5_volcengine_v1: 180

@@ -90,6 +90,7 @@ spawn 稳定运行一个观察周期（建议 ≥2 周，覆盖各类任务路�
 
 ## 回退手册
 
-1. 后台动态配置改 `sync_task.worker_start_method = fork`；
-2. 重启服务（或等下次池自然重建）；
-3. download_io_pool pid 守卫保证回退期间下载写盘不假超时；若回退期间再做七牛上传等其它路径，注意 9-13 盲区仍在（reset_file_storage 已覆盖工厂单例）。
+1. **前提（已有环境一次性）**：合入后需在后台执行一次「初始化配置」，把 `sync_task.worker_start_method`（已预置在 `config.example.yml` / `config_dev.base.yml` / `config_prod.base.yaml` / `config_unit.base.yml` 的 sync_task 段，经 base 深合并生效）种入 `system_config`——`init_default_configs()` 只从 YAML 取值入库，缺 YAML 键就跳过，后台列表也只显示已入库行；
+2. 后台动态配置改 `sync_task.worker_start_method = fork`（或应急用环境变量 `SYNC_TASK_WORKER_START_METHOD=fork`，无需 DB）；
+3. 重启服务（或等下次池自然重建）；
+4. download_io_pool pid 守卫保证回退期间下载写盘不假超时；若回退期间再做七牛上传等其它路径，注意 9-13 盲区仍在（reset_file_storage 已覆盖工厂单例）。
