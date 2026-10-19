@@ -33,8 +33,8 @@ SUPPORTED_MAX_EDGES = {720, 1280, 1920}
 DEFAULT_MAX_EDGE = 1280
 DEFAULT_DURATION = 10
 DEFAULT_START_SECOND = 0
-# 10s 为生产稳定档；11-15s 在 webapp 默认实例显存边界上随机 OOM，不放开
-SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10}
+# 显存充裕后恢复 4-15（官方规格）；营销分段段长 = SEGMENT_LENGTH_SECONDS(15)
+SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 # 分段编排（extra_config.dh_segments 存在时走 sync_mode 全流水线：
 # 逐段生成→下载→ffmpeg 拼接→本地落盘，见 docs/marketing_agent_digital_human_duration_routing_plan.md）
@@ -287,85 +287,37 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 f.write(resp.content)
         return self._storage._sync_upload_file(local_file)
 
-    def _submit_segmented_sync(self, ai_tool, segment_paths: list, extra_config: Dict[str, Any]) -> Dict[str, Any]:
-        """分段拼接入口（同步，运行于 to_thread）。
+    def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
+        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
+        r = subprocess.run(
+            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
+             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
+            return out_jpg
+        self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
+        return None
 
-        首选按端点切好的段（confirm 侧静音切分，段长=常量 15s）跑全流水线；
-        段长 >10s 时处于 webapp 默认实例显存边界（偶发 torch.OutOfMemoryError），
-        全流水线失败后自动降档按 10s 稳定档用完整音频重切重跑一次。
-        """
-        try:
-            return self._run_segment_pipeline(ai_tool, segment_paths, extra_config)
-        except _SegmentedCongestedError as e:
-            # 上游拥堵：与单段路径同款可重试结果（调度器回队，不降档、不退款）
-            self.logger.warning(f"[分段] 上游拥堵，交回调度器延迟重试: {e}")
-            return {
-                "success": False,
-                "error": "上游服务繁忙，正在自动排队重试…",
-                "error_type": "USER",
-                "retry": True,
-                "retry_reason": "UPSTREAM_CONGESTED",
-            }
-        except _SegmentedPipelineError as e:
-            durations = extra_config.get("dh_segment_durations") or []
-            if durations and max(durations) > 10:
-                self.logger.warning(
-                    f"[分段] 段长 {max(durations)}s 流水线失败（{e}），自动降档 10s 稳定档重切重跑")
-                try:
-                    fallback = self._run_segment_pipeline(ai_tool, None, extra_config,
-                                                          fallback_max_seg=10)
-                except _SegmentedPipelineError as e2:
-                    return self._segmented_failure(f"降档 10s 重跑仍失败: {e2}", retried=True)
-                fallback["fallback_used"] = True
-                return fallback
-            return self._segmented_failure(str(e), retried=True)
+    def _submit_segments_async(self, ai_tool, segment_paths: list,
+                               extra_config: Dict[str, Any]) -> Dict[str, Any]:
+        """末帧接力串行链式生成（同步，运行于 to_thread）：段 1 用角色图，
+        段 i+1 用段 i 末帧作首帧（画面衔接）；逐段生成→提取末帧→链式提交；
+        全部完成后下载拼接、落盘 /upload/cache 并返回最终 result_url。
 
-    def _run_segment_pipeline(self, ai_tool, segment_paths: Optional[list],
-                              extra_config: Dict[str, Any],
-                              fallback_max_seg: Optional[int] = None) -> Dict[str, Any]:
-        """单次分段全流水线：逐段提交 → 并行轮询 → 下载 → ffmpeg concat → 落盘。
-
-        Args:
-            segment_paths: 端点切好的段音频路径列表；为 None 时降档模式——
-                用 ai_tool.audio_path 完整音频按 fallback_max_seg 重切。
-        Raises:
-            _SegmentedPipelineError: 任一环节最终失败。
-        """
-        from utils.audio_duration_util import _get_ffmpeg_path
-
+        失败语义：段提交/生成失败自动重试一次（换新 RunningHub 任务），
+        仍失败抛 _SegmentedPipelineError（入口转统一失败处理）。
+        上游拥堵（is_upstream_congested_error）抛 _SegmentedCongestedError，
+        由 submit_task 入口转回队延迟重试。"""
         motion_prompt = (ai_tool.prompt or "").strip() or "角色面向镜头说话，固定镜头。"
         max_edge = self._resolve_max_edge(extra_config)
+        segment_durations = extra_config.get("dh_segment_durations") or []
 
-        if segment_paths:
-            segment_durations = extra_config.get("dh_segment_durations") or []
-            segments = [
-                {"path": p,
-                 "duration": int(segment_durations[i]) if i < len(segment_durations) else DEFAULT_DURATION}
-                for i, p in enumerate(segment_paths)
-            ]
-            tag = "seg"
-        else:
-            # 降档模式：完整音频按稳定段长重切
-            from utils.audio_duration_util import get_audio_duration_seconds
-            from utils.audio_segment_util import split_audio_into_segments
-
-            audio_local = self._storage._resolve_to_local_file(ai_tool.audio_path or "")
-            if not audio_local or not os.path.exists(audio_local):
-                raise _SegmentedPipelineError("降档重切需要完整驱动音频，但无法映射到本地文件")
-            total = get_audio_duration_seconds(audio_local)
-            if not total:
-                raise _SegmentedPipelineError("降档重切时音频时长探测失败")
-            seg_dir = os.path.join('temp', f"h3seg_fallback_{ai_tool.id}")
-            plan = split_audio_into_segments(audio_local, float(total), seg_dir,
-                                             max_seg=fallback_max_seg or 10)
-            segments = plan["segments"]
-            self.logger.info(f"[分段] 降档重切完成: {len(segments)} 段 cuts={plan['cuts']}")
-
+        # 角色图（段 1 首帧）上传
         image_path = ai_tool.image_path
         if image_path:
             if "," in image_path:
                 image_path = image_path.split(",")[0].strip()
-            self.logger.info(f"[分段] 上传角色图（各段共用首帧）: {image_path}")
+            self.logger.info(f"[接力] 上传角色图（段 1 首帧）: {image_path}")
             result = self._upload_to_runninghub_sync(image_path)
             if not result.success:
                 raise _SegmentedPipelineError(f"角色图上传到 RunningHub 失败: {result.error}")
@@ -373,62 +325,196 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         else:
             raise _SegmentedPipelineError("分段任务缺少角色图")
 
-        # 1. 逐段提交（失败自动重试一次；偶发 LoadImageFromUrl 拉图失败重试即可恢复）
-        task_ids: list = []
-        for idx, seg in enumerate(segments, start=1):
-            audio_key = self._upload_segment_audio(seg["path"])
+        seg_files: list = []  # 各段成片本地路径
+        for idx, seg_path in enumerate(segment_paths, start=1):
+            seg_duration = int(segment_durations[idx - 1]) if idx - 1 < len(segment_durations) \
+                else DEFAULT_DURATION
+            audio_key = self._upload_segment_audio(seg_path)
             if not audio_key:
                 raise _SegmentedPipelineError(f"第 {idx} 段音频上传 RunningHub 失败")
+
+            # 提交（失败自动重试一次）
             last_err = ""
+            task_id = None
             for attempt in range(1 + SEGMENT_SUBMIT_RETRY):
                 task_id, last_err = self._submit_one_segment(
-                    image_url, audio_key, seg["duration"], motion_prompt, max_edge)
+                    image_url, audio_key, seg_duration, motion_prompt, max_edge)
                 if task_id:
-                    task_ids.append(task_id)
-                    self.logger.info(f"[分段] seg_{idx} 提交成功 taskId={task_id} "
-                                     f"duration={seg['duration']} attempt={attempt}")
                     break
-                self.logger.warning(f"[分段] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
+                self.logger.warning(f"[接力] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
                 time.sleep(5)
-            else:
+            if not task_id:
                 raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
 
-        # 2. 并行等待各段完成（轮询；FAILED 段自动重提一次）
-        seg_files: list = []
-        for idx, task_id in enumerate(task_ids, start=1):
+            # 等待出片并下载
             seg_file = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
-            ok, err = self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
-            if not ok:
-                # 段生成失败：重提一次（换新任务），仍失败则整体失败
-                self.logger.warning(f"[分段] seg_{idx} 生成失败（{err}），自动重提一次")
-                audio_key = self._upload_segment_audio(segments[idx - 1]["path"])
-                if not audio_key:
-                    raise _SegmentedPipelineError(f"第 {idx} 段重试时音频上传失败")
-                new_task_id, last_err = self._submit_one_segment(
-                    image_url, audio_key, segments[idx - 1]["duration"],
-                    motion_prompt, max_edge)
-                if not new_task_id:
-                    raise _SegmentedPipelineError(f"第 {idx} 段生成失败且重提失败: {last_err}")
-                ok, err = self._wait_and_download_segment(new_task_id, seg_file, f"seg_{idx}r")
-                if not ok:
-                    raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {err}")
+            self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
             seg_files.append(seg_file)
 
-        # 3. 拼接（重编码保证时间戳/参数一致；webapp 每次运行的输出分辨率随机
-        #    （实测同参数出现过 960×1280 与 512×704），先统一缩放到首段尺寸再 concat）
+            # 末帧接力：提取本段末帧，作为下一段首帧输入图重新上传
+            if idx < len(segment_paths):
+                last_frame = self._extract_last_frame(
+                    seg_file, os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}_last.jpg"))
+                if last_frame:
+                    img = self._upload_to_runninghub_sync(last_frame)
+                    if img.success:
+                        image_url = img.url if img.url else img.key
+                        self.logger.info(f"[接力] seg_{idx} 末帧已上传，作为 seg_{idx + 1} 首帧")
+                    else:
+                        self.logger.warning(
+                            f"[接力] seg_{idx} 末帧上传失败，下一段回退角色图: {img.error}")
+                        image_url = result_url_role  # 回退角色图
+
+        # 全部段完成：统一缩放拼接
+        result_url = self._concat_and_store(ai_tool.id, seg_files)
+        return {
+            "success": True,
+            "sync_mode": True,
+            "result_url": result_url,
+        }
+
+    def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
+        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
+        r = subprocess.run(
+            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
+             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
+            capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
+            return out_jpg
+        self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
+        return None
+
+    def _lookup_segment_task_ids(self, project_id: str) -> Optional[list]:
+        """project_id 为 ai_tools.id 且 extra_config 含 dh_segment_task_ids → 分段任务。
+
+        返回段 taskId 列表；否则 None（单段任务，走 RunningHub 原生轮询）。
+        """
+        try:
+            pid = str(project_id)
+            if len(pid) > 10:
+                return None  # RunningHub taskId 为 19 位大数，ai_tools.id 为小自增
+            from model.ai_tools import AIToolsModel
+            rec = AIToolsModel.get_by_id(int(pid))
+            if not rec or not rec.extra_config:
+                return None
+            ec = json.loads(rec.extra_config) if isinstance(rec.extra_config, str) \
+                else (rec.extra_config or {})
+            seg_ids = ec.get("dh_segment_task_ids") or []
+            return seg_ids if seg_ids else None
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning(f"[分段] 反查段 taskId 失败（按单段轮询）: {e}")
+            return None
+
+    def _check_segmented_status(self, project_id: str, seg_task_ids: list) -> Dict[str, Any]:
+        """聚合各段状态：全部 SUCCESS 时下载各段、统一缩放拼接并返回本地成片。"""
+        statuses = []
+        for tid in seg_task_ids:
+            try:
+                st, err = self._poll_segment_status(tid)
+            except Exception as e:  # noqa: BLE001
+                st, err = "RUNNING", str(e)
+            statuses.append((tid, st, err))
+        self.logger.info(f"[分段聚合] project_id={project_id} "
+                         f"statuses={[(s, e) for _, s, e in statuses]}")
+
+        # 段 FAILED：自动重提一次（换新 RunningHub 任务），并在库中更新 taskId
+        changed = False
+        for i, (tid, st, err) in enumerate(statuses):
+            if st == "FAILED":
+                new_id = self._resubmit_failed_segment(project_id, i, err)
+                if new_id:
+                    seg_task_ids[i] = new_id
+                    statuses[i] = (new_id, "RUNNING", "")
+                    changed = True
+        if changed:
+            self._save_segment_task_ids(project_id, seg_task_ids)
+
+        if any(st == "FAILED" for _, st, _ in statuses):
+            failed = [i + 1 for i, (_, st, _) in enumerate(statuses) if st == "FAILED"]
+            return {
+                "status": "FAILED",
+                "error": f"分段生成失败（段 {failed}），任务级重试将重新提交全部段",
+                "error_type": "SYSTEM",
+            }
+        if any(st != "SUCCESS" for _, st, _ in statuses):
+            return {"status": "RUNNING", "message": "分段生成中..."}
+
+        # 全部成功：下载各段（已下载的复用本地文件）并拼接
+        seg_files = []
+        for i, tid in enumerate(seg_task_ids, start=1):
+            seg_file = os.path.join('temp', f"h3seg_{project_id}_seg_{i}.mp4")
+            if not os.path.isfile(seg_file) or os.path.getsize(seg_file) < 1024:
+                video_url = self._fetch_segment_video_url(tid)
+                if not video_url:
+                    return {"status": "RUNNING", "message": "分段结果获取中..."}
+                import requests as _requests
+                with open(seg_file, 'wb') as f:
+                    f.write(_requests.get(video_url, timeout=300).content)
+            seg_files.append(seg_file)
+
+        result_url = self._concat_and_store(project_id, seg_files)
+        return {
+            "status": "SUCCESS",
+            "result_url": result_url,
+        }
+
+    def _resubmit_failed_segment(self, project_id: str, seg_index: int, err: str) -> Optional[str]:
+        """重提失败的段（沿用 extra_config 中的段音频与时长），返回新 taskId 或 None。"""
+        try:
+            from model.ai_tools import AIToolsModel
+            rec = AIToolsModel.get_by_id(int(project_id))
+            ec = json.loads(rec.extra_config) if rec and rec.extra_config else {}
+            seg_paths = ec.get("dh_segments") or []
+            seg_durations = ec.get("dh_segment_durations") or []
+            image_path = (rec.image_path or "").split(",")[0].strip()
+            if not seg_paths or seg_index >= len(seg_paths):
+                return None
+            img = self._upload_to_runninghub_sync(image_path)
+            if not img.success:
+                return None
+            image_url = img.url if img.url else img.key
+            audio_key = self._upload_segment_audio(seg_paths[seg_index])
+            if not audio_key:
+                return None
+            task_id, last_err = self._submit_one_segment(
+                image_url, audio_key,
+                int(seg_durations[seg_index]) if seg_index < len(seg_durations) else 10,
+                (rec.prompt or "").strip() or "角色面向镜头说话，固定镜头。",
+                self._resolve_max_edge(ec))
+            self.logger.info(f"[分段] 段 {seg_index + 1} 重提 taskId={task_id} (err={err})")
+            return task_id
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning(f"[分段] 段 {seg_index + 1} 重提异常: {e}")
+            return None
+
+    def _save_segment_task_ids(self, project_id: str, seg_task_ids: list) -> None:
+        """更新 extra_config.dh_segment_task_ids（段重提后同步新 taskId）。"""
+        try:
+            from model.ai_tools import AIToolsModel
+            rec = AIToolsModel.get_by_id(int(project_id))
+            ec = json.loads(rec.extra_config) if rec and rec.extra_config else {}
+            ec["dh_segment_task_ids"] = seg_task_ids
+            AIToolsModel.update(rec.id, extra_config=json.dumps(ec, ensure_ascii=False))
+        except Exception as e:  # noqa: BLE001
+            self.logger.warning(f"[分段] 保存段 taskId 失败: {e}")
+
+    def _concat_and_store(self, project_id, seg_files: list) -> str:
+        """统一缩放到首段尺寸后拼接，落盘 /upload/cache 并返回 result_url。"""
+        import json as _json
+        from utils.audio_duration_util import _get_ffmpeg_path
+
         probe = subprocess.run(
             ['bin/ffmpeg/ffprobe', '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'stream=width,height', '-of', 'json', seg_files[0]],
             capture_output=True, text=True, timeout=60)
-        vstream = (json.loads(probe.stdout or '{}').get('streams') or [{}])[0]
+        vstream = (_json.loads(probe.stdout or '{}').get('streams') or [{}])[0]
         out_w = int(vstream.get('width') or 960)
         out_h = int(vstream.get('height') or 1280)
         out_h += out_h % 2
         date_str = time.strftime('%Y-%m-%d')
         out_dir = os.path.join('upload', 'cache', date_str)
         os.makedirs(out_dir, exist_ok=True)
-        out_name = f"{ai_tool.id}_h3seg_{time.strftime('%H%M%S')}.mp4"
-        out_path = os.path.join(out_dir, out_name)
+        out_path = os.path.join(out_dir, f"{project_id}_h3seg_{time.strftime('%H%M%S')}.mp4")
         inputs = []
         for f in seg_files:
             inputs += ['-i', f]
@@ -446,13 +532,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         if r.returncode != 0 or not os.path.isfile(out_path):
             raise _SegmentedPipelineError(f"分段视频拼接失败: {r.stderr[-300:]}")
         self.logger.info(f"[分段] 拼接完成: {out_path} ({out_w}x{out_h})")
-
-        # 4. sync_mode 返回本地路径（visual_task 检测 /upload/ 前缀直接落库）
-        return {
-            "sync_mode": True,
-            "result_url": f"/upload/cache/{date_str}/{out_name}",
-            "success": True,
-        }
+        return f"/upload/cache/{date_str}/{os.path.basename(out_path)}"
 
     def _segmented_failure(self, message: str, retried: bool = False) -> Dict[str, Any]:
         """分段流水线的标准失败返回（sync 模式无 retry 重试意义，直接失败并退款走原机制）。"""
@@ -563,19 +643,21 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         try:
             prompt_preview = (ai_tool.prompt or "")[:50]
 
-            # 分段拼接模式（口播 >15s）：extra_config.dh_segments 由端点写入，
-            # 在本调用内完成「逐段提交→轮询→下载→拼接」全流水线，
-            # 以 sync_mode 返回本地成片路径（visual_task 直接落库，无需轮询）。
+            # 分段拼接模式（口播 >15s）：extra_config.dh_segments 由端点写入。
+            # 轮询模式：本调用只快速逐段提交 RunningHub（每段失败自动重提一次），
+            # 段 taskId 列表写入 extra_config.dh_segment_task_ids 并返回
+            # project_id=ai_tools.id；后续由 check_status 聚合各段状态、
+            # 全部完成时拼接并返回 /upload/cache 成片路径。
             extra_config = self._parse_extra_config(ai_tool)
             segment_paths = extra_config.get("dh_segments") or []
             if segment_paths:
                 self.logger.info(
-                    f"Segmented MiniMax H3 pipeline: text='{prompt_preview}...', "
+                    f"Segmented MiniMax H3 submit: text='{prompt_preview}...', "
                     f"segments={len(segment_paths)}, "
                     f"durations={extra_config.get('dh_segment_durations')}"
                 )
                 return await asyncio.to_thread(
-                    self._submit_segmented_sync, ai_tool, segment_paths, extra_config
+                    self._submit_segments_async, ai_tool, segment_paths, extra_config
                 )
 
             self.logger.info(
@@ -683,6 +765,16 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             }
 
     def check_status(self, project_id: str) -> Dict[str, Any]:
+        # 分段任务:project_id=ai_tools.id,extra_config.dh_segment_task_ids
+        # 存各段 RunningHub taskId——聚合各段状态、全部完成时拼接返回
+        seg_task_ids = self._lookup_segment_task_ids(project_id)
+        if seg_task_ids:
+            try:
+                return self._check_segmented_status(project_id, seg_task_ids)
+            except Exception as e:  # noqa: BLE001
+                self.logger.error(f"[分段聚合] check_status 异常: {e}")
+                return {"status": "RUNNING", "message": "分段聚合中,稍后重试"}
+
         try:
             self.logger.info(f"Checking task status: project_id={project_id}")
 

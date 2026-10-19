@@ -48,8 +48,8 @@ import logging
 
 logger = logging.getLogger(logger_name)
 
-# H3 视频时长档位（秒）与默认音色。10s 为生产稳定档（11-15s 随机显存 OOM 不放开）
-H3_ALLOWED_DURATIONS = tuple(range(4, 11))
+# H3 视频时长档位（秒）与默认音色。显存充裕后恢复 4-15（官方规格）
+H3_ALLOWED_DURATIONS = tuple(range(4, 16))
 DEFAULT_VOICE_TYPE = "zh_female_vv_uranus_bigtts"  # Vivi 2.0
 
 # 分段模式每段统一动作提示词：固定镜头/景别跟随参考图，保证段间构图一致（拼接点不跳景别）。
@@ -179,10 +179,10 @@ def restore_draft(draft_id: str, draft: Dict[str, Any], expires_at: float) -> No
 
 
 def clamp_h3_duration(seconds: float) -> int:
-    """TTS 时长吸附到 H3 档位 4–10 秒（向上取整）"""
+    """TTS 时长吸附到 H3 档位 4–15 秒（向上取整）"""
     if seconds <= 0:
         return 4
-    return max(4, min(10, int(math.ceil(seconds))))
+    return max(4, min(15, int(math.ceil(seconds))))
 
 
 def estimate_segment_durations(total_seconds: float) -> List[int]:
@@ -200,18 +200,17 @@ def estimate_segment_durations(total_seconds: float) -> List[int]:
 def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
     """按口播时长路由数字人生成方式（营销链路，2026-10-16 v3：H3 单段/分段拼接）。
 
-    - ≤10s → MiniMax H3（35）单段，时长吸附 4-10 档位；
-    - 10-30s → H3 分段拼接（segment_mode=True，每段 10s，driver 侧编排拼接）；
-    - >30s → 返回 None（超出分段上限），调用方须拒绝并提示拆分文案。
+    - ≤15s → MiniMax H3（35）单段，时长吸附 4-15 档位（显存充裕后恢复）；
+    - >15s → H3 分段拼接（segment_mode=True，每段 15s，driver 侧编排拼接）；
+    - 超 600s → 返回 None（异常兜底上限），调用方须拒绝。
 
     LTX2.3 数字人因效果问题（画面失真、尾部唇动无声）不再参与营销路由。
-    11-15s 不做单段（webapp 默认实例显存边界随机 OOM，不赌运气），并入分段。
     返回 dict 含 model_task_type / routing_reason / billable_duration / segment_mode。
     """
     if est_seconds <= DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS:
         return {
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-            "routing_reason": "duration_lte_10s_h3",
+            "routing_reason": "duration_lte_15s_h3_single",
             "billable_duration": clamp_h3_duration(est_seconds),
             "segment_mode": False,
             "segment_durations_est": [clamp_h3_duration(est_seconds)],
@@ -220,7 +219,7 @@ def resolve_digital_human_model(est_seconds: float) -> Optional[Dict[str, Any]]:
         durations_est = estimate_segment_durations(est_seconds)
         return {
             "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-            "routing_reason": "duration_gt_10s_h3_segmented",
+            "routing_reason": "duration_gt_15s_h3_segmented",
             # 预估计费口径 = 预估各段档位之和（与 confirm 实际静音切分可能 ±1 档位差，
             # confirm 会按实际切分结果重算）
             "billable_duration": sum(durations_est),

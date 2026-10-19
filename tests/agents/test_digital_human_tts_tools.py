@@ -74,35 +74,36 @@ class TestClampDuration(unittest.TestCase):
         self.assertEqual(clamp_h3_duration(4), 4)
         self.assertEqual(clamp_h3_duration(5.6), 6)
         self.assertEqual(clamp_h3_duration(10), 10)
-        self.assertEqual(clamp_h3_duration(14.2), 10)
-        self.assertEqual(clamp_h3_duration(99), 10)
+        self.assertEqual(clamp_h3_duration(14.2), 15)
+        self.assertEqual(clamp_h3_duration(99), 15)
 
 
 class TestResolveDigitalHumanModel(unittest.TestCase):
-    """时长路由边界（2026-10-16 v3）：≤10s→H3 单段，10-30s→H3 分段拼接，>30s→拒绝"""
+    """时长路由边界（2026-10-16 v3 定稿）：≤15s→H3 单段，>15s→H3 分段拼接，>600s→拒绝"""
 
-    def test_lte_10s_routes_h3_single(self):
-        for sec in (0, 4.0, 9.9, 10.0):
+    def test_lte_15s_routes_h3_single(self):
+        for sec in (0, 4.0, 10.0, 14.9, 15.0):
             r = resolve_digital_human_model(sec)
             self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-                             f"{sec}s 应路由 H3")
-            self.assertEqual(r["routing_reason"], "duration_lte_10s_h3")
+                             f"{sec}s 应路由 H3 单段")
+            self.assertEqual(r["routing_reason"], "duration_lte_15s_h3_single")
             self.assertFalse(r["segment_mode"])
 
     def test_h3_billable_clamps_to_grid(self):
         self.assertEqual(resolve_digital_human_model(5.2)["billable_duration"], 6)
         self.assertEqual(resolve_digital_human_model(0)["billable_duration"], 4)
         self.assertEqual(resolve_digital_human_model(10.0)["billable_duration"], 10)
+        self.assertEqual(resolve_digital_human_model(15.0)["billable_duration"], 15)
 
-    def test_gt_10s_routes_segmented(self):
-        r = resolve_digital_human_model(10.1)
+    def test_gt_15s_routes_segmented(self):
+        r = resolve_digital_human_model(15.1)
         self.assertEqual(r["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
-                         "10-30s 也走 H3（分段拼接），不再路由 LTX2.3；11-15s 不做单段（OOM）")
-        self.assertEqual(r["routing_reason"], "duration_gt_10s_h3_segmented")
+                         ">15s 走 H3 分段拼接（段长 15s），不再路由 LTX2.3")
+        self.assertEqual(r["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(r["segment_mode"])
-        # 计费口径 = 预估各段档位之和口径（estimate: 2 段各 ceil(5.05)=6 → 6+6）
-        self.assertEqual(r["billable_duration"], 12)
-        self.assertEqual(r["segment_durations_est"], [6, 6])
+        # 计费口径 = 预估各段档位之和（estimate: 2 段各 ceil(7.55)=8 → 8+8）
+        self.assertEqual(r["billable_duration"], 16)
+        self.assertEqual(r["segment_durations_est"], [8, 8])
 
     def test_30s_boundary_segmented(self):
         r = resolve_digital_human_model(30.0)
@@ -280,7 +281,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertIn("固定镜头", draft["motion_prompt"])
         # ≤15s 路由 H3 单段，新字段与旧字段一致
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
-        self.assertEqual(draft["routing_reason"], "duration_lte_10s_h3")
+        self.assertEqual(draft["routing_reason"], "duration_lte_15s_h3_single")
         self.assertFalse(draft["segment_mode"])
         self.assertEqual(draft["billable_duration"], 6)
         self.assertEqual(draft["video_computing_power"], draft["h3_computing_power"])
@@ -308,7 +309,7 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertTrue(result["success"])
         draft = result["draft"]
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
-        self.assertEqual(draft["routing_reason"], "duration_gt_10s_h3_segmented")
+        self.assertEqual(draft["routing_reason"], "duration_gt_15s_h3_segmented")
         self.assertTrue(draft["segment_mode"])
         self.assertEqual(draft["billable_duration"], 20)  # 整数段口径 ceil(20/10)*10
         self.assertEqual(draft["effective_motion_prompt"], SEGMENTED_MOTION_PROMPT,
@@ -336,12 +337,12 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertTrue(result["success"])
         draft = result["draft"]
         self.assertTrue(draft["segment_mode"])
-        self.assertEqual(draft["billable_duration"], 36)  # estimate(35): 4 段各 ceil(8.75)=9
-        self.assertEqual(len(draft["segment_durations_est"]), 4)
+        self.assertEqual(draft["billable_duration"], 36)  # estimate(35): 3 段各 ceil(11.67)=12
+        self.assertEqual(len(draft["segment_durations_est"]), 3)
         self.assertEqual(len(_DRAFT_STORE), 1)
 
     def test_user_audio_duration_probed_for_routing(self):
-        """用户直供音频缺时长时补 probe：15s → 分段拼接（11-15s 不做单段，OOM）"""
+        """用户直供音频缺时长时补 probe：15s → H3 单段（显存充裕恢复）"""
         probed = {}
 
         async def fake_probe(url):
@@ -367,8 +368,8 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(probed["url"], "http://x/user_audio.mp3")
         draft = result["draft"]
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
-        self.assertTrue(draft["segment_mode"], "15s 音频应走分段（单段 11-15s 有 OOM 风险）")
-        self.assertEqual(draft["billable_duration"], 16)  # estimate(15)=[8,8]
+        self.assertFalse(draft["segment_mode"], "15s 显存充裕后恢复单段直出")
+        self.assertEqual(draft["billable_duration"], 15)
 
 
 class TestConfirmTool(_VoiceModelMockBase):

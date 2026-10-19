@@ -508,6 +508,79 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
 PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
+# ---------------------------------------------------------------------------
+# Agent 生成类工具统一注册表（单一数据源，新增/修改生成工具必须在此登记）
+#
+# 同一批工具名曾散落 3 个文件共 6 份清单（expert_agent 的 project_ids 收集
+# 白名单、power_confirm 的计费/图片/视频/标签清单、pm_agent 的视频专家技能
+# 清单），两段式数字人上线时 confirm_digital_human 漏配 project_ids 白名单，
+# video_task_submitted 事件不推送，前端全程看不到"视频生成中"（事故：dev2
+# 会话 cf028375，project 12752 视频实际生成成功但界面无感知）。现集中于此，
+# 各使用点只允许从下方派生常量取用，禁止再在业务模块手写工具名清单。
+# 字段说明：
+#   emits_project_ids — 返回结构含 project_ids 且需推送前端轮询
+#       （expert_agent 收集进 pending_project_ids → pm_agent 推
+#       image/video_task_submitted SSE 事件）。四宫格三件套走独立前端
+#       展示且不返回 project_ids，故为 False。
+#   estimate — 算力预估分流类别："image"（_estimate_image）/ "video"
+#       （_estimate_video）/ "digital_human"（_estimate_digital_human 固定
+#       预估，与按参数预估的视频类分开）/ ""（不参与预估：不弹门或无
+#       独立预估规则）。
+#   billable — 是否纳入算力确认门（提交前弹窗确认）。两段式数字人
+#       prepare/confirm 流程自带 UI 确认、generate_marketing_video 的
+#       内部子工具各自过门，故二者不重复弹门（False）。
+#   label   — 算力确认弹窗等处的中文展示名。
+GENERATION_TOOL_REGISTRY: Dict[str, Dict[str, Union[bool, str]]] = {
+    "generate_text_to_image":           {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "文生图"},
+    "edit_image":                       {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "图片编辑"},
+    "generate_character_variant_image": {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "角色变体图"},
+    "generate_4grid_character_images":  {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "角色四宫格"},
+    "generate_4grid_location_images":   {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "场景四宫格"},
+    "generate_4grid_prop_images":       {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "道具四宫格"},
+    "generate_text_to_video":           {"emits_project_ids": True, "estimate": "video", "billable": True, "label": "文生视频"},
+    "image_to_video":                   {"emits_project_ids": True, "estimate": "video", "billable": True, "label": "图生视频"},
+    "generate_digital_human":           {"emits_project_ids": True, "estimate": "digital_human", "billable": True, "label": "数字人"},
+    "prepare_digital_human_draft":      {"emits_project_ids": False, "estimate": "", "billable": False, "label": "数字人口播草案"},
+    "confirm_digital_human":            {"emits_project_ids": True, "estimate": "", "billable": False, "label": "数字人提交生成"},
+    "generate_marketing_video":         {"emits_project_ids": True, "estimate": "", "billable": False, "label": "图文转视频"},
+}
+
+# —— 以下派生常量供业务代码直接引用 ——
+# 会返回 project_ids 并推送前端轮询的工具（expert_agent 收集白名单）
+GENERATION_TOOLS_EMIT_PROJECT_IDS = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["emits_project_ids"]
+)
+# 纳入算力确认门的计费生成工具
+GENERATION_TOOLS_BILLABLE = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["billable"]
+)
+# 图片 / 视频类生成工具（算力预估分流，见 power_confirm.estimate_tool_computing_power；
+# generate_digital_human 属 digital_human 分流，故意不在 VIDEO 一列）
+GENERATION_TOOLS_IMAGE = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "image"
+)
+GENERATION_TOOLS_VIDEO = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "video"
+)
+# 数字人固定预估分流
+GENERATION_TOOLS_ESTIMATE_DIGITAL_HUMAN = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "digital_human"
+)
+# 生成工具中文展示名（算力确认弹窗等）
+GENERATION_TOOL_LABELS = {
+    name: meta["label"] for name, meta in GENERATION_TOOL_REGISTRY.items()
+}
+
+# 产出视频类生成任务的专家技能清单（skill_name 维度，非工具名）：其
+# project_ids 必须以 video_task_submitted 推送，前端按视频任务轮询并在完成后
+# 渲染 <video>。漏配会把视频任务当图片轮询，任务完成后图片 URL 为空，前端
+# 误报"图片生成失败"（事故：会话 5847bc38）。新增视频类专家技能时必须登记。
+VIDEO_GENERATION_EXPERT_SKILLS = (
+    "marketing-video",
+    "article-to-video",
+    "digital-human-creator",
+)
+
 
 class MediaGenerationSurface:
     """媒体生成模型偏好的调用入口。"""
@@ -601,15 +674,15 @@ WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 # failedReason），10s 档长期生产稳定。营销路由与档位全部回到 10s 上限：
 # ≤10s H3 单段；10-30s 分段拼接（每段 10s，如 30s=3×10s）；>30s 拒绝提示拆分。
 # LTX2.3 数字人因效果问题自营销路由撤下。
-DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 10
+DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
 # 分段拼接的口播时长软上限。分段架构无技术上限（段数=ceil(时长/10s)），
 # 此值仅作为异常超长音频的兜底拒绝线（防 TTS 异常产物拖垮流水线）；
 # 实际时长由 prepare 的口播文案上限（2000 字 ≈ 6-7 分钟）自然约束，
 # 段数越多生成耗时越长（约 3 分钟/段），prepare 草案会预告段数与耗时
 DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 600
-# 每段目标时长（整数秒，H3 duration 节点粒度）。10s 为生产稳定档
-# （15s 段在默认实例显存边界上随机 OOM，driver 内置降档逻辑保留作兜底）
-DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 10
+# 每段目标时长（整数秒，H3 duration 节点粒度）。2026-10-19 显存充裕后恢复
+# 15s（官方上限，减少切割次数）；若个别实例仍 OOM，driver 内置按 10s 降档重切兜底
+DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
 # wan2.2 参考音色模式（generate_digital_human）适用的口播时长上限（秒）：
 # 超过则引导改走两段式 H3 链路
 DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10

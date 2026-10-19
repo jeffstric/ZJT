@@ -16,6 +16,7 @@ from config.constant import (
     EXPERT_HISTORY_MAX_IMAGES,
     AGENT_STATUS_POLL_MAX_ROUNDS,
     AGENT_TASK_IN_PROGRESS_STATUSES,
+    GENERATION_TOOLS_EMIT_PROJECT_IDS,
 )
 from .output_token_budget import resolve_max_output_tokens
 
@@ -462,15 +463,8 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             result = self._execute_tool(tool_name, tool_args)
 
             # 收集图片/视频生成任务的 project_ids 与算力消耗
-            if tool_name in (
-                "generate_text_to_image",
-                "edit_image",
-                "generate_character_variant_image",
-                "generate_text_to_video",
-                "image_to_video",
-                "generate_digital_human",
-                "generate_marketing_video",  # 图文转视频包装工具（article-to-video 专家）
-            ):
+            # （白名单统一由 config.constant.GENERATION_TOOL_REGISTRY 派生）
+            if tool_name in GENERATION_TOOLS_EMIT_PROJECT_IDS:
                 if isinstance(result, dict) and result.get("project_ids"):
                     self.pending_project_ids.extend(result["project_ids"])
                 if isinstance(result, dict):
