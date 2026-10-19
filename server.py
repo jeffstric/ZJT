@@ -5199,7 +5199,8 @@ async def digital_human_minimax_h3_generate(
                 detail="超过 10 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
             )
 
-        # 单段 4-10（10s 生产稳定档）；分段模式总时长允许 8-30（≥2 段各 4s）
+        # 单段 4-10（10s 生产稳定档）；分段模式总时长 8-600（≥2 段各 4s，
+        # 600 为异常兜底上限，实际受口播文案长度自然约束）
         if segment_files:
             if not (8 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
                 raise HTTPException(

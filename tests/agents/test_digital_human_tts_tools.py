@@ -109,9 +109,9 @@ class TestResolveDigitalHumanModel(unittest.TestCase):
         self.assertTrue(r["segment_mode"])
         self.assertEqual(r["billable_duration"], 30)
 
-    def test_gt_30s_rejected(self):
-        for sec in (30.1, 60, 500):
-            self.assertIsNone(resolve_digital_human_model(sec), f"{sec}s 应拒绝")
+    def test_gt_600s_rejected(self):
+        for sec in (601, 1000):
+            self.assertIsNone(resolve_digital_human_model(sec), f"{sec}s 应拒绝（异常兜底）")
 
 
 class _VoiceModelMockBase(unittest.TestCase):
@@ -316,8 +316,8 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertIn("MiniMax H3", result["message"])
         self.assertIn("拼接", result["message"])
 
-    def test_over_30s_rejected_with_split_hint(self):
-        """TTS 实测 35s → 拒绝并提示拆分文案，不产生草案"""
+    def test_35s_routes_multi_segment(self):
+        """TTS 实测 35s → 分段拼接（4 段），不再有 30s 拒绝"""
         voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
                           voice_type="zh_female_vv_uranus_bigtts")
 
@@ -333,10 +333,12 @@ class TestPrepareTool(_VoiceModelMockBase):
                 user_id="1", world_id="w", auth_token="t",
                 image_url="http://x/img.png", script_text="超长文案", voice_id=7))
 
-        self.assertFalse(result["success"])
-        self.assertIn("拆分", result["error"])
-        self.assertIn("35", result["error"])
-        self.assertEqual(len(_DRAFT_STORE), 0)
+        self.assertTrue(result["success"])
+        draft = result["draft"]
+        self.assertTrue(draft["segment_mode"])
+        self.assertEqual(draft["billable_duration"], 36)  # estimate(35): 4 段各 ceil(8.75)=9
+        self.assertEqual(len(draft["segment_durations_est"]), 4)
+        self.assertEqual(len(_DRAFT_STORE), 1)
 
     def test_user_audio_duration_probed_for_routing(self):
         """用户直供音频缺时长时补 probe：15s → 分段拼接（11-15s 不做单段，OOM）"""

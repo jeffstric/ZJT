@@ -602,8 +602,11 @@ WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 # ≤10s H3 单段；10-30s 分段拼接（每段 10s，如 30s=3×10s）；>30s 拒绝提示拆分。
 # LTX2.3 数字人因效果问题自营销路由撤下。
 DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 10
-# 分段拼接的口播时长上限；超出拒绝并提示拆分文案
-DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 30
+# 分段拼接的口播时长软上限。分段架构无技术上限（段数=ceil(时长/10s)），
+# 此值仅作为异常超长音频的兜底拒绝线（防 TTS 异常产物拖垮流水线）；
+# 实际时长由 prepare 的口播文案上限（2000 字 ≈ 6-7 分钟）自然约束，
+# 段数越多生成耗时越长（约 3 分钟/段），prepare 草案会预告段数与耗时
+DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 600
 # 每段目标时长（整数秒，H3 duration 节点粒度）。10s 为生产稳定档
 # （15s 段在默认实例显存边界上随机 OOM，driver 内置降档逻辑保留作兜底）
 DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 10
