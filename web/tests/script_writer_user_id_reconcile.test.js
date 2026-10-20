@@ -31,6 +31,18 @@ describe('script_writer wrong user_id and hide error', () => {
         expect(resolveBody).toContain("localStorage.getItem('user_id')");
     });
 
+    it('隐藏世界按钮用抽屉图标，永久删除仍用垃圾桶', () => {
+        const hideBtnStart = source.indexOf("hideBtn.className = 'world-hide-btn'");
+        const hideBtn = source.slice(hideBtnStart, source.indexOf('worldActions.appendChild(hideBtn)'));
+        expect(hideBtn).toContain('<rect x="2" y="3" width="20" height="5" rx="1"/>');
+        expect(hideBtn).toContain('<path d="M10 12h4"/>');
+        expect(hideBtn).not.toContain('polyline points="3 6 5 6 21 6"');
+
+        const deleteBtnStart = source.indexOf("deleteBtn.className = 'world-delete-btn'");
+        const deleteBtn = source.slice(deleteBtnStart, deleteBtnStart + 700);
+        expect(deleteBtn).toContain('polyline points="3 6 5 6 21 6"');
+    });
+
     it('隐藏世界失败时展示接口 detail，而不是固定未知错误', () => {
         expect(source).toContain('function readApiErrorText');
         expect(hideBody).toContain('readApiErrorText(data)');

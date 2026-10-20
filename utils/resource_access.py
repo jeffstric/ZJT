@@ -170,6 +170,23 @@ def ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW):
     return ensure_resource_access(world, user_id, action, "世界")
 
 
+def ensure_world_owner_or_admin(world_id: int, user_id: int):
+    """
+    隐藏、恢复、硬删除世界：创建者本人，或 users.role=admin 的管理员。
+
+    查看/编辑仍走 ensure_world_access，不在这里放宽。
+    世界不存在返回 404；既不是创建者也不是管理员返回 403。
+    """
+    from model.world import WorldModel
+
+    world = WorldModel.get_by_id(world_id)
+    if not world:
+        raise HTTPException(status_code=404, detail="世界不存在")
+    if getattr(world, 'user_id', None) != user_id and not is_admin_user(user_id):
+        raise HTTPException(status_code=403, detail="仅创建者或管理员可删除该世界")
+    return world
+
+
 async def enforce_x_user_id_consistency(request):
     """
     X-User-Id 自报身份与 token 属主一致性强制校验（供中间件统一调用）。

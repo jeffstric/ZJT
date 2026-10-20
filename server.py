@@ -125,6 +125,7 @@ from utils.resource_access import (
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
+    ensure_world_owner_or_admin,
     is_admin_user,
     resolve_authenticated_user_id,
     enforce_x_user_id_consistency,
@@ -8346,11 +8347,12 @@ async def hide_world(
 ):
     """
     伪删除（隐藏）世界：仅标记 is_deleted=1，不删库、不删资产。
+    不校验角色/场景是否为空。创建者或管理员可操作。
     已隐藏时幂等成功。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
         user_id = await resolve_authenticated_user_id(auth_token, user_id)
-        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+        world = await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
         await asyncio.to_thread(WorldModel.soft_delete, world_id)
         updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
@@ -8385,17 +8387,17 @@ async def restore_world(
 ):
     """
     恢复伪删除世界：is_deleted=0，重新出现在正常列表。
-    若同用户下已有同名未删除世界，返回 400。
+    创建者或管理员可操作。若同用户下已有同名未删除世界，返回 400。
     身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
         user_id = await resolve_authenticated_user_id(auth_token, user_id)
-        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+        world = await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
         # 仅对仍标记为删除的世界做重名校验
         if getattr(world, 'is_deleted', 0):
             existing = await asyncio.to_thread(
-                WorldModel.get_by_name, user_id, world.name, False
+                WorldModel.get_by_name, world.user_id, world.name, False
             )
             if existing and getattr(existing, 'id', None) != world_id:
                 return JSONResponse(
@@ -8446,13 +8448,7 @@ async def delete_world(
     """
     try:
         user_id = await resolve_authenticated_user_id(auth_token, user_id)
-        world = await asyncio.to_thread(WorldModel.get_by_id, world_id)
-        if not world:
-            raise HTTPException(status_code=404, detail="世界不存在")
-        if getattr(world, 'user_id', None) != user_id:
-            # 非创建者仅管理员可删
-            if not await asyncio.to_thread(is_admin_user, user_id):
-                raise HTTPException(status_code=403, detail="仅创建者或管理员可删除该世界")
+        await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
         character_count = await asyncio.to_thread(CharacterModel.count_by_world, world_id)
         if character_count > 0:

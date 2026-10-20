@@ -93,6 +93,51 @@ class TestCheckResourcePermission(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestEnsureWorldOwnerOrAdmin(unittest.TestCase):
+    def test_owner_can_pass_without_admin_lookup_success(self):
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 11
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user") as is_admin:
+            result = ensure_world_owner_or_admin(99, 11)
+        self.assertIs(result, world)
+        is_admin.assert_not_called()
+
+    def test_admin_can_hide_another_users_world(self):
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 7
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user", return_value=True):
+            result = ensure_world_owner_or_admin(99, 11)
+        self.assertIs(result, world)
+
+    def test_non_owner_non_admin_forbidden(self):
+        from fastapi import HTTPException
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 7
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user", return_value=False):
+            with self.assertRaises(HTTPException) as ctx:
+                ensure_world_owner_or_admin(99, 11)
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail, "仅创建者或管理员可删除该世界")
+
+    def test_missing_world_404(self):
+        from fastapi import HTTPException
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        with patch("model.world.WorldModel.get_by_id", return_value=None):
+            with self.assertRaises(HTTPException) as ctx:
+                ensure_world_owner_or_admin(99, 11)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
 class TestHttpExceptionMessage(unittest.TestCase):
     def test_string_detail(self):
         from utils.resource_access import http_exception_message

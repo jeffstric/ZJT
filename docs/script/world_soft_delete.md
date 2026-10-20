@@ -49,7 +49,7 @@ GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all&scope=user|al
 POST /api/worlds/{world_id}/hide
 ```
 
-- 权限同硬删（创建者等）。非创建者返回 403，正文同时带 `message` 与 `detail`，文案为「仅创建者可删除该世界」。剧本页按这句展示，不再落成「未知错误」
+- 权限同硬删：创建者本人，或管理员（`users.role='admin'`）可隐藏他人世界。其他身份返回 403，正文同时带 `message` 与 `detail`，文案为「仅创建者或管理员可删除该世界」。剧本页按这句展示，不再落成「未知错误」
 - **不**校验角色/场景是否为空
 - 已隐藏时幂等成功
 
@@ -59,6 +59,7 @@ POST /api/worlds/{world_id}/hide
 POST /api/worlds/{world_id}/restore
 ```
 
+- 权限同隐藏：创建者或管理员
 - 若同用户下已有同名未删除世界 → 400：`存在同名世界，请先修改名称后再恢复`
 
 ### 硬删除（保留）
@@ -75,7 +76,7 @@ DELETE /api/worlds/{world_id}
 
 | 入口 | 行为 |
 | --- | --- |
-| `script_writer` 侧栏 | 隐藏 / 查看已删除 / 恢复；当前世界被隐藏时跳转到未选世界 |
+| `script_writer` 侧栏 | 抽屉图标为隐藏，垃圾桶仅为管理员永久删除；查看已删除 / 恢复；当前世界被隐藏时跳转到未选世界 |
 | `script_writer` 侧栏（管理员） | 列表拉取 `scope=all` 展示全部用户世界；他人世界带「用户 {id} 创建」标记与永久删除按钮（硬删除，非隐藏） |
 | `video_workflow` / `video_workflow_list` / index / marketing 等 | 默认列表自动不展示已删；无伪删除 UI |
 | `storyboard` 编辑页 | 无世界列表；直链 `world_id` 仍可通过 `get_by_id` 访问 |
