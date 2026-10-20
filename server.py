@@ -124,6 +124,9 @@ from utils.resource_access import (
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
+    is_admin_user,
+    resolve_authenticated_user_id,
+    enforce_x_user_id_consistency,
 )
 from utils.media_upload import (
     UploadValidationError,
@@ -713,6 +716,22 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     if translated and cookie_token and not path.startswith("/api/auth/"):
         set_auth_cookie(response, cookie_token, request)
     return response
+
+
+@app.middleware("http")
+async def x_user_id_consistency_middleware(request: Request, call_next):
+    """X-User-Id 自报身份与 token 属主一致性强制校验。
+
+    修复"伪主人"漏洞：历史上一批接口（/api/worlds*、storyboard 等）只读
+    X-User-Id 头认定身份，不校验 Authorization token 属主，任何人改一个
+    header 即可冒充他人删改资源。凡携带 X-User-Id 的 /api/ 请求在此统一
+    要求有效 token 且属主一致（细节见 utils/resource_access.py
+    enforce_x_user_id_consistency 与 docs/backend/auth_unification.md）。
+    """
+    error_response = await enforce_x_user_id_consistency(request)
+    if error_response is not None:
+        return error_response
+    return await call_next(request)
 
 
 # 安全响应头中间件（docs/security/xss_stored_chain_fix_plan.md 阶段 4a 第一步）：
@@ -8005,26 +8024,36 @@ async def get_worlds(
         'active',
         description="列表范围：active=未删除(默认) | deleted=已伪删除 | all=全部",
     ),
+    scope: str = Query(
+        'user',
+        description="数据范围：user=当前用户(默认) | all=全部用户（仅管理员生效，其余身份自动回退 user）",
+    ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
     获取世界列表。
 
+    身份以 Authorization token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
     传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
+    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         vis = (visibility or 'active').lower()
         if vis not in ('active', 'deleted', 'all'):
             vis = 'active'
+        include_all_users = (scope or 'user').lower() == 'all' and await asyncio.to_thread(
+            is_admin_user, user_id
+        )
         result = await asyncio.to_thread(
             WorldModel.list_by_user,
             user_id=user_id,
             page=page,
             page_size=page_size,
             visibility=vis,
+            include_all_users=include_all_users,
         )
         return JSONResponse(
             status_code=200,
@@ -8034,6 +8063,8 @@ async def get_worlds(
                 'data': result
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get worlds: {e}")
         return JSONResponse(
@@ -8052,9 +8083,9 @@ async def get_world_by_id(
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
-    """获取单个世界详情。协作者可查看（世界 VIEW）。"""
+    """获取单个世界详情。协作者可查看（世界 VIEW）。身份以 token 解析为准。"""
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = await asyncio.wait_for(
             asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.VIEW),
             timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
@@ -8132,10 +8163,10 @@ async def create_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    创建世界
+    创建世界。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         
         if not request.name or not request.name.strip():
             return JSONResponse(
@@ -8180,6 +8211,8 @@ async def create_world(
                 'data': world.to_dict() if world else None
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create world: {e}")
         return JSONResponse(
@@ -8200,10 +8233,10 @@ async def update_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    编辑世界信息
+    编辑世界信息。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = _ensure_world_access(world_id, user_id, Action.EDIT)
 
         update_fields = {}
@@ -8293,10 +8326,10 @@ async def hide_world(
 ):
     """
     伪删除（隐藏）世界：仅标记 is_deleted=1，不删库、不删资产。
-    已隐藏时幂等成功。
+    已隐藏时幂等成功。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
 
         await asyncio.to_thread(WorldModel.soft_delete, world_id)
@@ -8333,9 +8366,10 @@ async def restore_world(
     """
     恢复伪删除世界：is_deleted=0，重新出现在正常列表。
     若同用户下已有同名未删除世界，返回 400。
+    身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
 
         # 仅对仍标记为删除的世界做重名校验
@@ -8387,12 +8421,20 @@ async def delete_world(
     """
     硬删除世界（物理删除记录）。
     伪删除请使用 POST /api/worlds/{world_id}/hide。
+    创建者本人可删；管理员（role=admin）可删除其他用户创建的世界。
+    身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
-        _ensure_world_access(world_id, user_id, Action.DELETE)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
+        world = await asyncio.to_thread(WorldModel.get_by_id, world_id)
+        if not world:
+            raise HTTPException(status_code=404, detail="世界不存在")
+        if getattr(world, 'user_id', None) != user_id:
+            # 非创建者仅管理员可删
+            if not await asyncio.to_thread(is_admin_user, user_id):
+                raise HTTPException(status_code=403, detail="仅创建者或管理员可删除该世界")
 
-        character_count = CharacterModel.count_by_world(world_id)
+        character_count = await asyncio.to_thread(CharacterModel.count_by_world, world_id)
         if character_count > 0:
             return JSONResponse(
                 status_code=400,
@@ -8403,7 +8445,7 @@ async def delete_world(
                 }
             )
 
-        location_count = LocationModel.count_by_world(world_id)
+        location_count = await asyncio.to_thread(LocationModel.count_by_world, world_id)
         if location_count > 0:
             return JSONResponse(
                 status_code=400,
@@ -8414,7 +8456,7 @@ async def delete_world(
                 }
             )
 
-        WorldModel.delete(world_id)
+        await asyncio.to_thread(WorldModel.delete, world_id)
 
         return JSONResponse(
             status_code=200,

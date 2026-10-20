@@ -1826,6 +1826,7 @@ body {
 
 .world-edit-btn,
 .world-hide-btn,
+.world-delete-btn,
 .world-restore-btn {
     display: flex;
     align-items: center;
@@ -1850,6 +1851,27 @@ body {
     background: #ef4444;
     color: white;
     transform: scale(1.1);
+}
+
+/* 管理员硬删除他人世界：深红区分于「隐藏」伪删除 */
+.world-delete-btn {
+    color: #dc2626;
+}
+
+.world-delete-btn:hover {
+    background: #991b1b;
+    color: white;
+    transform: scale(1.1);
+}
+
+/* 管理员视角下的世界归属标记 */
+.world-owner-tag {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.15));
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+    width: fit-content;
 }
 
 .world-restore-btn:hover {

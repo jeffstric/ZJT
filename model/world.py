@@ -137,6 +137,7 @@ class WorldModel:
         order_direction: str = 'DESC',
         keyword: Optional[str] = None,
         visibility: str = 'active',
+        include_all_users: bool = False,
     ) -> Dict[str, Any]:
         """
         Get world records list by user ID with pagination
@@ -149,6 +150,7 @@ class WorldModel:
             order_direction: Order direction (ASC, DESC)
             keyword: Search keyword for name
             visibility: 'active' (default, is_deleted=0) | 'deleted' (is_deleted=1) | 'all'
+            include_all_users: True 时不过滤 user_id（仅管理员场景，调用方需先鉴权）
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -168,8 +170,8 @@ class WorldModel:
         where_conditions = []
         params = []
         
-        # 独立空间模式才按 user_id 过滤
-        if Edition.is_space_isolated():
+        # 独立空间模式才按 user_id 过滤；include_all_users（管理员场景）跳过过滤
+        if Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("user_id = %s")
             params.append(user_id)
 

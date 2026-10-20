@@ -148,26 +148,35 @@ def _check_owner(task, user_id: Optional[int]) -> bool:
     return task.user_id == user_id
 
 
+def _user_mismatch_error() -> JSONResponse:
+    """X-User-Id 与 token 属主不一致：401（与全站 X-User-Id 一致性中间件同语义）。"""
+    return JSONResponse(
+        status_code=401,
+        content={
+            "success": False,
+            "error_code": "user_mismatch",
+            "error": "user_id 与当前登录用户不一致",
+            "detail": "用户身份不一致，请重新登录后再试",
+        },
+    )
+
+
 async def _resolve_request_identity(
     auth_header: Optional[str],
     user_id_header: Optional[str],
 ):
-    """Authorization 优先，失效时保留浏览器 X-User-Id 兼容路径。"""
-    fallback_user_id = _get_user_id_from_header(user_id_header)
-    normalized_token = normalize_authorization_token(auth_header)
-    if normalized_token:
-        token_user_id, token_error = await resolve_authorization_user_id(auth_header)
-        if token_user_id is not None:
-            return token_user_id, normalized_token, None
-        if fallback_user_id is not None:
-            return fallback_user_id, None, None
+    """身份唯一可信来源是 Authorization token；X-User-Id 仅作一致性参考。
+
+    - token 缺失/无效 → 401（不再回退 X-User-Id 自报头，防"伪主人"冒充）
+    - X-User-Id 与 token 属主不一致 → 401（user_mismatch）
+    """
+    token_user_id, token_error = await resolve_authorization_user_id(auth_header)
+    if token_user_id is None:
         return None, None, token_error
-
-    if fallback_user_id is not None:
-        return fallback_user_id, None, None
-
-    _user_id, missing_error = await resolve_authorization_user_id(None)
-    return None, None, missing_error
+    claimed_user_id = _get_user_id_from_header(user_id_header)
+    if claimed_user_id is not None and claimed_user_id != token_user_id:
+        return None, None, _user_mismatch_error()
+    return token_user_id, normalize_authorization_token(auth_header), None
 
 
 @router.get('/tasks/{task_id}')
