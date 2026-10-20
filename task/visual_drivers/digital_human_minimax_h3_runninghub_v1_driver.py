@@ -369,9 +369,22 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             if not task_id:
                 raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
 
-            # 等待出片并下载
+            # 等待出片并下载（生成失败/超时换新任务自动重提一次，双败即抛错带刹车——
+            # 返回值不可丢弃：旧实现忽略 (ok, err) 会让流水线带着不存在的段文件继续跑，
+            # 首帧静默回退角色图、后续段白跑，最后以误导性的「拼接失败」报错收场）
             seg_file = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
-            self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
+            ok, gen_err = self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
+            if not ok:
+                self.logger.warning(f"[接力] seg_{idx} 生成失败（{gen_err}），自动重提一次")
+                retry_task_id, submit_err = self._submit_one_segment(
+                    image_url, audio_key, seg_duration, motion_prompt, max_edge)
+                if not retry_task_id:
+                    raise _SegmentedPipelineError(
+                        f"第 {idx} 段生成失败后重提未成功: {submit_err}")
+                ok, gen_err = self._wait_and_download_segment(
+                    retry_task_id, seg_file, f"seg_{idx}r")
+                if not ok:
+                    raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {gen_err}")
             seg_files.append(seg_file)
 
             # 末帧接力：提取本段末帧，作为下一段首帧输入图重新上传

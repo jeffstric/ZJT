@@ -221,12 +221,13 @@ def _make_segment_pipeline_mocks(driver):
     driver._upload_segment_audio = MagicMock(return_value="openapi/audio.wav")
     submit_mock = MagicMock(return_value=("rh-task-x", ""))
     driver._submit_one_segment = submit_mock
-    driver._wait_and_download_segment = MagicMock()
+    wait_mock = MagicMock(return_value=(True, ""))
+    driver._wait_and_download_segment = wait_mock
     extract_mock = MagicMock(return_value="temp/resume_last.jpg")
     driver._extract_last_frame = extract_mock
     concat_mock = MagicMock(return_value="/upload/cache/2026-01-01/x.mp4")
     driver._concat_and_store = concat_mock
-    return submit_mock, extract_mock, concat_mock
+    return submit_mock, extract_mock, concat_mock, wait_mock
 
 
 _SEG_EXTRA = '{"dh_segments": ["/tmp/seg1.wav", "/tmp/seg2.wav"], ' \
@@ -245,7 +246,7 @@ def test_submit_segments_resumes_from_cached_segments(monkeypatch, tmp_path):
         f.write(b"x" * 70000)
 
     driver = make_driver()
-    submit_mock, extract_mock, concat_mock = _make_segment_pipeline_mocks(driver)
+    submit_mock, extract_mock, concat_mock, _ = _make_segment_pipeline_mocks(driver)
     ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
 
     result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
@@ -273,7 +274,7 @@ def test_submit_segments_regenerates_when_cache_corrupt(monkeypatch, tmp_path):
         f.write(b"x" * 70000)
 
     driver = make_driver()
-    submit_mock, _, concat_mock = _make_segment_pipeline_mocks(driver)
+    submit_mock, _, concat_mock, _ = _make_segment_pipeline_mocks(driver)
     ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
 
     result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
@@ -296,7 +297,7 @@ def test_submit_segments_all_cached_skips_submission(monkeypatch, tmp_path):
             f.write(b"x" * 70000)
 
     driver = make_driver()
-    submit_mock, _, concat_mock = _make_segment_pipeline_mocks(driver)
+    submit_mock, _, concat_mock, _ = _make_segment_pipeline_mocks(driver)
     ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
 
     result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
@@ -305,3 +306,49 @@ def test_submit_segments_all_cached_skips_submission(monkeypatch, tmp_path):
     submit_mock.assert_not_called()
     concat_mock.assert_called_once_with(
         1, ['temp/h3seg_1_seg_1.mp4', 'temp/h3seg_1_seg_2.mp4'])
+
+
+def test_submit_segments_resubmits_once_on_generation_failure(monkeypatch, tmp_path):
+    """段上游生成失败时换新任务自动重提一次；重提成功则流水线继续完成。"""
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+    submit_mock, _, concat_mock, wait_mock = _make_segment_pipeline_mocks(driver)
+
+    def wait_side_effect(task_id, out_path, tag):
+        if tag == "seg_1":
+            return (False, "上游任务失败")
+        return (True, "")
+
+    wait_mock.side_effect = wait_side_effect
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    # seg_1 首次提交 + 失败后重提，seg_2 正常提交
+    assert submit_mock.call_count == 3
+    # seg_1 两轮等待（失败/成功）+ seg_2 一轮
+    assert wait_mock.call_count == 3
+    concat_mock.assert_called_once()
+
+
+def test_submit_segments_brakes_when_generation_fails_twice(monkeypatch, tmp_path):
+    """段生成双败必须立即抛 _SegmentedPipelineError（带真实根因）带刹车：
+    不得带着不存在的段文件继续跑后续段，也不得走到拼接才报错。"""
+    import pytest
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+    submit_mock, _, concat_mock, wait_mock = _make_segment_pipeline_mocks(driver)
+    wait_mock.side_effect = [(False, "上游任务失败"), (False, "上游任务失败")]
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    with pytest.raises(drv_mod._SegmentedPipelineError) as exc_info:
+        driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    msg = str(exc_info.value)
+    assert "第 1 段重试后仍失败" in msg
+    assert "上游任务失败" in msg  # 根因如实上报，而非误导性的「拼接失败」
+    assert submit_mock.call_count == 2  # 首次提交 + 一次重提，不再多跑
+    concat_mock.assert_not_called()  # 带刹车：后续段与拼接均未执行
