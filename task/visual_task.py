@@ -67,6 +67,18 @@ logger = logging.getLogger(__name__)
 # 社区版不注册，_enterprise_failure_handler 保持 None
 _enterprise_failure_handler = None
 
+# process_func 返回契约（process_task_with_retry 调度循环消费，见该函数文档）：
+#   PROCESS_RESULT_SUCCESS   → 任务到达成功终态（COMPLETED/DOWNLOADING）
+#   PROCESS_RESULT_FAILED    → 已被 _handle_task_failure 处理为终态失败
+#                              （社区版标 FAILED+退费，或企业版接管进入重试流水线）
+#   PROCESS_RESULT_IN_FLIGHT → 提交/流转成功但任务仍在进行（pipeline/sync/异步提交/
+#                              拥堵重排队/轮询宽限/孤儿重置），处理函数已自行维护状态
+#   True（遗留）             → 兼容旧调用点，按成功计（新代码勿再返回裸 True）
+#   False / None             → transient 失败或仍在轮询，调度循环按 try_count 退避后再调度
+PROCESS_RESULT_SUCCESS = "SUCCESS"
+PROCESS_RESULT_FAILED = "FAILED"
+PROCESS_RESULT_IN_FLIGHT = "IN_FLIGHT"
+
 
 def register_enterprise_failure_handler(handler):
     """
@@ -252,20 +264,21 @@ async def _submit_new_task(ai_tool):
     """
     使用驱动架构提交新任务 (status == AI_TOOL_STATUS_PENDING)
 
-    ⚠️ 6条退出路径（修改时请逐一确认影响）：
-      1. Pipeline PARAM_PREPARE → WAITING_PARAM_PREPARE, return True
-      2. Sync mode → 提交到进程池, SYNC_QUEUED, return True
-      3. Mock 短路 → 直接 PROCESSING, return True
-      4. Driver 创建失败 → FAILED + 退费, return False
-      5. 同步 API 成功 → 直接 COMPLETED（含媒体下载缓存）, return True
-      6. 异步提交成功 → PROCESSING + project_id, return True
-      7. 提交失败 → _handle_task_failure（企业版重试 / 社区版失败+退费）
+    ⚠️ 7条退出路径（修改时请逐一确认影响，返回值含义见模块级 PROCESS_RESULT_* 契约）：
+      1. Pipeline PARAM_PREPARE → WAITING_PARAM_PREPARE, return IN_FLIGHT
+      2. Sync mode → 提交到进程池, SYNC_QUEUED, return IN_FLIGHT
+      3. Mock 短路 → 直接 PROCESSING, return IN_FLIGHT
+      4. Driver 创建失败 → _handle_task_failure → FAILED
+      5. 同步 API 成功 → 直接 COMPLETED（含媒体下载缓存）, return SUCCESS
+      6. 异步提交成功 → PROCESSING + project_id, return IN_FLIGHT
+      7. 提交失败/异常 → _handle_task_failure（企业版重试 / 社区版失败+退费）
 
     Args:
         ai_tool: AITool 对象
 
     Returns:
-        bool: True 表示成功，False 表示失败
+        PROCESS_RESULT_SUCCESS / PROCESS_RESULT_IN_FLIGHT / PROCESS_RESULT_FAILED / False
+        （False 表示 transient 失败，调度循环按 try_count 退避后再调度）
     """
     from task.visual_drivers import VideoDriverFactory
     from config.unified_config import UnifiedConfigRegistry, get_implementation_id, get_implementation_name
@@ -291,7 +304,7 @@ async def _submit_new_task(ai_tool):
             AIToolsModel.update(task_id, status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_WAITING_PARAM_PREPARE)
             logger.info(f"Task {task_id} has {len(pending_prep)} param_prepare steps, entering pipeline")
-            return True  # 调度器会自动分发 PENDING 步骤
+            return PROCESS_RESULT_IN_FLIGHT  # 调度器会自动分发 PENDING 步骤
 
         # 0b. 获取 implementation 并立即记录（确保无论后续成功/失败/异常都有记录）
         # 优先使用已记录的 implementation（如由 retry driver 设置），回退到用户偏好
@@ -348,7 +361,7 @@ async def _submit_new_task(ai_tool):
                         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_SYNC_QUEUED)
                         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_SYNC_QUEUED)
                         logger.info(f"[SyncTask] Task {task_id} submitted to sync task executor (sync_mode implementation: {impl_config.name})")
-                        return True
+                        return PROCESS_RESULT_IN_FLIGHT
 
                     logger.error(
                         f"[SyncTask] Submit failed for task {task_id} implementation={implementation_name}; outer retry will backoff"
@@ -364,7 +377,7 @@ async def _submit_new_task(ai_tool):
             AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
             logger.info(f"[MOCK] visual async submit short-circuit task={task_id} pid={project_id}")
-            return True
+            return PROCESS_RESULT_IN_FLIGHT
         # ==============================================================================
 
         # 1. 优先使用记录的 implementation 创建驱动，确保重试时使用正确的实现方
@@ -460,7 +473,7 @@ async def _submit_new_task(ai_tool):
                     task_id, status=TASK_STATUS_QUEUED, next_trigger=next_trigger
                 )
                 logger.info(f"Task {task_id} upstream congested, re-queued, will retry in {delay}s")
-                return True  # 返回 True → 外层 process_task_with_retry 不增加 try_count
+                return PROCESS_RESULT_IN_FLIGHT  # 已自行设置 next_trigger，外层不得再退避覆盖
 
             # 处理需要重试的情况（通常是网络异常）
             if result.get("retry"):
@@ -545,7 +558,7 @@ async def _submit_new_task(ai_tool):
                                user_id=ai_tool.user_id, status_to=AI_TOOL_STATUS_COMPLETED,
                                message="任务完成（同步任务）",
                                detail={'result_url': final_url})
-            return True
+            return PROCESS_RESULT_SUCCESS
 
         # 5. 异步模式，更新数据库
         project_id = result.get("project_id")
@@ -580,7 +593,7 @@ async def _submit_new_task(ai_tool):
                            implementation=ai_tool.implementation,
                            message=f"已提交到上游，project_id={project_id}",
                            detail={'project_id': project_id, 'driver': driver.driver_name})
-        return True
+        return PROCESS_RESULT_IN_FLIGHT
 
     except Exception as e:
         # 捕获所有未预期的异常
@@ -612,7 +625,10 @@ async def _check_task_status(ai_tool):
         ai_tool: AITool 对象
 
     Returns:
-        bool: True 表示任务已完成（成功或失败），False 表示仍在处理中
+        PROCESS_RESULT_SUCCESS: 任务成功终态（COMPLETED/DOWNLOADING）
+        PROCESS_RESULT_FAILED: 上游失败/异常，已被 _handle_task_failure 处理为终态
+        PROCESS_RESULT_IN_FLIGHT: 轮询宽限期或孤儿已重置，本轮无需退避
+        False: 仍在处理中（sync 执行器中/RUNNING/未知状态），调度循环退避后再轮询
     """
     from task.visual_drivers import VideoDriverFactory
     from task.sync_task_executor import get_sync_task_executor
@@ -647,11 +663,11 @@ async def _check_task_status(ai_tool):
                     f"AI tool {task_id} PROCESSING without project_id but active "
                     f"{active_seconds:.0f}s ago (<{grace_seconds}s grace), skip orphan reset"
                 )
-                return True
+                return PROCESS_RESULT_IN_FLIGHT  # 本轮无需重试计数/退避
         logger.warning(f"AI tool {task_id} has no project_id while status=PROCESSING and not in sync executor, resetting to PENDING")
         AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PENDING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED, try_count=0, next_trigger=datetime.now())
-        return True
+        return PROCESS_RESULT_IN_FLIGHT  # 已自行重置 try_count/next_trigger，外层不得再退避覆盖
     
     if _is_test_mode_enabled() and isinstance(project_id, str) and project_id.startswith("mock_task_"):
         logger.info(f"[TEST MODE] [DRIVER] Checking status for mock task {project_id}")
@@ -804,7 +820,9 @@ def _check_pipeline_stage(ai_tool, stage):
         stage: PipelineStage 阶段名称
 
     Returns:
-        bool: True 表示阶段已完成（ai_tool 状态已推进），False 表示仍在处理中
+        PROCESS_RESULT_FAILED: 阶段失败且任务已标 FAILED+退费（终态，外层不再退避重试）
+        PROCESS_RESULT_IN_FLIGHT: 阶段已推进/完成，任务回到主流程或等待中
+        False: 仍有步骤待处理，调度循环退避后继续轮询
     """
     from task.pipeline_processor import PipelineProcessor
 
@@ -819,7 +837,7 @@ def _check_pipeline_stage(ai_tool, stage):
         if stage == PipelineStage.PARAM_PREPARE:
             AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_PENDING)
             TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
-        return True
+        return PROCESS_RESULT_IN_FLIGHT
 
     has_pending_or_processing = any(
         s.status in (PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING)
@@ -871,7 +889,7 @@ def _check_pipeline_stage(ai_tool, stage):
                 logger.warning(f"Failed to mark attempt as failed for task {ai_tool.id}: {e}")
 
             logger.info(f"Task {ai_tool.id} failed: all retry attempts exhausted")
-        return True
+        return PROCESS_RESULT_FAILED
 
     if has_pending_or_processing:
         # 还有步骤在处理中或待处理，继续等待
@@ -888,7 +906,7 @@ def _check_pipeline_stage(ai_tool, stage):
         # before_finish 的 implementation_retry 驱动已将 ai_tool 设回 PENDING
         # 此处无需额外操作
         logger.info(f"Task {ai_tool.id} before_finish completed, re-submitting with new implementation")
-    return True
+    return PROCESS_RESULT_IN_FLIGHT
 
 
 async def _handle_task_success(project_id, task_id, media_url):
@@ -1027,7 +1045,8 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         project_id: Project ID (可选，提交阶段失败时为 None)
 
     Returns:
-        bool: True if handled successfully
+        PROCESS_RESULT_FAILED: 失败已处理为终态（企业版接管重试，或社区版标 FAILED+退费）
+        False: 处理本身失败（DB 更新/退费异常），交由调度循环退避重试
     """
     # 尝试企业版重试处理器（before_finish 切换备用实现方）
     reason = _normalize_failure_reason(reason)
@@ -1036,7 +1055,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         try:
             result = _enterprise_failure_handler(task_id, ai_tool_type, reason, user_id, project_id=project_id)
             if result:
-                return True  # 企业版已处理（进入重试流程）
+                return PROCESS_RESULT_FAILED  # 企业版已处理（进入重试流程）
         except Exception as e:
             logger.warning(f"Enterprise failure handler error for task {task_id}: {e}")
             # 不阻断原有失败处理流程
@@ -1099,7 +1118,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
 
         if is_already_refunded(ai_tool):
             logger.info(f"Task {task_id} already refunded (idempotent transaction), skipping")
-            return True
+            return PROCESS_RESULT_FAILED
 
         computing_power = resolve_refund_amount(ai_tool, task_type=ai_tool_type)
 
@@ -1141,7 +1160,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         logger.error(f"Failed to process refund for task {project_id}: {refund_error}")
     
     logger.info(f"Task {project_id} failed: {reason}")
-    return True
+    return PROCESS_RESULT_FAILED
 
 
 async def process_generate_video(task):
@@ -1248,12 +1267,19 @@ def process_task_with_retry(task_type, process_func):
       检测 WAITING_BEFORE_FINISH 状态但 ai_tools 已 PENDING/FAILED 的任务
       说明 pipeline 步骤完成但 tasks 表状态未同步，自动修复
 
+    ⚠️ process_func 返回值契约（模块级 PROCESS_RESULT_* 常量）：
+      SUCCESS    → 任务成功终态，计入 success_count
+      FAILED     → 已被 _handle_task_failure 处理为终态失败（含企业版接管重试），
+                   不再安排退避重试（避免对已终态任务虚增 try_count/假重试日志）
+      IN_FLIGHT  → 提交/流转成功但在途，处理函数已自行维护状态与 next_trigger
+      False/None → transient 失败或仍在轮询，try_count+1 并按退避延迟再调度
+
     Args:
         task_type: Task type
         process_func: Specific task processing function
 
     Returns:
-        Tuple of (has_task, process_result)
+        Tuple of (has_task, any_succeeded) —— any_succeeded 仅统计真成功终态
     """
     try:
         # Query tasks by type with status 0 (队列中) or 1 (处理中)
@@ -1491,15 +1517,29 @@ def process_task_with_retry(task_type, process_func):
                 import inspect
                 if inspect.iscoroutinefunction(process_func):
                     # 异步函数，使用 asyncio.run
-                    success = asyncio.run(process_func(task))
+                    result = asyncio.run(process_func(task))
                 else:
                     # 同步函数，直接调用
-                    success = process_func(task)
+                    result = process_func(task)
                 processed_count += 1
-                
-                if success:
+
+                # 返回值契约见模块级 PROCESS_RESULT_* 常量：
+                #   SUCCESS    → 真成功终态，计入 success_count
+                #   FAILED     → 已被 _handle_task_failure 处理为终态失败，主循环不再干预
+                #                （此前返回 True 会被误统计为成功，且对已 FAILED 任务虚增
+                #                  try_count/打 RETRY_SCHEDULED 假重试日志）
+                #   IN_FLIGHT  → 提交/流转成功但在途，处理函数已自行维护状态与 next_trigger
+                #   True（遗留）→ 兼容旧调用点，按成功计
+                #   False/None → transient 失败或仍在轮询，按 try_count 退避后再调度
+                if result == PROCESS_RESULT_SUCCESS or result is True:
                     logger.info(f"Task completed successfully: {task.task_id}")
                     success_count += 1
+                elif result == PROCESS_RESULT_FAILED:
+                    logger.info(f"Task {task.task_id} terminated in failure "
+                                f"(final state recorded by failure handler, no retry scheduling)")
+                elif result == PROCESS_RESULT_IN_FLIGHT:
+                    logger.info(f"Task {task.task_id} in flight "
+                                f"(state transitions handled by processing function)")
                 else:
                     # Failed - increment retry count and update status to -1 (处理失败)
                     new_try_count = (task.try_count or 0) + 1
