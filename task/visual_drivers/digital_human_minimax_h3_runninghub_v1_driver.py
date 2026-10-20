@@ -728,6 +728,15 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 "project_id": task_id,
             }
 
+        except _SegmentedCongestedError as e:
+            # 分段链路各段提交时命中上游 421 拥堵抛出此异常，
+            # 交回调度层按 UPSTREAM_CONGESTED 回队延迟重试（与单段路径一致），
+            # 不得落入通用 Exception 分支被当成不可重试硬失败
+            self.logger.warning(
+                f"Digital Human(MiniMax H3) segmented upstream congested, will auto-retry: {e}"
+            )
+            return self._build_upstream_congested_result()
+
         except ImageExpiredError as e:
             self.logger.warning(f"输入图片已过期: {str(e)}")
             return {

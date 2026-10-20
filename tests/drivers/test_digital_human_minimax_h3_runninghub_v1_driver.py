@@ -162,3 +162,27 @@ def test_concat_and_store_uses_configured_ffprobe(monkeypatch, tmp_path):
     assert calls[0] == "/usr/bin/ffprobe"
     assert calls[1] != "bin/ffmpeg/ffmpeg"
     assert result_url.startswith("/upload/cache/")
+
+
+def test_submit_task_segmented_congestion_returns_upstream_retry(monkeypatch):
+    """分段链路命中上游 421 拥堵时，submit_task 必须转成 UPSTREAM_CONGESTED 延迟重试，
+    不得落入通用异常分支被判为不可重试硬失败（会误报 Sentry 并退算力终态失败）。"""
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    driver = make_driver()
+    driver._send_alert = MagicMock()
+    ai_tool = make_ai_tool(
+        extra_config='{"dh_segments": ["/tmp/seg1.wav"], "dh_segment_durations": [10]}'
+    )
+
+    def _boom(ai_tool, segment_paths, extra_config):
+        raise drv_mod._SegmentedCongestedError("api queue limit reached")
+
+    monkeypatch.setattr(driver, "_submit_segments_async", _boom)
+
+    result = asyncio.run(driver.submit_task(ai_tool))
+
+    assert result == driver._build_upstream_congested_result()
+    assert result["retry"] is True
+    assert result["retry_reason"] == "UPSTREAM_CONGESTED"
+    driver._send_alert.assert_not_called()
