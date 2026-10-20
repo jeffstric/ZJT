@@ -124,7 +124,7 @@ next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
 
 ## 同步任务进程池恢复
 
-部分同步实现方会通过 `task/sync_task_executor.py` 进入独立 `ProcessPoolExecutor`，避免同步 API 请求阻塞主调度器。任务提交成功后：
+部分同步实现方会通过 `task/sync_task_executor.py` 进入独立 `ProcessPoolExecutor`，避免同步 API 请求阻塞主调度器。进程池默认以 **spawn** 方式创建 worker（全新解释器，根治 fork 继承线程池/锁导致的假超时与死锁，详见 `docs/backend/sync_worker_spawn_cutover.md`）；可用动态配置 `sync_task.worker_start_method`（spawn/fork，默认 spawn）回退，修改后重启或等下次池重建生效。Windows/macOS 默认本就是 spawn，该配置实际只影响 Linux。任务提交成功后：
 
 - `ai_tools.status = SYNC_QUEUED`
 - `tasks.status = SYNC_QUEUED`
@@ -132,7 +132,7 @@ next_trigger = datetime.now() + timedelta(seconds=delay_seconds)
 执行器保存 task id、implementation、提交时间和 future。结果检查时：
 
 - 已完成 future 使用 `future.result(timeout=0)` 读取结果。
-- 未完成 future 只对配置了 `sync_task.stale_timeout.<implementation>` 的白名单实现做 stale 检测。
+- 未完成 future 只对配置了 `sync_task.stale_timeout.<implementation>` 的白名单实现做 stale 检测；stale 时钟从 submit 起算，spawn worker 冷启动（池创建/重建后首个任务，秒级）计入其中。
 - 默认不 kill 未配置 timeout 的实现，避免误杀 GPT/Gemini 等合法长耗时任务。
 - Seedance、RunningHub、Happy Horse 等提交后轮询的异步任务不属于 SyncTask stale future 回收范围。
 

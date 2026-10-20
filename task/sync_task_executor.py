@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Any
 
 from config.constant import (
+    SYNC_WORKER_DEFAULT_START_METHOD,
     SYNC_WORKER_INIT_WATCHDOG_TIMEOUT,
     SYNC_WORKER_RECLAIM_GRACE_SECONDS,
     SYNC_WORKER_RECLAIM_JOIN_TIMEOUT,
@@ -135,14 +136,12 @@ def _enterprise_sync_worker_init() -> None:
     # 单例缓存，子进程首次 get_file_storage() 时新建干净线程池。必须放在社区版
     # early-return 之前，两版通吃。
     #
-    # 【已知盲区（本重置不覆盖，升级 spawn 或统一 fork 状态重置时可一并解决）】
-    # 1. utils/media_cache.get_cache_manager() 模块级单例在父进程启动时已持有
-    #    旧 storage 引用（self._storage），reset 工厂缓存救不了它；当前
-    #    qiniu_long_term 执行器在父进程从未上传过（token=0）故未爆，若调度器
-    #    进程日后经 media_cache 上传过文件，子进程缓存上传将同样假超时。
-    # 2. utils/image_upload_utils._SYNC_WRAPPER_EXECUTOR（模块级线程池）同样
-    #    被 fork 继承；子进程无 running loop 时走 asyncio.run 直跑分支暂不经
-    #    过它，但父进程在异步上下文调过 _run_coro_sync 后它即毒化。
+    # 【盲区处置】进程池默认已切 spawn（2026-10，见 docs/backend/
+    # sync_worker_spawn_cutover.md）：worker 是全新解释器，下方 fork 盲区不再
+    # 存在；此重置与日志锁重建保留，作为动态配置回退 sync_task.worker_start_
+    # method=fork 时的防线。fork 模式下仍有的残余盲区：media_cache 单例持有的
+    # storage 引用、image_upload_utils._SYNC_WRAPPER_EXECUTOR（回退期间靠
+    # reset + 使用路径侥幸；download_io_pool 已加 pid 守卫，不再假超时）。
     reset_file_storage()
     try:
         from config.constant import Edition
@@ -403,6 +402,56 @@ class SyncTaskExecutor:
         except Exception:
             return 5
 
+    @staticmethod
+    def _get_worker_start_method() -> str:
+        """worker 进程池启动方式（spawn/fork），默认 spawn。
+
+        优先级：环境变量 SYNC_TASK_WORKER_START_METHOD（部署层应急开关，DB
+        不可达时也能切；值非法时忽略并回退动态配置）> 动态配置
+        sync_task.worker_start_method > 代码默认 SYNC_WORKER_DEFAULT_START_METHOD。
+        非法值/平台不支持（Windows 无 fork）时回退 spawn 并告警。每次建池
+        （start/rebuild）读取，改配置重启或等下次池重建后生效。
+        """
+        method = SYNC_WORKER_DEFAULT_START_METHOD
+        raw = None
+        source = "default"
+        env_raw = os.environ.get("SYNC_TASK_WORKER_START_METHOD")
+        if isinstance(env_raw, str) and env_raw.strip().lower() in ("spawn", "fork"):
+            raw = env_raw
+            source = "env:SYNC_TASK_WORKER_START_METHOD"
+        else:
+            if env_raw:
+                logger.warning(
+                    "[SyncTaskExecutor] 无效的环境变量 SYNC_TASK_WORKER_START_METHOD=%r，"
+                    "忽略并回退动态配置",
+                    env_raw,
+                )
+            try:
+                from config.config_util import get_dynamic_config_value
+
+                value = get_dynamic_config_value(
+                    "sync_task", "worker_start_method", default=SYNC_WORKER_DEFAULT_START_METHOD,
+                )
+                if value is not None:
+                    raw = value
+                    source = "config:sync_task.worker_start_method"
+            except Exception:
+                pass
+        if isinstance(raw, str) and raw.strip().lower() in ("spawn", "fork"):
+            method = raw.strip().lower()
+        elif raw not in (None, "", SYNC_WORKER_DEFAULT_START_METHOD):
+            logger.warning(
+                "[SyncTaskExecutor] 无效的 worker 启动方式 %s=%r，回退 %s",
+                source, raw, SYNC_WORKER_DEFAULT_START_METHOD,
+            )
+        if method == "fork" and "fork" not in multiprocessing.get_all_start_methods():
+            logger.warning(
+                "[SyncTaskExecutor] 当前平台不支持 fork 启动方式，回退 %s",
+                SYNC_WORKER_DEFAULT_START_METHOD,
+            )
+            method = SYNC_WORKER_DEFAULT_START_METHOD
+        return method
+
     def _is_stale_detection_enabled(self) -> bool:
         try:
             from config.config_util import get_dynamic_config_value
@@ -437,13 +486,21 @@ class SyncTaskExecutor:
             # 不再使用 multiprocessing.Manager 共享 worker_pids：Manager 服务进程
             # 是单点，死亡后所有任务在 worker 端 unpickle 参数（RebuildProxy 连接）
             # 阶段崩溃（2026-09-12 20:43 事故，生图任务 100% 失败）。
+            # 启动方式默认 spawn（根治 fork 继承线程池/锁问题，详见
+            # docs/backend/sync_worker_spawn_cutover.md），可经
+            # sync_task.worker_start_method 回退 fork。
+            start_method = self._get_worker_start_method()
             self._executor = ProcessPoolExecutor(
                 max_workers=self._max_workers,
                 initializer=_enterprise_sync_worker_init,
+                mp_context=multiprocessing.get_context(start_method),
             )
             self._pool_broken = False
             self._running = True
-            logger.info(f"[SyncTaskExecutor] Started with max_workers={self._max_workers}")
+            logger.info(
+                "[SyncTaskExecutor] Started with max_workers=%s, start_method=%s",
+                self._max_workers, start_method,
+            )
             return True
         except Exception as e:
             logger.error(f"[SyncTaskExecutor] Failed to start: {e}")
@@ -521,12 +578,18 @@ class SyncTaskExecutor:
                     reclaimed,
                 )
 
+        # 重建时重读启动方式配置（改 sync_task.worker_start_method 后无需重启，
+        # 下次池重建即生效）
+        start_method = self._get_worker_start_method()
         self._executor = ProcessPoolExecutor(
             max_workers=self._max_workers,
             initializer=_enterprise_sync_worker_init,
+            mp_context=multiprocessing.get_context(start_method),
         )
         self._pool_broken = False
-        logger.warning("[SyncTaskExecutor] Process pool rebuilt")
+        logger.warning(
+            "[SyncTaskExecutor] Process pool rebuilt (start_method=%s)", start_method,
+        )
 
     def _cleanup_task_metadata(self, task_id: int) -> None:
         self._futures.pop(task_id, None)

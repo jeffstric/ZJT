@@ -1160,6 +1160,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     {
+        'key': 'sync_task.worker_start_method',
+        'value_type': 'string',
+        'description': '同步任务 worker 进程池启动方式：spawn（默认，全新解释器，根治 fork 继承线程池/锁导致的假超时与死锁）/ fork（旧行为，Windows 不支持自动回落 spawn）。环境变量 SYNC_TASK_WORKER_START_METHOD 优先级更高（应急开关）。⚠️修改后需重启服务或等下次进程池重建生效',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
         'key': 'sync_task.stale_detection_enabled',
         'value_type': 'bool',
         'description': '是否启用同步任务 stale future 检测与 worker 回收',
