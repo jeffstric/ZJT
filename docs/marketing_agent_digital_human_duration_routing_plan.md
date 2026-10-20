@@ -284,3 +284,16 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 **修复**：3 处调用统一改 `_get_ffmpeg_path()` / `_get_ffprobe_path()`（读主配置 `bin.ffmpeg` / `bin.ffprobe`，缺省回退 PATH）；删除被覆盖的重复 `_extract_last_frame` 定义；`_extract_last_frame` 补 `OSError` 捕获——ffmpeg 启动失败时按契约返回 None（下一段回退角色图首帧），不再炸整条流水线。
 
 **测试**：`tests/drivers/test_digital_human_minimax_h3_runninghub_v1_driver.py` 新增 3 项（配置路径生效 / ffmpeg 不可启动优雅降级 / ffprobe 配置路径）+ 驱动相关 184 项回归通过。
+
+
+### 附录 C.10 上游 421 拥堵回队重试 + 分段断点续跑（2026-10-20）
+
+**事故（zjt-dev 环境，会话 f140f999）**：19.87s 口播 → 2 段分段拼接，第 1 段 11s 档上游两次无原因 FAILED、自动降档 10s 重切后 seg_2 提交时 RunningHub 返回 `errorCode=421`（api queue limit reached，账号级并发打满）。分段链路抛出 `_SegmentedCongestedError` 本意为"可重试拥堵信号"，但 `submit_task` 无对应 except 分支，落入通用 `Exception` 被当成不可重试硬失败——4 分钟内 7 次密集重试全部撞在拥堵高峰后终态失败退款，用户什么都拿不到，还误报 Sentry `UNEXPECTED_EXCEPTION`。
+
+**修复**：
+
+- `submit_task` 新增 `except _SegmentedCongestedError` 分支，返回 `_build_upstream_congested_result()`（`retry=True / UPSTREAM_CONGESTED`），与单段路径一致交回调度层：释放本地槽位 → 30s 延迟回队（`runninghub.upstream_congest_retry_delay`）→ 不消耗 try_count、不退款、不切换实现方，上游恢复即生成；`_check_task_expiration`（`task_expire_days`，默认 7 天）兜底过期退款。
+- **断点续跑**：段成片按 `ai_tools.id` 确定性落盘 `temp/h3seg_{id}_seg_{idx}.mp4`，重试时 `_is_valid_segment`（ffprobe 探测视频流 + 时长与档位偏差 ≤3s，防复用下载中途被杀的截断残文件）校验通过的已完成段直接复用，从第一个缺失的段继续生成；下一段首帧取自已复用段的末帧（接力衔接，失败回退角色图）。杜绝"第 2 段撞 421 → 第 1 段被完整重复生成"的上游费用浪费。
+- 顺带修复接力链 latent bug：末帧上传失败的回退分支引用不存在的 `result_url_role`（NameError 会炸整条 submit_task），改为回退到角色图 URL。
+
+**测试**：驱动测试新增 4 项（421→UPSTREAM_CONGESTED 转换 / 续跑命中跳段 / 缓存损坏回退全量重生成 / 全缓存零提交直接拼接），累计 775 项驱动测试通过。

@@ -186,3 +186,122 @@ def test_submit_task_segmented_congestion_returns_upstream_retry(monkeypatch):
     assert result["retry"] is True
     assert result["retry_reason"] == "UPSTREAM_CONGESTED"
     driver._send_alert.assert_not_called()
+
+
+import json as _json
+
+
+def _write_fake_ffprobe(monkeypatch, duration="10.0"):
+    """伪造 ffprobe：所有调用都返回可解析的视频流与指定时长。"""
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    def fake_run(argv, *args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout=_json.dumps({
+                "streams": [{"width": 720, "height": 1280}],
+                "format": {"duration": duration},
+            }),
+            stderr="")
+
+    monkeypatch.setattr(drv_mod.subprocess, "run", fake_run)
+
+
+def _make_segment_pipeline_mocks(driver):
+    """mock 掉流水线的外部交互，返回各 mock 便于断言。"""
+
+    def fake_upload(path):
+        if "resume_last" in str(path):
+            return SimpleNamespace(success=True, url="https://rh.example/relay.jpg",
+                                   key="openapi/relay.jpg", error=None)
+        return SimpleNamespace(success=True, url="https://rh.example/role.png",
+                               key="openapi/role.png", error=None)
+
+    driver._upload_to_runninghub_sync = MagicMock(side_effect=fake_upload)
+    driver._upload_segment_audio = MagicMock(return_value="openapi/audio.wav")
+    submit_mock = MagicMock(return_value=("rh-task-x", ""))
+    driver._submit_one_segment = submit_mock
+    driver._wait_and_download_segment = MagicMock()
+    extract_mock = MagicMock(return_value="temp/resume_last.jpg")
+    driver._extract_last_frame = extract_mock
+    concat_mock = MagicMock(return_value="/upload/cache/2026-01-01/x.mp4")
+    driver._concat_and_store = concat_mock
+    return submit_mock, extract_mock, concat_mock
+
+
+_SEG_EXTRA = '{"dh_segments": ["/tmp/seg1.wav", "/tmp/seg2.wav"], ' \
+             '"dh_segment_durations": [10, 10], "max_edge": 1280}'
+_SEG_PATHS = ["/tmp/seg1.wav", "/tmp/seg2.wav"]
+_SEG_CONFIG = {"dh_segment_durations": [10, 10], "max_edge": 1280}
+
+
+def test_submit_segments_resumes_from_cached_segments(monkeypatch, tmp_path):
+    """断点续跑：temp 已有上一轮完整下载的 seg_1 时，重试只提交 seg_2，
+    且首帧取自已复用段的末帧（接力衔接），不得重复生成 seg_1。"""
+    monkeypatch.chdir(tmp_path)
+    _write_fake_ffprobe(monkeypatch, duration="10.0")
+    os.makedirs('temp', exist_ok=True)
+    with open('temp/h3seg_1_seg_1.mp4', 'wb') as f:
+        f.write(b"x" * 70000)
+
+    driver = make_driver()
+    submit_mock, extract_mock, concat_mock = _make_segment_pipeline_mocks(driver)
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    # seg_1 被复用：整轮只提交一次（seg_2）
+    assert submit_mock.call_count == 1
+    call = submit_mock.call_args[0]
+    assert call[0] == "https://rh.example/relay.jpg"  # 首帧=复用段末帧，非角色图
+    assert call[2] == 10  # seg_2 时长档位
+    # 复用段末帧确实取自缓存的 seg_1 成片
+    assert extract_mock.call_args_list[0][0][0] == 'temp/h3seg_1_seg_1.mp4'
+    # 拼接输入 = 复用段 + 新生成段
+    concat_mock.assert_called_once_with(
+        1, ['temp/h3seg_1_seg_1.mp4', 'temp/h3seg_1_seg_2.mp4'])
+
+
+def test_submit_segments_regenerates_when_cache_corrupt(monkeypatch, tmp_path):
+    """缓存段成片校验不通过（ffprobe 时长与档位偏差过大，疑似截断残文件）时，
+    必须从 seg_1 重新生成，不得复用损坏文件。"""
+    monkeypatch.chdir(tmp_path)
+    _write_fake_ffprobe(monkeypatch, duration="4.0")  # 期望 10s，偏差 >3s → 无效
+    os.makedirs('temp', exist_ok=True)
+    with open('temp/h3seg_1_seg_1.mp4', 'wb') as f:
+        f.write(b"x" * 70000)
+
+    driver = make_driver()
+    submit_mock, _, concat_mock = _make_segment_pipeline_mocks(driver)
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    assert submit_mock.call_count == 2  # seg_1、seg_2 全部重新提交
+    # seg_1 首帧回退为角色图（无复用段）
+    assert submit_mock.call_args_list[0][0][0] == "https://rh.example/role.png"
+    concat_mock.assert_called_once_with(
+        1, ['temp/h3seg_1_seg_1.mp4', 'temp/h3seg_1_seg_2.mp4'])
+
+
+def test_submit_segments_all_cached_skips_submission(monkeypatch, tmp_path):
+    """全部段成片已缓存时（如拼接前 worker 重启），直接拼接，不再提交任何上游任务。"""
+    monkeypatch.chdir(tmp_path)
+    _write_fake_ffprobe(monkeypatch, duration="10.0")
+    os.makedirs('temp', exist_ok=True)
+    for idx in (1, 2):
+        with open(f'temp/h3seg_1_seg_{idx}.mp4', 'wb') as f:
+            f.write(b"x" * 70000)
+
+    driver = make_driver()
+    submit_mock, _, concat_mock = _make_segment_pipeline_mocks(driver)
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    submit_mock.assert_not_called()
+    concat_mock.assert_called_once_with(
+        1, ['temp/h3seg_1_seg_1.mp4', 'temp/h3seg_1_seg_2.mp4'])

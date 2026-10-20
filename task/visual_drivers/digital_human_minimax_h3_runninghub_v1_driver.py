@@ -294,6 +294,10 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         段 i+1 用段 i 末帧作首帧（画面衔接）；逐段生成→提取末帧→链式提交；
         全部完成后下载拼接、落盘 /upload/cache 并返回最终 result_url。
 
+        断点续跑：段成片按 ai_tool.id 确定性落盘 temp/h3seg_{id}_seg_{idx}.mp4，
+        上游 421 拥堵回队重试时复用已完整下载的段（ffprobe 校验通过），
+        从第一个缺失的段继续，避免已完成的段被重复生成（浪费上游并发与费用）。
+
         失败语义：段提交/生成失败自动重试一次（换新 RunningHub 任务），
         仍失败抛 _SegmentedPipelineError（入口转统一失败处理）。
         上游拥堵（is_upstream_congested_error）抛 _SegmentedCongestedError，
@@ -314,9 +318,38 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             image_url = result.url if result.url else result.key
         else:
             raise _SegmentedPipelineError("分段任务缺少角色图")
+        role_image_url = image_url  # 接力帧缺失/上传失败时回退角色图
 
+        # 断点续跑：复用上一轮已完整下载的段成片（须连续：第 1 个缺失段之前的才可复用）
         seg_files: list = []  # 各段成片本地路径
+        for idx in range(1, len(segment_paths) + 1):
+            cached = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
+            expected = int(segment_durations[idx - 1]) \
+                if idx - 1 < len(segment_durations) else None
+            if self._is_valid_segment(cached, expected):
+                seg_files.append(cached)
+                self.logger.info(f"[接力] 断点续跑：复用已完成段 seg_{idx}: {cached}")
+                continue
+            break
+        resumed = len(seg_files)
+
+        # 复用段之后的下一段首帧：取已复用末段的末帧上传（画面衔接），失败回退角色图
+        if 0 < resumed < len(segment_paths):
+            last_frame = self._extract_last_frame(
+                seg_files[-1], os.path.join('temp', f"h3seg_{ai_tool.id}_resume_last.jpg"))
+            if last_frame:
+                img = self._upload_to_runninghub_sync(last_frame)
+                if img.success:
+                    image_url = img.url if img.url else img.key
+                    self.logger.info(
+                        f"[接力] 复用段末帧已上传，作为 seg_{resumed + 1} 首帧")
+                else:
+                    self.logger.warning(
+                        f"[接力] 复用段末帧上传失败，回退角色图: {img.error}")
+
         for idx, seg_path in enumerate(segment_paths, start=1):
+            if idx <= resumed:
+                continue  # 断点续跑：该段已复用，跳过生成
             seg_duration = int(segment_durations[idx - 1]) if idx - 1 < len(segment_durations) \
                 else DEFAULT_DURATION
             audio_key = self._upload_segment_audio(seg_path)
@@ -353,7 +386,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                     else:
                         self.logger.warning(
                             f"[接力] seg_{idx} 末帧上传失败，下一段回退角色图: {img.error}")
-                        image_url = result_url_role  # 回退角色图
+                        image_url = role_image_url  # 回退角色图
 
         # 全部段完成：统一缩放拼接
         result_url = self._concat_and_store(ai_tool.id, seg_files)
@@ -362,6 +395,45 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             "sync_mode": True,
             "result_url": result_url,
         }
+
+    def _is_valid_segment(self, path: str,
+                          expected_duration: Optional[int] = None) -> bool:
+        """断点续跑校验：段成片存在、大小合理、ffprobe 可探测出视频流，
+        且时长与期望档位接近（防止复用下载中途被杀留下的截断/损坏文件）。
+        """
+        if not path or not os.path.isfile(path):
+            return False
+        try:
+            if os.path.getsize(path) < 64 * 1024:
+                return False
+            probe = subprocess.run(
+                [_get_ffprobe_path(), '-v', 'error',
+                 '-select_streams', 'v:0', '-show_streams', '-show_format',
+                 '-of', 'json', path],
+                capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if probe.returncode != 0:
+            return False
+        try:
+            data = json.loads(probe.stdout or '{}')
+        except (json.JSONDecodeError, TypeError):
+            return False
+        vstream = next(
+            (s for s in (data.get('streams') or [])
+             if isinstance(s, dict) and s.get('width') and s.get('height')),
+            None)
+        if vstream is None:
+            return False
+        if expected_duration:
+            try:
+                actual = float((data.get('format') or {}).get('duration') or 0)
+            except (TypeError, ValueError):
+                return False
+            # H3 出片时长相对请求档位允许小幅偏差；偏差过大视为残文件
+            if abs(actual - expected_duration) > 3:
+                return False
+        return True
 
     def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
         """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None（下一段回退角色图）。"""
