@@ -1426,6 +1426,9 @@ class StoryboardFeatureFlags:
     _CONSTANT_GROUP = True
 
     QUALITY_GRID_FIRST_FRAME_ENABLED = True
+    # quality 宫格首帧失败后是否降级为逐场景单图直出。
+    # 关闭后回到旧行为：宫格失败 → fail_downstream 级联判死整条串行链。
+    GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED = True
 
 
 class StoryboardTimeouts:
@@ -1870,6 +1873,8 @@ class StoryboardAutoGenerateConstants:
     BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    # 宫格失败降级单图时，单图提交本身失败的错误码（与宫格失败码区分，不再二次降级）。
+    ERROR_GRID_FALLBACK_SUBMIT_FAILED = "grid_fallback_submit_failed"
     ERROR_LOCATION_REFERENCE_GENERATION_FAILED = "location_reference_generation_failed"
     ERROR_PREVIOUS_GROUP_FAILED = "previous_group_failed"
     ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
