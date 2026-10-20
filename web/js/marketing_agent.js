@@ -1607,13 +1607,25 @@
                 window.location.href = `/index.html?login=1&redirect_url=${redirectUrl}`;
             }
 
-            // 检查 API 响应是否为认证失败（401），如果是则跳转到登录页面
+            // 检查 API 响应是否为认证失败（401），先走自愈，cookie 也失效才跳登录页
             function checkAuthResponse(response) {
                 if (response.status === 401) {
-                    redirectToLogin();
+                    handleAuth401();
                     return false;
                 }
                 return true;
+            }
+
+            // 401 统一自愈入口：先清 localStorage 残留 token 并探测 HttpOnly cookie
+            // 会话，cookie 仍有效则 reload 无感恢复（生成中/轮询中不再被直接踢到
+            // 登录页打断进度）；cookie 也失效才引导重新登录。
+            // 详见 web/js/auth_self_heal.js 头注释（2026-10-20 图文转视频 401 事故）。
+            function handleAuth401() {
+                if (window.authSelfHeal && typeof window.authSelfHeal.handle401 === 'function') {
+                    window.authSelfHeal.handle401({ onLoginExpired: redirectToLogin });
+                } else {
+                    redirectToLogin();
+                }
             }
 
             // 格式化时间
@@ -2580,9 +2592,10 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询不带任何显式凭证：同源请求由服务端 cookie 翻译中间件
+                    // 鉴权（token 拼 URL 会经 Referer/历史/访问日志泄漏，X3 红线）
                     const projectIdsStr = task.projectIds.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     // await 后再次校验会话：任务进行中切换对话时，旧轮询回调不可再写入当前（已切换的）messages/全局结果状态
@@ -2655,9 +2668,9 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                     const projectIdsStr = imageProjectIds.value.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     if (res.data.tasks) {
@@ -2772,9 +2785,9 @@
                     }
 
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
+                        // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                         const projectIdsStr = projectIds.join(',');
-                        const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                        const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                         resetTaskErrorCount(errorKey);
 
                         if (currentSessionId.value !== pollSessionId) {
@@ -2903,9 +2916,9 @@
                     }
 
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
+                        // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                         const projectIdsStr = projectIds.join(',');
-                        const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                        const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                         resetTaskErrorCount(errorKey);
                         if (currentSessionId.value !== pollSessionId) {
                             shouldContinuePolling = false;
@@ -3160,9 +3173,9 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                     const projectIdsStr = videoProjectIds.value.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     if (res.data.tasks) {
@@ -4306,8 +4319,8 @@
                     activeGenerationPollKeys.add(pollKey);
                     let handedToPoller = false;
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
-                        const res = await axios.get(`/api/get-status/${msg._projectIds.join(',')}`, { params });
+                        // 历史页恢复轮询：凭证走 cookie 翻译，token 不拼 URL（X3 红线）
+                        const res = await axios.get(`/api/get-status/${msg._projectIds.join(',')}`);
 
                         if (res.data.tasks && res.data.tasks.every(isGenerationTerminal)) {
                             // 任务已完成：替换为结果
@@ -4619,13 +4632,35 @@
                 userPhone.value = localStorage.getItem('phone') || '';
                 userEmail.value = localStorage.getItem('email') || '';
 
-                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                // 兼容期双写：登录态以 localStorage.auth_token 为准；token 缺失时
+                // 探测 HttpOnly cookie 会话兜底（401 自愈 reload 后 localStorage 已
+                // 清空，cookie 有效则继续使用页面，同源请求由服务端 cookie 翻译
+                // 中间件鉴权），两者皆无才视为未登录。
                 const hasLocalSession = !!authToken.value;
-                if (!userId.value || !hasLocalSession) {
+                if (!hasLocalSession && userId.value && window.authSelfHeal?.probeSession) {
+                    const cookieAlive = await window.authSelfHeal.probeSession();
+                    if (!cookieAlive) {
+                        isInitializing.value = false;
+                        redirectToLogin();
+                        return;
+                    }
+                } else if (!userId.value || !hasLocalSession) {
                     isInitializing.value = false;
                     redirectToLogin();
                     return;
                 }
+
+                // axios 全局 401 拦截：任何请求认证失败都先走自愈（清残留 token +
+                // 探测 cookie → reload），而不是把生成中/轮询中的页面直接踢到登录页
+                axios.interceptors.response.use(
+                    (res) => res,
+                    (err) => {
+                        if (err && err.response && err.response.status === 401) {
+                            handleAuth401();
+                        }
+                        return Promise.reject(err);
+                    }
+                );
 
                 // 营销智能体使用固定 world_id，无需多世界概念
                 worldId.value = '1';
