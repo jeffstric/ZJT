@@ -67,6 +67,19 @@
       </div>
     </div>
 
+    <section id="workflowOwnerScope" class="owner-scope" hidden>
+      <div class="owner-scope-tabs" role="tablist" data-i18n="owner_scope_label:aria-label" aria-label="工作流范围">
+        <button type="button" class="owner-scope-btn is-active" data-scope="mine" data-i18n="scope_workflow_mine">只看自己</button>
+        <button type="button" class="owner-scope-btn" data-scope="all" data-i18n="scope_workflow_all">查看全部</button>
+        <button type="button" class="owner-scope-btn" data-scope="user" data-i18n="scope_workflow_user">查看指定用户</button>
+      </div>
+      <form id="workflowOwnerForm" class="owner-scope-form" hidden>
+        <input id="workflowOwnerInput" class="search-input" type="search" data-i18n="owner_placeholder:placeholder" placeholder="输入昵称或账号（手机号 / 邮箱）" autocomplete="off" />
+        <button class="btn owner-scope-submit" type="submit" data-i18n="owner_search_btn">查看</button>
+      </form>
+      <p id="workflowOwnerHint" class="owner-scope-hint" hidden></p>
+    </section>
+
     <div id="workflowContainer">
       <div class="loading">
         <div class="loading-spinner"></div>

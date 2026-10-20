@@ -146,6 +146,84 @@ class UsersModel:
         except Exception as e:
             logger.error(f"Failed to get user by ID {user_id}: {e}")
             raise
+
+    @staticmethod
+    def get_display_names(user_ids) -> Dict[int, str]:
+        """批量取展示名。昵称去空白后非空则用昵称，否则「用户{id}」。
+
+        未查到的 id 不出现在结果里，由调用方自行兜底。空列表不查库。
+        """
+        ids = []
+        seen = set()
+        for raw in user_ids or []:
+            try:
+                uid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if uid in seen:
+                continue
+            seen.add(uid)
+            ids.append(uid)
+        if not ids:
+            return {}
+        placeholders = ",".join(["%s"] * len(ids))
+        sql = f"SELECT id, nickname FROM users WHERE id IN ({placeholders})"
+        try:
+            rows = execute_query(sql, tuple(ids), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to get display names: {e}")
+            raise
+        names = {}
+        for row in rows:
+            uid = int(row["id"])
+            nickname = row.get("nickname")
+            text = nickname.strip() if isinstance(nickname, str) else ""
+            names[uid] = text or f"用户{uid}"
+        return names
+
+    @staticmethod
+    def find_ids_by_nickname_or_account(query: str, limit: int = 20) -> List[int]:
+        """按昵称或账号找用户 id。
+
+        账号是手机号或邮箱，只做精确匹配。昵称先精确，没有再按包含匹配。
+        空查询返回空列表，不查库。
+        """
+        text = (query or "").strip()
+        try:
+            capped = int(limit)
+        except (TypeError, ValueError):
+            capped = 20
+        if capped <= 0:
+            return []
+        capped = min(capped, 50)
+        if not text:
+            return []
+        exact_sql = """
+            SELECT id FROM users
+            WHERE nickname = %s OR phone = %s OR LOWER(email) = LOWER(%s)
+            ORDER BY id ASC
+            LIMIT %s
+        """
+        try:
+            exact_rows = execute_query(exact_sql, (text, text, text, capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname or account: {e}")
+            raise
+        if exact_rows:
+            return [int(row["id"]) for row in exact_rows]
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_sql = """
+            SELECT id FROM users
+            WHERE nickname LIKE %s
+            ORDER BY id ASC
+            LIMIT %s
+        """
+        try:
+            like_rows = execute_query(like_sql, (f"%{escaped}%", capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname like: {e}")
+            raise
+        return [int(row["id"]) for row in like_rows]
     
     @staticmethod
     def get_by_phone(phone: str) -> Optional[User]:

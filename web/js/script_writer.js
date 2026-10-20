@@ -18,7 +18,7 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
-        // 当前登录用户角色（'admin' 时世界侧栏展示全部用户世界，并可硬删除他人世界）
+        // 当前登录用户角色（'admin' 时世界侧栏展示全部用户世界，并可硬删除自己或他人的世界）
         let currentUserRole = null;
 
         // 拉取当前用户角色；失败保持 null（按普通用户处理，不影响主流程）
@@ -7764,7 +7764,7 @@
 
         // 缓存世界列表，用于侧边栏搜索
         let cachedWorlds = [];
-        // 侧栏列表模式：active=正常 | deleted=已伪删除
+        // 侧栏列表模式：active=正常 | deleted=已隐藏（接口参数仍是 visibility=deleted）
         let worldListMode = 'active';
 
         function updateWorldDeletedToggleUI() {
@@ -7772,7 +7772,7 @@
             if (!btn) return;
             const label = worldListMode === 'deleted'
                 ? (window.t ? window.t('back_to_world_list') : '返回世界列表')
-                : (window.t ? window.t('view_deleted_worlds') : '查看已删除的世界');
+                : (window.t ? window.t('view_deleted_worlds') : '查看已隐藏的世界');
             btn.innerHTML = `<span>${label}</span>`;
             btn.classList.toggle('active-mode', worldListMode === 'deleted');
         }
@@ -7788,8 +7788,8 @@
                 let emptyText;
                 if (isDeletedMode) {
                     emptyText = hasKeyword
-                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已删除世界')
-                        : (window.t ? window.t('no_deleted_worlds') : '暂无已删除的世界');
+                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已隐藏世界')
+                        : (window.t ? window.t('no_deleted_worlds') : '暂无已隐藏的世界');
                 } else {
                     emptyText = hasKeyword
                         ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
@@ -7822,9 +7822,10 @@
                 if (isAdminUser() && !isOwnWorld) {
                     const ownerTag = document.createElement('div');
                     ownerTag.className = 'world-owner-tag';
+                    const ownerName = String(world.owner_nickname || '').trim();
                     ownerTag.textContent = window.t
-                        ? window.t('world_owner_badge', { id: world.user_id })
-                        : `用户 ${world.user_id} 创建`;
+                        ? window.t('world_owner_badge', { name: ownerName || String(world.user_id) })
+                        : `${ownerName || ('用户' + world.user_id)} 创建`;
                     worldInfo.appendChild(ownerTag);
                 }
 
@@ -7886,8 +7887,8 @@
                     worldActions.appendChild(editBtn);
                     worldActions.appendChild(hideBtn);
 
-                    // 管理员可对他人创建的世界执行硬删除（物理删除，区别于「隐藏」伪删除）
-                    if (isAdminUser() && !isOwnWorld) {
+                    // 管理员可永久删除自己或他人的世界（物理删除，区别于「隐藏」）
+                    if (isAdminUser()) {
                         const deleteBtn = document.createElement('button');
                         deleteBtn.className = 'world-delete-btn';
                         deleteBtn.title = window.t ? window.t('delete_world_admin') : '永久删除（管理员）';
@@ -7999,7 +8000,7 @@
         async function hideWorld(worldId, worldName) {
             const confirmMsg = window.t
                 ? window.t('confirm_hide_world', { name: worldName || '' })
-                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已删除的世界」中恢复。数据不会丢失。`;
+                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已隐藏的世界」中恢复。数据不会丢失。`;
             if (!confirm(confirmMsg)) return;
 
             try {
@@ -8045,11 +8046,11 @@
             }
         }
 
-        // 管理员硬删除他人世界（物理删除；世界下仍有角色/场景时后端会拒绝）
+        // 管理员硬删除世界（含自己的；世界下仍有角色/场景/道具时后端会拒绝）
         async function adminDeleteWorld(worldId, worldName) {
             const confirmMsg = window.t
                 ? window.t('confirm_delete_world_admin', { name: worldName || '' })
-                : `【管理员操作】确定永久删除世界「${worldName || ''}」吗？\n\n该操作将物理删除世界记录，不可恢复；世界下仍存在角色或场景时会被拒绝。`;
+                : `【管理员操作】确定永久删除世界「${worldName || ''}」吗？\n\n该操作将物理删除世界记录，不可恢复；世界下仍存在角色、场景或道具时会被拒绝。`;
             if (!confirm(confirmMsg)) return;
 
             try {
@@ -8283,7 +8284,7 @@
                 if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_created_detail', {name: name}) : `✓ 世界 "${name}" 创建成功！`);
                     closeNewWorldModal();
-                    // 新建世界一定出现在正常列表；若当前在「已删除」视图则切回
+                    // 新建世界一定出现在正常列表；若当前在「已隐藏」视图则切回
                     worldListMode = 'active';
                     updateWorldDeletedToggleUI();
                     await loadUserWorlds();

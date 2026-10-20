@@ -6110,6 +6110,25 @@ async def fit_video_workflow_environment(
     )
 
 
+async def _workflow_view_forbidden(workflow, user_id: int) -> bool:
+    """独立空间下，非创建者且非管理员不可查看。共享空间保持原样。"""
+    if not Edition.is_space_isolated():
+        return False
+    if getattr(workflow, 'user_id', None) == user_id:
+        return False
+    return not await asyncio.to_thread(is_admin_user, user_id)
+
+
+def _attach_workflow_owner_nicknames(rows, names: dict) -> None:
+    for item in rows or []:
+        try:
+            owner_id = int(item.get('user_id'))
+        except (TypeError, ValueError):
+            item['owner_nickname'] = ''
+            continue
+        item['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
+
+
 @app.get('/api/video-workflow/list')
 @require_permission("video_workflow:list")
 async def get_video_workflow_list(
@@ -6120,28 +6139,80 @@ async def get_video_workflow_list(
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     order_by: str = Query("create_time", description="排序字段"),
     order_direction: str = Query("DESC", description="排序方向: ASC, DESC"),
+    scope: Optional[str] = Query(None, description="不传沿用原列表；mine 只看自己；all/user 仅管理员"),
+    owner: Optional[str] = Query(None, description="scope=user 时的昵称、手机号或邮箱"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    获取视频工作流列表（分页）
+    获取视频工作流列表（分页）。
+
+    不传 scope：沿用原列表。独立空间只含当前用户，共享空间含可见的全部工作流。
+    scope=mine 只看自己。scope=all 查看全部，scope=user 按昵称或账号查看，后两者仅管理员。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
+        requested = (scope or '').strip().lower()
+        if requested not in ('mine', 'all', 'user'):
+            requested = ''
+        if requested in ('all', 'user'):
+            admin = await asyncio.to_thread(is_admin_user, user_id)
+            if not admin:
+                requested = ''
 
-        result = VideoWorkflowModel.list_by_user(
-            user_id=user_id,
-            page=page,
-            page_size=page_size,
-            status=status,
-            keyword=keyword,
-            order_by=order_by,
-            order_direction=order_direction
+        owner_ids = None
+        include_all = False
+        notice = ''
+        if requested == 'user':
+            query = (owner or '').strip()
+            if not query:
+                notice = '请输入昵称或账号'
+            else:
+                owner_ids = await asyncio.to_thread(
+                    UsersModel.find_ids_by_nickname_or_account, query
+                )
+                if not owner_ids:
+                    notice = '未找到该用户'
+                    owner_ids = []
+        elif requested == 'all':
+            include_all = True
+        elif requested == 'mine':
+            owner_ids = [user_id]
+
+        if notice and owner_ids is None:
+            return JSONResponse({
+                "code": 0,
+                "message": notice,
+                "data": {
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "data": [],
+                    "scope": "user",
+                },
+            })
+
+        result = await asyncio.to_thread(
+            VideoWorkflowModel.list_by_user,
+            user_id,
+            page,
+            page_size,
+            order_by,
+            order_direction,
+            status,
+            keyword,
+            include_all,
+            owner_ids,
         )
-        
+        names = await asyncio.to_thread(
+            UsersModel.get_display_names,
+            [item.get('user_id') for item in (result.get('data') or [])],
+        )
+        _attach_workflow_owner_nicknames(result.get('data') or [], names)
+        result['scope'] = requested or 'mine'
         return JSONResponse({
             "code": 0,
-            "message": "success",
+            "message": notice or "success",
             "data": result
         })
     except Exception as e:
@@ -6166,15 +6237,15 @@ async def get_video_workflow(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        workflow = await asyncio.to_thread(VideoWorkflowModel.get_by_id, workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
             )
 
-        # 独立空间模式才检查权限，共享空间所有人可访问
-        if Edition.is_space_isolated() and getattr(workflow, 'user_id', None) != user_id:
+        # 独立空间：创建者或管理员可查看。共享空间所有人可访问。
+        if await _workflow_view_forbidden(workflow, user_id):
             return JSONResponse(
                 status_code=403,
                 content={"code": -1, "message": "无权限访问该工作流"}
@@ -6214,15 +6285,15 @@ async def poll_workflow_node_status(
         user_id = _get_user_id_from_header(user_id)
         
         # 获取工作流数据
-        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        workflow = await asyncio.to_thread(VideoWorkflowModel.get_by_id, workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
             )
         
-        # 独立空间模式才检查权限，共享空间所有人可访问
-        if Edition.is_space_isolated() and getattr(workflow, 'user_id', None) != user_id:
+        # 独立空间：创建者或管理员可查看。共享空间所有人可访问。
+        if await _workflow_view_forbidden(workflow, user_id):
             return JSONResponse(
                 status_code=403,
                 content={"code": -1, "message": "无权限访问该工作流"}
@@ -8076,6 +8147,20 @@ async def get_worlds(
             visibility=vis,
             include_all_users=include_all_users,
         )
+        if include_all_users:
+            worlds = result.get('data') or []
+            names = await asyncio.to_thread(
+                UsersModel.get_display_names,
+                [item.get('user_id') for item in worlds],
+            )
+            for item in worlds:
+                raw_owner_id = item.get('user_id')
+                try:
+                    owner_id = int(raw_owner_id)
+                except (TypeError, ValueError):
+                    item['owner_nickname'] = ''
+                    continue
+                item['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
         return JSONResponse(
             status_code=200,
             content={
@@ -8443,7 +8528,8 @@ async def delete_world(
     """
     硬删除世界（物理删除记录）。
     伪删除请使用 POST /api/worlds/{world_id}/hide。
-    创建者本人可删；管理员（role=admin）可删除其他用户创建的世界。
+    创建者本人可删；管理员（role=admin）可删除自己或其他用户创建的世界。
+    世界下仍有角色、场景或道具时拒绝。
     身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
@@ -8468,6 +8554,17 @@ async def delete_world(
                 content={
                     'code': -1,
                     'message': '该世界下仍存在场景，请先删除所有场景后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        props_count = await asyncio.to_thread(PropsModel.count_by_world, world_id)
+        if props_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在道具，请先删除所有道具后再尝试删除世界',
                     'data': None
                 }
             )

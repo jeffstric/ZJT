@@ -13,19 +13,43 @@ assert.equal(fs.existsSync(cssPath), true, 'storyboard list css should exist');
 
 const html = fs.readFileSync(htmlPath, 'utf8');
 const jsSource = fs.readFileSync(jsPath, 'utf8');
-const indexHtml = fs.readFileSync(path.join(root, 'web/index.html'), 'utf8');
-const scriptWriterHtml = fs.readFileSync(path.join(root, 'web/script_writer.html'), 'utf8');
+const listPageJs = fs.readFileSync(path.join(root, 'web/js/pages/list_page.js'), 'utf8');
+const scriptWriterJs = fs.readFileSync(path.join(root, 'web/js/script_writer.js'), 'utf8');
 const serverPy = fs.readFileSync(path.join(root, 'server.py'), 'utf8');
 
 assert.match(html, /id="storyboardFolderContainer"/);
+assert.match(html, /id="storyboardOwnerScope"/);
+assert.match(html, /只看自己/);
+assert.match(html, /查看全部/);
+assert.match(html, /查看指定用户/);
+assert.match(html, /id="storyboardOwnerInput"/);
+assert.match(jsSource, /escapeHtml\(ownerName\)/);
+assert.match(jsSource, /query\.set\('scope', ownerScope\)/);
+assert.match(fs.readFileSync(cssPath, 'utf8'), /\.folder-owner/);
+assert.match(fs.readFileSync(cssPath, 'utf8'), /\.owner-scope\[hidden\]/);
 assert.match(html, /\/js\/storyboard_list\.js/);
-assert.match(indexHtml, /handleStoryboardListClick/);
-assert.match(scriptWriterHtml, /openStoryboardFromScript/);
+assert.match(listPageJs, /handleStoryboardListClick/);
+assert.match(scriptWriterJs, /openStoryboardFromScript/);
 assert.match(serverPy, /@app\.get\("\/storyboard-list"\)/);
 
 const source = jsSource
   .replace(/export\s+function\s+/g, 'function ')
   .replace(/export\s+const\s+/g, 'const ');
+
+global.window = {
+  escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  },
+};
+global.localStorage = {
+  getItem() {
+    return '';
+  },
+};
 
 const factory = new Function(
   source + '\nreturn { buildStoryboardUrl, normalizeFoldersResponse };'

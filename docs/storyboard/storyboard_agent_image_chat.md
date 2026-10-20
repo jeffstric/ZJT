@@ -17,6 +17,8 @@
 
 文本框预填基线：切换到该模式、刷新页面恢复 `chatMode=image`、**切换分镜**时，前端用 `state.js` 的 `composeSceneImagePrompt` 预填当前分镜画面提示词——由 `scene.prompt_json` 的 `perspective` / `style` / `scene_desc` 按序以中文逗号组合；**不拼 `character_desc`**（该字段只是「、」连接的角色名列表，实际生图链路 `services/storyboard_agent_cli_service.py:_compose_image_prompt` 不使用它——角色外貌由参考图 + 参考图说明注入，拼进文本只会污染提示词；此前版本曾错误对齐 `api/storyboard.py` 的同名死函数导致预填末尾出现「，角色A、角色B」尾巴，该死函数已删除）；用户可直接编辑后提交，编辑值仅本次使用、不回写 `prompt_json`。旧分镜 `prompt_json` 为空时预填为空，需手填。
 
+用户在左侧改「画面提示词」并保存时，若当前是「直填生图」，且左下角文本框仍等于修改前的 `composeSceneImagePrompt`，文本框同步为新的组合结果。用户已经改过文本框（包括清空）则保持不动。左侧改「视频提示词」时同理：仅「视频生成」模式、且文本框仍等于修改前的 `videoPrompt` 时同步；对口型分镜没有该文本框，不同步。判断函数是 `nextDirectInputIfUnedited`。
+
 「视频生成」直连模式复用现成的社区版路由 `POST /scene/{id}/generate-video`，不经 `ToolExecutor`/企业版工具，社区版可用；「AI生视频」走智能体，社区版下视频工具未注册会报"未知工具"，故禁用并提示商业版特权。
 
 ## 左侧布局与防遮挡

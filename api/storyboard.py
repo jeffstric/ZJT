@@ -92,8 +92,11 @@ from services.storyboard_reference_prompt_service import (
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
+    ensure_owner_or_admin_view,
     ensure_world_access,
+    is_admin_user,
 )
+from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
     h3_keyframe_ref_task_id,
@@ -1056,21 +1059,42 @@ def build_storyboard_scenes_from_parsed_script(
     return scenes
 
 
-def _storyboard_folder_key(item: dict) -> str:
-    return f"{item.get('world_id')}:{item.get('episode_number') or 1}"
+def _folder_owner_id(item: dict):
+    raw = item.get('user_id')
+    if raw is None:
+        raw = item.get('owner_user_id')
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _storyboard_folder_key(item: dict, separate_owners: bool = False) -> str:
+    episode_number = item.get('episode_number') or 1
+    base = f"{item.get('world_id')}:{episode_number}"
+    if not separate_owners:
+        return base
+    owner_id = _folder_owner_id(item)
+    return f"{base}:{owner_id or 0}"
 
 
 def _to_iso(value):
     return value.isoformat() if hasattr(value, 'isoformat') else value
 
 
-def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict) -> list:
+def build_storyboard_folders(
+    scripts: list,
+    storyboards: list,
+    world_names: dict,
+    separate_owners: bool = False,
+) -> list:
     folders = {}
 
     for script in scripts:
         episode_number = script.get('episode_number') or 1
+        owner_user_id = _folder_owner_id(script)
         item = {
-            'folder_key': f"{script.get('world_id')}:{episode_number}",
+            'folder_key': _storyboard_folder_key(script, separate_owners),
             'world_id': script.get('world_id'),
             'world_name': world_names.get(script.get('world_id'), ''),
             'episode_number': episode_number,
@@ -1080,13 +1104,15 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
             'storyboard_title': None,
             'scene_count': 0,
             'status': 'not_created',
+            'owner_user_id': owner_user_id,
             'update_at': _to_iso(script.get('update_time') or script.get('create_time')),
         }
         folders[item['folder_key']] = item
 
     for storyboard in storyboards:
-        key = _storyboard_folder_key(storyboard)
+        key = _storyboard_folder_key(storyboard, separate_owners)
         episode_number = storyboard.get('episode_number') or 1
+        owner_user_id = _folder_owner_id(storyboard)
         if key not in folders:
             title = storyboard.get('title') or f"Episode {episode_number}"
             folders[key] = {
@@ -1100,6 +1126,7 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
                 'storyboard_title': title,
                 'scene_count': int(storyboard.get('scene_count') or 0),
                 'status': 'orphan',
+                'owner_user_id': owner_user_id,
                 'update_at': _to_iso(storyboard.get('update_at') or storyboard.get('create_at')),
             }
             continue
@@ -1110,6 +1137,8 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
         folder['scene_count'] = int(storyboard.get('scene_count') or 0)
         folder['status'] = 'created'
         folder['update_at'] = _to_iso(storyboard.get('update_at') or folder.get('update_at'))
+        if owner_user_id is not None:
+            folder['owner_user_id'] = owner_user_id
         if not folder.get('script_id') and storyboard.get('script_id'):
             folder['script_id'] = storyboard.get('script_id')
 
@@ -1128,11 +1157,14 @@ def _folder_script_key(script: dict) -> str:
     return f"{script.get('world_id')}:{episode_number}"
 
 
-def dedupe_folder_scripts(scripts: list) -> list:
-    """同一 world_id + 集数只保留 id 最小的入库剧本。"""
+def dedupe_folder_scripts(scripts: list, separate_owners: bool = False) -> list:
+    """同一文件夹键只保留 id 最小的入库剧本。
+
+    默认键是 world_id + 集数。separate_owners 时再按创建者拆开。
+    """
     chosen = {}
     for script in scripts:
-        key = _folder_script_key(script)
+        key = _storyboard_folder_key(script, separate_owners) if separate_owners else _folder_script_key(script)
         current = chosen.get(key)
         script_id = int(script.get('id') or 0)
         if current is None or script_id < int(current.get('id') or 0):
@@ -1140,20 +1172,96 @@ def dedupe_folder_scripts(scripts: list) -> list:
     return list(chosen.values())
 
 
-def collect_storyboard_folder_data(user_id: int, world_id: Optional[int]) -> list:
-    """按已入库剧本聚合文件夹。不看 script.user_id，也不读暂存文件。"""
+def apply_folder_owner_nicknames(folders: list, names: dict) -> list:
+    """给文件夹补上创建者昵称。无昵称时回退「用户{id}」。"""
+    for folder in folders or []:
+        raw = folder.get('owner_user_id')
+        try:
+            owner_id = int(raw)
+        except (TypeError, ValueError):
+            folder['owner_nickname'] = ''
+            continue
+        folder['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
+    return folders
+
+
+def _world_names_for_ids(user_id: int, world_ids: list, known: dict) -> dict:
+    missing = []
+    for raw in world_ids:
+        try:
+            world_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if world_id not in known and world_id not in missing:
+            missing.append(world_id)
+    if not missing:
+        return known
+    rows = WorldModel.list_names_for_storyboard_folders(user_id, include_all_users=True)
+    by_id = {row.get('id'): row.get('name') or '' for row in rows}
+    for world_id in missing:
+        known[world_id] = by_id.get(world_id, '')
+    return known
+
+
+def collect_storyboard_folder_data(
+    user_id: int,
+    world_id: Optional[int],
+    include_all_users: bool = False,
+    owner_user_ids: Optional[list] = None,
+) -> list:
+    """按已入库剧本聚合文件夹。默认不按 script.user_id 过滤，也不读暂存文件。
+
+    include_all_users：管理员查看全部用户。同一世界同一集按创建者拆开。
+    owner_user_ids：管理员查看指定用户。空列表返回空。
+    """
+    separate_owners = bool(include_all_users or owner_user_ids is not None)
+    if owner_user_ids is not None:
+        scripts = dedupe_folder_scripts(
+            ScriptModel.list_for_owner_folders(owner_user_ids, world_id),
+            separate_owners=True,
+        )
+        storyboards = StoryboardModel.list_folders_by_user(
+            user_id,
+            world_id,
+            owner_user_ids=owner_user_ids,
+        )
+        if world_id is not None:
+            world = WorldModel.get_by_id(world_id)
+            world_names = {world_id: world.name if world else ''}
+        else:
+            world_names = {}
+        involved = [item.get('world_id') for item in scripts]
+        involved.extend(item.get('world_id') for item in storyboards)
+        world_names = _world_names_for_ids(user_id, involved, world_names)
+        return build_storyboard_folders(scripts, storyboards, world_names, separate_owners=True)
+
     if world_id is not None:
         world = WorldModel.get_by_id(world_id)
         world_names = {world_id: world.name if world else ''}
         world_ids = [world_id]
     else:
         # 含伪删除世界，避免已有故事板丢失世界名
-        worlds = WorldModel.list_names_for_storyboard_folders(user_id)
+        worlds = WorldModel.list_names_for_storyboard_folders(
+            user_id,
+            include_all_users=include_all_users,
+        )
         world_names = {row.get('id'): row.get('name') or '' for row in worlds}
         world_ids = list(world_names.keys())
-    scripts = dedupe_folder_scripts(ScriptModel.list_for_folders(world_ids))
-    storyboards = StoryboardModel.list_folders_by_user(user_id=user_id, world_id=world_id)
-    return build_storyboard_folders(scripts, storyboards, world_names)
+    scripts = dedupe_folder_scripts(
+        ScriptModel.list_for_folders(world_ids),
+        separate_owners=separate_owners,
+    )
+    storyboards = StoryboardModel.list_folders_by_user(
+        user_id=user_id,
+        world_id=world_id,
+        include_all_users=include_all_users,
+    )
+    return build_storyboard_folders(
+        scripts,
+        storyboards,
+        world_names,
+        separate_owners=separate_owners,
+    )
 
 
 async def _ensure_scene_access(scene_id: int, user_id: int, action: str):
@@ -2624,12 +2732,71 @@ async def list_storyboard_folders(
     request: Request,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
     world_id: Optional[int] = None,
+    scope: Optional[str] = None,
+    owner: Optional[str] = None,
 ):
+    """故事板文件夹。
+
+    不传 scope：沿用原列表。独立空间的故事板只含当前用户，剧本仍按世界聚合。
+    scope=mine 只看自己的剧本和故事板（共享空间也同样只看自己）。
+    scope=all 查看全部，仅管理员。
+    scope=user 查看指定用户，owner 为昵称或账号（手机号/邮箱），仅管理员。
+    """
     user_id = get_user_id_from_header(user_id)
-    if world_id is not None:
+    requested = (scope or '').strip().lower()
+    if requested not in ('mine', 'all', 'user'):
+        requested = ''
+    if requested in ('all', 'user'):
+        admin = await asyncio.to_thread(is_admin_user, user_id)
+        if not admin:
+            requested = ''
+
+    owner_ids = None
+    include_all = False
+    if requested == 'user':
+        query = (owner or '').strip()
+        if not query:
+            return JSONResponse({
+                'success': True,
+                'total': 0,
+                'folders': [],
+                'scope': 'user',
+                'message': '请输入昵称或账号',
+            })
+        owner_ids = await asyncio.to_thread(UsersModel.find_ids_by_nickname_or_account, query)
+        if not owner_ids:
+            return JSONResponse({
+                'success': True,
+                'total': 0,
+                'folders': [],
+                'scope': 'user',
+                'message': '未找到该用户',
+            })
+    elif requested == 'all':
+        include_all = True
+    elif requested == 'mine':
+        owner_ids = [user_id]
+    elif world_id is not None:
         await asyncio.to_thread(ensure_world_access, world_id, user_id, Action.VIEW)
-    folders = await asyncio.to_thread(collect_storyboard_folder_data, user_id, world_id)
-    return JSONResponse({'success': True, 'total': len(folders), 'folders': folders})
+
+    folders = await asyncio.to_thread(
+        collect_storyboard_folder_data,
+        user_id,
+        world_id,
+        include_all,
+        owner_ids,
+    )
+    names = await asyncio.to_thread(
+        UsersModel.get_display_names,
+        [item.get('owner_user_id') for item in folders],
+    )
+    apply_folder_owner_nicknames(folders, names)
+    return JSONResponse({
+        'success': True,
+        'total': len(folders),
+        'folders': folders,
+        'scope': requested or 'mine',
+    })
 
 
 def _computing_power_range(cp):
@@ -3312,7 +3479,7 @@ async def get_storyboard(
     if not sb:
         return JSONResponse(status_code=404, content={'error': '故事板不存在'})
 
-    ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
+    await asyncio.to_thread(ensure_owner_or_admin_view, sb, user_id, "故事板")
 
     scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     await _attach_dialogues(scenes)

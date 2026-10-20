@@ -180,7 +180,7 @@ class ScriptModel:
 
         placeholders = ",".join(["%s"] * len(normalized))
         sql = f"""
-            SELECT id, world_id, title, episode_number, update_time, create_time
+            SELECT id, world_id, user_id, title, episode_number, update_time, create_time
             FROM script
             WHERE world_id IN ({placeholders})
             ORDER BY world_id ASC, episode_number ASC, id ASC
@@ -190,6 +190,41 @@ class ScriptModel:
             return list(results) if results else []
         except Exception as e:
             logger.error(f"Failed to list scripts for folders, worlds={normalized}: {e}")
+            raise
+
+    @staticmethod
+    def list_for_owner_folders(owner_user_ids: List[int], world_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """指定创建者的已入库剧本。不读正文。world_id 有值时再限定世界。"""
+        owners: List[int] = []
+        seen = set()
+        for raw in owner_user_ids or []:
+            try:
+                owner_id = int(raw)
+            except (TypeError, ValueError):
+                continue
+            if owner_id in seen:
+                continue
+            seen.add(owner_id)
+            owners.append(owner_id)
+        if not owners:
+            return []
+        placeholders = ",".join(["%s"] * len(owners))
+        params: List[Any] = list(owners)
+        world_clause = ""
+        if world_id is not None:
+            world_clause = " AND world_id = %s"
+            params.append(int(world_id))
+        sql = f"""
+            SELECT id, world_id, user_id, title, episode_number, update_time, create_time
+            FROM script
+            WHERE user_id IN ({placeholders}){world_clause}
+            ORDER BY world_id ASC, episode_number ASC, id ASC
+        """
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return list(results) if results else []
+        except Exception as e:
+            logger.error(f"Failed to list scripts for owners {owners}: {e}")
             raise
 
     @staticmethod

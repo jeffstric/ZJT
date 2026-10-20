@@ -41,6 +41,22 @@ describe('script_writer wrong user_id and hide error', () => {
         const deleteBtnStart = source.indexOf("deleteBtn.className = 'world-delete-btn'");
         const deleteBtn = source.slice(deleteBtnStart, deleteBtnStart + 700);
         expect(deleteBtn).toContain('polyline points="3 6 5 6 21 6"');
+        const deleteGate = source.slice(source.indexOf('管理员可永久删除'), deleteBtnStart);
+        expect(deleteGate).toContain('if (isAdminUser())');
+        expect(deleteGate).not.toContain('!isOwnWorld');
+        expect(source).toContain('if (isAdminUser() && !isOwnWorld)');
+        expect(source).toContain('角色、场景或道具');
+        expect(source).toContain('查看已隐藏的世界');
+        expect(source).not.toContain('查看已删除的世界');
+    });
+
+    it('他人世界归属标记展示昵称，不用 innerHTML', () => {
+        const start = source.indexOf("ownerTag.className = 'world-owner-tag'");
+        const body = source.slice(start, start + 500);
+        expect(body).toContain('world.owner_nickname');
+        expect(body).toContain("window.t('world_owner_badge', { name: ownerName || String(world.user_id) })");
+        expect(body).toContain('ownerTag.textContent');
+        expect(body).not.toContain('ownerTag.innerHTML');
     });
 
     it('隐藏世界失败时展示接口 detail，而不是固定未知错误', () => {

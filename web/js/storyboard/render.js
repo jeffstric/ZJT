@@ -847,26 +847,69 @@ function episodeFolderStatusLabel(folder) {
     return i18nT('status_can_create', '可新建');
 }
 
+function renderEpisodeOwnerScope() {
+    if (!state.isStoryboardAdmin) return '';
+    const scope = state.episodeOwnerScope || 'mine';
+    const button = (value, label) => `
+        <button type="button" class="episode-owner-scope-btn ${scope === value ? 'is-active' : ''}"
+            data-action="set-episode-owner-scope" data-scope="${value}">${label}</button>`;
+    const search = scope === 'user'
+        ? `
+            <div class="episode-owner-search">
+                <input type="search" class="episode-owner-input" data-episode-owner-input
+                    placeholder="${i18nT('placeholder_storyboard_owner', '昵称或账号')}"
+                    value="${escapeHtml(state.episodeOwnerQuery || '')}">
+                <button type="button" class="episode-picker-go" data-action="search-episode-owner">${i18nT('btn_storyboard_owner_search', '查看')}</button>
+            </div>`
+        : '';
+    const hint = state.episodeOwnerHint
+        ? `<p class="episode-owner-hint">${escapeHtml(state.episodeOwnerHint)}</p>`
+        : '';
+    return `
+        <div class="episode-owner-scope" role="group" aria-label="${i18nT('label_episode_owner_scope', '故事板范围')}">
+            ${button('mine', i18nT('scope_storyboard_mine', '只看自己'))}
+            ${button('all', i18nT('scope_storyboard_all', '查看全部'))}
+            ${button('user', i18nT('scope_storyboard_user', '查看指定用户'))}
+            ${search}
+            ${hint}
+        </div>`;
+}
+
 function renderEpisodePicker() {
     if (!state.showEpisodePicker) return '';
     const folders = [...(state.episodeFolders || [])]
-        .sort((a, b) => (Number(a.episode_number) || 0) - (Number(b.episode_number) || 0));
+        .sort((a, b) => {
+            const epDiff = (Number(a.episode_number) || 0) - (Number(b.episode_number) || 0);
+            if (epDiff) return epDiff;
+            return String(a.owner_nickname || '').localeCompare(String(b.owner_nickname || ''), 'zh');
+        });
     const currentEp = Number(state.episodeNumber) || 1;
+    const currentOwner = Number(state.userId) || 0;
     const rows = folders.length
         ? folders.map((f) => {
             const ep = Number(f.episode_number) || 1;
-            const active = ep === currentEp ? 'active' : '';
+            const sameEpisode = ep === currentEp;
+            const sameOwner = !f.owner_user_id || Number(f.owner_user_id) === currentOwner;
+            const active = sameEpisode && sameOwner ? 'active' : '';
             const title = f.script_title || f.storyboard_title || `${i18nT('label_episode_prefix', '第')}${ep}${i18nT('label_episode_suffix', '集')}`;
             const status = episodeFolderStatusLabel(f);
+            const owner = String(f.owner_nickname || '').trim();
+            const ownerHtml = owner
+                ? `<span class="episode-picker-owner">${escapeHtml(owner)}</span>`
+                : '';
             return `
                 <button type="button" class="episode-picker-item ${active}"
                     data-action="switch-episode"
                     data-episode="${ep}"
                     data-script-id="${f.script_id || ''}"
                     data-storyboard-id="${f.storyboard_id || ''}"
+                    data-owner-user-id="${f.owner_user_id || ''}"
                     title="${escapeHtml(title)}">
                     <span class="episode-picker-ep">${i18nT('label_episode_prefix', '第')}${ep}${i18nT('label_episode_suffix', '集')}</span>
-                    <span class="episode-picker-title">${escapeHtml(truncateText(title, 18))}</span>
+                    <span class="episode-picker-main">
+                        <span class="episode-picker-title">${escapeHtml(truncateText(title, 18))}</span>
+                        ${ownerHtml}
+                    </span>
                     <span class="episode-picker-status">${escapeHtml(status)}</span>
                 </button>`;
         }).join('')
@@ -874,6 +917,7 @@ function renderEpisodePicker() {
 
     return `
         <div class="episode-picker-panel" data-episode-picker-panel>
+            ${renderEpisodeOwnerScope()}
             <div class="episode-picker-list">${rows}</div>
             <div class="episode-picker-custom">
                 <label class="episode-picker-custom-label">${i18nT('label_other_episode', '其他集数')}</label>

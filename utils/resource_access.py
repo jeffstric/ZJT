@@ -187,6 +187,15 @@ def ensure_world_owner_or_admin(world_id: int, user_id: int):
     return world
 
 
+def ensure_owner_or_admin_view(resource, user_id: int, resource_name: str = "资源"):
+    """查看资源：创建者本人，或管理员。编辑/删除不走这里。"""
+    if getattr(resource, 'user_id', None) == user_id:
+        return resource
+    if is_admin_user(user_id):
+        return resource
+    return ensure_resource_access(resource, user_id, Action.VIEW, resource_name)
+
+
 async def enforce_x_user_id_consistency(request):
     """
     X-User-Id 自报身份与 token 属主一致性强制校验（供中间件统一调用）。

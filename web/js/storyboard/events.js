@@ -41,6 +41,7 @@ import state, {
     getSelectedVideoModel,
     getSelectedImageTaskId,
     composeSceneImagePrompt,
+    nextDirectInputIfUnedited,
     onPowerEstimateUpdated,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
@@ -2069,12 +2070,52 @@ async function handleAction(action, target) {
             notify(t('msg_invalid_episode', '请输入有效的集数（正整数）'));
             return;
         }
-        // 自定义集：若列表中已有则带上 script/storyboard，否则纯新建
-        const folder = (state.episodeFolders || []).find(f => Number(f.episode_number) === ep);
+        // 自定义集：同一集有多位创建者时优先进入自己的故事板
+        const matches = (state.episodeFolders || []).filter(f => Number(f.episode_number) === ep);
+        const folder = matches.find(f => String(f.owner_user_id) === String(state.userId)) || matches[0];
         navigateToEpisode(ep, {
             scriptId: folder?.script_id ? Number(folder.script_id) : null,
             storyboardId: folder?.storyboard_id ? Number(folder.storyboard_id) : null,
         });
+        return;
+    }
+
+    if (action === 'set-episode-owner-scope') {
+        const nextScope = target?.dataset?.scope || 'mine';
+        if (!state.isStoryboardAdmin) return;
+        if (nextScope !== 'mine' && nextScope !== 'all' && nextScope !== 'user') return;
+        state.episodeOwnerScope = nextScope;
+        state.episodeOwnerHint = '';
+        if (nextScope === 'user' && !String(state.episodeOwnerQuery || '').trim()) {
+            state.episodeFolders = [];
+            state.episodeFoldersLoaded = true;
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            rerender([Region.HEADER]);
+            return;
+        }
+        state.episodeFoldersLoaded = false;
+        state.episodeFoldersLoading = false;
+        rerender([Region.HEADER]);
+        ensureEpisodeFoldersLoaded(true).catch((e) => notify(e.message || t('msg_load_episodes_failed', '加载集列表失败')));
+        return;
+    }
+
+    if (action === 'search-episode-owner') {
+        if (!state.isStoryboardAdmin) return;
+        const input = document.querySelector('[data-episode-owner-input]');
+        state.episodeOwnerQuery = input ? input.value : state.episodeOwnerQuery;
+        state.episodeOwnerScope = 'user';
+        state.episodeOwnerHint = '';
+        if (!String(state.episodeOwnerQuery || '').trim()) {
+            state.episodeFolders = [];
+            state.episodeFoldersLoaded = true;
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            rerender([Region.HEADER]);
+            return;
+        }
+        state.episodeFoldersLoaded = false;
+        state.episodeFoldersLoading = false;
+        ensureEpisodeFoldersLoaded(true).catch((e) => notify(e.message || t('msg_load_episodes_failed', '加载集列表失败')));
         return;
     }
 
@@ -2880,21 +2921,43 @@ async function handleAction(action, target) {
 /**
  * 加载当前世界下的集列表（剧本 + 故事板 folders）
  */
+async function ensureStoryboardAdminKnown() {
+    if (state.storyboardAdminKnown) return;
+    state.storyboardAdminKnown = true;
+    try {
+        const role = await api.fetchCurrentUserRole();
+        state.isStoryboardAdmin = role === 'admin';
+    } catch {
+        state.isStoryboardAdmin = false;
+    }
+}
+
 async function ensureEpisodeFoldersLoaded(force = false) {
     if (!state.worldId) return;
     if (!force && state.episodeFoldersLoaded) return;
     if (state.episodeFoldersLoading) return;
     state.episodeFoldersLoading = true;
     try {
-        const folders = await api.listStoryboardFolders(state.worldId);
+        await ensureStoryboardAdminKnown();
+        const scope = state.isStoryboardAdmin ? (state.episodeOwnerScope || 'mine') : '';
+        const owner = scope === 'user' ? String(state.episodeOwnerQuery || '').trim() : '';
+        if (scope === 'user' && !owner) {
+            state.episodeFolders = [];
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            state.episodeFoldersLoaded = true;
+            return;
+        }
+        const result = await api.listStoryboardFolders(state.worldId, { scope, owner });
+        const folders = result?.folders || [];
         // 只保留当前世界
-        state.episodeFolders = (folders || []).filter(
+        state.episodeFolders = folders.filter(
             f => !state.worldId || Number(f.world_id) === Number(state.worldId)
         );
+        state.episodeOwnerHint = result?.message || '';
         state.episodeFoldersLoaded = true;
-        if (state.showEpisodePicker) rerender([Region.HEADER]);
     } finally {
         state.episodeFoldersLoading = false;
+        if (state.showEpisodePicker) rerender([Region.HEADER]);
     }
 }
 
@@ -3008,6 +3071,12 @@ export function bindEvents() {
         if (!state.agentChatLogPinned) return;
         state.agentChatLogPinned = false;
         section.classList.remove('is-chat-log-pinned');
+    });
+
+    document.addEventListener('input', (event) => {
+        const input = event.target?.closest?.('[data-episode-owner-input]');
+        if (!input) return;
+        state.episodeOwnerQuery = input.value;
     });
 
     document.addEventListener('click', async (event) => {
@@ -3409,6 +3478,12 @@ export function bindEvents() {
         if (event.key === 'Enter' && target && target.matches && target.matches('[data-episode-custom-input]')) {
             event.preventDefault();
             const btn = document.querySelector('[data-action="switch-episode-custom"]');
+            if (btn) btn.click();
+            return;
+        }
+        if (event.key === 'Enter' && target && target.matches && target.matches('[data-episode-owner-input]')) {
+            event.preventDefault();
+            const btn = document.querySelector('[data-action="search-episode-owner"]');
             if (btn) btn.click();
             return;
         }
@@ -3922,9 +3997,19 @@ async function persistSceneLocationProps(sc) {
     rerender([Region.LEFT_TAB_BODY]);
 }
 
+function applyUneditedDirectInput(previous, next) {
+    const ta = document.getElementById('chat-textarea');
+    const current = ta ? ta.value : state.inputMessage;
+    const updated = nextDirectInputIfUnedited(current, previous, next);
+    if (updated == null) return;
+    state.inputMessage = updated;
+    rerenderAgentPanel();
+}
+
 async function persistPromptValue(scene, type, value) {
     try {
         if (type === 'scene') {
+            const previousImagePrompt = composeSceneImagePrompt(scene);
             if (!scene.promptJson) scene.promptJson = {};
             scene.promptJson.scene_desc = value;
             const payload = sceneToPromptPayload(scene);
@@ -3932,17 +4017,17 @@ async function persistPromptValue(scene, type, value) {
             scene.promptJson = payload;
             scene._fullPrompt = payload;
             if (scene.raw) scene.raw.prompt_json = payload;
+            // 直填生图：底部文本框还停在旧画面提示词时，跟着改成新的组合结果。
+            if (state.chatMode === 'image') {
+                applyUneditedDirectInput(previousImagePrompt, composeSceneImagePrompt(scene));
+            }
         } else if (type === 'video') {
             const previous = scene.videoPrompt || '';
             scene.videoPrompt = value;
             await api.updateScene(scene.id, sceneToUpdatePayload(scene));
-            // 底部发送框仍是旧视频提示词时跟着更新，否则左侧写的 @首帧图 到不了本次提交。
-            if (
-                (state.chatMode === 'video' || state.chatMode === 'aivideo')
-                && (state.inputMessage == null || state.inputMessage === '' || state.inputMessage === previous)
-            ) {
-                state.inputMessage = value;
-                rerenderAgentPanel();
+            // 视频生成：底部文本框还停在旧视频提示词时跟着更新。用户改过则不动。
+            if (state.chatMode === 'video' && !isDigitalHumanScene(scene)) {
+                applyUneditedDirectInput(previous, scene.videoPrompt || '');
             }
         }
     } catch (e) {
