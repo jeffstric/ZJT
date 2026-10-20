@@ -25,6 +25,7 @@ from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
 from utils.runninghub_error import is_upstream_congested_error
+from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
 from .exceptions import ImageExpiredError
 
 
@@ -287,17 +288,6 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 f.write(resp.content)
         return self._storage._sync_upload_file(local_file)
 
-    def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
-        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
-        r = subprocess.run(
-            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
-             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
-            capture_output=True, text=True, timeout=60)
-        if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
-            return out_jpg
-        self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
-        return None
-
     def _submit_segments_async(self, ai_tool, segment_paths: list,
                                extra_config: Dict[str, Any]) -> Dict[str, Any]:
         """末帧接力串行链式生成（同步，运行于 to_thread）：段 1 用角色图，
@@ -374,11 +364,17 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         }
 
     def _extract_last_frame(self, video_path: str, out_jpg: str) -> Optional[str]:
-        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None。"""
-        r = subprocess.run(
-            ['bin/ffmpeg/ffmpeg', '-y', '-loglevel', 'error', '-sseof', '-0.3',
-             '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
-            capture_output=True, text=True, timeout=60)
+        """提取视频末帧(最后 0.3s 处)为 jpg，失败返回 None（下一段回退角色图）。"""
+        # ffmpeg 路径读配置 bin.ffmpeg（Linux 部署为 /usr/bin/ffmpeg 等，
+        # 相对路径 bin/ffmpeg/ffmpeg 在服务器上不存在，曾致任务整体失败）
+        try:
+            r = subprocess.run(
+                [_get_ffmpeg_path(), '-y', '-loglevel', 'error', '-sseof', '-0.3',
+                 '-i', video_path, '-frames:v', '1', '-q:v', '2', out_jpg],
+                capture_output=True, text=True, timeout=60)
+        except OSError as e:
+            self.logger.warning(f"[接力] 末帧提取 ffmpeg 启动失败: {e}")
+            return None
         if r.returncode == 0 and os.path.isfile(out_jpg) and os.path.getsize(out_jpg) > 1024:
             return out_jpg
         self.logger.warning(f"[接力] 末帧提取失败: {out_jpg}")
@@ -501,10 +497,9 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
     def _concat_and_store(self, project_id, seg_files: list) -> str:
         """统一缩放到首段尺寸后拼接，落盘 /upload/cache 并返回 result_url。"""
         import json as _json
-        from utils.audio_duration_util import _get_ffmpeg_path
 
         probe = subprocess.run(
-            ['bin/ffmpeg/ffprobe', '-v', 'error', '-select_streams', 'v:0',
+            [_get_ffprobe_path(), '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'stream=width,height', '-of', 'json', seg_files[0]],
             capture_output=True, text=True, timeout=60)
         vstream = (_json.loads(probe.stdout or '{}').get('streams') or [{}])[0]
