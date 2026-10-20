@@ -1100,7 +1100,8 @@ function renderDialogueAudioSource(scene) {
     const hasVideo = Boolean(String(scene.videoUrl || '').trim());
     const hasTts = sceneHasDialogueAudio(scene.dialogues);
     const preferredVideo = Boolean(scene.audioEmbedded);
-    // 有效音源与预览/导出一致：无配音时自动视频原声；配音就绪后 audio_embedded=0 自动回 TTS
+    // 有效音源与预览/导出一致。音源口径：audio_embedded=0 仅在「有配音且用户显式选 TTS」
+    // 时成立——无配音一律视频原声（存量 0 值分镜靠自动兜底过渡，首条配音落地时后端锁回 1）。
     const audioMode = resolveSceneAudioMode({
         visualType: hasVideo ? 'video' : 'empty',
         audioEmbedded: preferredVideo,
@@ -1112,7 +1113,7 @@ function renderDialogueAudioSource(scene) {
 
     let hint = i18nT('hint_video_muted_use_dialogue_audio', '视频保持静音，连续预览和完整视频导出按顺序使用下方对话配音。');
     if (autoVideoFallback) {
-        hint = i18nT('hint_no_dialogue_use_video_audio', '当前没有对话配音，已自动使用视频原声；生成配音后会自动改回对话配音。');
+        hint = i18nT('hint_no_dialogue_use_video_audio', '当前没有对话配音，暂用视频原声。');
     } else if (useVideoAudio && hasVideo) {
         hint = i18nT('hint_video_audio_track_used', '连续预览和完整视频导出使用视频自带音轨，不再播放下方对话配音。');
     } else if (preferredVideo && !hasVideo) {
@@ -1126,6 +1127,10 @@ function renderDialogueAudioSource(scene) {
     const videoLabel = autoVideoFallback
         ? `${i18nT('label_video_audio', '视频原声')}<span class="dialogue-audio-source-auto-badge">${i18nT('label_auto', '自动')}</span>`
         : i18nT('label_video_audio', '视频原声');
+    // 无配音时不允许选 TTS（音源口径：TTS 仅在有配音时可选）
+    const ttsTitle = hasTts
+        ? i18nT('title_use_dialogue_audio', '使用下方对话配音')
+        : i18nT('title_tts_source_disabled', '请先生成对话配音，再选择此来源');
 
     return `
         <section class="dialogue-audio-source" aria-labelledby="dialogue-audio-source-title">
@@ -1137,8 +1142,8 @@ function renderDialogueAudioSource(scene) {
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? '' : 'active'}"
                     data-action="set-scene-audio-source" data-audio-source="tts"
-                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}"
-                    title="${i18nT('title_use_dialogue_audio', '使用下方对话配音；无配音时会自动使用视频原声')}">${i18nT('btn_dialogue_audio_tts', '对话配音（TTS）')}</button>
+                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}" ${hasTts ? '' : 'disabled'}
+                    title="${ttsTitle}">${i18nT('btn_dialogue_audio_tts', '对话配音（TTS）')}</button>
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? 'active' : ''}"
                     data-action="set-scene-audio-source" data-audio-source="video"
@@ -4253,7 +4258,7 @@ export function updateCurrentSceneDetail(scene) {
 }
 
 // 更新某条 dialogue 行的 audio 控件（仅在当前选中分镜 + 对话 Tab 时）。
-// 按 dialogue 行粒度替换，避免触碰用户正在编辑的其他行。返回 true 表示更新了。
+// 按行粒度替换，避免触碰用户正在编辑的其他行。返回 true 表示更新了。
 export function updateDialogueRow(scene, dialogueId) {
     if (!scene || scene.id !== state.currentSceneId || state.activeTab !== 'dialogue') return false;
     const dialogue = (scene.dialogues || []).find(d => d.id === dialogueId);
@@ -4261,6 +4266,30 @@ export function updateDialogueRow(scene, dialogueId) {
     const row = document.querySelector(`.dialogue-row[data-dialogue-id="${dialogueId}"]`);
     if (!row) return false;
     row.outerHTML = renderDialogueRowOuter(dialogue);
+    return true;
+}
+
+// 局部刷新左侧「音频来源」面板（仅当前选中分镜 + 对话 Tab 时）。
+// 配音落地（TTS 按钮禁用→可选）、后端音源翻转（audio_embedded 锁定）、
+// 音色替换收尾都会改变面板状态；轮询局部刷新必须覆盖，否则高亮/禁用态陈旧。
+// 签名防抖：面板渲染的全部输入未变时不重建 DOM，调用方可无脑调。
+export function updateDialogueAudioSourcePanel(scene) {
+    if (!scene || scene.id !== state.currentSceneId || state.activeTab !== 'dialogue') return false;
+    const panel = document.querySelector('.dialogue-audio-source');
+    if (!panel) return false;
+    const hasVideo = Boolean(String(scene.videoUrl || '').trim());
+    const sig = [
+        scene.audioEmbedded ? 1 : 0,
+        sceneHasDialogueAudio(scene.dialogues) ? 1 : 0,
+        hasVideo ? 1 : 0,
+        String(state.voiceReplaceBySceneId?.[scene.id]?.status || ''),
+    ].join('|');
+    if (panel.dataset.audioSig === sig) return false;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = renderDialogueAudioSource(scene);
+    const next = tmp.querySelector('.dialogue-audio-source');
+    if (!next) return false;
+    panel.replaceWith(next);
     return true;
 }
 

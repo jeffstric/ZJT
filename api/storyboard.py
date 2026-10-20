@@ -1038,8 +1038,10 @@ def build_storyboard_scenes_from_parsed_script(
                 'prompt': prompt_payload,
                 'video_prompt': video_prompt,
                 'video_type': resolved_video_type,
-                # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
-                'audio_embedded': resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
+                # 音源口径：新分镜默认视频原声，配音落地后保持、不自动切 TTS；
+                # 数字人分镜同此（口型音轨内嵌，声音同出）。
+                # 见 docs/storyboard/storyboard_timeline_playback.md
+                'audio_embedded': True,
                 # 发布幂等：用稳定 shot_id 做去重 key（见设计文档 §15）
                 'source_shot_key': shot.get('shot_id') or f'scene_{scene_index}',
                 'video_config': {
@@ -5561,6 +5563,8 @@ async def get_scene_task_status(
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
         'scene_duration': float(scene.duration) if scene and scene.duration is not None else None,
+        # 音频来源偏好（首条配音落地时后端会锁定为 True，前端轮询据此同步播放口径）
+        'audio_embedded': bool(scene.audio_embedded) if scene else None,
     })
 
 
@@ -5732,6 +5736,15 @@ async def delete_dialogue(
         return err
 
     affected = await asyncio.to_thread(StoryboardDialogueModel.delete, dialogue_id)
+
+    # 音源口径归位（R2）：audio_embedded=0 仅在「有配音且用户显式选 TTS」时成立；
+    # 对话删完分镜已无落地配音时，音频来源归位视频原声（与前端「无配音禁选 TTS」一致）。
+    if scene and not bool(getattr(scene, 'audio_embedded', False)):
+        landed = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.count_landed_selected_by_scene, scene.id
+        )
+        if landed == 0:
+            await asyncio.to_thread(StoryboardSceneModel.update, scene.id, audio_embedded=True)
     return JSONResponse({'success': True, 'affected': affected})
 
 

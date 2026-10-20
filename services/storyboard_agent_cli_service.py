@@ -4677,8 +4677,9 @@ class StoryboardAgentCliService:
                         f"叙事目的：{shot.get('narrative_purpose')}" if shot.get("narrative_purpose") else None,
                     ]),
                     "video_type": resolved_video_type,
-                    # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
-                    "audio_embedded": resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
+                    # 音源口径：新分镜默认视频原声，配音落地后保持、不自动切 TTS
+                    # （与 api/storyboard.py 拆分建分镜一致，见 docs/storyboard/storyboard_timeline_playback.md）
+                    "audio_embedded": True,
                     "video_config": {
                         "shot_type": shot_type,
                         "camera_angle": camera_angle,
