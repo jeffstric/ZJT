@@ -13,6 +13,22 @@ from api.script_split import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_token_resolution(monkeypatch):
+    """身份以 token 解析为准（"伪主人"修复后 X-User-Id 自报头不再是身份来源，
+    直接调用端点函数时需 mock token 属主与 user_id 一致）。
+    save_field 默认 no-op：带新 token 恢复任务时会持久化 token，测试不需要真写库；
+    个别用例自行 monkeypatch 覆盖本默认。"""
+    monkeypatch.setattr(
+        "model.user_tokens.UserTokensModel.get_user_id_by_token",
+        staticmethod(lambda token: 7 if token == "t7" else None),
+    )
+    monkeypatch.setattr(
+        "api.script_split.ScriptSplitTaskModel.save_field",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+
 def test_resume_targets_publishing_when_final_result_exists():
     task = ScriptSplitTask(
         status=ScriptSplitConstants.STATUS_PAUSED,
@@ -193,7 +209,7 @@ def test_resume_endpoint_restores_planned_task_to_generating(monkeypatch):
     response = asyncio.run(script_split.resume_task(
         task_id=23,
         request=None,
-        auth_token=None,
+        auth_token="t7",
         user_id=7,
     ))
 
@@ -240,7 +256,7 @@ def test_resume_qc_exhausted_task_preserves_round_for_forced_accept(monkeypatch)
     response = asyncio.run(script_split.resume_task(
         task_id=24,
         request=None,
-        auth_token=None,
+        auth_token="t7",
         user_id=7,
     ))
 
@@ -295,7 +311,7 @@ def test_resume_retry_exhausted_task_preserves_budget_when_candidate_exists(monk
     response = asyncio.run(script_split.resume_task(
         task_id=25,
         request=None,
-        auth_token=None,
+        auth_token="t7",
         user_id=7,
     ))
 
@@ -554,7 +570,7 @@ def test_resume_without_plan_resets_plan_retry_checkpoint(monkeypatch):
     response = asyncio.run(script_split.resume_task(
         task_id=26,
         request=None,
-        auth_token=None,
+        auth_token="t7",
         user_id=7,
     ))
 

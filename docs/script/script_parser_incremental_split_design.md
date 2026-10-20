@@ -581,11 +581,12 @@ POST /api/script-split/tasks/{task_id}/cancel
 
 活跃任务查询使用独立静态路径，避免与 `/tasks/{task_id}` 的动态路由匹配顺序冲突。
 
-通用任务接口同时支持两类调用方：Agent 使用交换后的短期 `auth_token`，通过
-`Authorization: Bearer <auth_token>` 解析真实用户；浏览器继续使用
-`X-User-Id`。有效 Authorization 优先于 Header；Authorization 缺失或因本地缓存
-过期而无效时，合法 `X-User-Id` 仍可回退，避免影响现有页面。Agent 不发送
-`X-User-Id`，因此无效 Agent Token 会返回 `401`。身份解析后仍必须校验任务所有权。
+通用任务接口的身份唯一可信来源是 `Authorization: Bearer <auth_token>`（Agent 使用
+交换后的短期 token，浏览器使用登录 token）。`X-User-Id` 头仅作一致性参考：
+携带时必须与 token 属主一致，不一致返回 `401 user_mismatch`；token 缺失/无效
+返回 `401`，**不再回退 X-User-Id 自报头**（"伪主人"漏洞修复；全站由
+`x_user_id_consistency_middleware` 统一收口，见 docs/backend/auth_unification.md）。
+身份解析后仍必须校验任务所有权。
 
 `resume` 不统一回到 `queued`：发布检查点恢复 `publishing`，分段计划检查点恢复 `generating`，无计划任务恢复 `queued`。`waiting_auth` 在刷新 token 后也遵循同一规则，避免已有计划的任务重新进入 `planning` 后空转。
 

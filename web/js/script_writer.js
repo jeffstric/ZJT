@@ -18,6 +18,28 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
+        // 当前登录用户角色（'admin' 时世界侧栏展示全部用户世界，并可硬删除他人世界）
+        let currentUserRole = null;
+
+        // 拉取当前用户角色；失败保持 null（按普通用户处理，不影响主流程）
+        async function loadCurrentUserRole() {
+            try {
+                const resp = await fetch('/api/user/role', {
+                    headers: { 'Authorization': AUTH_TOKEN }
+                });
+                const data = await resp.json().catch(() => null);
+                if (data && data.code === 0 && data.data) {
+                    currentUserRole = data.data.role || null;
+                }
+            } catch (e) {
+                console.warn('获取用户角色失败:', e);
+            }
+        }
+
+        function isAdminUser() {
+            return currentUserRole === 'admin';
+        }
+
         // 纯转义走 web/js/escape.js。必须用 const 包一层，禁止 function 声明：
         // 非 module 脚本里 function escapeHtml 会挂到 window，覆盖权威实现并自递归爆栈。
         const escapeHtmlShared = window.escapeHtml;
@@ -153,6 +175,20 @@
         // 401——不设防重入会连环 alert，且反复重设跳转目标，会把刚登录成功的用户
         // 又拽回登录页（表现为"登录后进页面仍提示过期"的回环）。
         let tokenExpiredHandled = false;
+        let userMismatchHandled = false;
+
+        // X-User-Id 与 token 属主不一致（账号已切换、页面 URL 仍是旧账号的 user_id）：
+        // token 本身有效，绝不能走 handleTokenExpired 的「清 token + 跳登录页」——
+        // 登录页 redirect_url 会原样带回旧 user_id，重新登录后依旧 mismatch，形成回环。
+        // 正确做法是回首页，由首页按当前登录账号重新导航。
+        function handleUserMismatch() {
+            if (userMismatchHandled) {
+                return;
+            }
+            userMismatchHandled = true;
+            alert('⚠️ ' + (window.t ? window.t('alert_user_mismatch') : '当前页面所属账号与登录账号不一致\n\n请从首页重新进入。'));
+            window.location.href = window.location.origin + '/';
+        }
 
         async function handleTokenExpired() {
             if (tokenExpiredHandled) {
@@ -194,7 +230,11 @@
                 return true;
             }
             if (response && response.status === 401) {
-                handleTokenExpired();
+                if (data && data.error_code === 'user_mismatch') {
+                    handleUserMismatch();
+                } else {
+                    handleTokenExpired();
+                }
                 return true;
             }
             return false;
@@ -379,6 +419,7 @@
             await loadDriverStatus();
             await loadTextToImageModels();
             await loadComputingPower();
+            await loadCurrentUserRole();
             await loadUserWorlds();
             bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
@@ -2239,11 +2280,15 @@
                 console.error('Failed to submit verification:', error);
                 const input = document.getElementById('message-input');
 
-                // 401: token 过期
+                // 401: token 过期 / 身份不一致
                 if (error.response && error.response.status === 401) {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    handleTokenExpired();
+                    if (error.response.data && error.response.data.error_code === 'user_mismatch') {
+                        handleUserMismatch();
+                    } else {
+                        handleTokenExpired();
+                    }
                     return;
                 }
 
@@ -7694,6 +7739,17 @@
                 worldName.textContent = world.name;
                 worldInfo.appendChild(worldName);
 
+                // 管理员查看他人世界时展示归属标记，便于区分
+                const isOwnWorld = String(world.user_id) === String(USER_ID);
+                if (isAdminUser() && !isOwnWorld) {
+                    const ownerTag = document.createElement('div');
+                    ownerTag.className = 'world-owner-tag';
+                    ownerTag.textContent = window.t
+                        ? window.t('world_owner_badge', { id: world.user_id })
+                        : `用户 ${world.user_id} 创建`;
+                    worldInfo.appendChild(ownerTag);
+                }
+
                 if (world.description) {
                     const worldDesc = document.createElement('div');
                     worldDesc.className = 'world-desc';
@@ -7752,6 +7808,26 @@
 
                     worldActions.appendChild(editBtn);
                     worldActions.appendChild(hideBtn);
+
+                    // 管理员可对他人创建的世界执行硬删除（物理删除，区别于「隐藏」伪删除）
+                    if (isAdminUser() && !isOwnWorld) {
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'world-delete-btn';
+                        deleteBtn.title = window.t ? window.t('delete_world_admin') : '永久删除（管理员）';
+                        deleteBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            adminDeleteWorld(world.id, world.name);
+                        };
+                        deleteBtn.innerHTML = `
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11l4 4M14 11l-4 4"/>
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            </svg>
+                        `;
+                        worldActions.appendChild(deleteBtn);
+                    }
                 }
 
                 worldItem.appendChild(worldInfo);
@@ -7800,8 +7876,10 @@
         async function loadUserWorlds() {
             try {
                 const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
+                // 管理员可见全部用户的世界（后端对非管理员自动回退 user 范围）
+                const scopeParam = isAdminUser() ? '&scope=all' : '';
                 const response = await fetch(
-                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}`,
+                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}${scopeParam}`,
                     {
                         headers: {
                             'Authorization': AUTH_TOKEN,
@@ -7885,6 +7963,55 @@
                     window.t
                         ? window.t('error_hide_world_failed', { error: error.message })
                         : `隐藏世界失败: ${error.message}`
+                );
+            }
+        }
+
+        // 管理员硬删除他人世界（物理删除；世界下仍有角色/场景时后端会拒绝）
+        async function adminDeleteWorld(worldId, worldName) {
+            const confirmMsg = window.t
+                ? window.t('confirm_delete_world_admin', { name: worldName || '' })
+                : `【管理员操作】确定永久删除世界「${worldName || ''}」吗？\n\n该操作将物理删除世界记录，不可恢复；世界下仍存在角色或场景时会被拒绝。`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const response = await fetch(`/api/worlds/${worldId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_deleted', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已删除`
+                    );
+                    // 删除的是当前正在使用的世界 → 退出到未选世界状态
+                    if (String(worldId) === String(WORLD_ID)) {
+                        let newUrl = `${window.location.pathname}?user_id=${USER_ID}`;
+                        if (WORKFLOW_ID) {
+                            newUrl += `&workflow_id=${WORKFLOW_ID}`;
+                        }
+                        window.location.href = newUrl;
+                        return;
+                    }
+                    await loadUserWorlds();
+                } else {
+                    showError(
+                        window.t
+                            ? window.t('error_delete_world_failed', { error: data.message || data.error || '未知错误' })
+                            : `删除世界失败: ${data.message || data.error || '未知错误'}`
+                    );
+                }
+            } catch (error) {
+                console.error('删除世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_delete_world_failed', { error: error.message })
+                        : `删除世界失败: ${error.message}`
                 );
             }
         }

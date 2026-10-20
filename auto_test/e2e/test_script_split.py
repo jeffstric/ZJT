@@ -3,7 +3,7 @@
 覆盖测试方案第 4 章：
 - 4.1 剧本拆分全流程（提交 → 202 → 轮询四阶段进度 → completed → 取 result）
 - 4.2 断点续传与恢复（active-task 查询、resume、cancel）
-- API 权限校验（X-User-Id != owner → 403）
+- API 权限校验（伪造 X-User-Id + 失效 token → 401，全站一致性中间件拦截）
 - result 状态校验（非 completed → 409）
 
 说明：
@@ -164,29 +164,24 @@ def test_cancel_nonexistent_task_returns_404(api_client, user_id):
 @pytest.mark.p0
 @pytest.mark.script_split
 def test_owner_isolation_query_task(api_client, user_id):
-    """split_007 - 用户不能查询不属于自己的任务（X-User-Id != owner → 403）。
+    """split_007 - 伪装他人身份查询任务必须失败（401）。
 
-    用一个不存在的 task_id 配合其他 user_id：403 优先于 404 在权限校验之后，
-    但不存在的任务 owner 也校验失败。这里验证权限路径不泄露任务存在性需 owner 匹配。
-    实际行为：task 不存在 → 404；若 task 存在但 owner 不匹配 → 403。
-    本用例验证用错误 user_id 不会拿到 200 数据。
-
-    注意：api_client 默认带 session 的 Authorization 头，服务端 _resolve_request_identity
-    优先用 token 解析身份（会覆盖 X-User-Id）。若不显式覆写为一个失效 token，
-    session token 有效时本用例会以 owner 身份拿到 200 而失败（此前"通过"是
-    session token 恰好失效的巧合）。此处强制走 X-User-Id 兜底路径，结果确定。
+    全站 X-User-Id 一致性中间件上线后，"失效 token + 伪造 X-User-Id"
+    在中间件层即被拒绝（401，invalid_auth_token / user_mismatch），
+    不再进入端点的 X-User-Id 兜底路径。本用例固化该防线：
+    绝不应返回 200 且带数据。
     """
     resp = api_client.get(
         f"{SPLIT_API}/tasks/1",  # 任意 id
         # user_id fixture 为字符串，先转 int 再偏移，避免 str + int 报错
         headers={
             "X-User-Id": str(int(user_id) + 100000),  # 几乎不可能匹配的 user_id
-            # 失效 token：服务端解析不到 token 用户，回退到 X-User-Id 头
+            # 失效 token：服务端解析不到 token 用户
             "Authorization": "Bearer e2e-isolation-test-invalid-token",
         },
     )
-    # 不存在 → 404；存在但非 owner → 403；绝不应是 200 且带数据
-    assert resp.status_code in (403, 404), f"期望 403/404，实际 {resp.status_code}: {resp.text}"
+    # 401：身份校验直接拒绝（失效 token 或属主不匹配）
+    assert resp.status_code == 401, f"期望 401，实际 {resp.status_code}: {resp.text}"
 
 
 # ============================================================

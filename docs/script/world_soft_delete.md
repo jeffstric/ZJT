@@ -20,10 +20,14 @@ Model：`model/world.py`
 
 ## API
 
+> 鉴权（2026-10-20 起）：本节所有接口的身份唯一可信来源是 `Authorization` token
+> 解析结果；`X-User-Id` 头仅作一致性参考，缺失/失效/与 token 属主不一致一律 401
+> （全站由 `x_user_id_consistency_middleware` 收口，见 docs/backend/auth_unification.md 五）。
+
 ### 列表
 
 ```
-GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
+GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all&scope=user|all
 ```
 
 | `visibility` | 含义 |
@@ -31,6 +35,11 @@ GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
 | `active`（默认） | 仅 `is_deleted=0`，全站选择器默认行为 |
 | `deleted` | 仅已伪删除 |
 | `all` | 不过滤（名称反查等内部场景） |
+
+| `scope` | 含义 |
+| --- | --- |
+| `user`（默认） | 独立空间模式仅当前用户；共享空间本就返回全部 |
+| `all` | 全部用户的世界，**仅管理员生效**，其他身份自动回退 `user` |
 
 所有现有 `GET /api/worlds` 调用方**不传参即可自动排除已隐藏世界**。
 
@@ -58,13 +67,14 @@ POST /api/worlds/{world_id}/restore
 DELETE /api/worlds/{world_id}
 ```
 
-仍要求无角色/场景后物理删除。
+仍要求无角色/场景后物理删除。权限：创建者本人；**管理员（`users.role='admin'`）可删除其他用户创建的世界**（独立空间模式下管理员需先通过 `GET /api/worlds?scope=all` 看到目标世界）。
 
 ## 前端
 
 | 入口 | 行为 |
 | --- | --- |
 | `script_writer` 侧栏 | 隐藏 / 查看已删除 / 恢复；当前世界被隐藏时跳转到未选世界 |
+| `script_writer` 侧栏（管理员） | 列表拉取 `scope=all` 展示全部用户世界；他人世界带「用户 {id} 创建」标记与永久删除按钮（硬删除，非隐藏） |
 | `video_workflow` / `video_workflow_list` / index / marketing 等 | 默认列表自动不展示已删；无伪删除 UI |
 | `storyboard` 编辑页 | 无世界列表；直链 `world_id` 仍可通过 `get_by_id` 访问 |
 
