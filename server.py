@@ -121,6 +121,7 @@ from utils.video_resolution import validate_video_resolution
 from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
+    http_exception_message,
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
@@ -183,6 +184,24 @@ def _asset_not_owner_response(message: str) -> JSONResponse:
     return JSONResponse(
         status_code=403,
         content={'code': -1, 'message': message, 'data': None}
+    )
+
+
+def _http_exception_response(exc: HTTPException) -> JSONResponse:
+    """权限等 HTTPException 收成 {code, message, detail}，与本接口成功体同形。
+
+    直接 raise 时 FastAPI 只回 detail，剧本页只读 message 就会显示「未知错误」。
+    """
+    message = http_exception_message(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            'code': -1,
+            'success': False,
+            'message': message,
+            'detail': message,
+            'data': None,
+        },
     )
 
 
@@ -3047,6 +3066,7 @@ async def get_user_role(auth_token: str = Header(None, alias="Authorization")):
         return {
             "code": 0,
             "data": {
+                "id": user.id,
                 "role": user.role,
                 "nickname": user.nickname,
                 "display_name": user.nickname or f"用户{user.id}",
@@ -8310,8 +8330,8 @@ async def hide_world(
                 'data': updated.to_dict() if updated else (world.to_dict() if world else None)
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to hide world {world_id}: {e}")
         return JSONResponse(
@@ -8364,8 +8384,8 @@ async def restore_world(
                 'data': updated.to_dict() if updated else (world.to_dict() if world else None)
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to restore world {world_id}: {e}")
         return JSONResponse(
@@ -8424,8 +8444,8 @@ async def delete_world(
                 'data': None
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to delete world {world_id}: {e}")
         return JSONResponse(

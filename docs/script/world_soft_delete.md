@@ -40,7 +40,7 @@ GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
 POST /api/worlds/{world_id}/hide
 ```
 
-- 权限同硬删（创建者等）
+- 权限同硬删（创建者等）。非创建者返回 403，正文同时带 `message` 与 `detail`，文案为「仅创建者可删除该世界」。剧本页按这句展示，不再落成「未知错误」
 - **不**校验角色/场景是否为空
 - 已隐藏时幂等成功
 

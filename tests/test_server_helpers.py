@@ -93,6 +93,28 @@ class TestCheckResourcePermission(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestHttpExceptionMessage(unittest.TestCase):
+    def test_string_detail(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(http_exception_message("仅创建者可删除该世界"), "仅创建者可删除该世界")
+
+    def test_blank_and_validation_list(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(http_exception_message("  "), "请求失败")
+        self.assertEqual(http_exception_message(None), "请求失败")
+        self.assertEqual(
+            http_exception_message([{"msg": "user_id is required"}, {"msg": "缺少字段"}]),
+            "user_id is required；缺少字段",
+        )
+
+    def test_dict_prefers_message(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(
+            http_exception_message({"message": "存在同名世界", "detail": "other"}),
+            "存在同名世界",
+        )
+
+
 class TestStaticVersion(unittest.TestCase):
     """测试静态资源版本号生成逻辑"""
 

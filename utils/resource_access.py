@@ -75,6 +75,37 @@ def ensure_resource_access(resource, user_id: int, action: str, resource_name: s
     return resource
 
 
+def http_exception_message(detail, fallback: str = "请求失败") -> str:
+    """把 HTTPException.detail 收成一句可展示的中文。
+
+    FastAPI 默认错误体只有 detail，没有 message。调用方若只读 message，
+    会把「仅创建者可删除该世界」显示成未知错误。
+    """
+    if isinstance(detail, str):
+        text = detail.strip()
+        return text or fallback
+    if isinstance(detail, dict):
+        for key in ("message", "error", "detail", "msg"):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return fallback
+    if isinstance(detail, list):
+        parts = []
+        for item in detail:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                msg = item.get("msg") or item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip())
+        return "；".join(parts) if parts else fallback
+    if detail is None:
+        return fallback
+    text = str(detail).strip()
+    return text or fallback
+
+
 def ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW):
     """
     检查用户对世界的访问权限

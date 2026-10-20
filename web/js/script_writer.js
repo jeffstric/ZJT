@@ -324,7 +324,85 @@
         const savedLocale = localStorage.getItem('zjt_locale') || 'zh-CN';
         document.documentElement.lang = savedLocale === 'en' ? 'en' : 'zh-CN';
 
+        function isBlankUserId(value) {
+            const text = String(value == null ? '' : value).trim();
+            return !text || text === 'null' || text === 'undefined';
+        }
+
+        function readApiErrorText(data) {
+            const unknown = window.t ? window.t('error_unknown') : '未知错误';
+            if (!data || typeof data !== 'object') return unknown;
+            const direct = [data.message, data.error];
+            if (typeof data.detail === 'string') direct.push(data.detail);
+            for (let i = 0; i < direct.length; i++) {
+                if (typeof direct[i] === 'string' && direct[i].trim()) return direct[i].trim();
+            }
+            if (Array.isArray(data.detail)) {
+                const parts = data.detail.map(function (item) {
+                    if (!item) return '';
+                    if (typeof item === 'string') return item.trim();
+                    if (typeof item.msg === 'string') return item.msg.trim();
+                    if (typeof item.message === 'string') return item.message.trim();
+                    return '';
+                }).filter(Boolean);
+                if (parts.length) return parts.join('；');
+            }
+            if (data.detail && typeof data.detail === 'object') {
+                const nested = data.detail.message || data.detail.error || data.detail.msg;
+                if (typeof nested === 'string' && nested.trim()) return nested.trim();
+            }
+            return unknown;
+        }
+
+        async function resolveLoggedInUserId() {
+            try {
+                const headers = {};
+                if (AUTH_TOKEN) {
+                    headers.Authorization = AUTH_TOKEN.startsWith('Bearer ')
+                        ? AUTH_TOKEN
+                        : `Bearer ${AUTH_TOKEN}`;
+                }
+                const resp = await fetch('/api/user/role', {
+                    headers: headers,
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json().catch(function () { return null; });
+                const resolved = data && data.code === 0 && data.data ? data.data.id : null;
+                if (resp.ok && !isBlankUserId(resolved)) {
+                    const id = String(resolved).trim();
+                    try { localStorage.setItem('user_id', id); } catch (e) { /* 隐私模式忽略 */ }
+                    return id;
+                }
+            } catch (e) {
+                // 角色接口失败时退回登录时写入的 user_id
+            }
+            const cached = localStorage.getItem('user_id');
+            return isBlankUserId(cached) ? '' : String(cached).trim();
+        }
+
+        // 分享链接或旧书签可能带上别人的 user_id。页面身份若继续用这个值，
+        // 后续世界/会话请求都会 403，用户停在当前页无法操作。入口处改成登录身份并刷新。
+        async function reconcileScriptWriterUserId() {
+            const authUserId = await resolveLoggedInUserId();
+            if (!authUserId) return false;
+            const params = new URLSearchParams(window.location.search);
+            const urlUserId = (params.get('user_id') || '').trim();
+            if (!isBlankUserId(urlUserId) && urlUserId === authUserId) return false;
+            params.set('user_id', authUserId);
+            // 错误 user_id 搭配的 world_id 属于对方。留下会继续卡在无权操作的世界里。
+            if (!isBlankUserId(urlUserId)) {
+                params.delete('world_id');
+            }
+            const qs = params.toString();
+            window.location.replace(window.location.pathname + (qs ? `?${qs}` : ''));
+            return true;
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
+            if (await reconcileScriptWriterUserId()) {
+                return;
+            }
+
             // i18n 初始化
             try {
                 // 初始化所有所需的命名空间
@@ -7873,10 +7951,11 @@
                     }
                     await loadUserWorlds();
                 } else {
+                    const errorText = readApiErrorText(data);
                     showError(
                         window.t
-                            ? window.t('error_hide_world_failed', { error: data.message || data.error || '未知错误' })
-                            : `隐藏世界失败: ${data.message || data.error || '未知错误'}`
+                            ? window.t('error_hide_world_failed', { error: errorText })
+                            : `隐藏世界失败: ${errorText}`
                     );
                 }
             } catch (error) {
@@ -7907,7 +7986,7 @@
                     );
                     await loadUserWorlds();
                 } else {
-                    const msg = data.message || data.error || '未知错误';
+                    const msg = readApiErrorText(data);
                     showError(
                         window.t
                             ? window.t('error_restore_world_failed', { error: msg })
