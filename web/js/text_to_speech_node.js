@@ -12,7 +12,11 @@
   ];
 
   function tr(key, fallback) {
-    return window.t ? window.t(key) : fallback;
+    // window.t 缺键时返回键名本身，不能把键名当成译文
+    if (typeof window.t !== 'function') return fallback;
+    var value = window.t(key);
+    if (!value || value === key) return fallback;
+    return value;
   }
 
   function createTextToSpeechNode(opts) {
@@ -173,7 +177,8 @@
         async function loadVoices() {
           if (!window.VoiceLibraryApi) return;
           try {
-            var data = await window.VoiceLibraryApi.listVoices({ page_size: 300 });
+            // 快速合成只能用火山音色；reference_audio 是克隆参考，不能走这条链路
+            var data = await window.VoiceLibraryApi.listVoices({ page_size: 300, provider: 'volcengine' });
             voiceOptions = data.voices || [];
             powerTiers = data.power_tiers || [];
             var esc = window.escapeHtml || function(s) { return String(s == null ? '' : s); };
@@ -183,6 +188,7 @@
               }).join('');
             if (node.data.voiceId) voiceSelectEl.value = String(node.data.voiceId);
           } catch (e) {
+            console.error('音色库加载失败:', e);
             voiceSelectEl.innerHTML = '<option value="">' +
               esc2(tr('tts_voice_load_failed', '音色库加载失败')) + '</option>';
           }
