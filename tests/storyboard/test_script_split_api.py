@@ -61,6 +61,16 @@ def _fake_task(**overrides):
     return task
 
 
+def _auth_headers(monkeypatch, user_id=7):
+    """mock token 解析并返回一致的认证头（X-User-Id 必须与 token 属主一致，
+    否则 401 user_mismatch——X-User-Id 自报头已不再是可信身份来源）。"""
+    monkeypatch.setattr(
+        "model.user_tokens.UserTokensModel.get_user_id_by_token",
+        staticmethod(lambda token: user_id if token == f"t{user_id}" else None),
+    )
+    return {"Authorization": f"Bearer t{user_id}", "X-User-Id": str(user_id)}
+
+
 # ---------------- compute_active_key ----------------
 
 class TestComputeActiveKey:
@@ -156,9 +166,10 @@ class TestGetTaskStatus:
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "generating"
 
-    def test_valid_authorization_wins_over_conflicting_browser_header(
+    def test_conflicting_browser_header_rejected(
         self, monkeypatch, patch_to_thread
     ):
+        """token 属主与 X-User-Id 不一致 → 401（不再"token 覆盖 header"放行）。"""
         task = _fake_task(user_id=7)
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
@@ -172,11 +183,13 @@ class TestGetTaskStatus:
             headers={"Authorization": "Bearer agent-auth", "X-User-Id": "999"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 401
+        assert resp.json()["error_code"] == "user_mismatch"
 
-    def test_invalid_authorization_falls_back_to_browser_header(
+    def test_invalid_authorization_rejected_despite_browser_header(
         self, monkeypatch, patch_to_thread
     ):
+        """失效 token + X-User-Id 兜底路径已关闭 → 401。"""
         task = _fake_task(user_id=7)
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
@@ -190,7 +203,8 @@ class TestGetTaskStatus:
             headers={"Authorization": "Bearer expired", "X-User-Id": "7"},
         )
 
-        assert resp.status_code == 200
+        assert resp.status_code == 401
+        assert resp.json()["error_code"] == "invalid_auth_token"
 
     def test_invalid_agent_authorization_without_header_is_unauthorized(
         self, monkeypatch, patch_to_thread
@@ -215,7 +229,13 @@ class TestGetTaskStatus:
         task = _fake_task(user_id=7)
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().get("/api/script-split/tasks/1", headers={"X-User-Id": "7"})
+        monkeypatch.setattr(
+            "model.user_tokens.UserTokensModel.get_user_id_by_token",
+            staticmethod(lambda token: 7 if token == "t7" else None),
+        )
+        resp = _client().get(
+            "/api/script-split/tasks/1",
+            headers={"Authorization": "Bearer t7", "X-User-Id": "7"})
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "generating"
 
@@ -223,13 +243,25 @@ class TestGetTaskStatus:
         task = _fake_task(user_id=7)
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().get("/api/script-split/tasks/1", headers={"X-User-Id": "999"})
+        monkeypatch.setattr(
+            "model.user_tokens.UserTokensModel.get_user_id_by_token",
+            staticmethod(lambda token: 999 if token == "t999" else None),
+        )
+        resp = _client().get(
+            "/api/script-split/tasks/1",
+            headers={"Authorization": "Bearer t999", "X-User-Id": "999"})
         assert resp.status_code == 403
 
     def test_task_not_found(self, monkeypatch, patch_to_thread):
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: None))
-        resp = _client().get("/api/script-split/tasks/1", headers={"X-User-Id": "7"})
+        monkeypatch.setattr(
+            "model.user_tokens.UserTokensModel.get_user_id_by_token",
+            staticmethod(lambda token: 7 if token == "t7" else None),
+        )
+        resp = _client().get(
+            "/api/script-split/tasks/1",
+            headers={"Authorization": "Bearer t7", "X-User-Id": "7"})
         assert resp.status_code == 404
 
 
@@ -261,7 +293,7 @@ class TestGetTaskResult:
         task = _fake_task(status="completed", _final={"shot_groups": [{"shots": []}]})
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().get("/api/script-split/tasks/1/result", headers={"X-User-Id": "7"})
+        resp = _client().get("/api/script-split/tasks/1/result", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 200
         assert resp.json()["data"]["shot_groups"] is not None
 
@@ -269,7 +301,7 @@ class TestGetTaskResult:
         task = _fake_task(status="paused")
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().get("/api/script-split/tasks/1/result", headers={"X-User-Id": "7"})
+        resp = _client().get("/api/script-split/tasks/1/result", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 409
 
 
@@ -303,7 +335,7 @@ class TestGetActiveTask:
             staticmethod(lambda st, sid, key: task))
         resp = _client().get(
             "/api/script-split/active-task?source_type=storyboard&source_id=5",
-            headers={"X-User-Id": "7"})
+            headers=_auth_headers(monkeypatch))
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "generating"
 
@@ -313,12 +345,12 @@ class TestGetActiveTask:
             staticmethod(lambda st, sid, key: None))
         resp = _client().get(
             "/api/script-split/active-task?source_type=storyboard&source_id=5",
-            headers={"X-User-Id": "7"})
+            headers=_auth_headers(monkeypatch))
         assert resp.status_code == 200
         assert resp.json()["data"] is None
 
-    def test_missing_source_params_400(self):
-        resp = _client().get("/api/script-split/active-task", headers={"X-User-Id": "7"})
+    def test_missing_source_params_400(self, monkeypatch):
+        resp = _client().get("/api/script-split/active-task", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 400
 
 
@@ -379,14 +411,15 @@ class TestResumeTask:
         task = _fake_task(status="generating")
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().post("/api/script-split/tasks/1/resume", headers={"X-User-Id": "7"})
+        resp = _client().post("/api/script-split/tasks/1/resume", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 409
 
     def test_non_owner_forbidden(self, monkeypatch, patch_to_thread):
         task = _fake_task(user_id=7, status="paused")
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().post("/api/script-split/tasks/1/resume", headers={"X-User-Id": "999"})
+        resp = _client().post("/api/script-split/tasks/1/resume",
+                              headers=_auth_headers(monkeypatch, 999))
         assert resp.status_code == 403
 
 
@@ -425,7 +458,7 @@ class TestCancelTask:
                             staticmethod(lambda tid: requested.append(tid)))
         monkeypatch.setattr("api.script_split.ScriptSplitTaskModel.update_status",
                             staticmethod(lambda tid, status, **kw: None))
-        resp = _client().post("/api/script-split/tasks/1/cancel", headers={"X-User-Id": "7"})
+        resp = _client().post("/api/script-split/tasks/1/cancel", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "cancelling"
         assert requested == [1]
@@ -434,12 +467,13 @@ class TestCancelTask:
         task = _fake_task(status="completed")
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().post("/api/script-split/tasks/1/cancel", headers={"X-User-Id": "7"})
+        resp = _client().post("/api/script-split/tasks/1/cancel", headers=_auth_headers(monkeypatch))
         assert resp.status_code == 409
 
     def test_non_owner_forbidden(self, monkeypatch, patch_to_thread):
         task = _fake_task(user_id=7, status="generating")
         monkeypatch.setattr(
             "api.script_split.ScriptSplitTaskModel.get_by_id", staticmethod(lambda tid: task))
-        resp = _client().post("/api/script-split/tasks/1/cancel", headers={"X-User-Id": "999"})
+        resp = _client().post("/api/script-split/tasks/1/cancel",
+                              headers=_auth_headers(monkeypatch, 999))
         assert resp.status_code == 403
