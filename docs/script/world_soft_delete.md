@@ -69,6 +69,8 @@ DELETE /api/worlds/{world_id}
 
 仍要求无角色/场景后物理删除。权限：创建者本人；**管理员（`users.role='admin'`）可删除其他用户创建的世界**（独立空间模式下管理员需先通过 `GET /api/worlds?scope=all` 看到目标世界）。
 
+剧本页管理员永久删除失败时，与隐藏/恢复一样走 `readApiErrorText`：按 `message`、`error`、字符串 `detail`、校验数组 `detail[].msg` 的顺序取文案。世界下仍有角色或场景时，后端拒绝原因会显示出来，不会落成「未知错误」。
+
 ## 前端
 
 | 入口 | 行为 |

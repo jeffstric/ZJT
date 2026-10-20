@@ -8079,10 +8079,11 @@
                     }
                     await loadUserWorlds();
                 } else {
+                    const errorText = readApiErrorText(data);
                     showError(
                         window.t
-                            ? window.t('error_delete_world_failed', { error: data.message || data.error || '未知错误' })
-                            : `删除世界失败: ${data.message || data.error || '未知错误'}`
+                            ? window.t('error_delete_world_failed', { error: errorText })
+                            : `删除世界失败: ${errorText}`
                     );
                 }
             } catch (error) {
