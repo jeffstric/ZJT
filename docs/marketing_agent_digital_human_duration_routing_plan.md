@@ -273,3 +273,14 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - `_run_segment_pipeline`（sync 长跑，sync executor 进程池内）：串行循环——上传段音频→提交（输入图=角色图[段1] 或前段末帧[段2+]）→轮询→下载；段提交/生成失败自动重试一次；全部成功后 concat 落盘，sync_mode 返回 result_url。
 - 顺带清理：重复的旧 `_submit_segments_async`（并行快速提交版，被多次 checkout 往返产生的残留）删除，保留串行末帧接力单一实现。
 - 代价：分段任务改为串行，总耗时 = 段数 × 单段时长（约 2-5 分钟/段）；换取消除拼接点景别跳变。
+
+
+### 附录 C.9 修复 ffmpeg/ffprobe 硬编码相对路径——Linux 部署分段必现失败（2026-10-20）
+
+**事故（zjt_trial 环境，会话 0a38dcac，project 1256，43s/3 段）**：末帧接力链式下 seg_1 在 RunningHub 生成成功并下载后，`_extract_last_frame` 以相对路径 `bin/ffmpeg/ffmpeg` 调用 ffmpeg → `FileNotFoundError`（服务器无 `bin/` 目录，系统 ffmpeg 在 `/usr/bin/ffmpeg`）→ 整条 submit_task 失败、算力退款，前端只见"服务异常"。
+
+**根因**：`86a652f9`（dev2 ffmpeg 定位兼容 Linux）只改了 `_concat_and_store` 的 ffmpeg 调用（`_get_ffmpeg_path()`）；其后 `37f4018f` 接力链新代码 `_extract_last_frame` 又写回硬编码，且 `_concat_and_store` 内探测首段尺寸的 ffprobe 仍硬编码 `bin/ffmpeg/ffprobe`——驱动内共 3 处残留（含一份被后定义覆盖的重复 `_extract_last_frame`）。Windows 开发机存在 `bin/ffmpeg/ffmpeg.exe`，自测不可复现；**所有无 `bin/ffmpeg/` 的 Linux 部署上分段数字人（>10s）必现失败**（单段不走末帧提取，不受影响）。
+
+**修复**：3 处调用统一改 `_get_ffmpeg_path()` / `_get_ffprobe_path()`（读主配置 `bin.ffmpeg` / `bin.ffprobe`，缺省回退 PATH）；删除被覆盖的重复 `_extract_last_frame` 定义；`_extract_last_frame` 补 `OSError` 捕获——ffmpeg 启动失败时按契约返回 None（下一段回退角色图首帧），不再炸整条流水线。
+
+**测试**：`tests/drivers/test_digital_human_minimax_h3_runninghub_v1_driver.py` 新增 3 项（配置路径生效 / ffmpeg 不可启动优雅降级 / ffprobe 配置路径）+ 驱动相关 184 项回归通过。

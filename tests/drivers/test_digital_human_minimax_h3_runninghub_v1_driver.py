@@ -1,4 +1,5 @@
 import asyncio
+import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -94,3 +95,70 @@ def test_build_create_request_resolution_maps_to_max_edge():
     )))
     nodes = node_map(request)
     assert nodes[("213", "value")] == "720"
+
+
+def test_extract_last_frame_uses_configured_ffmpeg(monkeypatch, tmp_path):
+    """末帧提取必须走配置 bin.ffmpeg（Linux 部署无 bin/ffmpeg/ffmpeg 相对路径）。"""
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    seen = {}
+
+    def fake_run(argv, *args, **kwargs):
+        seen["ffmpeg"] = argv[0]
+        with open(argv[-1], "wb") as f:
+            f.write(b"x" * 2048)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(drv_mod, "_get_ffmpeg_path", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(drv_mod.subprocess, "run", fake_run)
+
+    driver = make_driver()
+    out_jpg = str(tmp_path / "last.jpg")
+    assert driver._extract_last_frame(str(tmp_path / "seg1.mp4"), out_jpg) == out_jpg
+    assert seen["ffmpeg"] == "/usr/bin/ffmpeg"
+    assert seen["ffmpeg"] != "bin/ffmpeg/ffmpeg"
+
+
+def test_extract_last_frame_degrades_when_ffmpeg_unlaunchable(monkeypatch, tmp_path):
+    """ffmpeg 启动失败时返回 None（下一段回退角色图），不得抛异常炸整条流水线。"""
+    import errno
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    def boom(argv, *args, **kwargs):
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(drv_mod, "_get_ffmpeg_path", lambda: "bin/ffmpeg/ffmpeg")
+    monkeypatch.setattr(drv_mod.subprocess, "run", boom)
+
+    driver = make_driver()
+    assert driver._extract_last_frame(str(tmp_path / "v.mp4"), str(tmp_path / "o.jpg")) is None
+
+
+def test_concat_and_store_uses_configured_ffprobe(monkeypatch, tmp_path):
+    """拼接前探测首段尺寸的 ffprobe 也必须走配置 bin.ffprobe。"""
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    calls = []
+
+    def fake_run(argv, *args, **kwargs):
+        calls.append(argv[0])
+        if "-show_entries" in argv:
+            return SimpleNamespace(
+                returncode=0,
+                stdout='{"streams": [{"width": 720, "height": 1280}]}',
+                stderr="")
+        out_path = argv[-1]
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        with open(out_path, "wb") as f:
+            f.write(b"x" * 2048)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(drv_mod, "_get_ffprobe_path", lambda: "/usr/bin/ffprobe")
+    monkeypatch.setattr(drv_mod.subprocess, "run", fake_run)
+    monkeypatch.chdir(tmp_path)
+
+    driver = make_driver()
+    result_url = driver._concat_and_store(999, [str(tmp_path / "seg1.mp4"), str(tmp_path / "seg2.mp4")])
+    assert calls[0] == "/usr/bin/ffprobe"
+    assert calls[1] != "bin/ffmpeg/ffmpeg"
+    assert result_url.startswith("/upload/cache/")
