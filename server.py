@@ -10617,6 +10617,131 @@ async def delete_props(
         )
 
 
+class _TimelineMediaExportError(Exception):
+    """时间轴素材下载失败：携带 HTTP 状态码与用户可读错误信息。"""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error = message
+
+
+async def _download_timeline_media_clips(clips, media_kind, temp_download_dir, request_origin):
+    """
+    下载时间轴素材（视频/音频）到 temp_download_dir，供草稿导出与素材包导出共用。
+
+    media_kind: 'video' | 'audio'（决定文件名前缀、扩展名推断与错误文案）。
+    本站 /upload/ 文件直接复用本地路径，相同素材（同 URL / 同本地文件）只下载一次。
+    失败时抛 _TimelineMediaExportError，由调用方转成对应状态的 JSONResponse。
+    """
+    is_video = media_kind == 'video'
+    kind_label = '视频' if is_video else '音频'
+    prefix = 'video' if is_video else 'audio'
+    default_ext = '.mp4' if is_video else '.mp3'
+    cache_hint = '生成视频缓存' if is_video else '生成结果缓存'
+    from utils.cdn_util import CDNUtil
+
+    downloaded_files = []
+    asset_cache = {}
+
+    for idx, clip in enumerate(clips):
+        media_url = clip.get('url')
+        media_name = clip.get('name', f'{prefix}_{idx}')
+
+        if not media_url:
+            logger.warning(f"跳过没有URL的片段: {media_name}")
+            continue
+
+        try:
+            asset_key = None
+            local_asset_path = _get_local_upload_file(media_url, request_origin)
+            if local_asset_path:
+                asset_key = f"local::{os.path.abspath(local_asset_path)}"
+            elif media_url:
+                asset_key = f"url::{media_url}"
+
+            if asset_key and asset_key in asset_cache:
+                file_path = asset_cache[asset_key]
+                safe_name = os.path.basename(file_path)
+                logger.info(f"复用已下载素材: {media_name} -> {safe_name}")
+            else:
+                if local_asset_path:
+                    file_ext = os.path.splitext(local_asset_path)[1] or default_ext
+                    safe_name = f"{prefix}_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                    file_path = os.path.join(temp_download_dir, safe_name)
+                    shutil.copy2(local_asset_path, file_path)
+                    logger.info(f"已复用本地上传{kind_label}文件: {local_asset_path} -> {file_path}")
+                else:
+                    logger.info(f"正在下载{kind_label} {idx + 1}/{len(clips)}: {media_name}")
+
+                    # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与草稿导出同理：
+                    # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
+                    if not media_url.lower().startswith(('http://', 'https://')):
+                        if media_url.startswith('/upload/'):
+                            hint = (f'该素材的源文件已被服务器到期清理'
+                                    f'（{cache_hint}只保留有限天数），'
+                                    f'请重新生成或重新上传后再导出')
+                        else:
+                            hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                    '请刷新页面后重新上传该素材，再重新导出')
+                        raise _TimelineMediaExportError(
+                            400,
+                            f'素材 {media_name} 无法导出（{media_url[:80]}）：{hint}')
+
+                    # 刷新 CDN URL 签名（防止 token 过期导致 403）
+                    download_url = await asyncio.to_thread(
+                        CDNUtil.refresh_cdn_signed_url, media_url)
+
+                    # 下载媒体 (异步)
+                    async with httpx.AsyncClient(timeout=300.0) as http_client:
+                        async with http_client.stream('GET', download_url) as response:
+                            response.raise_for_status()
+
+                            # 确定文件扩展名
+                            file_ext = default_ext
+                            content_type = response.headers.get('content-type', '')
+                            if is_video:
+                                if 'video/quicktime' in content_type or media_url.endswith('.mov'):
+                                    file_ext = '.mov'
+                                elif 'video/x-msvideo' in content_type or media_url.endswith('.avi'):
+                                    file_ext = '.avi'
+                            else:
+                                if 'audio/wav' in content_type or media_url.endswith('.wav'):
+                                    file_ext = '.wav'
+                                elif 'audio/aac' in content_type or media_url.endswith('.aac'):
+                                    file_ext = '.aac'
+                                elif 'audio/mpeg' in content_type or media_url.endswith('.mp3'):
+                                    file_ext = '.mp3'
+
+                            # 保存文件
+                            safe_name = f"{prefix}_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                            file_path = os.path.join(temp_download_dir, safe_name)
+
+                            with open(file_path, 'wb') as f:
+                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                    f.write(chunk)
+
+                    logger.info(f"{kind_label}下载完成: {safe_name}")
+
+                if asset_key:
+                    asset_cache[asset_key] = file_path
+
+            downloaded_files.append({
+                'file_path': file_path,
+                'clip': clip,
+                'filename': safe_name
+            })
+
+        except _TimelineMediaExportError:
+            raise
+        except Exception as e:
+            logger.error(f"处理{kind_label}失败 {media_name}: {e}")
+            raise _TimelineMediaExportError(
+                500, f'处理{kind_label}失败: {media_name} - {str(e)}')
+
+    return downloaded_files
+
+
 class ExportTimelineDraftRequest(BaseModel):
     draft_path: str
     video_clips: List[dict] = []
@@ -10665,7 +10790,6 @@ async def export_timeline_draft(
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
         from jianying.utils import seconds_to_microseconds
-        from utils.cdn_util import CDNUtil
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
@@ -10687,205 +10811,13 @@ async def export_timeline_draft(
         logger.info(f"草稿路径前缀: {payload.draft_path}")
 
         request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
-        
-        # 下载所有视频和音频
-        downloaded_video_files = []
-        downloaded_audio_files = []
-        asset_cache = {}
-        
-        # 下载视频文件
-        for idx, clip in enumerate(payload.video_clips):
-            video_url = clip.get('url')
-            video_name = clip.get('name', f'video_{idx}')
-            
-            if not video_url:
-                logger.warning(f"跳过没有URL的片段: {video_name}")
-                continue
-            
-            try:
-                asset_key = None
-                local_asset_path = _get_local_upload_file(video_url, request_origin)
-                if local_asset_path:
-                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
-                elif video_url:
-                    asset_key = f"url::{video_url}"
 
-                if asset_key and asset_key in asset_cache:
-                    file_path = asset_cache[asset_key]
-                    safe_name = os.path.basename(file_path)
-                    logger.info(f"复用已下载素材: {video_name} -> {safe_name}")
-                else:
-                    if local_asset_path:
-                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp4'
-                        safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        shutil.copy2(local_asset_path, file_path)
-                        logger.info(f"已复用本地上传文件: {local_asset_path} -> {file_path}")
-                    else:
-                        logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
+        # 下载所有视频和音频（草稿导出与素材包导出共用 _download_timeline_media_clips）
+        downloaded_video_files = await _download_timeline_media_clips(
+            payload.video_clips, 'video', temp_download_dir, request_origin)
+        downloaded_audio_files = await _download_timeline_media_clips(
+            payload.audio_clips, 'audio', temp_download_dir, request_origin)
 
-                        # 无协议头的地址无法交给 httpx 下载。media_cache 到期清理时本地文件
-                        # 与七牛云端副本、映射记录是同步删除的，/upload/ 地址本地缺失即素材
-                        # 已被彻底清理、无法恢复，直接给出可行动的报错
-                        if not video_url.lower().startswith(('http://', 'https://')):
-                            if video_url.startswith('/upload/'):
-                                hint = ('该素材的源文件已被服务器到期清理'
-                                        '（生成视频缓存只保留有限天数），'
-                                        '请重新生成或重新上传后再导出')
-                            else:
-                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
-                                        '请刷新页面后重新上传该素材，再重新导出')
-                            return JSONResponse(
-                                status_code=400,
-                                content={
-                                    'success': False,
-                                    'error': f'素材 {video_name} 无法导出（{video_url[:80]}）：{hint}'
-                                }
-                            )
-
-                        # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        download_url = await asyncio.to_thread(
-                            CDNUtil.refresh_cdn_signed_url, video_url)
-
-                        # 下载视频 (异步)
-                        async with httpx.AsyncClient(timeout=300.0) as http_client:
-                            async with http_client.stream('GET', download_url) as response:
-                                response.raise_for_status()
-                                
-                                # 确定文件扩展名
-                                file_ext = '.mp4'
-                                content_type = response.headers.get('content-type', '')
-                                if 'video/quicktime' in content_type or video_url.endswith('.mov'):
-                                    file_ext = '.mov'
-                                elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
-                                    file_ext = '.avi'
-                                
-                                # 保存文件
-                                safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                                file_path = os.path.join(temp_download_dir, safe_name)
-                                
-                                with open(file_path, 'wb') as f:
-                                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                                        f.write(chunk)
-                        
-                        logger.info(f"视频下载完成: {safe_name}")
-                    
-                    if asset_key:
-                        asset_cache[asset_key] = file_path
-                
-                downloaded_video_files.append({
-                    'file_path': file_path,
-                    'clip': clip,
-                    'filename': safe_name
-                })
-                
-            except Exception as e:
-                logger.error(f"处理视频失败 {video_name}: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        'success': False,
-                        'error': f'处理视频失败: {video_name} - {str(e)}'
-                    }
-                )
-        
-        # 下载音频文件
-        for idx, clip in enumerate(payload.audio_clips):
-            audio_url = clip.get('url')
-            audio_name = clip.get('name', f'audio_{idx}')
-            
-            if not audio_url:
-                logger.warning(f"跳过没有URL的音频片段: {audio_name}")
-                continue
-            
-            try:
-                asset_key = None
-                local_asset_path = _get_local_upload_file(audio_url, request_origin)
-                if local_asset_path:
-                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
-                elif audio_url:
-                    asset_key = f"url::{audio_url}"
-
-                if asset_key and asset_key in asset_cache:
-                    file_path = asset_cache[asset_key]
-                    safe_name = os.path.basename(file_path)
-                    logger.info(f"复用已下载素材: {audio_name} -> {safe_name}")
-                else:
-                    if local_asset_path:
-                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp3'
-                        safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        shutil.copy2(local_asset_path, file_path)
-                        logger.info(f"已复用本地上传音频文件: {local_asset_path} -> {file_path}")
-                    else:
-                        logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
-
-                        # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与视频分支同理：
-                        # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
-                        if not audio_url.lower().startswith(('http://', 'https://')):
-                            if audio_url.startswith('/upload/'):
-                                hint = ('该素材的源文件已被服务器到期清理'
-                                        '（生成结果缓存只保留有限天数），'
-                                        '请重新生成或重新上传后再导出')
-                            else:
-                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
-                                        '请刷新页面后重新上传该素材，再重新导出')
-                            return JSONResponse(
-                                status_code=400,
-                                content={
-                                    'success': False,
-                                    'error': f'素材 {audio_name} 无法导出（{audio_url[:80]}）：{hint}'
-                                }
-                            )
-
-                        # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        download_url = await asyncio.to_thread(
-                            CDNUtil.refresh_cdn_signed_url, audio_url)
-
-                        # 下载音频 (异步)
-                        async with httpx.AsyncClient(timeout=300.0) as http_client:
-                            async with http_client.stream('GET', download_url) as response:
-                                response.raise_for_status()
-                                
-                                # 确定文件扩展名
-                                file_ext = '.mp3'
-                                content_type = response.headers.get('content-type', '')
-                                if 'audio/wav' in content_type or audio_url.endswith('.wav'):
-                                    file_ext = '.wav'
-                                elif 'audio/aac' in content_type or audio_url.endswith('.aac'):
-                                    file_ext = '.aac'
-                                elif 'audio/mpeg' in content_type or audio_url.endswith('.mp3'):
-                                    file_ext = '.mp3'
-                                
-                                # 保存文件
-                                safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                                file_path = os.path.join(temp_download_dir, safe_name)
-                                
-                                with open(file_path, 'wb') as f:
-                                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                                        f.write(chunk)
-                        
-                        logger.info(f"音频下载完成: {safe_name}")
-                    
-                    if asset_key:
-                        asset_cache[asset_key] = file_path
-                
-                downloaded_audio_files.append({
-                    'file_path': file_path,
-                    'clip': clip,
-                    'filename': safe_name
-                })
-                
-            except Exception as e:
-                logger.error(f"处理音频失败 {audio_name}: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        'success': False,
-                        'error': f'处理音频失败: {audio_name} - {str(e)}'
-                    }
-                )
-        
         if not downloaded_video_files and not downloaded_audio_files:
             return JSONResponse(
                 status_code=400,
@@ -11248,6 +11180,16 @@ async def export_timeline_draft(
             }
         )
         
+    except _TimelineMediaExportError as e:
+        # 素材下载失败（URL 失效/清理等），按原始状态码返回可行动的提示
+        logger.warning(f"导出草稿失败(素材下载): {e.error}")
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                'success': False,
+                'error': e.error
+            }
+        )
     except Exception as e:
         logger.error(f"导出草稿失败: {e}")
         logger.error(traceback.format_exc())
@@ -11258,6 +11200,219 @@ async def export_timeline_draft(
                 'error': str(e)
             }
         )
+
+
+class ExportTimelineAssetsRequest(BaseModel):
+    video_clips: List[dict] = []
+    audio_clips: List[dict] = []
+    workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
+
+
+def _sanitize_timeline_asset_name(raw_name, fallback, used_names):
+    """清洗片段名为跨平台（Windows/Linux/macOS）安全的 zip 内文件名，冲突时加序号。"""
+    cleaned = "".join(
+        c for c in str(raw_name or '').strip()
+        if c not in '<>:"/\\|?*' and ord(c) >= 32
+    ).rstrip('. ')
+    cleaned = cleaned[:80] or fallback
+    candidate = cleaned
+    seq = 2
+    while candidate in used_names:
+        candidate = f"{cleaned}_{seq}"
+        seq += 1
+    used_names.add(candidate)
+    return candidate
+
+
+@app.post('/api/export_timeline_assets')
+async def export_timeline_assets(
+    payload: ExportTimelineAssetsRequest,
+    http_request: Request,
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    导出时间轴素材包 zip（视频/ 音频/ 原素材 + manifest.json），上传 CDN 后返回
+    download_url。交付方式对齐故事板「导出素材包」（export-all-scenes）：不含剪影
+    草稿结构，只交付原始素材文件，供用户在任意剪辑软件中使用。
+    """
+    base_temp_dir = None
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        if not payload.video_clips and not payload.audio_clips:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '时间轴为空，无法导出'
+                }
+            )
+
+        safe_workflow_name = "".join(
+            c for c in (payload.workflow_name or '未命名工作流')
+            if c.isalnum() or c in (' ', '-', '_')
+        ).strip()
+        safe_workflow_name = safe_workflow_name.replace(' ', '_') or 'workflow'
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        package_name = f"{safe_workflow_name}_素材_{stamp}"
+        zip_filename = f"{package_name}.zip"
+
+        # 复用剪影导出的临时目录（files/tmp/jianying_export/日期/，按日期分组便于排查）
+        base_temp_dir = FilePathConstants.get_jianying_export_dir(APP_DIR, package_name)
+        temp_download_dir = os.path.join(base_temp_dir, 'downloads')
+        os.makedirs(temp_download_dir, exist_ok=True)
+
+        logger.info(f"开始导出时间轴素材包: {package_name}")
+        logger.info(f"临时下载目录: {temp_download_dir}")
+
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
+
+        downloaded_video_files = await _download_timeline_media_clips(
+            payload.video_clips, 'video', temp_download_dir, request_origin)
+        downloaded_audio_files = await _download_timeline_media_clips(
+            payload.audio_clips, 'audio', temp_download_dir, request_origin)
+
+        if not downloaded_video_files and not downloaded_audio_files:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '没有成功下载任何媒体文件'
+                }
+            )
+
+        def _manifest_entry(item, order, zip_name):
+            clip = item['clip']
+            return {
+                'file': zip_name,
+                'order': order,
+                'name': clip.get('name'),
+                'url': clip.get('url'),
+                'duration': clip.get('duration'),
+                'startTime': clip.get('startTime', 0),
+                'endTime': clip.get('endTime', clip.get('duration', 0)),
+                'pillarId': clip.get('pillarId'),
+            }
+
+        def _build_zip():
+            import zipfile
+            used_names = set()
+
+            def _zip_names(items, prefix):
+                names = []
+                for i, item in enumerate(items, 1):
+                    ext = os.path.splitext(item['filename'])[1] or ''
+                    fallback = f"{prefix}_{i:02d}"
+                    base = _sanitize_timeline_asset_name(
+                        item['clip'].get('name'), fallback, used_names)
+                    names.append(f"{i:02d}_{base}{ext}")
+                return names
+
+            video_zip_names = _zip_names(downloaded_video_files, 'video')
+            audio_zip_names = _zip_names(downloaded_audio_files, 'audio')
+
+            manifest = {
+                'workflow_name': payload.workflow_name,
+                'exported_at': datetime.now().isoformat(),
+                'video_count': len(downloaded_video_files),
+                'audio_count': len(downloaded_audio_files),
+                'videos': [
+                    _manifest_entry(item, i, f"视频/{name}")
+                    for i, (item, name) in enumerate(zip(downloaded_video_files, video_zip_names), 1)
+                ],
+                'audios': [
+                    _manifest_entry(item, i, f"音频/{name}")
+                    for i, (item, name) in enumerate(zip(downloaded_audio_files, audio_zip_names), 1)
+                ],
+            }
+
+            manifest_path = os.path.join(base_temp_dir, 'manifest.json')
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+            zip_path = os.path.join(base_temp_dir, zip_filename)
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(manifest_path, 'manifest.json')
+                for item, name in zip(downloaded_video_files, video_zip_names):
+                    zf.write(item['file_path'], f"视频/{name}")
+                for item, name in zip(downloaded_audio_files, audio_zip_names):
+                    zf.write(item['file_path'], f"音频/{name}")
+            return zip_path
+
+        zip_path = await asyncio.to_thread(_build_zip)
+        logger.info(f"素材包已创建: {zip_path}")
+
+        # 根据 is_local 配置决定下载方式（与草稿导出一致）
+        is_local = get_dynamic_config_value("server", "is_local", default=True)
+        if is_local:
+            # 本地环境：放到 /upload 静态目录直接下载；返回相对路径，
+            # 避免配置 host=0.0.0.0 时浏览器拿到不可访问的绝对地址
+            date_folder = datetime.now().strftime('%Y-%m-%d')
+            upload_dir = get_upload_subdir(UploadPathConstants.DRAFT_DIR, date_folder)
+            final_zip_path = os.path.join(upload_dir, zip_filename)
+            await asyncio.to_thread(shutil.copy2, zip_path, final_zip_path)
+            download_url = f"/upload/draft/{date_folder}/{zip_filename}"
+            logger.info(f"本地环境，下载地址: {download_url}")
+        else:
+            # 非本地环境：上传到七牛云后返回 CDN 链接
+            logger.info("非本地环境，准备上传到七牛云...")
+            from utils.file_storage import get_file_storage
+            from config.config_util import get_config
+
+            storage = get_file_storage(get_config())
+            storage_key = storage.generate_key_with_datetime(zip_filename)
+            upload_result = await storage.upload_file(storage_key, zip_path, content_type='application/zip')
+
+            if not upload_result.success:
+                logger.error(f"上传到七牛云失败: {upload_result.error}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        'success': False,
+                        'error': f'上传素材包到云存储失败: {upload_result.error}'
+                    }
+                )
+
+            download_url = storage.get_download_url(upload_result.key)
+            logger.info(f"已上传到七牛云，CDN下载地址: {download_url}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'success': True,
+                'download_url': download_url,
+                'filename': zip_filename,
+                'video_count': len(downloaded_video_files),
+                'audio_count': len(downloaded_audio_files),
+            }
+        )
+
+    except _TimelineMediaExportError as e:
+        logger.warning(f"导出素材包失败(素材下载): {e.error}")
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                'success': False,
+                'error': e.error
+            }
+        )
+    except Exception as e:
+        logger.error(f"导出素材包失败: {e}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'error': str(e) or '导出素材包失败'
+            }
+        )
+    finally:
+        if base_temp_dir:
+            try:
+                await asyncio.to_thread(shutil.rmtree, base_temp_dir, True)
+            except Exception as e:
+                logger.warning(f"清理素材包临时目录失败: {e}")
 
 
 @app.get("/video-workflow-list")

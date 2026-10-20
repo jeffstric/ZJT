@@ -1539,6 +1539,11 @@
       exportTimelineToDraft();
     });
 
+    document.getElementById('timelineExportAssetsBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportTimelineAssets();
+    });
+
     // ========== 角色和场景选择功能 ==========
     
     // 打开角色选择模态框
