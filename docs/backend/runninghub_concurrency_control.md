@@ -242,7 +242,7 @@ if error_code or error_message:
         # => {"success": False, "retry": True, "retry_reason": "UPSTREAM_CONGESTED", ...}
 ```
 
-所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / qwen_multi_angle）和异步驱动均接入该识别。
+所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / digital_human_minimax_h3（含单段与分段链路）/ minimax_h3 系列 / qwen_multi_angle）和异步驱动均接入该识别。其中 digital_human_minimax_h3 的分段链路在各段提交时命中 421 会抛 `_SegmentedCongestedError`，由 `submit_task` 入口统一转换为上述可重试结果（不得落入通用异常分支被判为硬失败）。
 
 ##### 2. 视频任务（tasks 表）—— 不消耗重试次数的延迟重试
 
