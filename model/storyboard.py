@@ -296,11 +296,30 @@ class StoryboardModel:
     def list_folders_by_user(
         user_id: int,
         world_id: Optional[int] = None,
+        include_all_users: bool = False,
+        owner_user_ids: Optional[List[int]] = None,
     ) -> List[Dict[str, Any]]:
         where_conditions = []
         params: list = []
 
-        if Edition.is_space_isolated():
+        if owner_user_ids is not None:
+            owners: List[int] = []
+            seen = set()
+            for raw in owner_user_ids:
+                try:
+                    owner_id = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if owner_id in seen:
+                    continue
+                seen.add(owner_id)
+                owners.append(owner_id)
+            if not owners:
+                return []
+            placeholders = ",".join(["%s"] * len(owners))
+            where_conditions.append(f"sb.user_id IN ({placeholders})")
+            params.extend(owners)
+        elif Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("sb.user_id = %s")
             params.append(user_id)
 

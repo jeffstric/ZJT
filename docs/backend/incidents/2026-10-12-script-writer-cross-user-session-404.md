@@ -43,6 +43,16 @@
   变为「列表 403 → 走旧 createSession（body 仍带 user_id → 403）→ 页面提示创建会话失败」，
   与旧行为相比无功能回退，但不自愈；前端一起上后彻底修复。
 
+## 后续（2026-10-20）
+
+课堂修复只停了「建会话回传 URL user_id」。页面其余请求仍用地址栏里的 `user_id`，
+别人的链接打开后身份对不上，世界和素材接口持续 403，用户停在当前页无法操作。
+
+入口现改为：`DOMContentLoaded` 先用 `/api/user/role`（失败则用 `localStorage.user_id`）
+取登录身份。与地址栏不一致时，把 `user_id` 改成登录用户并 `location.replace`；
+同时去掉配套的 `world_id`（那是对方的世界）。本人链接不刷新。`/api/user/role`
+的 `data.id` 即当前用户 id。
+
 ## 预防
 
 - 前端页面身份参数（user_id）凡可与登录身份比对的，一律在入口处校验或直接不信任 URL。

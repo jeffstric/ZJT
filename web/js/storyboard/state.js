@@ -17,6 +17,12 @@ const state = {
     episodeFoldersLoaded: false,
     episodeFoldersLoading: false,
     showEpisodePicker: false,
+    /** 管理员集列表范围：mine | all | user */
+    episodeOwnerScope: 'mine',
+    episodeOwnerQuery: '',
+    episodeOwnerHint: '',
+    isStoryboardAdmin: false,
+    storyboardAdminKnown: false,
     scriptId: null,
     workflowId: null,
     userId: null,
@@ -965,6 +971,18 @@ export function composeSceneImagePrompt(scene = null) {
         .map((part) => String(part || '').trim())
         .filter(Boolean)
         .join('，');
+}
+
+/**
+ * 左下角直填框仍等于修改前的提示词时，返回应写入的新文本。
+ * 用户已经改过文本框时返回 null。
+ */
+export function nextDirectInputIfUnedited(current, previous, next) {
+    const before = previous == null ? '' : String(previous);
+    const after = next == null ? '' : String(next);
+    const text = current == null ? '' : String(current);
+    if (text !== before || text === after) return null;
+    return after;
 }
 
 export function getSelectedVideoTaskId({ hasInputs = true, imageMode = state.videoImageMode } = {}) {

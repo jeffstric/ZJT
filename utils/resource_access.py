@@ -109,6 +109,37 @@ def ensure_resource_access(resource, user_id: int, action: str, resource_name: s
     return resource
 
 
+def http_exception_message(detail, fallback: str = "请求失败") -> str:
+    """把 HTTPException.detail 收成一句可展示的中文。
+
+    FastAPI 默认错误体只有 detail，没有 message。调用方若只读 message，
+    会把「仅创建者可删除该世界」显示成未知错误。
+    """
+    if isinstance(detail, str):
+        text = detail.strip()
+        return text or fallback
+    if isinstance(detail, dict):
+        for key in ("message", "error", "detail", "msg"):
+            value = detail.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return fallback
+    if isinstance(detail, list):
+        parts = []
+        for item in detail:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                msg = item.get("msg") or item.get("message")
+                if isinstance(msg, str) and msg.strip():
+                    parts.append(msg.strip())
+        return "；".join(parts) if parts else fallback
+    if detail is None:
+        return fallback
+    text = str(detail).strip()
+    return text or fallback
+
+
 def is_admin_user(user_id: int) -> bool:
     """
     判断用户是否为管理员（users.role == 'admin'）。
@@ -137,6 +168,32 @@ def ensure_world_access(world_id: int, user_id: int, action: str = Action.VIEW):
     if not world:
         raise HTTPException(status_code=404, detail="世界不存在")
     return ensure_resource_access(world, user_id, action, "世界")
+
+
+def ensure_world_owner_or_admin(world_id: int, user_id: int):
+    """
+    隐藏、恢复、硬删除世界：创建者本人，或 users.role=admin 的管理员。
+
+    查看/编辑仍走 ensure_world_access，不在这里放宽。
+    世界不存在返回 404；既不是创建者也不是管理员返回 403。
+    """
+    from model.world import WorldModel
+
+    world = WorldModel.get_by_id(world_id)
+    if not world:
+        raise HTTPException(status_code=404, detail="世界不存在")
+    if getattr(world, 'user_id', None) != user_id and not is_admin_user(user_id):
+        raise HTTPException(status_code=403, detail="仅创建者或管理员可删除该世界")
+    return world
+
+
+def ensure_owner_or_admin_view(resource, user_id: int, resource_name: str = "资源"):
+    """查看资源：创建者本人，或管理员。编辑/删除不走这里。"""
+    if getattr(resource, 'user_id', None) == user_id:
+        return resource
+    if is_admin_user(user_id):
+        return resource
+    return ensure_resource_access(resource, user_id, Action.VIEW, resource_name)
 
 
 async def enforce_x_user_id_consistency(request):

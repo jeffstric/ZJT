@@ -121,15 +121,36 @@ export async function getStoryboardCreateDefaults(worldId) {
 }
 
 /** 当前用户在某世界下的「集」文件夹（剧本 + 故事板），含尚未创建故事板的集 */
-export async function listStoryboardFolders(worldId) {
-    const qs = worldId != null && worldId !== ''
-        ? `?world_id=${encodeURIComponent(worldId)}`
-        : '';
+export async function listStoryboardFolders(worldId, options = {}) {
+    const params = new URLSearchParams();
+    if (worldId != null && worldId !== '') params.set('world_id', String(worldId));
+    const scope = options.scope || '';
+    if (scope) params.set('scope', scope);
+    if (scope === 'user' && options.owner) params.set('owner', String(options.owner));
+    const qs = params.toString() ? `?${params.toString()}` : '';
     const data = await request(`/folders${qs}`);
-    if (Array.isArray(data?.folders)) return data.folders;
-    if (Array.isArray(data?.data?.folders)) return data.data.folders;
-    if (Array.isArray(data)) return data;
-    return [];
+    const folders = Array.isArray(data?.folders)
+        ? data.folders
+        : Array.isArray(data?.data?.folders)
+            ? data.data.folders
+            : Array.isArray(data)
+                ? data
+                : [];
+    return {
+        folders,
+        message: typeof data?.message === 'string' ? data.message : '',
+    };
+}
+
+export async function fetchCurrentUserRole() {
+    try {
+        const resp = await fetch('/api/user/role', { headers: authHeaders(false) });
+        const data = await resp.json().catch(() => null);
+        if (data && data.code === 0 && data.data) return data.data.role || '';
+    } catch {
+        /* 角色失败按普通用户处理 */
+    }
+    return '';
 }
 export async function getStoryboard(storyboardId) {
     return request(`/${storyboardId}`);

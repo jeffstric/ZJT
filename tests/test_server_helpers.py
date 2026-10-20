@@ -6,6 +6,7 @@ server.py 辅助函数单元测试
 import hashlib
 import re
 import unittest
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 
@@ -93,6 +94,106 @@ class TestCheckResourcePermission(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestEnsureWorldOwnerOrAdmin(unittest.TestCase):
+    def test_owner_can_pass_without_admin_lookup_success(self):
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 11
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user") as is_admin:
+            result = ensure_world_owner_or_admin(99, 11)
+        self.assertIs(result, world)
+        is_admin.assert_not_called()
+
+    def test_admin_can_hide_another_users_world(self):
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 7
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user", return_value=True):
+            result = ensure_world_owner_or_admin(99, 11)
+        self.assertIs(result, world)
+
+    def test_non_owner_non_admin_forbidden(self):
+        from fastapi import HTTPException
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        world = MagicMock()
+        world.user_id = 7
+        with patch("model.world.WorldModel.get_by_id", return_value=world), \
+                patch("utils.resource_access.is_admin_user", return_value=False):
+            with self.assertRaises(HTTPException) as ctx:
+                ensure_world_owner_or_admin(99, 11)
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertEqual(ctx.exception.detail, "仅创建者或管理员可删除该世界")
+
+    def test_missing_world_404(self):
+        from fastapi import HTTPException
+        from utils.resource_access import ensure_world_owner_or_admin
+
+        with patch("model.world.WorldModel.get_by_id", return_value=None):
+            with self.assertRaises(HTTPException) as ctx:
+                ensure_world_owner_or_admin(99, 11)
+        self.assertEqual(ctx.exception.status_code, 404)
+
+
+class TestEnsureOwnerOrAdminView(unittest.TestCase):
+    def test_owner_skips_admin_lookup(self):
+        from utils.resource_access import ensure_owner_or_admin_view
+
+        resource = MagicMock()
+        resource.user_id = 11
+        with patch("utils.resource_access.is_admin_user") as is_admin:
+            result = ensure_owner_or_admin_view(resource, 11, "故事板")
+        self.assertIs(result, resource)
+        is_admin.assert_not_called()
+
+    def test_admin_can_view_another_users_storyboard(self):
+        from utils.resource_access import ensure_owner_or_admin_view
+
+        resource = MagicMock()
+        resource.user_id = 7
+        with patch("utils.resource_access.is_admin_user", return_value=True):
+            result = ensure_owner_or_admin_view(resource, 11, "故事板")
+        self.assertIs(result, resource)
+
+    def test_non_owner_non_admin_uses_resource_access(self):
+        from fastapi import HTTPException
+        from utils.resource_access import ensure_owner_or_admin_view
+
+        resource = MagicMock()
+        resource.user_id = 7
+        with patch("utils.resource_access.is_admin_user", return_value=False), \
+                patch("utils.resource_access.Edition.is_space_isolated", return_value=True):
+            with self.assertRaises(HTTPException) as ctx:
+                ensure_owner_or_admin_view(resource, 11, "故事板")
+        self.assertEqual(ctx.exception.status_code, 403)
+
+
+class TestHttpExceptionMessage(unittest.TestCase):
+    def test_string_detail(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(http_exception_message("仅创建者可删除该世界"), "仅创建者可删除该世界")
+
+    def test_blank_and_validation_list(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(http_exception_message("  "), "请求失败")
+        self.assertEqual(http_exception_message(None), "请求失败")
+        self.assertEqual(
+            http_exception_message([{"msg": "user_id is required"}, {"msg": "缺少字段"}]),
+            "user_id is required；缺少字段",
+        )
+
+    def test_dict_prefers_message(self):
+        from utils.resource_access import http_exception_message
+        self.assertEqual(
+            http_exception_message({"message": "存在同名世界", "detail": "other"}),
+            "存在同名世界",
+        )
+
+
 class TestStaticVersion(unittest.TestCase):
     """测试静态资源版本号生成逻辑"""
 
@@ -116,6 +217,29 @@ class TestStaticVersion(unittest.TestCase):
         hash2 = hashlib.md5("2.0.0".encode()).hexdigest()[:8]
 
         self.assertNotEqual(hash1, hash2)
+
+
+class TestDeleteWorldAssetGuard(unittest.TestCase):
+    """硬删除必须先拒绝仍有角色、场景或道具的世界。"""
+
+    def test_delete_world_rejects_characters_locations_and_props(self):
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "server.py").read_text(encoding="utf-8")
+        start = text.index("async def delete_world(")
+        end = text.index("@app.get('/api/scripts')", start)
+        body = text[start:end]
+
+        character_at = body.index("asyncio.to_thread(CharacterModel.count_by_world, world_id)")
+        location_at = body.index("asyncio.to_thread(LocationModel.count_by_world, world_id)")
+        props_at = body.index("asyncio.to_thread(PropsModel.count_by_world, world_id)")
+        delete_at = body.index("asyncio.to_thread(WorldModel.delete, world_id)")
+
+        self.assertLess(character_at, location_at)
+        self.assertLess(location_at, props_at)
+        self.assertLess(props_at, delete_at)
+        self.assertIn("该世界下仍存在角色，请先删除所有角色后再尝试删除世界", body)
+        self.assertIn("该世界下仍存在场景，请先删除所有场景后再尝试删除世界", body)
+        self.assertIn("该世界下仍存在道具，请先删除所有道具后再尝试删除世界", body)
 
 
 class TestGenerationSnapshotExtraConfigContract(unittest.TestCase):

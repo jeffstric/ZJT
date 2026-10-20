@@ -27,6 +27,8 @@ from config.config_util import get_config
 from config.constant import IMAGE_DESCRIBE_PREFERRED_MODEL, IMAGE_DESCRIBE_PREFERRED_VENDOR
 from config.constant import (
     DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
+    DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX,
+    DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN,
     DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS,
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
@@ -605,9 +607,14 @@ async def prepare_digital_human_draft(
         mode_note = ""
         if segment_mode:
             seg_count = len(segment_durations_est)
-            est_minutes = max(3, seg_count * 3)
-            mode_note = (f"，将切分为 {seg_count} 段（每段 ≤10 秒）生成后自动拼接，"
-                         f"预计耗时约 {est_minutes} 分钟，画面全程固定镜头")
+            est_lo = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN
+            est_hi = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX
+            mode_note = (
+                f"，将切分为 {seg_count} 段（每段 ≤10 秒）生成后自动拼接，"
+                f"预计耗时约 {est_lo}~{est_hi} 分钟"
+                f"（每段约 {DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN}~"
+                f"{DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX} 分钟），画面全程固定镜头"
+            )
         if locked_note:
             mode_note += locked_note
         return {

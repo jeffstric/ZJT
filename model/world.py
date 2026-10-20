@@ -215,14 +215,15 @@ class WorldModel:
             raise
 
     @staticmethod
-    def list_names_for_storyboard_folders(user_id: int) -> List[Dict[str, Any]]:
+    def list_names_for_storyboard_folders(user_id: int, include_all_users: bool = False) -> List[Dict[str, Any]]:
         """故事板文件夹用的世界 id 与名称。含伪删除世界，不分页。
 
         独立空间只返回该用户的世界；共享空间返回全部世界。
+        include_all_users 为真时（管理员查看全部）不按 user_id 过滤。
         """
         where_conditions = []
         params: list = []
-        if Edition.is_space_isolated():
+        if Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("user_id = %s")
             params.append(user_id)
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"

@@ -158,7 +158,7 @@ button {
     top: calc(100% + 6px);
     left: 0;
     z-index: 1200;
-    width: min(320px, 86vw);
+    width: min(380px, 86vw);
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -193,7 +193,62 @@ button {
     color: var(--primary);
     font-weight: 600;
 }
+.episode-owner-scope {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 8px 0;
+}
+.episode-owner-scope-btn {
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--foreground);
+    font-size: 12px;
+    cursor: pointer;
+}
+.episode-owner-scope-btn.is-active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #fff;
+}
+.episode-owner-search {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+}
+.episode-owner-input {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+    font-size: 12px;
+}
+.episode-owner-hint {
+    width: 100%;
+    margin: 0;
+    font-size: 11px;
+    color: var(--muted);
+}
 .episode-picker-ep { font-weight: 700; white-space: nowrap; }
+.episode-picker-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.episode-picker-owner {
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .episode-picker-title {
     min-width: 0;
     overflow: hidden;

@@ -1,7 +1,7 @@
 """
 Video Workflow Model - Database operations for video_workflow table
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .database import execute_query, execute_update, execute_insert
 from config.constant import Edition
 import hashlib
@@ -212,7 +212,9 @@ class VideoWorkflowModel:
         order_by: str = 'create_time',
         order_direction: str = 'DESC',
         status: Optional[int] = None,
-        keyword: Optional[str] = None
+        keyword: Optional[str] = None,
+        include_all_users: bool = False,
+        owner_user_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
         """
         Get video workflow records list by user ID with pagination
@@ -242,8 +244,31 @@ class VideoWorkflowModel:
         where_conditions = []
         params = []
         
-        # 独立空间模式才按 user_id 过滤
-        if Edition.is_space_isolated():
+        # owner_user_ids 优先：只看自己或查看指定用户。空列表直接空页，不查库。
+        # 独立空间默认按当前用户过滤；include_all_users 时管理员查看全部。
+        if owner_user_ids is not None:
+            owners: List[int] = []
+            seen = set()
+            for raw in owner_user_ids:
+                try:
+                    owner_id = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if owner_id in seen:
+                    continue
+                seen.add(owner_id)
+                owners.append(owner_id)
+            if not owners:
+                return {
+                    'total': 0,
+                    'page': page,
+                    'page_size': page_size,
+                    'data': [],
+                }
+            placeholders = ",".join(["%s"] * len(owners))
+            where_conditions.append(f"user_id IN ({placeholders})")
+            params.extend(owners)
+        elif Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("user_id = %s")
             params.append(user_id)
         

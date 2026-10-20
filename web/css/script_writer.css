@@ -1848,12 +1848,12 @@ body {
 }
 
 .world-hide-btn:hover {
-    background: #ef4444;
+    background: #475569;
     color: white;
     transform: scale(1.1);
 }
 
-/* 管理员硬删除他人世界：深红区分于「隐藏」伪删除 */
+/* 管理员硬删除自己或他人的世界：深红区分于「隐藏」伪删除 */
 .world-delete-btn {
     color: #dc2626;
 }

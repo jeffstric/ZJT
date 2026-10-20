@@ -46,6 +46,74 @@ def test_generate_default_nickname_format():
         assert not name[-1].isdigit()
 
 
+def test_get_display_names_uses_nickname_and_falls_back(monkeypatch):
+    from model.users import UsersModel
+
+    def fake_query(sql, params, fetch_all=False):
+        assert "SELECT id, nickname FROM users WHERE id IN" in sql
+        assert params == (14, 33, 8)
+        assert fetch_all is True
+        return [
+            {"id": 14, "nickname": " 远方 "},
+            {"id": 33, "nickname": ""},
+            {"id": 8, "nickname": None},
+        ]
+
+    monkeypatch.setattr("model.users.execute_query", fake_query)
+    names = UsersModel.get_display_names([14, "33", 33, 8, None, "bad"])
+    assert names == {14: "远方", 33: "用户33", 8: "用户8"}
+
+
+def test_find_ids_by_nickname_or_account_exact_then_like(monkeypatch):
+    from model.users import UsersModel
+
+    calls = []
+
+    def fake_query(sql, params, fetch_all=False):
+        calls.append((sql, params))
+        if "nickname = %s" in sql:
+            return []
+        assert "nickname LIKE %s" in sql
+        assert params[0] == "%小\\%明%"
+        return [{"id": 33}]
+
+    monkeypatch.setattr("model.users.execute_query", fake_query)
+    assert UsersModel.find_ids_by_nickname_or_account("  小%明 ") == [33]
+    assert len(calls) == 2
+
+
+def test_find_ids_by_nickname_or_account_exact_skips_like(monkeypatch):
+    from model.users import UsersModel
+
+    def fake_query(sql, params, fetch_all=False):
+        assert "LIKE" not in sql
+        return [{"id": 14}]
+
+    monkeypatch.setattr("model.users.execute_query", fake_query)
+    assert UsersModel.find_ids_by_nickname_or_account("13800000000") == [14]
+
+
+def test_find_ids_empty_skips_query(monkeypatch):
+    from model.users import UsersModel
+
+    def fail_query(*args, **kwargs):
+        raise AssertionError("empty query must not hit the database")
+
+    monkeypatch.setattr("model.users.execute_query", fail_query)
+    assert UsersModel.find_ids_by_nickname_or_account("   ") == []
+
+
+def test_get_display_names_empty_skips_query(monkeypatch):
+    from model.users import UsersModel
+
+    def fail_query(*args, **kwargs):
+        raise AssertionError("empty ids must not query")
+
+    monkeypatch.setattr("model.users.execute_query", fail_query)
+    assert UsersModel.get_display_names([]) == {}
+    assert UsersModel.get_display_names([None, "x"]) == {}
+
+
 def test_generate_default_nickname_avoids_used_names():
     used = set()
     for _ in range(30):

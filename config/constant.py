@@ -686,7 +686,8 @@ DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
 # 分段拼接的口播时长软上限。分段架构无技术上限（段数=ceil(时长/10s)），
 # 此值仅作为异常超长音频的兜底拒绝线（防 TTS 异常产物拖垮流水线）；
 # 实际时长由 prepare 的口播文案上限（2000 字 ≈ 6-7 分钟）自然约束，
-# 段数越多生成耗时越长（约 3 分钟/段），prepare 草案会预告段数与耗时
+# 段数越多生成耗时越长。prepare 草案按每段 4~10 分钟预告总耗时区间
+# （段数 × DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN ~ 段数 × MAX）
 DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 600
 # 每段目标时长（整数秒，H3 duration 节点粒度）。2026-10-19 显存充裕后恢复
 # 15s（官方上限，减少切割次数）；若个别实例仍 OOM，driver 内置按 10s 降档重切兜底
@@ -696,6 +697,10 @@ DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
 DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10
 # 口播时长估算速率（字/秒），营销数字人草案在缺实测时长时按文案长度估算
 DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
+# 营销数字人分段生成的耗时预估（分钟/段）。prepare 草案在分段模式下写出区间：
+# 总耗时约 段数×MIN ~ 段数×MAX
+DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN = 4
+DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX = 10
 
 
 class AgentAuthConstants:
