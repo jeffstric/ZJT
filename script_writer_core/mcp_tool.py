@@ -4299,10 +4299,11 @@ MCP_TOOLS = [
                     "type": "string",
                     "description": "用户上传的驱动音频 URL（可选）。用户提供音频且想让人物说这段音频时传入（跳过 TTS）；此时不再需要音色"
                 },
-                "max_edge": {
-                    "type": "integer",
-                    "description": "视频最长边：720/1280/1920（默认 1280）",
-                    "default": 1280
+                "resolution": {
+                    "type": "string",
+                    "enum": ["480P", "720P", "1080P"],
+                    "description": "视频分辨率档位（可选，默认 720P）。档位→最长边像素：480P=720、720P=1280、1080P=1920。注意档位与像素值同名不同义：用户要 720P 就传 \"720P\"，不要传 720（720 像素是 480P 档）",
+                    "default": "720P"
                 }
             },
             "required": ["image_url", "script_text"]

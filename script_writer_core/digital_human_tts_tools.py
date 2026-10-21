@@ -32,6 +32,7 @@ from config.constant import (
     DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS,
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
+    StoryboardDigitalHumanConstants,
     TaskTypeId,
     TaskTypeRegistry,
 )
@@ -427,6 +428,31 @@ async def _pick_voice_by_image(
         return _fallback("默认音色（视觉分析异常）")
 
 
+# 分辨率档位 → 最长边，与故事板数字人同口径（RunningHub webapp node 213）
+_DH_MAX_EDGE_TO_RESOLUTION = {720: "480P", 1280: "720P", 1920: "1080P"}
+
+
+def _resolve_draft_resolution(resolution: Optional[str],
+                              max_edge: Optional[int]) -> Tuple[str, int]:
+    """分辨率档位(480P/720P/1080P) → (规范标签, 最长边像素)。
+
+    resolution 优先；缺省时兼容旧 max_edge 像素值参数；都非法时回落默认 720P→1280。
+    标签与像素值同名不同义（720P=1280），必须统一在本函数映射，不能由调用方换算。
+    """
+    raw = str(resolution).strip() if resolution else ""
+    edge = StoryboardDigitalHumanConstants.RESOLUTION_TO_MAX_EDGE.get(raw)
+    if edge:
+        return raw.upper(), int(edge)
+    try:
+        edge_int = int(max_edge) if max_edge is not None else None
+    except (TypeError, ValueError):
+        edge_int = None
+    if edge_int in _DH_MAX_EDGE_TO_RESOLUTION:
+        return _DH_MAX_EDGE_TO_RESOLUTION[edge_int], edge_int
+    return (StoryboardDigitalHumanConstants.DEFAULT_RESOLUTION,
+            int(StoryboardDigitalHumanConstants.DEFAULT_MAX_EDGE))
+
+
 async def prepare_digital_human_draft(
     user_id: str,
     world_id: str,
@@ -437,7 +463,8 @@ async def prepare_digital_human_draft(
     voice_id: int = None,
     voice_requirement: str = "",
     motion_prompt: str = "",
-    max_edge: int = 1280,
+    resolution: str = None,
+    max_edge: int = None,
     aspect_ratio: str = "9:16",
 ) -> Dict[str, Any]:
     """准备数字人口播草案：确定音色 → TTS 合成驱动音频 → 产出草案（不提交视频）。
@@ -458,7 +485,9 @@ async def prepare_digital_human_draft(
         voice_id: 音色库音色 ID（可选；给定则跳过 VL 挑选）
         voice_requirement: 对声音的要求描述（可选，如"成熟男性、纪录片感"）
         motion_prompt: 动作提示词（可选；如"角色面向镜头深情的说话，固定镜头。"）
-        max_edge: 视频最长边 720/1280/1920（默认 1280）
+        resolution: 视频分辨率档位 480P/720P/1080P（可选，默认 720P）。
+            档位→最长边：480P=720、720P=1280、1080P=1920；档位与像素值同名不同义，直接传档位
+        max_edge: [已废弃] 视频最长边像素 720/1280/1920；与 resolution 同传时以 resolution 为准
         aspect_ratio: 视频比例（默认 9:16），仅透传给确认信息
 
     Returns:
@@ -573,6 +602,9 @@ async def prepare_digital_human_draft(
             locked_prompt = LOCKED_CAMERA_PROMPT_FALLBACK
             locked_note = '（人物细节提示词生成失败，已用通用描述兜底）'
 
+        # 分辨率档位 → 最长边由服务端统一映射（避免 "720P" 被误当像素值 720 下发）
+        resolved_resolution, resolved_max_edge = _resolve_draft_resolution(resolution, max_edge)
+
         draft = {
             "draft_id": None,  # store 后回填
             "script_text": script_text,
@@ -596,7 +628,8 @@ async def prepare_digital_human_draft(
             # 兼容旧字段
             "h3_duration": billable,
             "h3_computing_power": video_power,
-            "max_edge": max_edge if max_edge in (720, 1280, 1920) else 1280,
+            "resolution": resolved_resolution,
+            "max_edge": resolved_max_edge,
             "aspect_ratio": aspect_ratio,
         }
         draft_id = _store_draft(draft)
@@ -623,6 +656,7 @@ async def prepare_digital_human_draft(
             'message': (
                 f"数字人口播草案已就绪（draft_id: {draft_id}）。"
                 f"将使用模型：{model_name}（按口播时长自动路由{mode_note}）；"
+                f"分辨率：{resolved_resolution}（最长边 {resolved_max_edge}）；"
                 f"音色：{draft['voice_name'] or '用户音频'}（{draft['voice_selection_reason']}）；"
                 f"动作提示词：{effective_motion}；"
                 f"音频时长 {draft['audio_duration'] or billable}s；{tts_cost_note}"
@@ -838,7 +872,8 @@ async def confirm_digital_human(
             'text': (draft.get("h3_locked_prompt")
                      or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000],
             'duration': str(billable),
-            'max_edge': str(draft.get("max_edge") or 1280),
+            'max_edge': str(draft.get("max_edge")
+                            or int(StoryboardDigitalHumanConstants.DEFAULT_MAX_EDGE)),
             'start_second': '0',
             'user_id': str(user_id),
             'auth_token': auth_token or '',

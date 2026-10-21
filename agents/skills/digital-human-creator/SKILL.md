@@ -66,8 +66,8 @@ allowed-tools: ["generate_digital_human", "prepare_digital_human_draft", "confir
 
 查询之前生成的图片任务状态。状态为 `completed` 时结果包含 `image_url`。当任务描述只给了 project_id 引用（如"使用之前生成的形象图"）而没有真实图片 URL 时，必须先用本工具拿到真实 `image_url`，再调用 `generate_digital_human`。
 
-### `prepare_digital_human_draft(image_url, script_text, voice_id?, voice_requirement?, max_edge?)`
-准备数字人口播草案：确定音色（用户指定 voice_id > 视觉模型看角色图挑选 > 默认音色）→ 火山 TTS 合成驱动音频（立即消耗字符算力）→ 返回 draft_id 与草案明细（音色/选择理由/试听 URL/时长/两段算力）。**不提交视频**。script_text 必须是最终口播文案。
+### `prepare_digital_human_draft(image_url, script_text, voice_id?, voice_requirement?, resolution?)`
+准备数字人口播草案：确定音色（用户指定 voice_id > 视觉模型看角色图挑选 > 默认音色）→ 火山 TTS 合成驱动音频（立即消耗字符算力）→ 返回 draft_id 与草案明细（音色/选择理由/试听 URL/时长/两段算力）。**不提交视频**。script_text 必须是最终口播文案。resolution 为分辨率档位 480P/720P/1080P（默认 720P），用户偏好里的「720P」直接传 `"720P"`；档位→最长边为 480P=720、720P=1280、1080P=1920，**不要传像素值**（720 像素是 480P 档）。
 
 ### `confirm_digital_human(draft_id)`
 用户明确确认草案后调用：提交 MiniMax H3 生成视频（消耗时长算力），返回 project_ids。拿到 project_id 后草案才消费，防止重复出片。确认失败（配置、素材、H3 错误）沿用同一 draft_id 再确认，不要为此重新 prepare。草案 30 分钟过期；用户要改文案或换声音时才重新 prepare。提交后旧规则第 5/6 条同样适用（必须拿到非空 project_ids 才算提交成功）。

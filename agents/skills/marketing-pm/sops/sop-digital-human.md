@@ -75,7 +75,7 @@ description: 数字人视频流程，适用于让图片中的人物开口说话�
    - 例：用户先要求"生成一张医生宣传图"，图片完成后紧接着说"生产数字人视频：'我是你的
      佐力健康私人医生……'"——**必须自动使用刚生成的医生图**，不得回复"当前未提供角色图片"。
 
-2. **专家调用 `prepare_digital_human_draft`**（参数：image_url / script_text / 可选 audio_url、voice_id、voice_requirement / max_edge）：
+2. **专家调用 `prepare_digital_human_draft`**（参数：image_url / script_text / 可选 audio_url、voice_id、voice_requirement / resolution）：
    - 产出草案 draft_id：音色与选择理由、试听链接、时长、**将使用的生成方式（按时长路由：单段/分段拼接）**、两段算力消耗
    - **必须把草案完整展示给用户并等待明确确认**（文案/角色图/试听/模型/算力）
    - 用户可单项修改（改文案/换声音/换图）→ 只重做对应项重新 prepare
