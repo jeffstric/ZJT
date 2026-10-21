@@ -777,7 +777,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
     @staticmethod
     def _is_reanchor_segment(idx: int) -> bool:
         """段 idx（1 起）是否回锚角色原图：每接力 N 段后回锚一次
-        （N=3 时段 4/7/10…），阻断「抽帧→再生成」循环的累积漂移。"""
+        （N=2 时段 3/5/7…），阻断「抽帧→再生成」循环的累积漂移。"""
         return idx > 1 and (idx - 1) % DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL == 0
 
     def _measure_avg_brightness(self, media_path: str) -> Optional[float]:
