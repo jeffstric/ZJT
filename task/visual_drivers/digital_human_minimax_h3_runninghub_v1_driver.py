@@ -305,7 +305,10 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         - 接力帧为无损 PNG 真正末帧（见 _extract_last_frame）；
         - 每接力 DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL 段，下一段回锚角色原图，
           阻断「抽帧→再生成」循环的亮度/噪声累积漂移；
-        - 段下载后黑段检测（_check_segment_brightness），黑段视同生成失败重提一次。
+        - 段下载后黑段检测（_check_segment_brightness），黑段视同生成失败重提一次；
+          重提仍判黑不判任务失败——回退数字人输入的角色原图作为该段首帧重新生成并
+          放行（场景固有暗，如深色背景口播，会被相对判据误判，交付优先于拦截），
+          且回退后整条链固定角色原图首帧、亮度校验降级为仅告警。
 
         断点续跑：段成片按 ai_tool.id 确定性落盘 temp/h3seg_{id}_seg_{idx}.mp4，
         上游 421 拥堵回队重试时复用已完整下载的段（ffprobe 校验通过），
@@ -335,6 +338,9 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         # 首帧参考亮度（黑段相对判据基准）：角色原图测一次；接力帧生成后逐段更新
         role_yavg = self._measure_avg_brightness(image_path)
         ref_yavg = role_yavg
+        # 黑段回退标记：某段两次判黑后回退角色原图重生成并放行，此后整条链固定
+        # 角色原图首帧（跳过末帧接力），亮度校验降级为仅告警（场景固有暗不误杀）
+        brightness_gate_off = False
 
         # 断点续跑：复用上一轮已完整下载的段成片（须连续：第 1 个缺失段之前的才可复用）
         seg_files: list = []  # 各段成片本地路径
@@ -392,12 +398,14 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             if not task_id:
                 raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
 
-            # 等待出片并下载（生成失败/超时换新任务自动重提一次，双败即抛错带刹车——
+            # 等待出片并下载（生成失败/超时换新任务自动重提一次——
             # 返回值不可丢弃：旧实现忽略 (ok, err) 会让流水线带着不存在的段文件继续跑，
-            # 首帧静默回退角色图、后续段白跑，最后以误导性的「拼接失败」报错收场）
+            # 首帧静默回退角色图、后续段白跑，最后以误导性的「拼接失败」报错收场；
+            # 黑段双杀不判失败：回退角色原图作为本段首帧重新生成一次并放行）
             seg_file = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
-            ok, gen_err = self._download_validated_segment(
-                task_id, seg_file, f"seg_{idx}", ref_yavg)
+            reject_black = not brightness_gate_off
+            ok, gen_err, was_black = self._download_validated_segment(
+                task_id, seg_file, f"seg_{idx}", ref_yavg, reject_black=reject_black)
             if not ok:
                 self.logger.warning(f"[接力] seg_{idx} 生成失败（{gen_err}），自动重提一次")
                 retry_task_id, submit_err = self._submit_one_segment(
@@ -405,15 +413,41 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
                 if not retry_task_id:
                     raise _SegmentedPipelineError(
                         f"第 {idx} 段生成失败后重提未成功: {submit_err}")
-                ok, gen_err = self._download_validated_segment(
-                    retry_task_id, seg_file, f"seg_{idx}r", ref_yavg)
+                ok, gen_err, was_black_retry = self._download_validated_segment(
+                    retry_task_id, seg_file, f"seg_{idx}r", ref_yavg, reject_black=reject_black)
+                was_black = was_black or was_black_retry
+            if not ok and was_black:
+                # 两次均判黑段：多为场景固有暗（12811 实证：深色木墙口播 YAVG≈74，
+                # 相对判据必然命中，重提无意义）。改用数字人输入的角色原图作为首帧
+                # 重新生成一次并直接放行（不再因亮度判黑），交付优先于拦截；
+                # 回退后整条链固定角色原图首帧、亮度校验降级为仅告警。
+                self.logger.warning(
+                    f"[接力] seg_{idx} 两次判黑段，回退角色原图作为首帧重新生成并放行")
+                fb_task_id, fb_err = self._submit_one_segment(
+                    role_image_url, audio_key, seg_duration, motion_prompt, max_edge)
+                if not fb_task_id:
+                    raise _SegmentedPipelineError(
+                        f"第 {idx} 段黑段回退角色原图后重提未成功: {fb_err}")
+                ok, gen_err = self._wait_and_download_segment(
+                    fb_task_id, seg_file, f"seg_{idx}_role")
                 if not ok:
-                    raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {gen_err}")
+                    raise _SegmentedPipelineError(f"第 {idx} 段黑段回退后仍生成失败: {gen_err}")
+                image_url = role_image_url
+                ref_yavg = role_yavg
+                brightness_gate_off = True
+            if not ok:
+                raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {gen_err}")
             seg_files.append(seg_file)
 
             # 末帧接力：提取本段末帧，作为下一段首帧输入图重新上传；
-            # 每接力 N 段回锚角色原图一次，阻断逐段累积的亮度/噪声漂移
+            # 每接力 N 段回锚角色原图一次，阻断逐段累积的亮度/噪声漂移；
+            # 黑段回退后固定角色原图首帧（场景固有暗，接力只会传递暗帧）
             if idx < len(segment_paths):
+                if brightness_gate_off:
+                    image_url = role_image_url
+                    ref_yavg = role_yavg
+                    self.logger.info(f"[接力] seg_{idx + 1} 固定角色原图首帧（黑段回退后跳过末帧接力）")
+                    continue
                 if self._is_reanchor_segment(idx + 1):
                     image_url = role_image_url
                     ref_yavg = role_yavg
@@ -802,34 +836,40 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         return sum(values) / len(values)
 
     def _check_segment_brightness(self, seg_file: str, ref_yavg: Optional[float],
-                                  tag: str) -> bool:
-        """黑段检测：True=黑段（需重提）。绝对下限 + 相对首帧参考图偏暗双判据。
-        实证（任务 12792）：正常段 YAVG ≥140，灾难性黑段整段 ~30。"""
+                                  tag: str, reject_black: bool = True) -> bool:
+        """黑段检测：True=黑段需拦截。绝对下限 + 相对首帧参考图偏暗双判据。
+        reject_black=False 时命中只告警不拦截（黑段回退后场景固有暗放行）。
+        实证（任务 12792）：正常段 YAVG ≥140，灾难性黑段整段 ~30；
+        场景固有暗（任务 12811 深色木墙口播）YAVG≈74 会命中相对判据，需放行。"""
         yavg = self._measure_avg_brightness(seg_file)
         if yavg is None:
             return False
+        dark_reason = None
         if yavg < DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR:
-            self.logger.warning(
-                f"[分段] {tag} 判定黑段: YAVG={yavg:.1f} "
-                f"< 下限 {DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR}")
+            dark_reason = f"YAVG={yavg:.1f} < 下限 {DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR}"
+        elif ref_yavg and yavg < ref_yavg * (1 - DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO):
+            dark_reason = (f"YAVG={yavg:.1f} 较首帧参考 {ref_yavg:.1f} "
+                           f"偏暗超 {DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO:.0%}")
+        if dark_reason is None:
+            self.logger.info(f"[分段] {tag} 亮度校验通过: YAVG={yavg:.1f}（参考 {ref_yavg}）")
+            return False
+        if reject_black:
+            self.logger.warning(f"[分段] {tag} 判定黑段: {dark_reason}")
             return True
-        if ref_yavg and yavg < ref_yavg * (1 - DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO):
-            self.logger.warning(
-                f"[分段] {tag} 判定黑段: YAVG={yavg:.1f} 较首帧参考 {ref_yavg:.1f} "
-                f"偏暗超 {DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO:.0%}")
-            return True
-        self.logger.info(f"[分段] {tag} 亮度校验通过: YAVG={yavg:.1f}（参考 {ref_yavg}）")
+        self.logger.warning(f"[分段] {tag} 亮度异常仅告警（黑段回退后放行）: {dark_reason}")
         return False
 
     def _download_validated_segment(self, task_id: str, out_path: str, tag: str,
-                                    ref_yavg: Optional[float]) -> tuple:
-        """轮询下载段成片 + 黑段检测；黑段视同生成失败（由调用方走重提一次）。"""
+                                    ref_yavg: Optional[float],
+                                    reject_black: bool = True) -> tuple:
+        """轮询下载段成片 + 黑段检测；返回 (ok, err, was_black)。
+        was_black=True 且 ok=False 表示败因是黑段（调用方可回退角色原图重生成）。"""
         ok, err = self._wait_and_download_segment(task_id, out_path, tag)
         if not ok:
-            return False, err
-        if self._check_segment_brightness(out_path, ref_yavg, tag):
-            return False, f"黑段（画面亮度异常，{tag}）"
-        return True, ""
+            return False, err, False
+        if self._check_segment_brightness(out_path, ref_yavg, tag, reject_black=reject_black):
+            return False, f"黑段（画面亮度异常，{tag}）", True
+        return True, "", False
 
     async def submit_task(self, ai_tool) -> Dict[str, Any]:
         try:
