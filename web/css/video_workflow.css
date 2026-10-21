@@ -4266,6 +4266,25 @@ html.theme-dark .camera-slider:hover {
   margin-top: 2px;
 }
 
+/* ===== @ 下拉条目悬停大图预览（web/js/hover_preview.js 使用） ===== */
+.wf-hover-preview {
+  position: fixed;
+  z-index: 10001;
+  display: none;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.wf-hover-preview img {
+  display: block;
+  max-width: 280px;
+  max-height: 220px;
+  border-radius: 4px;
+}
+
 /* ===== 新建画布弹窗的比例卡片样式（仅用于 #createWorkflowModal）===== */
 #createWorkflowModal .ratio-option {
   display: flex;

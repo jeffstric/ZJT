@@ -4558,7 +4558,7 @@
       }
 
       const frameHtml = frameItems.map(item => `
-        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
           <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
           <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
         </div>
@@ -4568,8 +4568,9 @@
         const warningStyle = hasImage ? '' : 'background: #fef2f2; border-left: 3px solid #ef4444;';
         const nameStyle = hasImage ? 'color: #374151;' : 'color: #ef4444;';
         const warningText = hasImage ? '' : '<span style="font-size: 10px; color: #ef4444; margin-left: 4px;">无参考图</span>';
+        const hoverPreviewAttr = hasImage ? ` data-hover-preview="${escapeHtml(char.reference_image)}"` : '';
         return `
-          <div class="character-dropdown-item" data-character-name="${escapeHtml(char.name)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; ${warningStyle}">
+          <div class="character-dropdown-item" data-character-name="${escapeHtml(char.name)}"${hoverPreviewAttr} style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; ${warningStyle}">
             ${hasImage ? `<img src="${escapeHtml(char.reference_image)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #fee2e2; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #ef4444;">!</div>'}
             <span style="font-size: 12px; ${nameStyle}">${escapeHtml(char.name)}${warningText}</span>
           </div>
@@ -4614,6 +4615,7 @@
 
     // 隐藏角色选择下拉框（图片提示词用）
     function hideCharacterDropdownForImagePrompt(nodeId, dropdownKey = 'imageprompt') {
+      if (window.WFHoverPreview) window.WFHoverPreview.hide();
       const dropdown = document.getElementById(`character-dropdown-${dropdownKey}-${nodeId}`);
       if (dropdown) {
         dropdown.style.display = 'none';
