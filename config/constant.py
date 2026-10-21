@@ -718,6 +718,15 @@ DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR = 50.0
 # 该比例判定黑段（自然漂移 ~10% 以内放行，灾难性偏暗才重提）
 DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO = 0.25
 
+# ===== 数字人 VL 锁镜头提示词生成重试（2026-10-21，修复 12815「背景/衣服漂移」）=====
+# 背景：VL 看角色图生成 H3 锁镜头提示词时，角色图走远程下载；内网环境自访问
+# frp 公网地址偶发瞬时不通（12815 实证 12:02:44 httpx ConnectError
+# "All connection attempts failed"），单次失败即降级为无约束兜底模板 →
+# H3 丢失服装/背景约束、逐段自由发挥（段 1 灰衬衫演播室 vs 段 2-4 白大褂诊所）。
+# 整体重试次数（含首次尝试）；相邻尝试间隔秒数
+DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS = 3
+DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS = 2
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""
@@ -2475,9 +2484,7 @@ class VideoScriptExtractConstants:
     LLM_TEMPERATURE = 0.4
     # 剧本文本长度上限（字符），超出截断，防止异常输出撑爆 workflow JSON。
     MAX_SCRIPT_CHARS = 30000
-    # 任务记录 TTL（秒）：running 记录超期未更新判执行进程失联（状态查询 404、
-    # 新任务创建时标记失败释放并发占用）；历史记录超期惰性清理。任务状态落
-    # script_extract_task 表（跨 gunicorn worker 共享），不再随进程内存丢失。
+    # 内存任务记录保留时长（秒），超期惰性清理；服务重启任务即失联（前端提示重新提取）。
     TASK_TTL_SECONDS = 1800
     # 默认推荐模型：与图片描述一致的 VL 偏好（须已在模型表配置密钥且 supports_vl）。
     PREFERRED_VENDOR = "volcengine"

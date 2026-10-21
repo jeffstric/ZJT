@@ -341,3 +341,20 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 **修复**：端点校验不再写死数字，统一引用常量——单段上限 `duration > DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`、白名单 `range(4, DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS + 1)`，错误信息随常量口径；server.py import 补 `DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`。confirm docstring、SOP（`sop-digital-human.md` 路由表与 11-15s 引用块）、`mcp_tool.py` 工具 description 与 wan2.2 引导文案、`docs/marketing_agent.md` 中残留的 10s 口径一并同步。
 
 **防回归**：`tests/api/test_digital_human_h3_duration_validation.py` 新增 11 项端点校验用例（11-15s 单段放行 / 16s 无分段 400 / <4s 400 / 显式分段不受单段口径牵连 / 分段和校验保留）。红线：端点校验与路由层必须共用 `DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`，禁止再写死 10/15。
+
+
+### 附录 C.15 修复 VL 锁镜头提示词生成失败导致段间换装/换背景：重试 + 本地映射兜底 + 兜底模板加约束（2026-10-21）
+
+**背景**：任务 12815（会话 98bb4735，52s 分 4 段）成片 0~14s 是灰衬衫深色演播室、14s 起变白大褂明亮诊所，用户在拼接点看到背景/衣服突变。调查证实与末帧接力/回锚无关（该任务黑段双杀后全链固定角色原图首帧，根本没走接力）：
+
+1. **根因**：12:02:44 `_generate_locked_camera_prompt` 取角色图走远程下载，内网环境自访问 frp 公网地址（zjt-dev.perseids.cn）瞬时不通（httpx `ConnectError: All connection attempts failed`）→ 单次失败即降级为无约束兜底模板（`a static medium shot of a person facing the camera directly`，全文无服装/背景描述）。H3 webapp 是主体参考模式（人脸保留、服装/背景由提示词+采样自由生成），约束缺失 → 段 1 三次生成全部漂移成灰衬衫演播室（前两次 YAVG 106.3/69.7 被黑段相对判据连杀，第三次被 C.13 双杀回退强制放行），段 2-4 正常白大褂。
+2. **对照**：同图任务 12814、异图任务 12812 的 VL 提示词均成功（含 `white medical lab coat` / `beige knitted cardigan...field of daisies` 细节），逐段抽首帧核验全部保真——证明机制本身无恙，纯提示词约束缺失所致。
+3. 同 URL 的选音色路径（`_pick_voice_by_image`）12:02:21 也遇同样瞬断，但其有本地映射兜底所以成功了；锁镜头提示词路径无此兜底。12:02 后同一域名 curl 实测 93ms 正常，确认为瞬时故障。
+
+**改动**（`script_writer_core/digital_human_tts_tools.py` + `config/constant.py`）：
+
+- `_generate_locked_camera_prompt` 整体重试 `DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS`（3）次、相邻间隔 `DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS`（2s），重试耗尽才降级兜底模板；每次尝试内远程下载失败后改用本地映射文件直读兜底一次（复用 `_pick_voice_by_image` 的 `try_map_url_to_local_file` 策略，直接命中 frp 自访问瞬断的主因）。
+- `LOCKED_CAMERA_PROMPT_FALLBACK` 的 scene 槽位加入约束：`keeping the exact same outfit, hairstyle and background as the reference image`——兜底提示词细节少但不再放任 H3 换装/换背景。
+- prepare 阶段注释与 `locked_note` 同步（兜底模板语义变化）。
+
+**测试**：`tests/agents/test_digital_human_tts_tools.py` 新增 `TestLockedCameraPrompt` 4 项——瞬时失败重试至成功（断言尝试次数=MAX_ATTEMPTS）、远程失败走本地映射直读成功、重试耗尽返回 success=False、兜底模板含服装/发型/背景约束。34 项全过；CI 红线（blocking_calls/migration_names/tool_executor_signature/frontend_xss）全过。

@@ -32,6 +32,8 @@ from config.constant import (
     DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS,
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
+    DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS,
+    DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS,
     StoryboardDigitalHumanConstants,
     TaskTypeId,
     TaskTypeRegistry,
@@ -78,7 +80,8 @@ LOCKED_CAMERA_PROMPT_TEMPLATE = (
     'non_diegetic_music: [leave empty]')
 
 LOCKED_CAMERA_PROMPT_FALLBACK = LOCKED_CAMERA_PROMPT_TEMPLATE.format(
-    scene='a person facing the camera directly')
+    scene='a person facing the camera directly, keeping the exact same outfit, '
+          'hairstyle and background as the reference image')
 
 VL_LOCKED_CAMERA_INSTRUCTION = (
     '你是一个专业的AI视频提示词生成专家。请观察这张参考图，提取人物的性别、发型、'
@@ -98,31 +101,58 @@ VL_LOCKED_CAMERA_INSTRUCTION = (
 async def _generate_locked_camera_prompt(image_url: str, user_id: str) -> Dict[str, Any]:
     """VL 看角色图生成 H3 锁镜头英文提示词(integrated_multimodal_description 格式)。
 
-    失败时返回 success=False，调用方降级使用不含人物细节的英文兜底模板。
+    失败时返回 success=False，调用方降级使用英文兜底模板（兜底模板已内置
+    服装/背景保持约束，见 LOCKED_CAMERA_PROMPT_FALLBACK）。
+
+    角色图读取对瞬时网络抖动敏感：内网环境自访问 frp 公网地址偶发瞬时不通
+    （12815 实证 httpx ConnectError "All connection attempts failed"），单次失败
+    即降级会让 H3 丢失服装/背景约束、分段生成逐段自由发挥（换装/换背景）。
+    故整体重试 DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS 次；且单次尝试内远程下载
+    失败后改用本地映射文件兜底一次（与 _pick_voice_by_image 同策略）。
     """
-    try:
-        ok, data_url, err = await image_url_to_base64(
-            image_url, compress_timeout=15, allow_remote=True,
-            remote_timeout=30, user_id=int(user_id or 0))
-        if not ok or not data_url:
-            raise RuntimeError(f'角色图读取失败: {err}')
-        picked = await pick_vl_model(IMAGE_DESCRIBE_PREFERRED_VENDOR,
-                                     IMAGE_DESCRIBE_PREFERRED_MODEL)
-        if not picked:
-            raise RuntimeError('无可用视觉模型')
-        v_ok, content, v_err = await call_vl(
-            VL_LOCKED_CAMERA_INSTRUCTION, '', data_url,
-            model=picked.get('name'), vendor_id=picked.get('vendor_id'),
-            llm_timeout=90, temperature=0.2, max_tokens=500)
-        if not v_ok or not content:
-            raise RuntimeError(f'VL 描述生成失败: {v_err}')
-        prompt = content.strip()
-        if 'integrated_multimodal_description' not in prompt:
-            raise RuntimeError('VL 输出不符合 integrated_multimodal_description 模板')
-        return {'success': True, 'prompt': prompt}
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"锁镜头英文提示词生成失败，将使用兜底模板: {e}")
-        return {'success': False, 'error': str(e)}
+    last_err = ""
+    for attempt in range(1, DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS + 1):
+        try:
+            ok, data_url, err = await image_url_to_base64(
+                image_url, compress_timeout=15, allow_remote=True,
+                remote_timeout=30, user_id=int(user_id or 0))
+            if not ok or not data_url:
+                # 内网环境自访问 frp 公网地址不通：改用本地映射直读兜底一次
+                from utils.image_upload_utils import try_map_url_to_local_file
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                local_path = try_map_url_to_local_file(image_url, get_config(), project_root)
+                if local_path and os.path.isfile(local_path):
+                    logger.warning(
+                        "VL 提示词图片远程下载失败（%s），已改用本地映射文件: %s", err, local_path)
+                    ok, data_url, err = await image_url_to_base64(
+                        image_url, compress_timeout=15, allow_remote=False,
+                        remote_timeout=None, user_id=int(user_id or 0),
+                        local_path=local_path)
+            if not ok or not data_url:
+                raise RuntimeError(f'角色图读取失败: {err}')
+            picked = await pick_vl_model(IMAGE_DESCRIBE_PREFERRED_VENDOR,
+                                         IMAGE_DESCRIBE_PREFERRED_MODEL)
+            if not picked:
+                raise RuntimeError('无可用视觉模型')
+            v_ok, content, v_err = await call_vl(
+                VL_LOCKED_CAMERA_INSTRUCTION, '', data_url,
+                model=picked.get('name'), vendor_id=picked.get('vendor_id'),
+                llm_timeout=90, temperature=0.2, max_tokens=500)
+            if not v_ok or not content:
+                raise RuntimeError(f'VL 描述生成失败: {v_err}')
+            prompt = content.strip()
+            if 'integrated_multimodal_description' not in prompt:
+                raise RuntimeError('VL 输出不符合 integrated_multimodal_description 模板')
+            return {'success': True, 'prompt': prompt}
+        except Exception as e:  # noqa: BLE001
+            last_err = str(e)
+            logger.warning(
+                "锁镜头英文提示词生成第 %d/%d 次失败: %s",
+                attempt, DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS, last_err)
+            if attempt < DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS:
+                await asyncio.sleep(DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS)
+    logger.warning(f"锁镜头英文提示词生成失败，将使用兜底模板: {last_err}")
+    return {'success': False, 'error': last_err}
 
 # 草案内存存储：{draft_id: {"draft": {...}, "expires_at": ts}}
 _DRAFT_STORE: Dict[str, Dict[str, Any]] = {}
@@ -592,7 +622,9 @@ async def prepare_digital_human_draft(
         effective_motion = SEGMENTED_MOTION_PROMPT if segment_mode else motion_prompt
 
         # H3 锁镜头 webapp 要求 214 为英文 integrated_multimodal_description 格式：
-        # VL 看角色图提取人物/背景细节生成；失败降级为无细节英文兜底模板（画面能跑但细节少）
+        # VL 看角色图提取人物/背景细节生成（内部带重试与本地映射兜底）；
+        # 失败降级为带服装/背景保持约束的英文兜底模板（细节少但不放任换装/换背景，
+        # 12815 实证：无约束兜底下 H3 逐段自由发挥，段间背景/衣服突变）
         locked_prompt = None
         locked_note = ''
         vl_result = await _generate_locked_camera_prompt(image_url, user_id)
@@ -600,7 +632,7 @@ async def prepare_digital_human_draft(
             locked_prompt = vl_result['prompt']
         else:
             locked_prompt = LOCKED_CAMERA_PROMPT_FALLBACK
-            locked_note = '（人物细节提示词生成失败，已用通用描述兜底）'
+            locked_note = '（人物细节提示词生成失败，已用带约束的通用描述兜底）'
 
         # 分辨率档位 → 最长边由服务端统一映射（避免 "720P" 被误当像素值 720 下发）
         resolved_resolution, resolved_max_edge = _resolve_draft_resolution(resolution, max_edge)
