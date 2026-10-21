@@ -94,4 +94,24 @@ describe('auth_self_heal 自愈契约（与 script_writer.handleTokenExpired 行
     it('cookie 也失效时回调 onLoginExpired 由页面跳登录页', () => {
         expect(healSource).toContain('opts.onLoginExpired');
     });
+
+    it('探测解析业务码 code===0（/api/user/role 失效也返回 HTTP 200，resp.ok 恒真）', () => {
+        const probeBody = healSource.slice(
+            healSource.indexOf('function probeSession'),
+            healSource.indexOf('function readLastHealAt'),
+        );
+        expect(probeBody).toContain('resp.ok');
+        expect(probeBody).toContain('data.code === 0');
+        // 契约护栏：不得退回「只看 HTTP 状态」的恒真探测
+        expect(probeBody).not.toMatch(/return\s+resp\.ok\s*;?\s*\}\)/);
+    });
+
+    it('探测 JSON 解析失败/网络异常按会话失效处理（fail closed 到 onLoginExpired）', () => {
+        const probeBody = healSource.slice(
+            healSource.indexOf('function probeSession'),
+            healSource.indexOf('function readLastHealAt'),
+        );
+        expect(probeBody).toContain('.catch(function ()');
+        expect(probeBody).toContain('return false');
+    });
 });
