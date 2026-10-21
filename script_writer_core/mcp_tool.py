@@ -28,6 +28,7 @@ from config.constant import (
     AGENT_TASK_IN_PROGRESS_STATUSES,
     DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS,
     DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
+    DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
 )
 from utils.script_duration import (
     budget_tolerance_upper,
@@ -4245,7 +4246,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_digital_human",
-        "description": "生成数字人视频（wan2.2 参考音色模式，非阻塞）。⚠️ 仅当用户要求'用某段音频的音色说新的文案'且文案较短（口播 ≤10 秒，约 40 字内）时使用——audio_url 只用于提取音色，口播内容由 text 驱动，超长文案会被拒绝并引导改走 prepare_digital_human_draft + confirm_digital_human（自动路由 LTX2.3）。若用户想让人物说某段音频（音频驱动口播），请直接用 prepare_digital_human_draft + confirm_digital_human。根据人物图片、口播文本和参考音频 URL 提交任务，返回 project_ids。",
+        "description": "生成数字人视频（wan2.2 参考音色模式，非阻塞）。⚠️ 仅当用户要求'用某段音频的音色说新的文案'且文案较短（口播 ≤10 秒，约 40 字内）时使用——audio_url 只用于提取音色，口播内容由 text 驱动，超长文案会被拒绝并引导改走 prepare_digital_human_draft + confirm_digital_human（按时长自动路由 MiniMax H3 单段/分段拼接）。若用户想让人物说某段音频（音频驱动口播），请直接用 prepare_digital_human_draft + confirm_digital_human。根据人物图片、口播文本和参考音频 URL 提交任务，返回 project_ids。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4271,7 +4272,7 @@ MCP_TOOLS = [
     },
     {
         "name": "prepare_digital_human_draft",
-        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认，同时生成固定镜头动作提示词）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。生成方式按口播时长自动路由：≤10 秒用 MiniMax H3 单段直出；10 秒以上用 MiniMax H3 分段拼接（每段 10 秒、固定镜头，切点落在句间停顿，后端自动拼接，段数随时长增加；草案按每段 4~10 分钟给出总耗时区间）；口播文案上限 2000 字。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
+        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认，同时生成固定镜头动作提示词）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。生成方式按口播时长自动路由：≤15 秒用 MiniMax H3 单段直出；15 秒以上用 MiniMax H3 分段拼接（每段 15 秒、固定镜头，切点落在句间停顿，后端自动拼接，段数随时长增加；草案按每段 4~10 分钟给出总耗时区间）；口播文案上限 2000 字。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4311,7 +4312,7 @@ MCP_TOOLS = [
     },
     {
         "name": "confirm_digital_human",
-        "description": "确认数字人口播草案并提交视频生成（消耗视频时长算力）。按草案路由自动选择生成方式：≤10 秒提交 MiniMax H3 单段；10 秒以上提交 MiniMax H3 分段拼接（每段 10 秒固定镜头，切点落在句间停顿，后端自动逐段生成并拼接，每段约 4~10 分钟、总耗时约段数×4~段数×10 分钟）。仅当用户明确确认草案后调用；草案一次性消费，提交后不可重复。生成失败或草案过期时请重新 prepare。",
+        "description": "确认数字人口播草案并提交视频生成（消耗视频时长算力）。按草案路由自动选择生成方式：≤15 秒提交 MiniMax H3 单段；15 秒以上提交 MiniMax H3 分段拼接（每段 15 秒固定镜头，切点落在句间停顿，后端自动逐段生成并拼接，每段约 4~10 分钟、总耗时约段数×4~段数×10 分钟）。仅当用户明确确认草案后调用；草案一次性消费，提交后不可重复。生成失败或草案过期时请重新 prepare。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4952,14 +4953,16 @@ def generate_digital_human(
             return {'success': False, 'error': '文本内容不能超过1000个字'}
 
         # 口播时长估算：>10s 时 wan2.2 参考音色模式不适用（长口播口型/音色不稳），
-        # 引导改走两段式链路（prepare+confirm 会自动路由 H3 分段拼接，支持至 30 秒）
+        # 引导改走两段式链路（prepare+confirm 会自动路由 H3，分段支持至
+        # DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS 秒兜底上限）
         est_seconds = len(text) / DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND
         if est_seconds > DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS:
             return {
                 'success': False,
                 'error': (f'口播文案约 {est_seconds:.0f} 秒，超过 10 秒，不适合 wan2.2 参考音色模式。'
                           f'请改用 prepare_digital_human_draft + confirm_digital_human'
-                          f'（将按口播时长自动路由 MiniMax H3，10-30 秒走分段拼接，最长支持 30 秒），'
+                          f'（将按口播时长自动路由 MiniMax H3，15 秒以上分段拼接，'
+                          f'最长支持 {DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒），'
                           f'或把文案缩短到约 {DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS * DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND} 字以内。'),
             }
 
