@@ -72,6 +72,8 @@ DELETE /api/worlds/{world_id}
 
 剧本页管理员永久删除失败时，与隐藏/恢复一样走 `readApiErrorText`：按 `message`、`error`、字符串 `detail`、校验数组 `detail[].msg` 的顺序取文案。世界下仍有角色、场景或道具时，后端拒绝原因会显示出来，不会落成「未知错误」。
 
+403 等 `HTTPException` 收成同时带 `message` 与 `detail`；角色或场景非空时的 400 只带 `message`。剧本页管理员永久删除（`adminDeleteWorld`）与隐藏、恢复一样走 `readApiErrorText`，按 `message` → `error` → `detail` 展示，不再落成固定「未知错误」。
+
 ## 前端
 
 | 入口 | 行为 |

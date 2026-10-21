@@ -702,6 +702,21 @@ DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
 DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN = 4
 DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX = 10
 
+# ===== 数字人末帧接力质量防护（2026-10-20，修复「多段接力越来越黑」）=====
+# 背景：段 i+1 首帧接力段 i 末帧，「视频→抽帧→再生成」每轮漂移 -6~-12 YAVG
+# 且偶发整段骤黑（任务 12792 五段接力实测 174.7→163.5→155.3→29.9(黑段)→141.6）。
+# 回锚间隔（段）：每接力 N 段后，下一段首帧回锚角色原图，阻断累积漂移。
+# N 越小接缝跳变越频繁、画面越稳定；N=2 为画面质量与生成效率的折中。
+# 回锚时若希望段间画面几乎无缝，需权衡：角色原图首帧与上一段末帧内容不同，
+# 拼接点会有可见跳变；N=2 把累积漂移约束在 ≤2 段（~24 YAVG）内。
+DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL = 2
+# 黑段检测·绝对亮度下限：段成片平均亮度 YAVG（signalstats 全帧均值）低于该值判定黑段，
+# 视同生成失败自动重提一次（12792 黑段实测 ~30，正常段 ≥140）
+DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR = 50.0
+# 黑段检测·相对偏暗比例：段平均亮度较其首帧参考图（接力帧/角色原图）偏暗超过
+# 该比例判定黑段（自然漂移 ~10% 以内放行，灾难性偏暗才重提）
+DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO = 0.25
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""

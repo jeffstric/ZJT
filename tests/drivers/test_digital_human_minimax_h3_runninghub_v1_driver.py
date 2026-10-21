@@ -223,7 +223,7 @@ def _make_segment_pipeline_mocks(driver):
     driver._submit_one_segment = submit_mock
     wait_mock = MagicMock(return_value=(True, ""))
     driver._wait_and_download_segment = wait_mock
-    extract_mock = MagicMock(return_value="temp/resume_last.jpg")
+    extract_mock = MagicMock(return_value="temp/resume_last.png")
     driver._extract_last_frame = extract_mock
     concat_mock = MagicMock(return_value="/upload/cache/2026-01-01/x.mp4")
     driver._concat_and_store = concat_mock
@@ -352,3 +352,136 @@ def test_submit_segments_brakes_when_generation_fails_twice(monkeypatch, tmp_pat
     assert "上游任务失败" in msg  # 根因如实上报，而非误导性的「拼接失败」
     assert submit_mock.call_count == 2  # 首次提交 + 一次重提，不再多跑
     concat_mock.assert_not_called()  # 带刹车：后续段与拼接均未执行
+
+
+def test_extract_last_frame_png_two_stage_true_last(monkeypatch, tmp_path):
+    """无损末帧：快路径 -sseof 窗口 + -update 1 覆盖写（禁 -frames:v 1，否则取到
+    窗口第一帧而非真正末帧），快路径空输出时降级全片解码；输出为无损 PNG。"""
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    calls = []
+
+    def fake_run(argv, *args, **kwargs):
+        calls.append(argv)
+        if len(calls) == 1:
+            # 快路径空输出（未写文件），触发兜底
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        with open(argv[-1], "wb") as f:
+            f.write(b"x" * 2048)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(drv_mod, "_get_ffmpeg_path", lambda: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(drv_mod.subprocess, "run", fake_run)
+
+    driver = make_driver()
+    out_png = str(tmp_path / "last.png")
+    assert driver._extract_last_frame(str(tmp_path / "seg.mp4"), out_png) == out_png
+    assert len(calls) == 2  # 快路径 + 全片解码兜底
+    assert "-sseof" in calls[0] and "-update" in calls[0]
+    assert "-frames:v" not in calls[0]
+    assert "-sseof" not in calls[1]  # 兜底为全片解码
+
+
+def test_is_reanchor_segment():
+    """回锚点：每接力 N=2 段后回锚一次 → 段 3/5/7，段 1 与接力段不回锚。"""
+    from task.visual_drivers.digital_human_minimax_h3_runninghub_v1_driver import (
+        DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL as N,
+    )
+
+    assert N == 2
+    reanchors = [i for i in range(1, 11)
+                 if DigitalHumanMinimaxH3RunninghubV1Driver._is_reanchor_segment(i)]
+    assert reanchors == [3, 5, 7, 9]
+
+
+def test_submit_segments_reanchors_to_role_image_every_2(monkeypatch, tmp_path):
+    """每接力 2 段回锚角色原图：seg_2/seg_4 首帧接力末帧，seg_3 回锚角色图，
+    阻断「抽帧→再生成」循环的亮度/噪声累积漂移。"""
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+
+    def fake_upload(path):
+        p = str(path)
+        if p.endswith("_last.png") or "resume_last" in p:
+            return SimpleNamespace(
+                success=True, url=f"https://rh.example/relay_{os.path.basename(p)}",
+                key="k", error=None)
+        return SimpleNamespace(success=True, url="https://rh.example/role.png",
+                               key="openapi/role.png", error=None)
+
+    driver._upload_to_runninghub_sync = MagicMock(side_effect=fake_upload)
+    driver._upload_segment_audio = MagicMock(return_value="openapi/audio.wav")
+    submit_mock = MagicMock(return_value=("rh-task-x", ""))
+    driver._submit_one_segment = submit_mock
+    driver._wait_and_download_segment = MagicMock(return_value=(True, ""))
+    driver._extract_last_frame = MagicMock(side_effect=lambda seg, out: out)
+    driver._concat_and_store = MagicMock(return_value="/upload/cache/x.mp4")
+    driver._measure_avg_brightness = MagicMock(return_value=150.0)
+
+    paths = ["/tmp/s1.wav", "/tmp/s2.wav", "/tmp/s3.wav", "/tmp/s4.wav"]
+    extra = {"dh_segment_durations": [10, 10, 10, 10], "max_edge": 1280}
+    ai_tool = make_ai_tool(extra_config=_json.dumps({
+        "dh_segments": paths, "dh_segment_durations": [10, 10, 10, 10],
+        "max_edge": 1280}))
+
+    result = driver._submit_segments_async(ai_tool, paths, extra)
+
+    assert result["success"] is True
+    images = [c[0][0] for c in submit_mock.call_args_list]
+    assert images[0] == "https://rh.example/role.png"   # seg_1 角色图
+    assert "relay" in images[1]                         # seg_2 接力末帧
+    assert images[2] == "https://rh.example/role.png"   # seg_3 回锚角色原图
+    assert "relay" in images[3]                         # seg_4 接力末帧
+
+
+def test_submit_segments_resubmits_once_on_black_segment(monkeypatch, tmp_path):
+    """黑段检测：段成片亮度低于下限视同生成失败，换新任务自动重提一次；
+    重提后亮度恢复则流水线继续完成。"""
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+    submit_mock, _, concat_mock, _ = _make_segment_pipeline_mocks(driver)
+
+    state = {"n": 0}
+
+    def fake_measure(path):
+        if str(path).endswith("h3seg_1_seg_1.mp4"):
+            state["n"] += 1
+            return 30.0 if state["n"] == 1 else 150.0  # 首轮黑段，重提后恢复
+        return 150.0
+
+    driver._measure_avg_brightness = MagicMock(side_effect=fake_measure)
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    # seg_1 初提 + 黑段重提，seg_2 正常提交
+    assert submit_mock.call_count == 3
+    concat_mock.assert_called_once()
+
+
+def test_submit_segments_brakes_when_black_segment_twice(monkeypatch, tmp_path):
+    """黑段重提后仍黑：抛 _SegmentedPipelineError 带刹车，不得拼接黑片交付。"""
+    import pytest
+    from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
+
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+    submit_mock, _, concat_mock, _ = _make_segment_pipeline_mocks(driver)
+    driver._measure_avg_brightness = MagicMock(return_value=30.0)  # 始终黑段
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    with pytest.raises(drv_mod._SegmentedPipelineError) as exc_info:
+        driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert "黑段" in str(exc_info.value)
+    assert submit_mock.call_count == 2  # 首次提交 + 一次重提，不再多跑
+    concat_mock.assert_not_called()
+
+
+def test_check_segment_brightness_degrades_on_measure_failure(monkeypatch, tmp_path):
+    """亮度测量失败（ffmpeg 异常/无输出）时检测降级放行，不得阻塞流水线。"""
+    driver = make_driver()
+    driver._measure_avg_brightness = MagicMock(return_value=None)
+    assert driver._check_segment_brightness(
+        str(tmp_path / "seg.mp4"), 150.0, "seg_x") is False
