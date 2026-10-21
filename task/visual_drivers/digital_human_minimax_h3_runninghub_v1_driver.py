@@ -15,19 +15,14 @@ webapp_id: 2087200340012785665
 import asyncio
 import json
 import os
-import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Any, Optional
 import traceback
 from .base_video_driver import BaseVideoDriver
 from config.config_util import get_config, get_dynamic_config_value
-from config.constant import (
-    MediaConstants,
-    DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL,
-    DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR,
-    DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO,
-)
+from config.constant import DigitalHumanSegmentConstants
 from config.unified_config import TaskTypeId
 from utils.sentry_util import SentryUtil, AlertLevel
 from utils.file_storage import RunningHubFileStorage
@@ -45,12 +40,22 @@ DEFAULT_START_SECOND = 0
 SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 # 分段编排（extra_config.dh_segments 存在时走 sync_mode 全流水线：
-# 逐段生成→下载→ffmpeg 拼接→本地落盘，见 docs/marketing_agent_digital_human_duration_routing_plan.md）
+# 各段首帧统一用输入角色图（不做末帧接力，MiniMax H3 成片末尾渐暗，
+# 接力帧会污染后续段落）；缺失段全并发提交 RunningHub（每段独立任务），
+# 全部到齐后 ffmpeg 拼接→本地落盘，
+# 见 docs/marketing_agent_digital_human_duration_routing_plan.md）
 SEGMENT_POLL_INTERVAL_SECONDS = 20
 SEGMENT_POLL_MAX_TRIES = 60  # 单段轮询上限 20 分钟
 SEGMENT_SUBMIT_RETRY = 1     # 段提交/生成失败后的自动重试次数
 # 15s 段在默认实例显存边界上偶发 OOM，整条流水线失败后按此稳定段长降档重切重跑
 SEGMENT_FALLBACK_MAX_SEG = 10
+
+# 分段并发执行线程池（模块级长寿 executor；禁止 with 上下文管理器——
+# with 退出会触发 shutdown(wait=True)，使 future.result(timeout=) 假超时，
+# 调用线程仍卡死，见 AGENTS.md 超时红线 R10）
+_SEGMENT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=DigitalHumanSegmentConstants.SEGMENT_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix="dh-segment")
 
 
 class _SegmentedPipelineError(Exception):
@@ -297,22 +302,14 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
     def _submit_segments_async(self, ai_tool, segment_paths: list,
                                extra_config: Dict[str, Any]) -> Dict[str, Any]:
-        """末帧接力串行链式生成（同步，运行于 to_thread）：段 1 用角色图，
-        段 i+1 用段 i 末帧作首帧（画面衔接）；逐段生成→提取末帧→链式提交；
+        """全并发分段生成（同步，运行于 to_thread）：各段首帧统一用输入角色图
+        （不做末帧接力——MiniMax H3 成片末尾渐暗，接力帧会污染后续段落）；
+        缺失段全部并发提交 RunningHub（每段独立任务）→ 各自轮询下载；
         全部完成后下载拼接、落盘 /upload/cache 并返回最终 result_url。
-
-        质量防护（2026-10-20「越来越黑」修复）：
-        - 接力帧为无损 PNG 真正末帧（见 _extract_last_frame）；
-        - 每接力 DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL 段，下一段回锚角色原图，
-          阻断「抽帧→再生成」循环的亮度/噪声累积漂移；
-        - 段下载后黑段检测（_check_segment_brightness），黑段视同生成失败重提一次；
-          重提仍判黑不判任务失败——回退数字人输入的角色原图作为该段首帧重新生成并
-          放行（场景固有暗，如深色背景口播，会被相对判据误判，交付优先于拦截），
-          且回退后整条链固定角色原图首帧、亮度校验降级为仅告警。
 
         断点续跑：段成片按 ai_tool.id 确定性落盘 temp/h3seg_{id}_seg_{idx}.mp4，
         上游 421 拥堵回队重试时复用已完整下载的段（ffprobe 校验通过），
-        从第一个缺失的段继续，避免已完成的段被重复生成（浪费上游并发与费用）。
+        只并发补缺失段，避免已完成的段被重复生成（浪费上游并发与费用）。
 
         失败语义：段提交/生成失败自动重试一次（换新 RunningHub 任务），
         仍失败抛 _SegmentedPipelineError（入口转统一失败处理）。
@@ -322,156 +319,47 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         max_edge = self._resolve_max_edge(extra_config)
         segment_durations = extra_config.get("dh_segment_durations") or []
 
-        # 角色图（段 1 首帧）上传
+        # 角色图（各段统一首帧）上传
         image_path = ai_tool.image_path
         if image_path:
             if "," in image_path:
                 image_path = image_path.split(",")[0].strip()
-            self.logger.info(f"[接力] 上传角色图（段 1 首帧）: {image_path}")
+            self.logger.info(f"[分段] 上传角色图（各段统一首帧）: {image_path}")
             result = self._upload_to_runninghub_sync(image_path)
             if not result.success:
                 raise _SegmentedPipelineError(f"角色图上传到 RunningHub 失败: {result.error}")
             image_url = result.url if result.url else result.key
         else:
             raise _SegmentedPipelineError("分段任务缺少角色图")
-        role_image_url = image_url  # 接力帧缺失/上传失败时回退角色图
-        # 首帧参考亮度（黑段相对判据基准）：角色原图测一次；接力帧生成后逐段更新
-        role_yavg = self._measure_avg_brightness(image_path)
-        ref_yavg = role_yavg
-        # 黑段回退标记：某段两次判黑后回退角色原图重生成并放行，此后整条链固定
-        # 角色原图首帧（跳过末帧接力），亮度校验降级为仅告警（场景固有暗不误杀）
-        brightness_gate_off = False
 
         # 断点续跑：复用上一轮已完整下载的段成片（须连续：第 1 个缺失段之前的才可复用）
-        seg_files: list = []  # 各段成片本地路径
+        seg_files: list = []  # 各段成片本地路径（按段序）
         for idx in range(1, len(segment_paths) + 1):
             cached = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
             expected = int(segment_durations[idx - 1]) \
                 if idx - 1 < len(segment_durations) else None
             if self._is_valid_segment(cached, expected):
                 seg_files.append(cached)
-                self.logger.info(f"[接力] 断点续跑：复用已完成段 seg_{idx}: {cached}")
+                self.logger.info(f"[分段] 断点续跑：复用已完成段 seg_{idx}: {cached}")
                 continue
             break
         resumed = len(seg_files)
 
-        # 复用段之后的下一段首帧：取已复用末段的末帧上传（画面衔接），失败回退角色图；
-        # 下一段落在回锚点（每 N 段一次）时直接用角色原图，阻断累积漂移
-        if 0 < resumed < len(segment_paths):
-            if self._is_reanchor_segment(resumed + 1):
-                self.logger.info(
-                    f"[接力] seg_{resumed + 1} 回锚角色原图"
-                    f"（每 {DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL} 段一次），跳过末帧接力")
-            else:
-                last_frame = self._extract_last_frame(
-                    seg_files[-1], os.path.join('temp', f"h3seg_{ai_tool.id}_resume_last.png"))
-                if last_frame:
-                    img = self._upload_to_runninghub_sync(last_frame)
-                    if img.success:
-                        image_url = img.url if img.url else img.key
-                        ref_yavg = self._measure_avg_brightness(last_frame) or role_yavg
-                        self.logger.info(
-                            f"[接力] 复用段末帧已上传，作为 seg_{resumed + 1} 首帧")
-                    else:
-                        self.logger.warning(
-                            f"[接力] 复用段末帧上传失败，回退角色图: {img.error}")
-
+        # 缺失段全并发提交（每段独立 worker：上传音频→提交→轮询下载）
+        futures: Dict[int, Any] = {}
         for idx, seg_path in enumerate(segment_paths, start=1):
             if idx <= resumed:
                 continue  # 断点续跑：该段已复用，跳过生成
             seg_duration = int(segment_durations[idx - 1]) if idx - 1 < len(segment_durations) \
                 else DEFAULT_DURATION
-            audio_key = self._upload_segment_audio(seg_path)
-            if not audio_key:
-                raise _SegmentedPipelineError(f"第 {idx} 段音频上传 RunningHub 失败")
+            futures[idx] = _SEGMENT_EXECUTOR.submit(
+                self._run_one_segment, idx, seg_path, image_url, seg_duration,
+                motion_prompt, max_edge, ai_tool.id)
 
-            # 提交（失败自动重试一次）
-            last_err = ""
-            task_id = None
-            for attempt in range(1 + SEGMENT_SUBMIT_RETRY):
-                task_id, last_err = self._submit_one_segment(
-                    image_url, audio_key, seg_duration, motion_prompt, max_edge)
-                if task_id:
-                    break
-                self.logger.warning(f"[接力] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
-                time.sleep(5)
-            if not task_id:
-                raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
-
-            # 等待出片并下载（生成失败/超时换新任务自动重提一次——
-            # 返回值不可丢弃：旧实现忽略 (ok, err) 会让流水线带着不存在的段文件继续跑，
-            # 首帧静默回退角色图、后续段白跑，最后以误导性的「拼接失败」报错收场；
-            # 黑段双杀不判失败：回退角色原图作为本段首帧重新生成一次并放行）
-            seg_file = os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}.mp4")
-            reject_black = not brightness_gate_off
-            ok, gen_err, was_black = self._download_validated_segment(
-                task_id, seg_file, f"seg_{idx}", ref_yavg, reject_black=reject_black)
-            if not ok:
-                self.logger.warning(f"[接力] seg_{idx} 生成失败（{gen_err}），自动重提一次")
-                retry_task_id, submit_err = self._submit_one_segment(
-                    image_url, audio_key, seg_duration, motion_prompt, max_edge)
-                if not retry_task_id:
-                    raise _SegmentedPipelineError(
-                        f"第 {idx} 段生成失败后重提未成功: {submit_err}")
-                ok, gen_err, was_black_retry = self._download_validated_segment(
-                    retry_task_id, seg_file, f"seg_{idx}r", ref_yavg, reject_black=reject_black)
-                was_black = was_black or was_black_retry
-            if not ok and was_black:
-                # 两次均判黑段：多为场景固有暗（12811 实证：深色木墙口播 YAVG≈74，
-                # 相对判据必然命中，重提无意义）。改用数字人输入的角色原图作为首帧
-                # 重新生成一次并直接放行（不再因亮度判黑），交付优先于拦截；
-                # 回退后整条链固定角色原图首帧、亮度校验降级为仅告警。
-                self.logger.warning(
-                    f"[接力] seg_{idx} 两次判黑段，回退角色原图作为首帧重新生成并放行")
-                fb_task_id, fb_err = self._submit_one_segment(
-                    role_image_url, audio_key, seg_duration, motion_prompt, max_edge)
-                if not fb_task_id:
-                    raise _SegmentedPipelineError(
-                        f"第 {idx} 段黑段回退角色原图后重提未成功: {fb_err}")
-                ok, gen_err = self._wait_and_download_segment(
-                    fb_task_id, seg_file, f"seg_{idx}_role")
-                if not ok:
-                    raise _SegmentedPipelineError(f"第 {idx} 段黑段回退后仍生成失败: {gen_err}")
-                image_url = role_image_url
-                ref_yavg = role_yavg
-                brightness_gate_off = True
-            if not ok:
-                raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {gen_err}")
-            seg_files.append(seg_file)
-
-            # 末帧接力：提取本段末帧，作为下一段首帧输入图重新上传；
-            # 每接力 N 段回锚角色原图一次，阻断逐段累积的亮度/噪声漂移；
-            # 黑段回退后固定角色原图首帧（场景固有暗，接力只会传递暗帧）
-            if idx < len(segment_paths):
-                if brightness_gate_off:
-                    image_url = role_image_url
-                    ref_yavg = role_yavg
-                    self.logger.info(f"[接力] seg_{idx + 1} 固定角色原图首帧（黑段回退后跳过末帧接力）")
-                    continue
-                if self._is_reanchor_segment(idx + 1):
-                    image_url = role_image_url
-                    ref_yavg = role_yavg
-                    self.logger.info(
-                        f"[接力] seg_{idx + 1} 回锚角色原图"
-                        f"（每 {DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL} 段一次）")
-                    continue
-                last_frame = self._extract_last_frame(
-                    seg_file, os.path.join('temp', f"h3seg_{ai_tool.id}_seg_{idx}_last.png"))
-                if last_frame:
-                    img = self._upload_to_runninghub_sync(last_frame)
-                    if img.success:
-                        image_url = img.url if img.url else img.key
-                        ref_yavg = self._measure_avg_brightness(last_frame) or role_yavg
-                        self.logger.info(f"[接力] seg_{idx} 末帧已上传，作为 seg_{idx + 1} 首帧")
-                    else:
-                        self.logger.warning(
-                            f"[接力] seg_{idx} 末帧上传失败，下一段回退角色图: {img.error}")
-                        image_url = role_image_url  # 回退角色图
-                        ref_yavg = role_yavg
-                else:
-                    self.logger.warning(f"[接力] seg_{idx} 末帧提取失败，下一段回退角色图")
-                    image_url = role_image_url
-                    ref_yavg = role_yavg
+        # 按段序收集结果（显式超时，R9）；worker 内异常由 result() 原样透传
+        for idx in range(resumed + 1, len(segment_paths) + 1):
+            seg_files.append(futures[idx].result(
+                timeout=DigitalHumanSegmentConstants.SEGMENT_FUTURE_TIMEOUT_SECONDS))
 
         # 全部段完成：统一缩放拼接
         result_url = self._concat_and_store(ai_tool.id, seg_files)
@@ -480,6 +368,48 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             "sync_mode": True,
             "result_url": result_url,
         }
+
+    def _run_one_segment(self, idx: int, seg_path: str, image_url: str,
+                         seg_duration: int, motion_prompt: str, max_edge: int,
+                         ai_tool_id) -> str:
+        """worker 线程入口：单段「上传音频→提交→轮询下载」（失败各重试一次）。
+
+        返回段成片本地路径；失败抛 _SegmentedPipelineError，
+        上游拥堵抛 _SegmentedCongestedError（由 future.result 原样透传）。"""
+        audio_key = self._upload_segment_audio(seg_path)
+        if not audio_key:
+            raise _SegmentedPipelineError(f"第 {idx} 段音频上传 RunningHub 失败")
+
+        # 提交（失败自动重试一次）
+        last_err = ""
+        task_id = None
+        for attempt in range(1 + SEGMENT_SUBMIT_RETRY):
+            task_id, last_err = self._submit_one_segment(
+                image_url, audio_key, seg_duration, motion_prompt, max_edge)
+            if task_id:
+                break
+            self.logger.warning(f"[分段] seg_{idx} 第 {attempt + 1} 次提交失败: {last_err}")
+            time.sleep(5)
+        if not task_id:
+            raise _SegmentedPipelineError(f"第 {idx} 段任务提交失败: {last_err}")
+
+        # 等待出片并下载（生成失败/超时换新任务自动重提一次，双败即抛错带刹车——
+        # 返回值不可丢弃：旧实现忽略 (ok, err) 会让流水线带着不存在的段文件继续跑，
+        # 后续段白跑，最后以误导性的「拼接失败」报错收场）
+        seg_file = os.path.join('temp', f"h3seg_{ai_tool_id}_seg_{idx}.mp4")
+        ok, gen_err = self._wait_and_download_segment(task_id, seg_file, f"seg_{idx}")
+        if not ok:
+            self.logger.warning(f"[分段] seg_{idx} 生成失败（{gen_err}），自动重提一次")
+            retry_task_id, submit_err = self._submit_one_segment(
+                image_url, audio_key, seg_duration, motion_prompt, max_edge)
+            if not retry_task_id:
+                raise _SegmentedPipelineError(
+                    f"第 {idx} 段生成失败后重提未成功: {submit_err}")
+            ok, gen_err = self._wait_and_download_segment(
+                retry_task_id, seg_file, f"seg_{idx}r")
+            if not ok:
+                raise _SegmentedPipelineError(f"第 {idx} 段重试后仍失败: {gen_err}")
+        return seg_file
 
     def _is_valid_segment(self, path: str,
                           expected_duration: Optional[int] = None) -> bool:
@@ -519,40 +449,6 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
             if abs(actual - expected_duration) > 3:
                 return False
         return True
-
-    def _extract_last_frame(self, video_path: str, out_image: str) -> Optional[str]:
-        """提取视频真正最后一帧为无损 PNG，失败返回 None（下一段回退角色图）。
-
-        两级尾帧提取（对齐 services/video_frame_extract_service.extract_last_frame）：
-        快路径 -sseof -<窗口> + -update 1 覆盖写同一文件，留下窗口内最后一帧——
-        不能带 -frames:v 1（会在窗口第一帧后停止，取到的并非末帧）；
-        兜底全片解码 -update 1（流时长元数据虚高导致窗口空输出时）。
-        接力帧必须无损：JPEG -q:v 2 + 4:2:0 色度子采样会让多段接力逐轮累积
-        噪点/偏色（「越来越黑」事故，见 docs/marketing_agent_digital_human_duration_routing_plan.md）。
-        """
-        # ffmpeg 路径读配置 bin.ffmpeg（Linux 部署为 /usr/bin/ffmpeg 等，
-        # 相对路径 bin/ffmpeg/ffmpeg 在服务器上不存在，曾致任务整体失败）
-        window = MediaConstants.VIDEO_FRAME_TAIL_SEEK_WINDOW_SECONDS
-        commands = [
-            (60, [_get_ffmpeg_path(), '-y', '-loglevel', 'error',
-                  '-sseof', f'-{window}', '-i', video_path, '-update', '1', out_image]),
-            (MediaConstants.VIDEO_FRAME_FALLBACK_TIMEOUT_SECONDS,
-             [_get_ffmpeg_path(), '-y', '-loglevel', 'error',
-              '-i', video_path, '-update', '1', out_image]),
-        ]
-        try:
-            for i, (timeout, cmd) in enumerate(commands):
-                if i > 0:
-                    self.logger.warning(f"[接力] 末帧快路径空输出，降级全片解码: {video_path}")
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-                if r.returncode == 0 and os.path.isfile(out_image) \
-                        and os.path.getsize(out_image) > 1024:
-                    return out_image
-        except (OSError, subprocess.TimeoutExpired) as e:
-            self.logger.warning(f"[接力] 末帧提取 ffmpeg 执行失败: {e}")
-            return None
-        self.logger.warning(f"[接力] 末帧提取失败: {out_image}")
-        return None
 
     def _lookup_segment_task_ids(self, project_id: str) -> Optional[list]:
         """project_id 为 ai_tools.id 且 extra_config 含 dh_segment_task_ids → 分段任务。
@@ -808,78 +704,14 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
         self.logger.info(f"[分段] {tag} 下载完成 {len(resp.content)} bytes -> {out_path}")
         return True, ""
 
-    @staticmethod
-    def _is_reanchor_segment(idx: int) -> bool:
-        """段 idx（1 起）是否回锚角色原图：每接力 N 段后回锚一次
-        （N=2 时段 3/5/7…），阻断「抽帧→再生成」循环的累积漂移。"""
-        return idx > 1 and (idx - 1) % DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL == 0
-
-    def _measure_avg_brightness(self, media_path: str) -> Optional[float]:
-        """ffmpeg signalstats 测平均亮度 YAVG（全帧取均值；图片为单帧）。
-        段长 ≤15s 全帧解码亚秒级完成，无需 fps=1 抽稀（fps 滤镜对单帧图片
-        会因缺乏下一帧 pts 输出空帧，导致图片测量恒失败）。
-        测量失败返回 None——黑段检测降级放行，不得阻塞流水线。"""
-        try:
-            r = subprocess.run(
-                [_get_ffmpeg_path(), '-hide_banner', '-loglevel', 'error',
-                 '-i', media_path,
-                 '-vf', 'signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-',
-                 '-f', 'null', '-'],
-                capture_output=True, text=True, timeout=120)
-        except (OSError, subprocess.TimeoutExpired):
-            return None
-        if r.returncode != 0:
-            return None
-        values = [float(m) for m in re.findall(r'YAVG=([0-9.]+)', r.stdout or '')]
-        if not values:
-            return None
-        return sum(values) / len(values)
-
-    def _check_segment_brightness(self, seg_file: str, ref_yavg: Optional[float],
-                                  tag: str, reject_black: bool = True) -> bool:
-        """黑段检测：True=黑段需拦截。绝对下限 + 相对首帧参考图偏暗双判据。
-        reject_black=False 时命中只告警不拦截（黑段回退后场景固有暗放行）。
-        实证（任务 12792）：正常段 YAVG ≥140，灾难性黑段整段 ~30；
-        场景固有暗（任务 12811 深色木墙口播）YAVG≈74 会命中相对判据，需放行。"""
-        yavg = self._measure_avg_brightness(seg_file)
-        if yavg is None:
-            return False
-        dark_reason = None
-        if yavg < DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR:
-            dark_reason = f"YAVG={yavg:.1f} < 下限 {DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR}"
-        elif ref_yavg and yavg < ref_yavg * (1 - DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO):
-            dark_reason = (f"YAVG={yavg:.1f} 较首帧参考 {ref_yavg:.1f} "
-                           f"偏暗超 {DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO:.0%}")
-        if dark_reason is None:
-            self.logger.info(f"[分段] {tag} 亮度校验通过: YAVG={yavg:.1f}（参考 {ref_yavg}）")
-            return False
-        if reject_black:
-            self.logger.warning(f"[分段] {tag} 判定黑段: {dark_reason}")
-            return True
-        self.logger.warning(f"[分段] {tag} 亮度异常仅告警（黑段回退后放行）: {dark_reason}")
-        return False
-
-    def _download_validated_segment(self, task_id: str, out_path: str, tag: str,
-                                    ref_yavg: Optional[float],
-                                    reject_black: bool = True) -> tuple:
-        """轮询下载段成片 + 黑段检测；返回 (ok, err, was_black)。
-        was_black=True 且 ok=False 表示败因是黑段（调用方可回退角色原图重生成）。"""
-        ok, err = self._wait_and_download_segment(task_id, out_path, tag)
-        if not ok:
-            return False, err, False
-        if self._check_segment_brightness(out_path, ref_yavg, tag, reject_black=reject_black):
-            return False, f"黑段（画面亮度异常，{tag}）", True
-        return True, "", False
-
     async def submit_task(self, ai_tool) -> Dict[str, Any]:
         try:
             prompt_preview = (ai_tool.prompt or "")[:50]
 
             # 分段拼接模式（口播 >15s）：extra_config.dh_segments 由端点写入。
-            # 轮询模式：本调用只快速逐段提交 RunningHub（每段失败自动重提一次），
-            # 段 taskId 列表写入 extra_config.dh_segment_task_ids 并返回
-            # project_id=ai_tools.id；后续由 check_status 聚合各段状态、
-            # 全部完成时拼接并返回 /upload/cache 成片路径。
+            # 全流水线同步执行：缺失段全并发提交 RunningHub（各段首帧统一用
+            # 角色图，不做末帧接力；每段失败自动重提一次），全部到齐后拼接，
+            # 返回 sync_mode 结果（result_url 为 /upload/cache 成片路径）。
             extra_config = self._parse_extra_config(ai_tool)
             segment_paths = extra_config.get("dh_segments") or []
             if segment_paths:
