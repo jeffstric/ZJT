@@ -318,6 +318,32 @@ class TestLockedCameraPrompt(unittest.TestCase):
         self.assertIn("background", LOCKED_CAMERA_PROMPT_FALLBACK)
         self.assertIn("integrated_multimodal_description", LOCKED_CAMERA_PROMPT_FALLBACK)
 
+    def test_locked_camera_template_hand_micro_motion_clause(self):
+        """手部微动条件从句：可见手→小幅动作，无手→全身静止；防段间漂移的身体
+        锁定约束必须保留，且 VL 指令要求看图判断有无手（零新增 LLM 调用）"""
+        from script_writer_core.digital_human_tts_tools import (
+            LOCKED_CAMERA_PROMPT_TEMPLATE,
+            VL_LOCKED_CAMERA_INSTRUCTION,
+        )
+        for text in (LOCKED_CAMERA_PROMPT_TEMPLATE, LOCKED_CAMERA_PROMPT_FALLBACK):
+            self.assertIn("If hands are visible", text)
+            self.assertIn("subtle natural movements", text)
+            # 身体/服装/背景锁定约束不得被手部例外削弱（12815 回归红线）
+            self.assertIn("motionless", text)
+            self.assertIn("zero camera movement", text)
+        self.assertIn("手部", VL_LOCKED_CAMERA_INSTRUCTION)
+        self.assertIn("手腕微转", VL_LOCKED_CAMERA_INSTRUCTION)
+        # 指令内嵌模板与正式模板的手部从句一致（VL 逐字照抄内嵌模板输出）
+        self.assertIn("If hands are visible", VL_LOCKED_CAMERA_INSTRUCTION)
+
+    def test_storyboard_default_prompt_hand_clause(self):
+        """分镜链 DEFAULT_PROMPT：条件从句（无手不生效）+ 身体其余部分锁定"""
+        from config.constant import StoryboardDigitalHumanConstants
+        prompt = StoryboardDigitalHumanConstants.DEFAULT_PROMPT
+        self.assertIn("图片1中的角色在说话。", prompt)
+        self.assertIn("如画面中可见手部", prompt)
+        self.assertIn("身体其余部分保持不动", prompt)
+
 
 def _default_vid():
     from script_writer_core.digital_human_tts_tools import _default_voice_id
@@ -503,6 +529,83 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["model_task_type"], TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3)
         self.assertFalse(draft["segment_mode"], "15s 显存充裕后恢复单段直出")
         self.assertEqual(draft["billable_duration"], 15)
+
+    def test_motion_prompt_does_not_skip_vl_voice_picking(self):
+        """回归 750aba96：传 motion_prompt 不应阻断 VL 看图选音色。
+
+        旧条件 need_vl_analysis=(not motion_prompt) and ... 让专家按 SOP 传
+        motion_prompt 时整体跳过 VL 选音色，voice_id 保持 None 流到下游
+        int(None) 崩溃，异常文案被误判为"语音服务不可用"。
+        """
+        voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
+                          voice_type="zh_female_vv_uranus_bigtts")
+        picked_calls = []
+
+        async def fake_tts(**kw):
+            return {"success": True, "audio_url": "http://x/a.mp3", "duration": 5.2,
+                    "computing_power": 2, "voice_name": "Vivi 2.0", "voice_type": "zh",
+                    "voice_id": kw.get("voice_id")}
+
+        async def fake_pick(image_url, candidates, user_id, requirement=""):
+            picked_calls.append({"image_url": image_url, "candidates": candidates})
+            return {"voice_id": 7, "reason": "女性角色",
+                    "motion_prompt": "角色面向镜头深情的说话，固定镜头。"}
+
+        def fake_candidates(*a, **k):
+            return [{"id": 7, "name": "Vivi 2.0"}]
+
+        async def fake_locked_prompt(image_url, user_id):
+            return {"success": True, "prompt": "integrated_multimodal_description: shot"}
+
+        with patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+             patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts), \
+             patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick), \
+             patch("script_writer_core.digital_human_tts_tools._load_voice_candidates", fake_candidates), \
+             patch("script_writer_core.digital_human_tts_tools._generate_locked_camera_prompt", fake_locked_prompt):
+            vm.get_by_id.return_value = voice
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="测试文案",
+                motion_prompt="角色面向镜头专业讲解，手上有自然的手势动作，固定镜头"))
+
+        self.assertTrue(result["success"], result.get("error"))
+        # 传了 motion_prompt 也必须走了 VL 选音色（而非跳过）
+        self.assertEqual(len(picked_calls), 1, "传 motion_prompt 不应跳过 VL 看图选音色")
+        self.assertEqual(result["draft"]["voice_id"], 7)
+        # 显式 motion_prompt 优先于 VL 生成的动作提示词
+        self.assertIn("专业讲解", result["draft"]["motion_prompt"])
+
+    def test_explicit_voice_and_motion_skip_vl_analysis(self):
+        """音色与动作提示词都显式给出时走快速路径：不触发 VL 分析（省一次调用），
+        显式参数原样保留"""
+        voice = MagicMock(id=9, is_active=1, provider="volcengine", name="Vivi 2.0",
+                          voice_type="zh_female_vv_uranus_bigtts")
+
+        async def fake_tts(**kw):
+            return {"success": True, "audio_url": "http://x/a.mp3", "duration": 5.2,
+                    "computing_power": 2, "voice_name": "Vivi 2.0", "voice_type": "zh",
+                    "voice_id": kw.get("voice_id")}
+
+        async def fake_pick(*a, **k):
+            raise AssertionError("音色与动作提示词均已显式指定，不应触发 VL 分析")
+
+        async def fake_locked_prompt(image_url, user_id):
+            return {"success": True, "prompt": "integrated_multimodal_description: shot"}
+
+        with patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+             patch("script_writer_core.digital_human_tts_tools.is_tts_configured", return_value=True), \
+             patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts), \
+             patch("script_writer_core.digital_human_tts_tools._pick_voice_by_image", fake_pick), \
+             patch("script_writer_core.digital_human_tts_tools._generate_locked_camera_prompt", fake_locked_prompt):
+            vm.get_by_id.return_value = voice
+            result = asyncio.run(prepare_digital_human_draft(
+                user_id="1", world_id="w", auth_token="t",
+                image_url="http://x/img.png", script_text="测试文案",
+                voice_id=9, motion_prompt="角色面向镜头专业讲解，固定镜头"))
+
+        self.assertTrue(result["success"], result.get("error"))
+        self.assertEqual(result["draft"]["voice_id"], 9)
+        self.assertIn("专业讲解", result["draft"]["motion_prompt"])
 
 
 class TestConfirmTool(_VoiceModelMockBase):

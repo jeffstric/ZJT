@@ -135,7 +135,7 @@
 
       defaultTextForVersion(v) {
         if (v === 'v1') return '';
-        if (v === 'minimax') return '图片1中的角色在说话。';
+        if (v === 'minimax') return '图片1中的角色在说话。如画面中可见手部，手部配合说话有细微自然的动作（手指轻动、手腕微转），身体其余部分保持不动。';
         return '角色面向镜头深情的说话，固定镜头。';
       },
 

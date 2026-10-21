@@ -2065,7 +2065,11 @@ class StoryboardDigitalHumanConstants:
     """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
     # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。
     TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
-    DEFAULT_PROMPT = "图片1中的角色在说话。"
+    # 手部微动用条件从句表达、由视频模型对照首帧自行判断（分镜链无 VL 分析步骤，
+    # 不新增 LLM 调用）：无手图片不生效，避免凭空"长出手"；幅度限定手指/手腕级别，
+    # 身体其余部分锁定，避免引入段间漂移（同 12815 教训）
+    DEFAULT_PROMPT = ("图片1中的角色在说话。如画面中可见手部，手部配合说话有细微自然的动作"
+                      "（手指轻动、手腕微转），身体其余部分保持不动。")
     ERROR_AUDIO_REQUIRED = "audio_required"
     ERROR_AUDIO_PENDING = "audio_pending"
     ERROR_AUDIO_FAILED = "audio_failed"

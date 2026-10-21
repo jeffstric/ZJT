@@ -358,3 +358,30 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - prepare 阶段注释与 `locked_note` 同步（兜底模板语义变化）。
 
 **测试**：`tests/agents/test_digital_human_tts_tools.py` 新增 `TestLockedCameraPrompt` 4 项——瞬时失败重试至成功（断言尝试次数=MAX_ATTEMPTS）、远程失败走本地映射直读成功、重试耗尽返回 success=False、兜底模板含服装/发型/背景约束。34 项全过；CI 红线（blocking_calls/migration_names/tool_executor_signature/frontend_xss）全过。
+
+### 附录 C.16 手部微动：锁镜头模板加"手部例外"条件从句 + 分镜链 DEFAULT_PROMPT 同步（2026-10-21）
+
+**背景**：用户反馈生成的数字人手完全不动（口型由音频驱动，其余部位一动不动）。需求：输入图片中有手时，让手小幅动起来。**约束：不新增 LLM 调用**——营销链的 VL 本来就看图生成锁镜头提示词，顺带输出手部动作描述即可；分镜链本来就没有 VL 步骤，用条件从句把"有没有手"的判断交给视频模型自己对照首帧做。
+
+**改动**（`script_writer_core/digital_human_tts_tools.py` + `config/constant.py`）：
+
+- `LOCKED_CAMERA_PROMPT_TEMPLATE`：全身冻结措辞改为"身体姿态/服装/背景与参考图完全一致且保持静止（motionless）+ 条件从句 `If hands are visible in the frame, the hands make subtle natural movements—gentle finger gestures and small wrist motions only; otherwise the entire body remains fixed in the center of the frame`"。**不动 C.4/C.15 的防漂移强度**——镜头三件套（locked tripod / frozen frame / zero camera movement）原样保留，手部是唯一 carve-out，幅度锁死手指/手腕级别。
+- `VL_LOCKED_CAMERA_INSTRUCTION`：在"提取性别/发型/服装/背景"之外要求 VL 检查有无清晰可见的手部——有则在场景描述中译入一句手部细微动作（禁止大幅度摆臂/改变手部结构），无则不提手；指令内嵌模板同步更新（VL 逐字照抄内嵌模板，不同步会被旧模板覆盖）。**同一次 VL 调用完成，零新增调用**；单段与分段模式都走 `h3_locked_prompt`（`effective_motion_prompt`/`SEGMENTED_MOTION_PROMPT` 仅 draft 展示，不进驱动），改一处全覆盖。
+- 分镜链 `StoryboardDigitalHumanConstants.DEFAULT_PROMPT`：`图片1中的角色在说话。` → 追加"如画面中可见手部，手部配合说话有细微自然的动作（手指轻动、手腕微转），身体其余部分保持不动。"——条件从句无手不生效，避免无手图凭空"长出手"。
+
+**测试**：`tests/agents/test_digital_human_tts_tools.py` 新增 2 项——模板/兜底/指令均含手部从句且防漂移约束（motionless / zero camera movement）不削弱；分镜 DEFAULT_PROMPT 含条件从句 + 身体锁定。
+
+**待 A/B 验证**（沿用 C.4 流程）：含手图 10~20 张测"动起来比例 + 手部畸变率"，无手图若干张测 hallucinate 长手风险，并回归段间换装/换背景（不得重现 12815）；不达标则收紧措辞或整体回退（改动集中在 3 个常量，回退成本极低）。
+
+### 附录 C.17 修复传 motion_prompt 跳过 VL 选音色导致 voice_id=None 崩溃（750aba96，2026-10-21）
+
+**背景**：会话 750aba96（更年期数字人口播）专家首次 prepare 抛"准备数字人草案异常: int() argument must be ... not 'NoneType'"，被误判为"语音服务不可用"反馈用户；专家去掉 motion_prompt 重试才巧合自救。根因：`need_vl_analysis` 旧条件含 `(not motion_prompt)` 因子，专家按 SOP 传 motion_prompt 时整体跳过 VL 看图选音色，`voice_id` 保持 None 流到下游 `synthesize_speech_for_user(voice_id=int(voice_id))` 崩溃——motion_prompt 与选音色是两个独立参数，互不隶属。
+
+**改动**（`script_writer_core/digital_human_tts_tools.py`）：
+
+- `need_vl_analysis` 改为 `bool(image_url) and ((need_voice and not voice_id) or not motion_prompt)`：缺音色（需声音且未指定）**或**缺动作提示词才看图分析。比调查报告建议的 `(need_voice or not voice_id)` 多保留一条性质：音色与动作提示词**都已显式给出**时走快速路径不触发 VL 分析（省一次调用、参数不被覆盖）。
+- 合成前加防御：需要音色却仍未确定时返回明确错误"未能确定音色：请显式指定 voice_id，或提供驱动音频（audio_url）后重试"，杜绝此类场景再被包装成 int(None) TypeError 误导排障。
+
+**注意**（遗留观察，未改）：VL 分支内 `voice_id = picked["voice_id"]` 仍会**覆盖**显式指定的 voice_id（只传 voice_id 不传 motion_prompt 时命中）——与 docstring"voice_id 显式指定 > VL 看图挑选"的优先级表述不一致，但属存量行为且 SOP 常规传 motion_prompt 不会命中，留待需要时单独处理。
+
+**测试**：`tests/agents/test_digital_human_tts_tools.py` 新增 2 项——`test_motion_prompt_does_not_skip_vl_voice_picking`（回归：传 motion_prompt 仍走 VL 选音色、voice_id 正确、显式 motion_prompt 优先；已验证在旧代码上复现 int(None) TypeError 失败）、`test_explicit_voice_and_motion_skip_vl_analysis`（快速路径：双显式不触发 VL 分析）。
