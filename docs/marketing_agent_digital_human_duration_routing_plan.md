@@ -406,12 +406,15 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 
 **遗留建议**（未改，待评估）：单段时长档位按 ceil(音频文件总长) 吸附，尾部静音（本例语音 13.63s 结束、文件 14.016s、请求 15s）会给模型留出"片尾空间"；如需进一步压制尾部异常，可按最后语音结束时刻（silencedetect）取档，或交付前加尾部黑帧检测自动重试。
 
-### 附录 C.19 修复分段耗时区间被转述吞 "~" 变成"820分钟"（2026-10-21）
-
-**现象**：用户确认页显示"预计耗时：约820分钟（单段生成约410分钟）"。根因不是计算错误——后端原文是"预计耗时约 8~20 分钟（每段约 4~10 分钟）"，专家 LLM 转述给用户时把数字间的 `~` 吞掉：8~20→820、4~10→410（2 段 × 410 恰好 820，完全吻合）。
-
-**改动**：prepare 分段提示（`digital_human_tts_tools.py` mode_note）及同链路所有面向 LLM 的区间文案，`数字~数字` 统一改为 `数字-数字`（LLM 转述中稳定保留）：mcp_tool.py 工具描述（prepare/confirm/音色设计描述/图片与音频生成等待提示）3+4 处、`sop-digital-human.md` 2 处、`digital-human-creator/SKILL.md` 1 处。代码注释中的事故说明保留 `~` 原文。
-
-**测试断言同步**：`test_long_speech_routes_segmented_h3`（8~20→8-20、每段 4~10→4-10 分钟）、`test_35s_routes_multi_segment`（12~30→12-30）；已用全 mock 临时用例端到端验证 20s→2 段消息为"8-20 分钟（每段约 4-10 分钟）"。
-
 **未改**："## 工作总结" 等代理协议段落是技能定义的标准输出格式（前端按协议解析），非缺陷。
+
+### 附录 C.20 修复 H3 端点服务端提示词长度上限未同步导致 confirm 误拒（2026-10-21）
+
+**现象**：营销智能体数字人任务（口播文案仅约 70 字）confirm 失败：`数字人生成请求失败: 文本内容不能超过1000个字`，智能体误判为"系统异常"。口播文案长度与该限制无关——1000 字校验作用在 `text` 字段上，而 confirm 提交的 `text` 是 H3 锁镜头动作提示词（`h3_locked_prompt`，VL 生成，常见 1300+ 字符）。
+
+**根因**：C.18 把客户端 confirm 截断上限提到 `H3_LOCKED_PROMPT_MAX_CHARS = 4000`，但 `/api/digital-human-minimax-h3`（`server.py`）的服务端校验仍硬编码 `len(text) > 1000`，两端上限不一致：VL 产出 1000~4000 字符的提示词必被 400 拒绝。
+
+**改动**：
+
+- `server.py` 的 H3 端点改为与客户端共用 `H3_LOCKED_PROMPT_MAX_CHARS`（import 自 `script_writer_core/digital_human_tts_tools`），错误文案随常量动态生成；`/api/digital-human`（wan2.2）与 `/api/digital-human-v2`（LTX2.3）的 text 确为口播文案，1000 字限制保持不变。
+- 回归测试 `test_motion_prompt_1001_to_4000_chars_accepted` / `test_motion_prompt_over_limit_rejected`：1000~4000 字符提示词放行、超上限拒绝（在旧代码上前者可复现 400）。
