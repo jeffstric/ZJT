@@ -460,22 +460,53 @@ def test_submit_segments_resubmits_once_on_black_segment(monkeypatch, tmp_path):
     concat_mock.assert_called_once()
 
 
-def test_submit_segments_brakes_when_black_segment_twice(monkeypatch, tmp_path):
-    """黑段重提后仍黑：抛 _SegmentedPipelineError 带刹车，不得拼接黑片交付。"""
+def test_submit_segments_falls_back_to_role_image_on_persistent_black(monkeypatch, tmp_path):
+    """黑段双杀不判失败：回退数字人输入的角色原图作为该段首帧重新生成并放行；
+    回退后整条链固定角色原图首帧（12811 实证：场景固有暗会被相对判据误判）。"""
+    monkeypatch.chdir(tmp_path)
+    driver = make_driver()
+    submit_mock, extract_mock, concat_mock, _ = _make_segment_pipeline_mocks(driver)
+    driver._measure_avg_brightness = MagicMock(return_value=30.0)  # 始终判黑
+    ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
+
+    result = driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
+
+    assert result["success"] is True
+    # seg_1 初提 + 黑段重提 + 回退角色原图重提，seg_2 黑段回退后固定角色图直接提交
+    assert submit_mock.call_count == 4
+    # 第 3 次起首帧均为角色图 URL（回退触发）
+    assert submit_mock.call_args_list[2][0][0] == "https://rh.example/role.png"
+    assert submit_mock.call_args_list[3][0][0] == "https://rh.example/role.png"
+    # 回退后跳过末帧接力
+    extract_mock.assert_not_called()
+    concat_mock.assert_called_once()
+
+
+def test_submit_segments_brakes_when_fallback_generation_fails(monkeypatch, tmp_path):
+    """黑段回退后的角色原图重生成仍失败（上游/下载问题）才抛错带刹车，
+    黑段本身永不作为失败理由。"""
     import pytest
     from task.visual_drivers import digital_human_minimax_h3_runninghub_v1_driver as drv_mod
 
     monkeypatch.chdir(tmp_path)
     driver = make_driver()
-    submit_mock, _, concat_mock, _ = _make_segment_pipeline_mocks(driver)
-    driver._measure_avg_brightness = MagicMock(return_value=30.0)  # 始终黑段
+    submit_mock, _, concat_mock, wait_mock = _make_segment_pipeline_mocks(driver)
+    driver._measure_avg_brightness = MagicMock(return_value=30.0)
+
+    def wait_side_effect(task_id, out_path, tag):
+        if tag == "seg_1_role":
+            return (False, "上游任务失败")
+        return (True, "")
+
+    wait_mock.side_effect = wait_side_effect
     ai_tool = make_ai_tool(extra_config=_SEG_EXTRA)
 
     with pytest.raises(drv_mod._SegmentedPipelineError) as exc_info:
         driver._submit_segments_async(ai_tool, _SEG_PATHS, _SEG_CONFIG)
 
-    assert "黑段" in str(exc_info.value)
-    assert submit_mock.call_count == 2  # 首次提交 + 一次重提，不再多跑
+    msg = str(exc_info.value)
+    assert "黑段回退后仍生成失败" in msg
+    assert "上游任务失败" in msg
     concat_mock.assert_not_called()
 
 

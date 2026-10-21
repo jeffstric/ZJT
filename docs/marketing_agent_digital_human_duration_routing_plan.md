@@ -319,3 +319,16 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - **每 2 段回锚角色原图**：`DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL=2`（2026-10-21 由 3 收紧至 2：实测漂移每段可达 -12 YAVG，3 段累积 ~36 仍明显偏暗；2 段约束在 ~24 以内），段 3/5/7…（`_is_reanchor_segment`）首帧直接用角色原图而非接力末帧，把累积漂移约束在每 2 段归零一次；断点续跑路径同样遵守回锚规则。接力帧提取/上传失败的回退分支补齐重置为角色图（旧代码 extraction 失败时 image_url 残留上一段首帧的 latent bug 一并修复）。
 
 **验证**：19 项驱动测试全过（新增 6 项：两级无损末帧参数 / 回锚点序列 / 4 段链路回锚断言 / 黑段重提一次 / 双黑带刹车 / 测量失败降级放行），`tests/drivers` 累计 786 项通过。用 12792 生产残留段文件实测：角色原图 YAVG=191.7、接力帧 173.3 测量正常；seg_1(174.6)/seg_2(163.6) 放行，seg_4(37.6) 命中黑段；回锚序列 [3,5,7,9] 正确（2026-10-21 调整 N=2 后复验）。
+
+
+### 附录 C.13 黑段双杀不再判失败：回退角色原图首帧放行（2026-10-21）
+
+**背景**：C.12 的黑段检测上线当天误杀任务 12811——医生角色在深色木墙背景前口播（`temp/h3seg_12811_seg_1.mp4` 抽帧核实画面完全正常），角色原图为浅色亮底（YAVG=173.9），H3 再生成后场景固有暗（两次稳定输出 YAVG=101.8/73.8），命中相对判据（>25% 偏暗）→ 重提仍黑 → 双杀抛错退款。绝对下限 50 并未命中，是相对判据对「亮底角色图 → 暗场景视频」的必然误报。
+
+**改动**（`_submit_segments_async` / `_download_validated_segment` / `_check_segment_brightness`）：
+
+- 黑段不再作为失败理由：某段两次判黑后，自动**回退数字人输入的角色原图作为该段首帧重新生成一次并直接放行**（该次不再因亮度判黑，仅校验结构完整性）；仅当这回生成/下载本身失败才抛 `_SegmentedPipelineError`。
+- 回退后整条链固定角色原图首帧（跳过末帧接力，避免暗帧继续传递），亮度校验降级为仅告警——场景固有暗的链路上不再每次三跑（初提+重提+回退），各段一次生成即可。
+- `_download_validated_segment` 返回 `(ok, err, was_black)`，黑段败因显式上抛；`_check_segment_brightness` 新增 `reject_black=False` 告警模式。
+
+**测试**：`test_submit_segments_brakes_when_black_segment_twice` 改写为 `test_submit_segments_falls_back_to_role_image_on_persistent_black`（双黑→回退角色图→放行，断言回退后首帧均角色图 URL 且不再抽接力帧），新增 `test_submit_segments_brakes_when_fallback_generation_fails`（回退后生成失败才抛错）。20 项驱动测试全过。
