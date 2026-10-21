@@ -470,9 +470,9 @@ class TestPrepareTool(_VoiceModelMockBase):
                          "分段模式必须使用固定镜头统一提示词")
         self.assertIn("MiniMax H3", result["message"])
         self.assertIn("拼接", result["message"])
-        # 20s → 2 段，每段 4~10 分钟
-        self.assertIn("8~20", result["message"])
-        self.assertIn("每段约 4~10 分钟", result["message"])
+        # 20s → 2 段，每段 4-10 分钟；区间用连字符（"~"会被专家 LLM 转述吞掉，曾出现"820分钟"事故）
+        self.assertIn("8-20", result["message"])
+        self.assertIn("每段约 4-10 分钟", result["message"])
 
     def test_35s_routes_multi_segment(self):
         """TTS 实测 35s → 分段拼接（4 段），不再有 30s 拒绝"""
@@ -497,8 +497,8 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(draft["billable_duration"], 36)  # estimate(35): 3 段各 ceil(11.67)=12
         self.assertEqual(len(draft["segment_durations_est"]), 3)
         self.assertEqual(len(_DRAFT_STORE), 1)
-        # 35s → 3 段，每段 4~10 分钟
-        self.assertIn("12~30", result["message"])
+        # 35s → 3 段，每段 4-10 分钟
+        self.assertIn("12-30", result["message"])
 
     def test_user_audio_duration_probed_for_routing(self):
         """用户直供音频缺时长时补 probe：15s → H3 单段（显存充裕恢复）"""

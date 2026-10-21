@@ -713,10 +713,13 @@ async def prepare_digital_human_draft(
             seg_count = len(segment_durations_est)
             est_lo = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN
             est_hi = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX
+            # 区间必须用连字符 "-" 而非 "~"：本消息由专家 LLM 转述给用户，
+            # "8~20 分钟"曾被吞掉 "~" 写成"约820分钟（单段生成约410分钟）"（2 段 × 410 实锤），
+            # 数字-数字是 LLM 转述中稳定保留的写法
             mode_note = (
                 f"，将切分为 {seg_count} 段（每段 ≤{DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS} 秒）生成后自动拼接，"
-                f"预计耗时约 {est_lo}~{est_hi} 分钟"
-                f"（每段约 {DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN}~"
+                f"预计耗时约 {est_lo}-{est_hi} 分钟"
+                f"（每段约 {DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN}-"
                 f"{DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX} 分钟），画面全程固定镜头"
             )
         if locked_note:

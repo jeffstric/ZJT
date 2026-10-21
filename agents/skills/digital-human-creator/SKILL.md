@@ -114,7 +114,7 @@ generate_reference_audio(
 )
 ```
 
-然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。该工具单次调用会自动等待约 20 秒，音频生成通常需要 30~90 秒，返回 `processing` 属正常，继续查询直到终态，不要中途放弃。
+然后使用返回的 `task_id` 调用 `check_reference_audio_status`，直到拿到 `audio_url` 或失败。该工具单次调用会自动等待约 20 秒，音频生成通常需要 30-90 秒（区间写连字符，勿写 "~"——向用户转述时 "~" 可能被吞，"30~90 秒"曾被误写成 3090 秒），返回 `processing` 属正常，继续查询直到终态，不要中途放弃。
 
 ### 步骤 3：提交数字人任务
 

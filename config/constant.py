@@ -703,21 +703,6 @@ DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
 DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN = 4
 DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX = 10
 
-# ===== 数字人末帧接力质量防护（2026-10-20，修复「多段接力越来越黑」）=====
-# 背景：段 i+1 首帧接力段 i 末帧，「视频→抽帧→再生成」每轮漂移 -6~-12 YAVG
-# 且偶发整段骤黑（任务 12792 五段接力实测 174.7→163.5→155.3→29.9(黑段)→141.6）。
-# 回锚间隔（段）：每接力 N 段后，下一段首帧回锚角色原图，阻断累积漂移。
-# N 越小接缝跳变越频繁、画面越稳定；N=2 为画面质量与生成效率的折中。
-# 回锚时若希望段间画面几乎无缝，需权衡：角色原图首帧与上一段末帧内容不同，
-# 拼接点会有可见跳变；N=2 把累积漂移约束在 ≤2 段（~24 YAVG）内。
-DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL = 2
-# 黑段检测·绝对亮度下限：段成片平均亮度 YAVG（signalstats 全帧均值）低于该值判定黑段，
-# 视同生成失败自动重提一次（12792 黑段实测 ~30，正常段 ≥140）
-DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR = 50.0
-# 黑段检测·相对偏暗比例：段平均亮度较其首帧参考图（接力帧/角色原图）偏暗超过
-# 该比例判定黑段（自然漂移 ~10% 以内放行，灾难性偏暗才重提）
-DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO = 0.25
-
 # ===== 数字人 VL 锁镜头提示词生成重试（2026-10-21，修复 12815「背景/衣服漂移」）=====
 # 背景：VL 看角色图生成 H3 锁镜头提示词时，角色图走远程下载；内网环境自访问
 # frp 公网地址偶发瞬时不通（12815 实证 12:02:44 httpx ConnectError
@@ -967,14 +952,18 @@ class TaskType:
     _LABELS = {
         'GENERATE_VIDEO': '生成视频',
         'GENERATE_AUDIO': '生成音频',
+        'COMPOSE_JOB': '数字人分段拼接',
     }
     GENERATE_VIDEO = 'generate_video'
     GENERATE_AUDIO = 'generate_audio'
+    # 数字人分段拼接编排任务（task/compose_task.py 专用主循环消费）
+    COMPOSE_JOB = 'compose_job'
 
 
 # 向后兼容别名
 TASK_TYPE_GENERATE_VIDEO = TaskType.GENERATE_VIDEO
 TASK_TYPE_GENERATE_AUDIO = TaskType.GENERATE_AUDIO
+TASK_TYPE_COMPOSE_JOB = TaskType.COMPOSE_JOB
 
 # ============ 从 TaskTypeRegistry 动态生成的向后兼容常量 ============
 # 
@@ -1258,11 +1247,12 @@ RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
-# 注意：以下四个状态类用于不同的数据库表，数值含义有差异，请勿混用：
+# 注意：以下状态类用于不同的数据库表，数值含义有差异，请勿混用：
 # - AIToolStatus: ai_tools 表（图片/视频生成任务）
 # - TaskStatus: tasks 表（定时任务队列）
 # - GridImageTaskStatus: grid_image_tasks 表（宫格生图任务，独有 TIMEOUT/CANCELLED/DOWNLOAD_FAILED 状态）
 # - AIAudioStatus: ai_audio 表（音频/TTS 生成任务）
+# - ComposeJobStatus: compose_jobs 表（数字人分段拼接编排，纯编排不涉及计费）
 #
 # 数值对比：
 #                  PENDING/QUEUED  PROCESSING  COMPLETED  FAILED  特有状态
@@ -1270,6 +1260,7 @@ TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 # TaskStatus:      0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
 # GridImageTaskStatus: 0           1           2          -1      TIMEOUT(-2), CANCELLED(-3), DOWNLOAD_FAILED(-4)
 # AIAudioStatus:   0               1           2          -1      （无特有状态）
+# ComposeJobStatus: 0(PENDING)    1(COMPOSING) 2         -1      （无特有状态）
 
 class AIToolStatus:
     """AI工具任务状态（用于 ai_tools 表，跟踪图片/视频生成任务）"""
@@ -1292,6 +1283,21 @@ class AIToolStatus:
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
     DOWNLOADING = 6
+
+
+class ComposeJobStatus:
+    """数字人分段拼接编排状态（用于 compose_jobs 表，纯编排不涉及计费）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING': '待拼接',
+        'COMPOSING': '拼接中',
+        'COMPLETED': '拼接完成',
+        'FAILED': '拼接失败',
+    }
+    PENDING = 0
+    COMPOSING = 1
+    COMPLETED = 2
+    FAILED = -1
 
 
 class TaskStatus:
@@ -2113,6 +2119,38 @@ class StoryboardDigitalHumanConstants:
         "1080P": 1920,
         "1080p": 1920,
     }
+
+
+class ComposeJobConstants:
+    """数字人分段拼接编排（task/compose_task.py）。
+
+    编排任务自身不生成内容、不计费：只轮询各段状态、补缺口段、拼成片。
+    重试预算与「等待」解耦——等待段完成不消耗 try_count（否则长任务未跑完
+    就被判死），只有补段/拼接等真实动作失败才消耗。
+    """
+    # 对外 project_id 前缀（前端按不透明字符串透传，get-status 据此分发到 compose_jobs）
+    PROJECT_ID_PREFIX = "compose_"
+    # 编排主循环间隔（秒），与 generate_video 同频
+    POLL_INTERVAL_SECONDS = 5
+    # 等待段完成时的重新调度间隔（秒）；段平均 4-10 分钟，无需高频空转
+    WAIT_RESCHEDULE_SECONDS = 10
+    # 补段/拼接失败的重试预算（次）。按段数上限 40 段、每段最多补 2 次估算，
+    # 留足余量；超过则整单 FAILED。
+    MAX_RETRY_COUNT = 100
+    # 段已完成但 result_url 为远端地址（download_queue 兜底残留）时，
+    # compose 侧自行下载的最大尝试次数，超过则降级为缺口补段
+    SEGMENT_REMOTE_DOWNLOAD_MAX_ATTEMPTS = 3
+    # 每轮主循环最多自愈几个远端残留段（自愈是同步 HTTP 下载，串行做法会在
+    # 40 段全残留时把调度线程堵上数十分钟，导致其他编排单停摆）
+    SEGMENT_HEAL_PER_ROUND = 2
+    # 拼接失败重试上限（独立于补段的 MAX_RETRY_COUNT）。
+    # 拼接失败多为确定性错误（文件损坏/缺音轨），用 100 次补段预算重试会
+    # 在退避封顶 96s 下空转数小时并反复吃 CPU
+    CONCAT_MAX_ATTEMPTS = 3
+    # ffmpeg 拼接超时（秒）与执行线程池大小（AGENTS.md R9/R10：模块级长寿
+    # executor，future.result 必须显式 timeout）
+    CONCAT_TIMEOUT_SECONDS = 600
+    CONCAT_EXECUTOR_MAX_WORKERS = 2
 
 
 class StoryboardAgentReadConstants:

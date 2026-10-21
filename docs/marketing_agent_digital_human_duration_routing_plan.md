@@ -268,6 +268,8 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 用户指出：分段架构无 30s 技术上限。已放宽——`DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS` 30→600（仅作异常超长音频的兜底拒绝线），实际时长由 prepare 的口播文案上限（2000 字 ≈ 6-7 分钟 ≈ 40 段）自然约束。prepare 草案 message 会预告**段数与预计耗时**（每段 4~10 分钟，总耗时为段数×4~段数×10）；SOP/mcp_tool 同步更新（超长内容提示耗时随段数线性增长）。切分/拼接/降档逻辑天然支持任意段数。
 ### 附录 C.8 拼接方案改型：末帧接力串行链式（2026-10-19）
 
+> ⚠️ **已被附录 C.21 取代**：末帧接力整体移除（MiniMax H3 成片末尾渐暗，接力帧会污染后续段落），分段改为角色图直出 + 全并发。本附录仅留档。
+
 用户拍板：分段生成改**末帧接力串行链式**——段 1 用角色图，段 i+1 首帧 = 段 i 末帧（提取上传），逐段串行生成，全部完成后统一缩放拼接。拼接点画面完全连续，消除景别跳变。
 
 - `_run_segment_pipeline`（sync 长跑，sync executor 进程池内）：串行循环——上传段音频→提交（输入图=角色图[段1] 或前段末帧[段2+]）→轮询→下载；段提交/生成失败自动重试一次；全部成功后 concat 落盘，sync_mode 返回 result_url。
@@ -309,6 +311,8 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 
 
 ### 附录 C.12 修复多段接力「越来越黑」：无损末帧 + 黑段检测 + 每 2 段回锚（2026-10-20 实施，2026-10-21 回锚间隔 3→2）
+
+> ⚠️ **已被附录 C.21 取代**：该方案仍保留末帧接力（仅做无损化+黑段检测+回锚），与「彻底移除接力、角色图直出+并发」方向互斥，相关代码（`_extract_last_frame`/`_measure_avg_brightness`/`_check_segment_brightness`/`_download_validated_segment`/`_is_reanchor_segment` 及 3 个黑段常量）已随 C.21 移除。本附录留档备查（黑段事故数据仍有参考价值）。
 
 **事故（zjt-dev 任务 12792，会话 4fc2e175，5 段接力，成片 67.6s）**：用户反馈数字人口播视频越来越黑。成片逐秒亮度（YAVG）实测：段 1 ≈174.7 → 段 2 ≈163.5 → 段 3 ≈155.3 → **段 4 ≈29.9（整段近黑屏 13 秒）** → 段 5 ≈141.6。接力帧肉眼对比同样逐轮变暗、噪点/色斑累积。排查结论：ffmpeg 抽帧本身亮度误差 <1（已排除），RunningHub 上传为原样二进制（已排除）；劣化发生在「接力帧经 H3 VAE 重编码→扩散再生成」环节，每轮漂移 -6~-12 YAVG 且偏暗居多，多段接力累积成灾；另有 H3 段内偶发骤黑（12792_seg_4 首末帧正常、中段 13 秒 YAVG≈30），当时无任何画面内容校验，黑段直接进拼接交付。
 
@@ -393,7 +397,7 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 
 新增 `test_invalid_voice_id_rejected_with_clear_error`：脏 voice_id 返回参数级明确错误，不再冒"准备数字人草案异常"笼统文案。
 
-### 附录 C.16 修复 confirm 截断锁镜头提示词导致 H3 尾部淡出黑屏（2026-10-21，12824）
+### 附录 C.18 修复 confirm 截断锁镜头提示词导致 H3 尾部淡出黑屏（2026-10-21，12824）
 
 **现象**：任务 12824（女医生更年期口播，单段 15s）成片从 ~12s 起画面整体渐暗，~13.5s 全黑，尾部 ~1s 出现"纯黑背景 + 白色瓶盖状物体"（用户上报"末尾黑屏中间白色盖子"）。逐帧亮度扫描确认是一次平滑的"淡出收场 + 结尾幻觉物体"，非花屏/瞬断。同日其余 29 条 H3 成片（含同模板单段/分段）尾部全部正常。
 
@@ -405,3 +409,62 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - 回归测试 `test_confirm_long_locked_prompt_not_truncated`：>1000 字符提示词 confirm 后原样下发、结构化结尾完整（在旧代码上可复现失败）。
 
 **遗留建议**（未改，待评估）：单段时长档位按 ceil(音频文件总长) 吸附，尾部静音（本例语音 13.63s 结束、文件 14.016s、请求 15s）会给模型留出"片尾空间"；如需进一步压制尾部异常，可按最后语音结束时刻（silencedetect）取档，或交付前加尾部黑帧检测自动重试。
+
+**未改**："## 工作总结" 等代理协议段落是技能定义的标准输出格式（前端按协议解析），非缺陷。
+
+### 附录 C.20 修复 H3 端点服务端提示词长度上限未同步导致 confirm 误拒（2026-10-21）
+
+**现象**：营销智能体数字人任务（口播文案仅约 70 字）confirm 失败：`数字人生成请求失败: 文本内容不能超过1000个字`，智能体误判为"系统异常"。口播文案长度与该限制无关——1000 字校验作用在 `text` 字段上，而 confirm 提交的 `text` 是 H3 锁镜头动作提示词（`h3_locked_prompt`，VL 生成，常见 1300+ 字符）。
+
+**根因**：C.18 把客户端 confirm 截断上限提到 `H3_LOCKED_PROMPT_MAX_CHARS = 4000`，但 `/api/digital-human-minimax-h3`（`server.py`）的服务端校验仍硬编码 `len(text) > 1000`，两端上限不一致：VL 产出 1000~4000 字符的提示词必被 400 拒绝。
+
+**改动**：
+
+- `server.py` 的 H3 端点改为与客户端共用 `H3_LOCKED_PROMPT_MAX_CHARS`（import 自 `script_writer_core/digital_human_tts_tools`），错误文案随常量动态生成；`/api/digital-human`（wan2.2）与 `/api/digital-human-v2`（LTX2.3）的 text 确为口播文案，1000 字限制保持不变。
+- 回归测试 `test_motion_prompt_1001_to_4000_chars_accepted` / `test_motion_prompt_over_limit_rejected`：1000~4000 字符提示词放行、超上限拒绝（在旧代码上前者可复现 400）。
+
+### 附录 C.21 移除末帧接力：角色图直出 + 全段并发（2026-10-21）
+
+**背景**：MiniMax H3 生成的视频存在**末尾逐渐变暗**的问题（C.8 引入的末帧接力会让暗帧成为下一段首帧，成片越往后越暗，逐段累积——即 C.12 修复的「越来越黑」事故）。C.12/C.13 的「无损末帧 + 黑段检测 + 回锚」方案治标（缓解漂移、拦截黑段），但接力机制本身仍在传递变暗/噪声漂移，且黑段相对判据对「亮底角色图 → 暗场景视频」必然误报（12811 实证），链路复杂。用户拍板：**彻底移除末帧接力，每段首帧统一用输入角色图**，同时把串行链式改为**全段并发**（原串行总耗时 = 段数 × 单段 2-5 分钟）。
+
+**改动**（`task/visual_drivers/digital_human_minimax_h3_runninghub_v1_driver.py`）：
+
+- **删除末帧接力**：移除 `_extract_last_frame`、断点续跑后"复用段末帧作下一段首帧"、每段生成后"提取末帧接力"逻辑；**同时移除 C.12/C.13 引入的整套黑段/回锚机制**（`_measure_avg_brightness` / `_check_segment_brightness` / `_download_validated_segment` / `_is_reanchor_segment` 及 `DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL` / `DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR` / `DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO` 常量）——接力消失后黑段检测失去意义（无接力帧可污染，黑段只影响本段画面本身）。
+- **角色图直出**：角色图只上传一次，各段首帧统一用同一角色图 URL。
+- **全并发**：缺失段全部提交到模块级长寿 `ThreadPoolExecutor`（`DigitalHumanSegmentConstants.SEGMENT_EXECUTOR_MAX_WORKERS = 8`，新增于 `config/constant.py`），每段独立 worker 并发"上传段音频→提交 RunningHub（各自独立 taskId，上游天然并行）→轮询→下载"；主线程按段序 `future.result(timeout=SEGMENT_FUTURE_TIMEOUT_SECONDS = 1800)` 收集（超时红线 R9 显式超时 / R10 模块级 executor），全部到齐后拼接不变。总耗时降为 ≈ 最慢一段。
+- **保留**：断点续跑（`_is_valid_segment` 前缀复用）、段失败自动重提一次、双败抛 `_SegmentedPipelineError` 带刹车、上游 421 → `_SegmentedCongestedError` 回队重试（worker 线程内异常经 `future.result()` 原样透传，语义不变）。
+- **并发下的刹车语义**：一段双败时其余段可能已提交生成，不影响失败结果；重跑时已完成段被断点续跑复用，不浪费上游费用。
+
+**测试**：删除 `_extract_last_frame` 与黑段检测用例；断点续跑/缓存损坏/失败重提/双败刹车用例改为并发语义断言（首帧=角色图、集合断言替代顺序断言）；`tests/drivers` 778 项通过。
+
+**注意（并发上限）**：全并发提交可能触发上游 421 拥堵，由既有 `_SegmentedCongestedError` 回队机制兜底；若分段数增大（超长口播）导致上游排队严重，可再引入分段窗口（如每批 4 段），届时断点续跑可直接复用。
+
+### 附录 C.22 分段编排迁出驱动：compose_job 编排器（2026-10-21）
+
+**背景**：C.21 的「驱动内全流水线」在 `submit_task` 一次调用内完成"上传角色图 → 并发提交各段 → 轮询 → 下载 → 拼接"，随后以 `sync_mode` 返回。该实现有两个结构性问题：
+
+1. **独占 `generate_video` 调度槽**（`max_instances=1`、串行），一个分段单把图片/视频等所有生成任务一起堵住（实测两个数字人任务排队约 29 分钟）。
+2. **段不是标准任务**：段状态只存在于 `extra_config.dh_segment_task_ids`，无法复用任务的过期/重试/退避/退费/日志体系。
+
+**方案**：`docs/digital_human_compose_job_plan.md`。核心是「请求 / 编排 / 结果」三层分离：
+
+- **段** = 标准 `ai_tools(type=35)` + `tasks(generate_video)`，独立计费与退费，走驱动**单段标准路径**；
+- **编排** = 新表 `compose_jobs` + 独立主循环 `task/compose_task.py::process_compose_jobs`（不碰钱，只聚合段状态、补缺口段、拼接）；
+- **对外** `project_id = compose_<id>`，前端与营销 agent 都按不透明字符串透传，`get-status` 前缀分发。
+
+**本次删除（驱动内旧流水线全部下线，驱动 965 → 474 行）**：
+
+- 模块级 `_SEGMENT_EXECUTOR`、`SEGMENT_POLL_INTERVAL_SECONDS`/`SEGMENT_POLL_MAX_TRIES`/`SEGMENT_SUBMIT_RETRY`/`SEGMENT_FALLBACK_MAX_SEG`；
+- 异常类 `_SegmentedPipelineError` / `_SegmentedCongestedError`；
+- 方法 `_submit_segments_async` / `_run_one_segment` / `_is_valid_segment` / `_lookup_segment_task_ids` / `_check_segmented_status` / `_resubmit_failed_segment` / `_save_segment_task_ids` / `_concat_and_store` / `_segmented_failure` / `_upload_segment_audio` / `_submit_one_segment` / `_poll_segment_status` / `_fetch_segment_video_url` / `_wait_and_download_segment` / `_upload_to_runninghub_sync`；
+- `submit_task` 的 `extra_config.dh_segments` 分支、`check_status` 的分段聚合分支；
+- `config/constant.py::DigitalHumanSegmentConstants`（`SEGMENT_EXECUTOR_MAX_WORKERS` / `SEGMENT_FUTURE_TIMEOUT_SECONDS`）。
+
+**语义变化（排障须知）**：
+
+- 段不再由一次 `sync_mode` 调用同步产出，而是各自走完整异步生命周期；`dh_segment_task_ids` / `dh_segment_durations` 两个 extra_config 键不再写入。
+- 段失败由标准任务重试/退费兜底，不再有「双败刹车 + 降档重切」；`SEGMENT_FALLBACK_MAX_SEG` 的 15s OOM 降档逻辑随之废弃。
+- 拼接改由 `compose_task._concat_videos`（线程池 + `CONCAT_TIMEOUT_SECONDS`），ffmpeg 参数与原 `_concat_and_store` 一致（首段尺寸基准 + yuv420p + aac）。
+- 段完成不再上传 CDN（`is_segment_ai_tool()` 早退），成片由 `compose_jobs` 拼接后单独建 mapping 上传。
+
+**兼容**：本方案未发布，无线上在途分段任务；开发环境旧任务用 `scripts/cleanup_dh_segment_tasks.py` 关闭（默认 dry-run）。
