@@ -66,7 +66,8 @@ SEGMENTED_MOTION_PROMPT = ('固定机位拍摄：景别与参考图片保持一�
 
 # ===== H3 锁镜头 webapp(2111473047642398722)的英文提示词 =====
 # 该工作流要求 214 节点满足 h3 ref2 提示词格式(integrated_multimodal_description),
-# 由 VL 看角色图提取人物细节后按模板生成;镜头指令已写死在模板中,保证画面完全静止。
+# 由 VL 看角色图提取人物细节后按模板生成;镜头/身体锁定指令已写死在模板中防段间
+# 漂移（12815），唯一例外是手部：画面可见手时允许细微小动作（条件从句，无手不生效）。
 H3_LOCKED_CAMERA_WEBAPP_ID = '2111473047642398722'
 
 LOCKED_CAMERA_PROMPT_TEMPLATE = (
@@ -74,8 +75,11 @@ LOCKED_CAMERA_PROMPT_TEMPLATE = (
     'The camera is strictly locked on a tripod, maintaining a perfectly still, frozen frame '
     'with zero camera movement. No zooming, no panning, no tilting. '
     'The subject is looking directly at the camera, speaking continuously and naturally '
-    'with a subtle smile, lips moving constantly, while the body position remains fixed '
-    'in the center of the frame.\n'
+    'with a subtle smile, lips moving constantly. The body posture, outfit and background '
+    'stay perfectly consistent with the reference image and completely motionless. '
+    'If hands are visible in the frame, the hands make subtle natural movements—gentle '
+    'finger gestures and small wrist motions only; otherwise the entire body remains '
+    'fixed in the center of the frame.\n'
     'overall_soundscape: gentle ambient sounds.\n'
     'non_diegetic_music: [leave empty]')
 
@@ -85,15 +89,23 @@ LOCKED_CAMERA_PROMPT_FALLBACK = LOCKED_CAMERA_PROMPT_TEMPLATE.format(
 
 VL_LOCKED_CAMERA_INSTRUCTION = (
     '你是一个专业的AI视频提示词生成专家。请观察这张参考图，提取人物的性别、发型、'
-    '服装细节以及背景环境。然后，严格按照以下英文模板输出（把模板中"在此处替换为'
-    '提取到的画面描述"替换为提取内容的英文翻译，模板其余部分逐字保留，根据人物实际'
+    '服装细节以及背景环境；同时检查画面中是否有清晰可见的手部：若有，在画面描述中'
+    '以英文补充一句手部细微动作（仅限小幅度手指轻动、手腕微转，禁止大幅度摆臂，'
+    '不要改变手部结构）；若没有可见手部，则不要在描述中提及手。'
+    '然后，严格按照以下英文模板输出（把模板中"在此处替换为'
+    '提取到的画面描述"替换为提取内容的英文翻译，手部动作句一并译入，'
+    '模板其余部分逐字保留，根据人物实际'
     '性别使用 he/she），不要输出任何多余的解释或中文：\n'
     'integrated_multimodal_description: [Shot 1] A static medium shot of {在此处替换为'
-    '提取到的画面描述，翻译成英文}, The camera is strictly locked on a tripod, maintaining '
+    '提取到的画面描述，翻译成英文（含上述手部细微动作句；无手部则不含）}, '
+    'The camera is strictly locked on a tripod, maintaining '
     'a perfectly still, frozen frame with zero camera movement. No zooming, no panning, '
     'no tilting. The subject is looking directly at the camera, speaking continuously and '
-    'naturally with a subtle smile, lips moving constantly, while her body position remains '
-    'fixed in the center of the frame.\n'
+    'naturally with a subtle smile, lips moving constantly. The body posture, outfit and '
+    'background stay perfectly consistent with the reference image and completely '
+    'motionless. If hands are visible in the frame, the hands make subtle natural '
+    'movements—gentle finger gestures and small wrist motions only; otherwise the '
+    'entire body remains fixed in the center of the frame.\n'
     'overall_soundscape: gentle ambient sounds.\n'
     'non_diegetic_music: [leave empty]')
 
@@ -532,6 +544,16 @@ async def prepare_digital_human_draft(
         if len(script_text) > 2000:
             return {'success': False, 'error': '口播文案不能超过 2000 字'}
         motion_prompt = (motion_prompt or '').strip()[:200] or None
+        # 参数规范化：LLM 工具调用可能传入字符串/空串等非法 voice_id，统一在此归一，
+        # 让下游所有 int(voice_id)（:573/:590/:606/:667）拿到的都是 int 或 None，
+        # 报错也指向参数本身，而不是深处抛出 int() TypeError（750aba96 同类报错）
+        if voice_id is not None:
+            try:
+                voice_id = int(voice_id)
+            except (TypeError, ValueError):
+                return {'success': False,
+                        'error': f'voice_id 必须是数字音色 ID，收到: {voice_id!r}'}
+            voice_id = voice_id or None  # 0/负数视为未指定，走 VL 挑选/默认音色
 
         # 1. 用户提供驱动音频：跳过音色选择与 TTS
         user_audio_url = (audio_url or '').strip() or None
@@ -541,7 +563,11 @@ async def prepare_digital_human_draft(
         selection_reason = "用户指定音色"
         motion_from_vl = None
         need_voice = not user_audio_url
-        need_vl_analysis = (not motion_prompt) and bool(image_url) and (need_voice or not voice_id)
+        # 是否 VL 分析与"显式参数是否已齐"挂钩：缺音色（需声音且未指定）或缺动作提示词
+        # 才看图分析；motion_prompt 是独立参数，传了不应阻断 VL 选音色——750aba96 实证
+        # 旧条件 (not motion_prompt) 整体跳过 VL 选音色，voice_id 为 None 流到下游
+        # int(None) 崩溃，异常文案被专家误判为"语音服务不可用"
+        need_vl_analysis = bool(image_url) and ((need_voice and not voice_id) or not motion_prompt)
         if need_vl_analysis:
             # 候选按可用性选择：火山已配置→火山音色；未配置→免费预置音色（IndexTTS 克隆）
             candidate_provider = "volcengine" if volcengine_configured else "reference_audio"
@@ -562,6 +588,13 @@ async def prepare_digital_human_draft(
                 return {'success': False,
                         'error': '火山语音合成未配置，无法使用该音色。请改用免费预置音色（reference_audio 类）或提供驱动音频'}
         motion_prompt = motion_prompt or motion_from_vl or "角色面向镜头深情的说话，固定镜头。"
+
+        # 2.5 防御：需要音色却仍未确定时返回明确错误。750aba96 中此类场景曾流到下游
+        # int(voice_id) 抛 TypeError，被包装成"准备数字人草案异常"，既不命中 TTS
+        # 降级规则，也误导专家/用户以为是语音服务故障
+        if need_voice and not voice_id:
+            return {'success': False,
+                    'error': '未能确定音色：请显式指定 voice_id，或提供驱动音频（audio_url）后重试'}
 
         # 3. 合成驱动音频（三个引擎按音色 provider 与配置分派）
         voice_row = VoiceModel.get_by_id(int(voice_id)) if voice_id else None
@@ -699,7 +732,10 @@ async def prepare_digital_human_draft(
         }
     except Exception as e:  # noqa: BLE001
         logger.error(f"prepare_digital_human_draft error: {e}", exc_info=True)
-        return {'success': False, 'error': f'准备数字人草案异常: {str(e)}'}
+        # 带异常类型名透出：专家上报时可直接引用（如 TypeError），便于区分参数错误与
+        # 服务故障，命中对应降级规则
+        return {'success': False,
+                'error': f'准备数字人草案异常({type(e).__name__}): {str(e)}'}
 
 
 def _resolve_local_media_path(url: str) -> Optional[str]:
