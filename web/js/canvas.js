@@ -493,6 +493,16 @@
       }
       state.videoConnections = state.videoConnections.filter(c => c.from !== id && c.to !== id);
 
+      // 删除音色来源时，清掉文字转语音上由连线带入的参考音色
+      if(state.audioConnections){
+        state.audioConnections.filter(c => c.from === id && c.portType === 'voice').forEach(conn => {
+          const targetNode = state.nodes.find(n => n.id === conn.to);
+          if(targetNode && typeof targetNode.clearConnectedVoice === 'function'){
+            targetNode.clearConnectedVoice();
+          }
+        });
+      }
+
       // 清除该节点相关的音频连接
       // 如果删除的是音频节点，需要清除连接的图生视频节点的audioUrls
       if(node && node.type === 'audio') {

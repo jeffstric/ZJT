@@ -66,6 +66,12 @@
         }
         const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+        // 默认优先目录「性价比」档（与下方 populate 一致）
+        if (window.ModelCatalog && videoOptions.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(videoOptions, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
       
       const inheritedModel = opts && opts.model ? opts.model : defaultImageModel;
@@ -221,7 +227,7 @@
               <div class="field field-always-visible shot-frame-image-field" style="display:${node.data.imageUrl ? 'flex' : 'none'};">
                 <img class="shot-frame-image" src="${escapeHtml(node.data.imageUrl || '')}" style="max-width: 100%; max-height: 160px; object-fit: contain; border-radius: 6px; cursor: pointer;" />
               </div>
-              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #3b82f6; color: white; width: 100%; padding: 8px; border-radius: 6px; margin-top: auto;" disabled data-i18n="shot_frame_generate_dialogue_audio_btn">${window.t ? window.t('shot_frame_generate_dialogue_audio_btn') : '生成对话音频'}</button>
+              <button class="gen-btn shot-frame-generate-dialogue-btn" type="button" style="background: #3b82f6; color: white; width: 100%; padding: 8px; border-radius: 6px; margin-top: auto;" disabled data-i18n="shot_frame_generate_dialogue_audio_btn">${window.t ? window.t('shot_frame_generate_dialogue_audio_btn') : '创建对话语音'}</button>
             </div>
             <!-- 第2列: 提示词编辑 -->
             <div class="script-section">
@@ -442,7 +448,8 @@
             ? window.ModelCatalog.sceneForVideoImageMode(mode)
             : 'video.image_to_video';
           if (window.ModelCatalog) {
-            const valueHit = window.ModelCatalog.findTaskByTrack(allOptions, videoScene, null, 'value');
+            const initCatalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+            const valueHit = window.ModelCatalog.findTaskByTrack(allOptions, videoScene, initCatalog, 'value');
             if (valueHit && !valueHit.disabled) firstVideoModelValue = valueHit.value;
           }
           allOptions.forEach(opt => {
@@ -2173,7 +2180,9 @@
                              Array.isArray(node.data.shotJson.dialogue) && 
                              node.data.shotJson.dialogue.length > 0;
           generateDialogueBtn.disabled = !hasDialogue;
-          generateDialogueBtn.title = hasDialogue ? '生成对话音频' : '该镜头没有对话';
+          var dialogueBtnTitle = (typeof window.t === 'function') ? window.t('shot_frame_generate_dialogue_audio_btn') : '';
+          if (!dialogueBtnTitle || dialogueBtnTitle === 'shot_frame_generate_dialogue_audio_btn') dialogueBtnTitle = '创建对话语音';
+          generateDialogueBtn.title = hasDialogue ? dialogueBtnTitle : '该镜头没有对话';
           generateDialogueBtn.style.background = hasDialogue ? '#22c55e' : '#9ca3af';
           generateDialogueBtn.style.cursor = hasDialogue ? 'pointer' : 'not-allowed';
         }
@@ -2224,19 +2233,12 @@
             dialogueGroupNode.data.shotNumber = node.data.shotJson.shot_number;
           }
           
-          // 自动触发所有对话的音频生成
-          const dialogueGroupEl = canvasEl.querySelector(`.node[data-node-id="${dialogueGroupId}"]`);
-          if(dialogueGroupEl){
-            const generateAllBtn = dialogueGroupEl.querySelector('.dialogue-generate-all-btn');
-            if(generateAllBtn){
-              // 延迟一下再点击，确保init化完成
-              setTimeout(() => {
-                generateAllBtn.click();
-              }, 100);
-            }
+          // 合成交给文字转语音节点，这里只为每句台词创建或打开对应节点
+          if (typeof dialogueGroupNode.createDialogueTtsNodes === 'function') {
+            await dialogueGroupNode.createDialogueTtsNodes();
+          } else {
+            showToast('文字转语音节点未加载', 'error');
           }
-          
-          showToast('已创建对话组节点并开始生成音频', 'success');
           safeAutoSave()
         });
       }

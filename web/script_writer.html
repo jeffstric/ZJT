@@ -245,7 +245,7 @@
         </div>
         <div class="world-sidebar-footer" id="world-sidebar-footer">
             <button type="button" class="world-deleted-toggle" id="world-deleted-toggle" onclick="toggleDeletedWorldsView()">
-                <span data-i18n="view_deleted_worlds">查看已删除的世界</span>
+                <span data-i18n="view_deleted_worlds">查看已隐藏的世界</span>
             </button>
         </div>
     </aside>
@@ -921,6 +921,18 @@
                             <textarea id="char-other" class="form-textarea" rows="3" placeholder="其他相关信息" data-i18n-placeholder="placeholder_char_other"></textarea>
                         </div>
                         <div class="form-group full-width">
+                            <label class="form-label"><span data-i18n="label_voice_desc">音色描述</span></label>
+                            <div class="image-upload-container">
+                                <textarea id="char-voice-desc" class="form-textarea" rows="2" style="flex:1;" placeholder="角色声音的声学特征（性别年龄段/音高/质感/音量/语速），用于视频生成的音色一致性" data-i18n-placeholder="placeholder_voice_desc"></textarea>
+                                <div class="image-upload-actions">
+                                    <button type="button" class="btn btn-primary btn-sm" id="generate-voice-desc-btn" onclick="generateCharacterVoiceDesc()" disabled data-i18n="btn_generate_voice_desc">
+                                        自动生成
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">由 AI 根据角色人设自动生成，可手动修改；仅 MiniMax H3 系列视频模型使用</div>
+                        </div>
+                        <div class="form-group full-width" id="char-form-group-voice">
                             <label class="form-label"><span data-i18n="label_audio_ref">参考音频</span></label>
                             <div class="image-upload-container">
                                 <input type="text" id="char-default-voice" class="form-input" placeholder="参考音频URL" data-i18n-placeholder="placeholder_audio_url" readonly>
@@ -934,6 +946,9 @@
                                     <button type="button" class="btn btn-primary btn-sm" id="generate-character-voice-btn" onclick="generateCharacterReferenceAudio()" data-i18n="btn_generate_audio">
                                         生成参考音频
                                     </button>
+                                    <button type="button" class="btn btn-primary btn-sm" id="pick-voice-library-btn" onclick="openCharacterVoiceLibrary()" data-i18n="btn_voice_library">
+                                        从音色库选择
+                                    </button>
                                 </div>
                                 <input type="file" id="char-voice-file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.wma" style="display: none;" onchange="handleCharacterVoiceUpload(event)">
                             </div>
@@ -942,7 +957,7 @@
                             </div>
                             <div style="margin-top: 4px; font-size: 12px; color: #6b7280;">支持mp3、wav、m4a等格式，超过20秒将自动裁剪</div>
                         </div>
-                        <div class="form-group full-width">
+                        <div class="form-group full-width" id="char-form-group-image">
                             <label class="form-label"><span data-i18n="label_reference_image">参考图片</span></label>
                             <div class="image-upload-container">
                                 <input type="text" id="char-image" class="form-input" placeholder="图片URL或描述" data-i18n-placeholder="placeholder_image_url" readonly>
@@ -1207,6 +1222,35 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeEditModal()" data-i18n="btn_cancel">取消</button>
                 <button class="btn btn-primary" onclick="saveEditedFile()" data-i18n="btn_save">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 公共音色库选择弹窗（与声音页音色合成「参考音频-从音色库选择」同源，仅 AI 合成预置音色） -->
+    <div id="voice-library-modal" class="modal">
+        <div class="modal-overlay" onclick="closeCharacterVoiceLibrary()"></div>
+        <div class="modal-dialog">
+            <div class="modal-header">
+                <h3 class="modal-title" data-i18n="voice_library_title">从公共音色库选择</h3>
+                <button class="modal-close-btn" onclick="closeCharacterVoiceLibrary()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center;">
+                    <input type="text" id="voice-library-search" class="form-input" style="flex: 1;" data-i18n-placeholder="voice_library_search_placeholder" placeholder="搜索音色名称/风格" oninput="renderVoiceLibraryList()">
+                    <select id="voice-library-gender" class="form-input" style="flex: 0 0 110px;" onchange="renderVoiceLibraryList()">
+                        <option value="" data-i18n="voice_library_all_genders">全部</option>
+                        <option value="male" data-i18n="option_male">男</option>
+                        <option value="female" data-i18n="option_female">女</option>
+                    </select>
+                </div>
+                <div id="voice-library-list" style="max-height: 50vh; overflow-y: auto;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeCharacterVoiceLibrary()" data-i18n="btn_cancel">取消</button>
             </div>
         </div>
     </div>

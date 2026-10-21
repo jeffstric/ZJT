@@ -48,6 +48,28 @@ class ScriptSplitPreconditionError(ValueError):
         super().__init__(f"[{code}] {message}")
 
 
+def _validate_script_content_precondition(script_content: str) -> None:
+    """前置校验：剧本正文长度必须达到最小阈值，否则视为内容信息不足。
+
+    正文过短（如被误写为标题/占位文本）时，规划阶段唯一锚点会被模型整体
+    归入 excluded_block_ids（非正文），segments 为空，重试耗尽后 paused——
+    重试不会改变结论。与其让用户等待多轮规划 LLM 后收到含糊的
+    「分段计划缺少 segments 数组」，不如创建任务时直接 4xx 提示补全剧本。
+    纯字符串检查无 IO，同步执行不阻塞事件循环（AGENTS.md 规则 1）。
+    """
+    text = str(script_content or "").strip()
+    if len(text) >= ScriptSplitConstants.MIN_SCRIPT_SPLIT_CHARS:
+        return
+    raise ScriptSplitPreconditionError(
+        "script_content_insufficient",
+        (
+            f"剧本内容信息不足（仅 {len(text)} 字，至少需要 "
+            f"{ScriptSplitConstants.MIN_SCRIPT_SPLIT_CHARS} 字），无法拆分分镜，"
+            "请检查剧本内容是否完整后再试。"
+        ),
+    )
+
+
 async def _validate_world_scene_precondition(world_id: Optional[int]) -> None:
     """前置校验：world 至少有 1 个场景，且至少有 1 个带参考图的场景。
 
@@ -126,26 +148,35 @@ def _check_owner(task, user_id: Optional[int]) -> bool:
     return task.user_id == user_id
 
 
+def _user_mismatch_error() -> JSONResponse:
+    """X-User-Id 与 token 属主不一致：401（与全站 X-User-Id 一致性中间件同语义）。"""
+    return JSONResponse(
+        status_code=401,
+        content={
+            "success": False,
+            "error_code": "user_mismatch",
+            "error": "user_id 与当前登录用户不一致",
+            "detail": "用户身份不一致，请重新登录后再试",
+        },
+    )
+
+
 async def _resolve_request_identity(
     auth_header: Optional[str],
     user_id_header: Optional[str],
 ):
-    """Authorization 优先，失效时保留浏览器 X-User-Id 兼容路径。"""
-    fallback_user_id = _get_user_id_from_header(user_id_header)
-    normalized_token = normalize_authorization_token(auth_header)
-    if normalized_token:
-        token_user_id, token_error = await resolve_authorization_user_id(auth_header)
-        if token_user_id is not None:
-            return token_user_id, normalized_token, None
-        if fallback_user_id is not None:
-            return fallback_user_id, None, None
+    """身份唯一可信来源是 Authorization token；X-User-Id 仅作一致性参考。
+
+    - token 缺失/无效 → 401（不再回退 X-User-Id 自报头，防"伪主人"冒充）
+    - X-User-Id 与 token 属主不一致 → 401（user_mismatch）
+    """
+    token_user_id, token_error = await resolve_authorization_user_id(auth_header)
+    if token_user_id is None:
         return None, None, token_error
-
-    if fallback_user_id is not None:
-        return fallback_user_id, None, None
-
-    _user_id, missing_error = await resolve_authorization_user_id(None)
-    return None, None, missing_error
+    claimed_user_id = _get_user_id_from_header(user_id_header)
+    if claimed_user_id is not None and claimed_user_id != token_user_id:
+        return None, None, _user_mismatch_error()
+    return token_user_id, normalize_authorization_token(auth_header), None
 
 
 @router.get('/tasks/{task_id}')
@@ -510,7 +541,9 @@ async def create_split_task(
     request_config = _normalize_request_config(request_config)
     # 内部角色契约只允许服务端生成；在前置校验和幂等键计算前丢弃客户端同名字段。
     request_config.pop(CHARACTER_CONTRACT_CONFIG_KEY, None)
-    # 前置校验：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
+    # 前置校验 1：剧本正文长度（纯内存检查，先于需要查库的场景校验）
+    _validate_script_content_precondition(script_content)
+    # 前置校验 2：world 必须有可用场景资产，否则不创建任务，直接提示用户补齐
     await _validate_world_scene_precondition(request_config.get("world_id"))
     script_sha256 = hashlib.sha256(
         (script_content or "").encode("utf-8")

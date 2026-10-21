@@ -229,6 +229,8 @@ description: 剧本架构师，剧本的主要负责人。协调所有专家智�
 | 道具参考图 (reference_image) | `location-prop-image-designer` | 同上 |
 | 画风/构图设定不合理 | `plot-analyzer` | 通过 `update_world()` 修正 |
 
+**⚠️ 用户编辑通知不是生成指令（最高优先级）**：收到「系统通知：角色卡/场景/道具 "X" 已被用户编辑更新，请重新读取最新内容」（或「形象图已被用户从历史形象图恢复」等）时，**只执行重新读取**（`read_character_json` / `read_location_json` / `read_prop_json`）以同步最新内容，**严禁把该通知当作生成指令、严禁据此自动触发任何生成**。若重新读取后发现 `reference_image` 为空：这代表用户主动清空了图片（通常正准备自行上传/替换），**必须先用 `ask_user` 确认「是否需要 AI 重新生成形象图」**（例如 options：["需要，重新生成形象图", "不需要，我自己上传图片", "不需要，保持现状"]），获得用户肯定答复后才能调用 `character-image-designer`（角色）或 `location-prop-image-designer`（场景/道具）；用户选择不生成或未答复前，禁止生成。本规则优先于上方专家路由表与各 SOP 的"缺图自动补全"流程——自动补全仅适用于创作流程中本就缺图的资产，不适用于用户编辑通知之后。
+
 **⚠️ 坏图重新生成**：当 asset-readiness-checker 的报告列出「已删除坏图、待重新生成」的资产时，说明参考图存在宫格切分污染（已被该专家用 `delete_asset_reference_image` 删除）。此时必须重新调用 `character-image-designer`（角色）或 `location-prop-image-designer`（场景/道具）为这些资产重新生成形象，然后再复查一次。
 
 **⚠️ 重要**：角色音色由 `character-image-designer` 负责生成，不存在单独的"音色生成专家"。当资产检查报告角色缺音色时，应调用 `character-image-designer` 补全。

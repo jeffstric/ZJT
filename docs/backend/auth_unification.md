@@ -79,6 +79,7 @@
 - ai-tools 7 个工具页（text_to_image/image_edit/video_enhance/ai_video_gen/digital_human/ai_script_gen/image_to_video）history 查询 + `index.html` timeline 弹窗：query `auth_token` → header。
 - storyboard 前端 SSE 已带 Bearer，无需改动。
 - `script_writer.js`（2026-09-15 补丁）：文件系列端点（`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files`）约 13 处 `fetch` 原本不带 `Authorization` 头（POST 保存仅把 `auth_token` 放 body，装饰器不读 body），后端真鉴权上线后返回 401 → 前端 `checkTokenExpired` 把**任何** 401 都当 token 过期 → 整页跳登录页（e2e `test_script_writer.py` 批量失败）。已全部补 `Authorization: Bearer ${AUTH_TOKEN}` 头。
+- `DELETE /api/staging-file`（2026-10-16）：右侧暂存栏的角色卡、场景、道具、剧本删除是同一个按钮函数 `deleteStagingFile()`，都打到这个接口，只带 `Authorization` 头，不把 token 放进 URL。该接口曾把 `auth_token` 设为必填 query，四类删除在进函数前都被 FastAPI 打成 422 `Field required`（`loc: ["query", "auth_token"]`），函数体内也从未读取这个参数。已去掉 query 必填，登录身份仍由 `require_permission` 从 Authorization 头解析，query `user_id` 必须与登录用户一致。
 - 同族漏头补丁（2026-09-15，e2e 复现定位）：
   - `marketing_agent.js`：`GET /api/session/{id}/latest-task`（页面刷新恢复活跃任务流）裸 `fetch` 无头，401 → 整页跳登录（e2e `test_marketing_agent.py` 29 例批量失败）。已补 `Authorization: Bearer`。
   - `workflow.js`：`GET /api/computing-power-config`（驱动状态，TaskConfig 主路径与回退路径共 2 处）裸 `fetch` 无头，401 导致驱动状态/模型选项加载失败（e2e `test_node_operations.py` 模型/时长选项为空）。已补 `Authorization: Bearer`（`getAuthToken()`）。
@@ -128,6 +129,55 @@
    - 注：`upload-agent-image` / `upload-agent-audio` / `upload-agent-video` 已挂 `require_permission`（2026-09-15 确认）；前端 6 处裸 `fetch`（`marketing_agent.js` 5 处 + `marketing_inspiration.js` 1 处，原先仅把 `auth_token` 放 FormData）已补 `Authorization: Bearer` 头，否则上传 401 → `checkAuthResponse` 整页跳登录（e2e `test_marketing_agent_image_upload` 失败根因）；
    - 注：`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files` 文件系列已在 58e459fb 挂 `require_permission`（含 GET/POST/PATCH），前端缺头问题已按上文补齐；
    - `api/marketing_publications.py` 的 `X-User-Id` 裸信任。
+
+## 五、X-User-Id 防冒充收口（"伪主人"漏洞修复，2026-10-20）
+
+### 漏洞
+
+一批接口（`/api/worlds*` 全族、storyboard、script_split 等，6 个文件 110+ 处）只读
+`X-User-Id` 自报头认定身份，从不校验 `Authorization` token 属主：任何人不带 token
+（或持自己的 token）把 `X-User-Id` 改成他人即可删改他人资源。前端的 `user_id` 来自
+URL 参数，切号后旧标签页仍带旧 `user_id`，天然"串号"。
+
+### 修复（三层）
+
+1. **统一身份解析助手** `utils/resource_access.py::resolve_authenticated_user_id(auth_token, claimed_user_id)`：
+   user_id 唯一可信来源是 token 解析结果；token 缺失/无效 → 401；自报头与 token
+   属主不一致 → 401。
+2. **`/api/worlds*` 全部 7 个接口**（list/get/create/update/hide/restore/delete）改用
+   该助手，权限校验全部基于 token 属主。
+3. **全站一致性中间件** `x_user_id_consistency_middleware`（核心逻辑
+   `utils/resource_access.py::enforce_x_user_id_consistency`，独立可单测）：凡携带
+   `X-User-Id` 的 `/api/` 请求，必须持有有效 token 且属主一致——
+   缺失 `401 missing_auth_token`、失效 `401 invalid_auth_token`、不一致
+   `401 user_mismatch`。cookie 会话由 `auth_cookie_translation_middleware` 翻译注入，
+   本中间件同时直接兜底读 `AUTH_COOKIE_NAME`，与执行顺序无关。未携带 `X-User-Id`
+   的请求不受影响（公公开端点、require_permission 端点行为不变）。
+   `api/script_split.py::_resolve_request_identity` 同步去掉"token 失效回退
+   X-User-Id"旧路径，与中间件同语义。
+
+### 前端适配
+
+`web/js/script_writer.js`：`401 + error_code=user_mismatch` 走独立分支
+`handleUserMismatch()`——token 本身有效，不能清 token 跳登录页（redirect_url 会原样
+带回旧 user_id 形成 401 回环），改为提示后回首页按当前登录账号重新进入。
+
+### 兼容注意
+
+- 正常前后端（Authorization 与 X-User-Id 同源）不受影响；e2e conftest 默认头一致，兼容。
+- 例外行为确认无冲突：`/api/user/computing_power` 的 X-User-Id 本地算力兜底仅发生在
+  本地 token 有效、上游 perseids 失效的路径（见 auth_token_401_semantics.md），中间件放行。
+- 遗留清单中 `api/marketing_publications.py` 的 X-User-Id 裸信任由中间件全局覆盖。
+
+## 相关测试（本次新增/更新）
+
+- `tests/api/test_x_user_id_consistency.py`（新增，14 例）：助手与中间件全矩阵
+  （无 token/失效/不一致/一致/cookie 兜底，非 /api 与无头放行）。
+- `tests/storyboard/test_script_split_api.py`：X-User-Id-only 用例全部改带一致 token；
+  "token 覆盖冲突 header""失效 token 回退"两例反转为 401 防线用例。
+- `tests/api/test_script_split_resume.py`：autouse fixture mock token 解析 + save_field。
+- `auto_test/e2e/test_script_split.py::test_owner_isolation_query_task`：伪造
+  X-User-Id + 失效 token 预期从 403/404 改为 401（中间件拦截）。
 
 ## 相关测试
 

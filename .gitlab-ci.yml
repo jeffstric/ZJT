@@ -118,6 +118,30 @@ unit_tests:
     # 依赖 runner 的固定挂载 /srv/gitlab-builds:/builds，调整 builds_dir 时需同步修改。
     - export HOST_SRC_DIR="/srv/gitlab-builds${CI_PROJECT_DIR#/builds}"
     - echo "HOST_SRC_DIR=$HOST_SRC_DIR"
+    # 与 e2e_smoke 同理：daocloud 偶发 502，预取基础镜像（本地已有秒过，
+    # 缺失时带退避重试），避免 build/up 阶段依赖即时网络。
+    - |
+      pull_with_retry() {
+        image="$1"
+        if docker image inspect "$image" >/dev/null 2>&1; then
+          echo "本地已有镜像，跳过拉取: $image"
+          return 0
+        fi
+        for attempt in 1 2 3 4 5; do
+          docker pull "$image" && return 0
+          [ "$attempt" -eq 5 ] && break
+          wait=$((attempt * 10))
+          echo "docker pull 失败(${attempt}/5)，${wait}s 后重试: $image"
+          sleep "$wait"
+        done
+        echo "docker pull 连续 5 次失败: $image"
+        return 1
+      }
+      for image in \
+        "m.daocloud.io/docker.io/library/python:3.10-slim" \
+        "m.daocloud.io/docker.io/library/mysql:8.0"; do
+        pull_with_retry "$image" || exit 1
+      done
 
   script:
     # 进入 docker 目录
@@ -135,13 +159,24 @@ unit_tests:
         docker image rm "zjt_test_image:$TEST_IMAGE_TAG" 2>/dev/null || true
       fi
 
-    # 命中即跳过构建；未命中时构建也只重做变化层
+    # 命中即跳过构建；未命中时构建也只重做变化层。
+    # build 带重试：daocloud 偶发 502 / pip 源瞬时抖动，build 幂等且命中宿主机层缓存
     - |
       if docker image inspect "zjt_test_image:$TEST_IMAGE_TAG" > /dev/null 2>&1; then
         echo "镜像缓存命中，跳过构建"
       else
         echo "未命中，执行构建"
-        docker compose -f docker-compose-test.yml build test
+        for attempt in 1 2 3; do
+          if docker compose -f docker-compose-test.yml build test; then
+            built=1; break
+          fi
+          echo "docker compose build 失败(${attempt}/3)，15s 后重试"
+          sleep 15
+        done
+        if [ -z "$built" ]; then
+          echo "docker compose build 连续 3 次失败"
+          exit 1
+        fi
       fi
 
     # 冒烟验证：镜像可用且依赖自洽（--entrypoint 覆盖 docker-entrypoint.sh，
@@ -248,9 +283,50 @@ e2e_smoke:
     # bind mount 路径翻译（与 unit_tests 同理，依赖 /srv/gitlab-builds:/builds 固定挂载）
     - export HOST_SRC_DIR="/srv/gitlab-builds${CI_PROJECT_DIR#/builds}"
     - echo "HOST_SRC_DIR=$HOST_SRC_DIR"
+    # daocloud 公共代理偶发 502（HEAD manifests Bad Gateway），build 阶段解析基础镜像
+    # metadata 时直接失败，而 job 级 retry 不覆盖 script_failure，只能人工重跑。
+    # 预取基础镜像：本地已有秒过（常驻宿主机），缺失时带线性退避重试。
+    # playwright tag 需与 docker/Dockerfile.e2e 的 PLAYWRIGHT_BASE_IMAGE 默认值同步。
+    - |
+      pull_with_retry() {
+        image="$1"
+        if docker image inspect "$image" >/dev/null 2>&1; then
+          echo "本地已有镜像，跳过拉取: $image"
+          return 0
+        fi
+        for attempt in 1 2 3 4 5; do
+          docker pull "$image" && return 0
+          [ "$attempt" -eq 5 ] && break
+          wait=$((attempt * 10))
+          echo "docker pull 失败(${attempt}/5)，${wait}s 后重试: $image"
+          sleep "$wait"
+        done
+        echo "docker pull 连续 5 次失败: $image"
+        return 1
+      }
+      for image in \
+        "m.daocloud.io/mcr.microsoft.com/playwright/python:v1.60.0-noble" \
+        "m.daocloud.io/docker.io/library/python:3.10-slim" \
+        "m.daocloud.io/docker.io/library/mysql:8.0"; do
+        pull_with_retry "$image" || exit 1
+      done
 
   script:
-    - docker compose -f "$E2E_COMPOSE_FILE" build app e2e
+    # BuildKit build 时仍会向 registry 解析基础镜像 metadata（预拉取不豁免），
+    # daocloud 偶发 502 时整条 build 重试即可；build 幂等且命中宿主机层缓存，
+    # 重试同时兜住 RUN 层 pip 源的瞬时抖动。
+    - |
+      for attempt in 1 2 3; do
+        if docker compose -f "$E2E_COMPOSE_FILE" build app e2e; then
+          built=1; break
+        fi
+        echo "docker compose build 失败(${attempt}/3)，15s 后重试"
+        sleep 15
+      done
+      if [ -z "$built" ]; then
+        echo "docker compose build 连续 3 次失败"
+        exit 1
+      fi
     - docker compose -f "$E2E_COMPOSE_FILE" up -d mysql
     - docker compose -f "$E2E_COMPOSE_FILE" run --rm prepare
     - docker compose -f "$E2E_COMPOSE_FILE" up -d app

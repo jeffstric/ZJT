@@ -8,11 +8,16 @@
         return translated && translated !== key ? translated : fallback;
       };
 
-      // 从后端配置获取第一个视频模型作为默认值
+      // 从后端配置获取默认视频模型：优先目录「性价比」档（与剧本/分镜组节点一致），回退列表第一项
       let defaultVideoModel = 'wan22';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
         const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(options.length > 0) defaultVideoModel = options[0].value;
+        if(window.ModelCatalog && options.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(options, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
       
       const node = {
@@ -1275,6 +1280,11 @@
               allAudioUrls = allAudioUrls.concat(voiceRefs.voiceUrls);
               submitPrompt = appendVoiceReferencePrompt(submitPrompt, voiceRefs.promptNote);
               notifyVoiceReferences(voiceRefs.voiceUrls.length);
+            }
+            // H3 系列：追加角色音色指纹（voice_desc）——须在 voiceCharacters 作用域内；
+            // 首帧模式无角色连线数据，暂不覆盖
+            if(typeof appendVoiceCastingIfH3 === 'function'){
+              submitPrompt = appendVoiceCastingIfH3(videoModel, submitPrompt, voiceCharacters);
             }
           }
 

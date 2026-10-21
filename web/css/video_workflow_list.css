@@ -161,14 +161,80 @@ body{
 .workflow-content{
   padding: 16px;
 }
+.owner-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 18px;
+}
+
+.owner-scope[hidden],
+.owner-scope-form[hidden],
+.owner-scope-hint[hidden] {
+  display: none !important;
+}
+
+.owner-scope-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.owner-scope-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.owner-scope-btn.is-active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.owner-scope-form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: min(100%, 320px);
+}
+
+.owner-scope-form .search-input {
+  flex: 1;
+  width: auto;
+}
+
+.owner-scope-submit {
+  flex: 0 0 auto;
+}
+
+.owner-scope-hint {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .workflow-name{
   font-size: 16px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.workflow-owner{
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 .workflow-desc{
   font-size: 13px;

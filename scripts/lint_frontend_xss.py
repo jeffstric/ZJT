@@ -62,12 +62,34 @@ X4_ALLOWED_FILES = {
     "web/reference_audio_guide.html",
 }
 
+# X3 豁免：auth_token 仍经 axios params 对象/URLSearchParams 进 URL 的未迁移页面
+# （收敛过渡期降级实现，只减不增；P1 批次迁移完成后应清空此清单，
+#   见 docs/security/auth_token_in_url_migration.md）
+X3_ALLOWED_FILES = {
+    "web/js/index_app.js",
+    "web/js/pages/ai_script_gen.js",
+    "web/js/pages/ai_video_gen.js",
+    "web/js/pages/audio_generate.js",
+    "web/js/pages/digital_human.js",
+    "web/js/pages/image_edit.js",
+    "web/js/pages/image_to_video.js",
+    "web/js/pages/skill_config.js",
+    "web/js/pages/text_to_image.js",
+    "web/js/pages/video_enhance.js",
+}
+
 X1_DEFINE_RE = re.compile(
     r"\bfunction\s+(?:escapeHtml|escapeHtmlSafe|escapeHtmlLocal|sanitizeHtml)\s*\("
 )
 X2_MARKED_PARSE_RE = re.compile(r"\bmarked\s*\.\s*parse\s*\(")
+# X3：token 进 URL 的三类形态——模板串/字符串拼接、axios params 对象（会被序列化
+# 进 URL query）、URLSearchParams。注意不能匹配请求体字段（JSON body / FormData
+# 里的 auth_token 不进 URL，属合法用法），故 params 形式必须锚定变量名 params。
 X3_URL_TOKEN_RE = re.compile(
-    r"""[?&]auth_token=\$?\{|[?&]auth_token='|searchParams\.set\(\s*['"]auth_token['"]\s*,"""
+    r"""[?&]auth_token=\$?\{|[?&]auth_token='|searchParams\.(?:set|append)\(\s*['"]auth_token['"]"""
+)
+X3_PARAMS_OBJECT_RE = re.compile(
+    r"""\bparams\s*:\s*\{[^}]*\bauth_token\b|\bparams\s*=\s*[\w.]+\s*\?\s*\{[^}]*\bauth_token\b"""
 )
 X4_IMODAL_ONCLICK_RE = re.compile(r"""onclick=["']document\.getElementById\('imgModal'""")
 
@@ -114,6 +136,13 @@ def check_file(rel: str, path: Path) -> list[Finding]:
             findings.append(Finding(
                 "X3", path, lineno,
                 "auth_token 拼进 URL（Referer/历史记录/服务端日志泄漏）；改用 Authorization 头",
+            ))
+        if rel not in X3_ALLOWED_FILES and X3_PARAMS_OBJECT_RE.search(line):
+            findings.append(Finding(
+                "X3", path, lineno,
+                "auth_token 放进 axios params 对象会被序列化进 URL query"
+                "（Referer/历史记录/服务端日志泄漏）；同源请求改走 cookie 会话翻译，"
+                "非浏览器客户端改用 Authorization 头",
             ))
         if rel not in X4_ALLOWED_FILES and X4_IMODAL_ONCLICK_RE.search(line):
             findings.append(Finding(

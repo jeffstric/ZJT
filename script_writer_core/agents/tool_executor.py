@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import logging
 from typing import Dict, Any, List, Callable, Optional
 from script_writer_core.file_manager import FileManager
@@ -42,6 +44,8 @@ from script_writer_core.mcp_tool import (
     generate_character_reference_audio,
     check_reference_audio_status,
     generate_digital_human,
+    prepare_digital_human_draft,
+    confirm_digital_human,
 )
 
 logger = logging.getLogger(__name__)
@@ -127,6 +131,8 @@ class ToolExecutor:
             "generate_character_reference_audio": generate_character_reference_audio,
             "check_reference_audio_status": check_reference_audio_status,
             "generate_digital_human": generate_digital_human,
+            "prepare_digital_human_draft": prepare_digital_human_draft,
+            "confirm_digital_human": confirm_digital_human,
         }
 
 
@@ -174,7 +180,8 @@ class ToolExecutor:
                 "delete_asset_reference_image",
                 "generate_reference_audio",
                 "generate_character_reference_audio", "check_reference_audio_status",
-                "generate_digital_human"
+                "generate_digital_human",
+                "prepare_digital_human_draft", "confirm_digital_human"
             ]
 
             # 需要传递 language 参数的创建工具（update 函数不调用 validate_name_for_filename，不需要此参数）
@@ -207,7 +214,12 @@ class ToolExecutor:
                     extra_kwargs['model'] = model
                     extra_kwargs['model_id'] = model_id
                     extra_kwargs['vendor_id'] = vendor_id
-                result = tool_func(user_id, world_id, auth_token, **extra_kwargs, **safe_tool_args)
+                if inspect.iscoroutinefunction(tool_func):
+                    # Agent 工具运行于同步线程（无事件循环），async 工具以 asyncio.run 执行
+                    result = asyncio.run(
+                        tool_func(user_id, world_id, auth_token, **extra_kwargs, **safe_tool_args))
+                else:
+                    result = tool_func(user_id, world_id, auth_token, **extra_kwargs, **safe_tool_args)
             else:
                 # 兼容旧逻辑，但理论上现在应该都走上面
                 tool_args["user_id"] = user_id

@@ -12,6 +12,87 @@ let totalPages = 1;
 let searchKeyword = '';
 let searchTimeout = null;
 let worldsCache = [];
+let ownerScope = 'mine';
+let ownerQuery = '';
+let isAdminUser = false;
+let listRequestSeq = 0;
+
+function setListBrowseState(state) {
+  if (!state) return;
+  if (state.isAdmin != null) isAdminUser = !!state.isAdmin;
+  if (state.scope != null) ownerScope = state.scope;
+  if (state.owner != null) ownerQuery = state.owner;
+}
+
+function buildWorkflowListQuery(options) {
+  const params = new URLSearchParams();
+  params.set('page', String(options.page));
+  params.set('page_size', String(options.pageSize));
+  if (options.status) params.set('status', options.status);
+  if (options.keyword) params.set('keyword', options.keyword);
+  if (options.isAdmin && options.scope) params.set('scope', options.scope);
+  if (options.isAdmin && options.scope === 'user' && options.owner) {
+    params.set('owner', options.owner);
+  }
+  return params.toString();
+}
+
+function ownerHintText(message) {
+  if (!message || message === 'success') return '';
+  if (message === '请输入昵称或账号') return t('owner_query_required');
+  if (message === '未找到该用户') return t('owner_not_found');
+  return message;
+}
+
+function canManageWorkflow(workflow, userId) {
+  if (!workflow || workflow.user_id == null || workflow.user_id === '') return true;
+  return String(workflow.user_id) === String(userId);
+}
+
+function workflowOwnerMarkup(nickname) {
+  const ownerName = String(nickname || '').trim();
+  if (!ownerName) return '';
+  return `<div class="workflow-owner">${escapeHtml(ownerName)}</div>`;
+}
+
+async function loadIsAdmin() {
+  try {
+    const response = await fetch('/api/user/role', {
+      headers: {
+        'Authorization': getAuthToken(),
+        'X-User-Id': getUserId()
+      }
+    });
+    const data = await response.json().catch(() => null);
+    isAdminUser = !!(data && data.code === 0 && data.data && data.data.role === 'admin');
+  } catch (e) {
+    isAdminUser = false;
+  }
+}
+
+function syncOwnerScopeUi() {
+  const bar = document.getElementById('workflowOwnerScope');
+  const form = document.getElementById('workflowOwnerForm');
+  if (bar) bar.hidden = !isAdminUser;
+  if (form) form.hidden = !(isAdminUser && ownerScope === 'user');
+  document.querySelectorAll('#workflowOwnerScope .owner-scope-btn').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.scope === ownerScope);
+  });
+}
+
+function showOwnerHint(message) {
+  const hint = document.getElementById('workflowOwnerHint');
+  if (!hint) return;
+  const text = ownerHintText(message);
+  hint.textContent = text;
+  hint.hidden = !text;
+}
+
+function showOwnerQueryRequired() {
+  listRequestSeq += 1;
+  showOwnerHint('请输入昵称或账号');
+  renderWorkflows({ data: [], total: 0 });
+}
 
 function ensureLoggedIn() {
   const uid = getUserId();
@@ -23,19 +104,29 @@ function ensureLoggedIn() {
 }
 
 async function loadWorkflows() {
+  const seq = ++listRequestSeq;
   const container = document.getElementById('workflowContainer');
+  if (!container) return;
   container.innerHTML = '<div class="loading"><div class="loading-spinner"></div><div>' + t('loading') + '</div></div>';
 
   if (!ensureLoggedIn()) {
+    if (seq !== listRequestSeq) return;
     container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🔒</div><div class="empty-state-title">' + t('login_required') + '</div><div class="empty-state-desc">' + t('login_required_desc') + '</div><a class="btn" href="/">' + t('go_to_login') + '</a></div>';
-    document.getElementById('pagination').style.display = 'none';
+    const pagination = document.getElementById('pagination');
+    if (pagination) pagination.style.display = 'none';
     return;
   }
 
-  const status = document.getElementById('statusFilter').value;
-  let url = `/api/video-workflow/list?page=${currentPage}&page_size=${pageSize}`;
-  if (status) url += `&status=${status}`;
-  if (searchKeyword) url += `&keyword=${encodeURIComponent(searchKeyword)}`;
+  const status = document.getElementById('statusFilter')?.value || '';
+  const url = `/api/video-workflow/list?${buildWorkflowListQuery({
+    page: currentPage,
+    pageSize: pageSize,
+    status: status,
+    keyword: searchKeyword,
+    isAdmin: isAdminUser,
+    scope: ownerScope,
+    owner: ownerQuery
+  })}`;
 
   try {
     const response = await fetch(url, {
@@ -45,14 +136,17 @@ async function loadWorkflows() {
       }
     });
     const result = await response.json();
+    if (seq !== listRequestSeq) return;
 
     if (result.code === 0) {
+      showOwnerHint(result.message);
       renderWorkflows(result.data);
     } else {
       showToast(result.message || t('load_failed'), 'error');
       container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">' + t('load_failed') + '</div><div class="empty-state-desc">' + t('load_failed_desc') + '</div></div>';
     }
   } catch (error) {
+    if (seq !== listRequestSeq) return;
     showToast(t('network_error'), 'error');
     container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">😕</div><div class="empty-state-title">' + t('network_error') + '</div><div class="empty-state-desc">' + t('network_error_desc') + '</div></div>';
   }
@@ -94,21 +188,26 @@ function renderWorkflows(data) {
     const safeName = escapeHtml(JSON.stringify(workflow.name || ''));
     const safeDesc = escapeHtml(JSON.stringify(workflow.description || ''));
 
+    const actionsHtml = canManageWorkflow(workflow, getUserId())
+      ? `<div class="workflow-actions" onclick="event.stopPropagation()">
+          <button class="btn btn-secondary btn-sm" onclick="editWorkflow(${workflow.id}, ${safeName}, ${safeDesc}, ${workflow.status})">${t('edit_btn')}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteWorkflow(${workflow.id})">${t('delete_btn')}</button>
+        </div>`
+      : '';
+
     html += `
       <div class="workflow-card" onclick="enterWorkflow(${workflow.id})">
         <div class="workflow-cover">${coverHtml}</div>
         <div class="workflow-content">
           <div class="workflow-name">${escapeHtml(workflow.name)}</div>
+          ${workflowOwnerMarkup(workflow.owner_nickname)}
           <div class="workflow-desc">${escapeHtml(workflow.description || t('no_description'))}</div>
           <div class="workflow-meta">
             <span>${createTime}</span>
             <span class="workflow-status ${statusClass}">${statusText}</span>
           </div>
         </div>
-        <div class="workflow-actions" onclick="event.stopPropagation()">
-          <button class="btn btn-secondary btn-sm" onclick="editWorkflow(${workflow.id}, ${safeName}, ${safeDesc}, ${workflow.status})">${t('edit_btn')}</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteWorkflow(${workflow.id})">${t('delete_btn')}</button>
-        </div>
+        ${actionsHtml}
       </div>
     `;
   });
@@ -589,15 +688,58 @@ async function applyFeedbackVisibilityFromServer() {
   if (img && qrUrl) img.setAttribute('src', qrUrl);
 }
 
+async function bootWorkflowList() {
+  try {
+    await initI18n();
+  } catch (err) {
+    console.error('[i18n] 初始化失败:', err);
+  }
+  await loadIsAdmin();
+  syncOwnerScopeUi();
+  loadWorkflows();
+}
+
+function bindOwnerScope() {
+  const bar = document.getElementById('workflowOwnerScope');
+  if (!bar || bar.dataset.bound === '1') return;
+  bar.dataset.bound = '1';
+  bar.addEventListener('click', (event) => {
+    const button = event.target.closest('.owner-scope-btn');
+    if (!button || !isAdminUser) return;
+    ownerScope = button.dataset.scope || 'mine';
+    if (ownerScope === 'user') {
+      ownerQuery = (document.getElementById('workflowOwnerInput')?.value || '').trim();
+    }
+    currentPage = 1;
+    syncOwnerScopeUi();
+    if (ownerScope === 'user' && !ownerQuery) {
+      showOwnerQueryRequired();
+      return;
+    }
+    loadWorkflows();
+  });
+  const form = document.getElementById('workflowOwnerForm');
+  if (!form) return;
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!isAdminUser) return;
+    ownerScope = 'user';
+    ownerQuery = (document.getElementById('workflowOwnerInput')?.value || '').trim();
+    currentPage = 1;
+    syncOwnerScopeUi();
+    if (!ownerQuery) {
+      showOwnerQueryRequired();
+      return;
+    }
+    loadWorkflows();
+  });
+}
+
 // Initial load（仅在浏览器环境中执行，测试环境跳过）
 if (typeof document !== 'undefined' && document.getElementById('workflowContainer')) {
   applyFeedbackVisibilityFromServer().catch(() => {});
-  initI18n().then(() => {
-    loadWorkflows();
-  }).catch(err => {
-    console.error('[i18n] 初始化失败:', err);
-    loadWorkflows();
-  });
+  bindOwnerScope();
+  bootWorkflowList();
 
   // 检测URL参数，如果有action=create则自动打开新建表单
   const urlParams = new URLSearchParams(window.location.search);
@@ -619,5 +761,14 @@ if (typeof document !== 'undefined' && document.getElementById('workflowContaine
 
 // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
 if (typeof module !== 'undefined') {
-  module.exports = { ensureLoggedIn };
+  module.exports = {
+    ensureLoggedIn,
+    buildWorkflowListQuery,
+    ownerHintText,
+    canManageWorkflow,
+    workflowOwnerMarkup,
+    loadWorkflows,
+    bindOwnerScope,
+    setListBrowseState
+  };
 }

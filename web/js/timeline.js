@@ -251,10 +251,8 @@
         }
       }
       
-      // 如果是对话组节点
-      if (node.type === 'dialogue_group' && node.data.shotNumber) {
-        shotNumber = node.data.shotNumber;
-        // 查找关联的剧本节点（通过分镜节点连接）
+      // 如果是对话组节点：优先从入边分镜节点解析柱子（分镜节点自身带有剧本与镜号）
+      if (node.type === 'dialogue_group') {
         const incomingConns = state.connections.filter(c => c.to === nodeId);
         for (const conn of incomingConns) {
           const sourceNode = state.nodes.find(n => n.id === conn.from);
@@ -265,14 +263,39 @@
         }
       }
 
-      // 如果是音频节点（来自对话组生成的独立音频节点）
+      // 如果是文字转语音节点：通过来源关联线/音色线向上找对话组，再追溯到分镜
+      if (node.type === 'text_to_speech') {
+        const linkConn = (state.audioConnections || []).find(c =>
+          c.to === nodeId && (c.portType === 'dialogue_link' || c.portType === 'voice')
+        );
+        if (linkConn) {
+          const parentNode = state.nodes.find(n => n.id === linkConn.from);
+          if (parentNode && parentNode.type === 'dialogue_group') {
+            const pillar = getPillarForNode(parentNode.id);
+            if (pillar) return pillar;
+          }
+        }
+      }
+
+      // 如果是音频节点（文字转语音生成，或来自对话组的独立音频节点）
       if (node.type === 'audio') {
-        // 优先通过 sourceNodeId 找到父对话组节点
+        // 1) 文字转语音生成的音频节点：优先沿产出连线向上追溯
+        const ttsConn = (state.audioConnections || []).find(c => c.to === nodeId && !c.portType);
+        if (ttsConn) {
+          const pillar = getPillarForNode(ttsConn.from);
+          if (pillar) return pillar;
+        }
+        if (node.data.ttsNodeId != null) {
+          const pillar = getPillarForNode(node.data.ttsNodeId);
+          if (pillar) return pillar;
+        }
+        // 2) 通过 sourceNodeId 找到父对话组节点
         let dialogueGroupNode = null;
         if (node.data.sourceNodeId) {
-          dialogueGroupNode = state.nodes.find(n => n.id === node.data.sourceNodeId);
+          const byIdNode = state.nodes.find(n => n.id === node.data.sourceNodeId);
+          if (byIdNode && byIdNode.type === 'dialogue_group') dialogueGroupNode = byIdNode;
         }
-        // 如果 sourceNodeId 不存在，尝试通过音频连接线查找父对话组
+        // 3) 如果 sourceNodeId 不存在，尝试通过音频连接线查找父对话组
         if (!dialogueGroupNode) {
           const audioConn = (state.audioConnections || []).find(c => c.to === nodeId);
           if (audioConn) {
@@ -1791,6 +1814,43 @@
       return null;
     }
     
+    // 片段可能携带已失效的 blob: 临时地址（在上传完成前添加到时间轴所致），
+    // blob: 地址只在浏览器会话内有效，服务端无法下载，导出时回退到所属节点的当前地址
+    function isValidMediaUrl(u) {
+      return typeof u === 'string'
+        && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/upload/'));
+    }
+
+    function resolveClipExportUrl(clip) {
+      if (isValidMediaUrl(clip.url)) return clip.url;
+      const node = (clip.nodeId !== undefined && clip.nodeId !== null)
+        ? state.nodes.find(n => n.id === clip.nodeId)
+        : null;
+      if (node && isValidMediaUrl(node.data.url)) {
+        console.warn('[时间轴导出] 片段地址已失效，回退节点当前地址:', clip.name, clip.url, '->', node.data.url);
+        return node.data.url;
+      }
+      return clip.url;
+    }
+
+    // 收集时间轴导出用片段数据（草稿导出 / 素材包导出共用），按 order 排序
+    function collectTimelineExportClips() {
+      const sortedClips = [...(state.timeline.clips || [])].sort((a, b) => a.order - b.order);
+      const sortedAudioClips = [...(state.timeline.audioClips || [])].sort((a, b) => a.order - b.order);
+      const toPayload = (clip) => ({
+        url: resolveClipExportUrl(clip),
+        name: clip.name,
+        duration: clip.duration,
+        startTime: clip.startTime || 0,
+        endTime: clip.endTime || clip.duration,
+        pillarId: clip.pillarId || null
+      });
+      return {
+        videoClipsData: sortedClips.map(toPayload),
+        audioClipsData: sortedAudioClips.map(toPayload)
+      };
+    }
+
     // 导出时间轴到剪影草稿
     function exportTimelineToDraft() {
       if (!state.timeline.clips || state.timeline.clips.length === 0) {
@@ -1874,43 +1934,8 @@
         
         closeDialog();
         
-        // 片段可能携带已失效的 blob: 临时地址（在上传完成前添加到时间轴所致），
-        // blob: 地址只在浏览器会话内有效，服务端无法下载，导出时回退到所属节点的当前地址
-        const isValidMediaUrl = (u) => typeof u === 'string'
-          && (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/upload/'));
-        const resolveClipExportUrl = (clip) => {
-          if (isValidMediaUrl(clip.url)) return clip.url;
-          const node = (clip.nodeId !== undefined && clip.nodeId !== null)
-            ? state.nodes.find(n => n.id === clip.nodeId)
-            : null;
-          if (node && isValidMediaUrl(node.data.url)) {
-            console.warn('[导出草稿] 片段地址已失效，回退节点当前地址:', clip.name, clip.url, '->', node.data.url);
-            return node.data.url;
-          }
-          return clip.url;
-        };
-
-        // 准备时间轴数据 - 包含视频和音频
-        const sortedClips = [...state.timeline.clips].sort((a, b) => a.order - b.order);
-        const videoClipsData = sortedClips.map(clip => ({
-          url: resolveClipExportUrl(clip),
-          name: clip.name,
-          duration: clip.duration,
-          startTime: clip.startTime || 0,
-          endTime: clip.endTime || clip.duration,
-          pillarId: clip.pillarId || null
-        }));
-
-        // 准备音频数据
-        const sortedAudioClips = [...state.timeline.audioClips].sort((a, b) => a.order - b.order);
-        const audioClipsData = sortedAudioClips.map(clip => ({
-          url: resolveClipExportUrl(clip),
-          name: clip.name,
-          duration: clip.duration,
-          startTime: clip.startTime || 0,
-          endTime: clip.endTime || clip.duration,
-          pillarId: clip.pillarId || null
-        }));
+        // 片段地址解析与数据收集见 collectTimelineExportClips（草稿/素材包导出共用）
+        const { videoClipsData, audioClipsData } = collectTimelineExportClips();
         
         // 准备柱子数据（用于处理不连续的视频）
         const pillarsData = state.timeline.pillars.map(pillar => ({
@@ -1932,7 +1957,7 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-User-Id': window.USER_ID || '1'
+              'X-User-Id': localStorage.getItem('user_id') || '1'
             },
             body: JSON.stringify({
               draft_path: draftPath,
@@ -1986,6 +2011,67 @@
           closeDialog();
         }
       });
+    }
+
+    // 导出时间轴素材包 zip（对齐故事板「导出素材包」：原视频/音频素材 + manifest，
+    // 服务端打包上传后返回 download_url）
+    async function exportTimelineAssets() {
+      if (!state.timeline.clips || state.timeline.clips.length === 0) {
+        showToast(window.t ? window.t('timeline_assets_empty') : '时间轴为空，无法导出素材包', 'error');
+        return;
+      }
+
+      const { videoClipsData, audioClipsData } = collectTimelineExportClips();
+      const workflowName = document.querySelector('.brand-title')?.textContent || '未命名工作流';
+
+      try {
+        showToast(window.t ? window.t('timeline_assets_packing') : '正在打包素材，请稍候...', 'info');
+
+        const response = await fetch('/api/export_timeline_assets', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-User-Id': localStorage.getItem('user_id') || '1'
+          },
+          body: JSON.stringify({
+            video_clips: videoClipsData,
+            audio_clips: audioClipsData,
+            workflow_name: workflowName,
+            request_origin: window.location.origin
+          })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          if (!result.download_url) {
+            showToast(window.t ? window.t('timeline_assets_no_url') : '素材包导出成功，但未返回下载链接', 'warning');
+            return;
+          }
+
+          // 验证下载URL协议，防止open redirect
+          const downloadUrl = result.download_url;
+          if (!/^https?:\/\//i.test(downloadUrl) && !downloadUrl.startsWith('/')) {
+            console.error('Invalid download URL protocol:', downloadUrl);
+            showToast(window.t ? window.t('timeline_assets_invalid_url') : '下载链接无效', 'error');
+            return;
+          }
+
+          showToast(window.t ? window.t('timeline_assets_success') : '素材包导出成功，已开始下载', 'success');
+          // downloadWithAuth 带 Authorization 走 /api/download 代理取附件，
+          // 兼容本地 /upload 相对路径与 CDN 签名地址，且能指定下载文件名
+          if (typeof window.downloadWithAuth === 'function') {
+            window.downloadWithAuth(downloadUrl, result.filename || 'timeline_assets.zip');
+          } else {
+            window.location.href = downloadUrl;
+          }
+        } else {
+          showToast((window.t ? window.t('timeline_assets_failed') : '素材包导出失败') + ': ' + (result.error || '未知错误'), 'error');
+        }
+      } catch (error) {
+        console.error('导出素材包失败:', error);
+        showToast((window.t ? window.t('timeline_assets_failed') : '素材包导出失败') + ': ' + error.message, 'error');
+      }
     }
     
     // 绑定音频片段事件

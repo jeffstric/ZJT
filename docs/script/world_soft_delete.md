@@ -2,7 +2,7 @@
 
 ## 概述
 
-剧本策划页（`script_writer`）左侧世界侧栏支持将世界**伪删除**：仅打隐藏标记，从列表中消失，**不删库、不删资产**。用户可在「查看已删除的世界」中恢复显示。
+剧本策划页（`script_writer`）左侧世界侧栏支持将世界**隐藏**：仅打隐藏标记，从列表中消失，**不删库、不删资产**。用户可在「查看已隐藏的世界」中恢复显示。
 
 硬删除（`DELETE /api/worlds/{id}`，画布世界选择器的「−」）语义不变，与伪删除并存。
 
@@ -20,10 +20,14 @@ Model：`model/world.py`
 
 ## API
 
+> 鉴权（2026-10-20 起）：本节所有接口的身份唯一可信来源是 `Authorization` token
+> 解析结果；`X-User-Id` 头仅作一致性参考，缺失/失效/与 token 属主不一致一律 401
+> （全站由 `x_user_id_consistency_middleware` 收口，见 docs/backend/auth_unification.md 五）。
+
 ### 列表
 
 ```
-GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
+GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all&scope=user|all
 ```
 
 | `visibility` | 含义 |
@@ -31,6 +35,11 @@ GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
 | `active`（默认） | 仅 `is_deleted=0`，全站选择器默认行为 |
 | `deleted` | 仅已伪删除 |
 | `all` | 不过滤（名称反查等内部场景） |
+
+| `scope` | 含义 |
+| --- | --- |
+| `user`（默认） | 独立空间模式仅当前用户；共享空间本就返回全部 |
+| `all` | 全部用户的世界，**仅管理员生效**，其他身份自动回退 `user` |
 
 所有现有 `GET /api/worlds` 调用方**不传参即可自动排除已隐藏世界**。
 
@@ -40,7 +49,7 @@ GET /api/worlds?page=1&page_size=100&visibility=active|deleted|all
 POST /api/worlds/{world_id}/hide
 ```
 
-- 权限同硬删（创建者等）
+- 权限同硬删：创建者本人，或管理员（`users.role='admin'`）可隐藏他人世界。其他身份返回 403，正文同时带 `message` 与 `detail`，文案为「仅创建者或管理员可删除该世界」。剧本页按这句展示，不再落成「未知错误」
 - **不**校验角色/场景是否为空
 - 已隐藏时幂等成功
 
@@ -50,6 +59,7 @@ POST /api/worlds/{world_id}/hide
 POST /api/worlds/{world_id}/restore
 ```
 
+- 权限同隐藏：创建者或管理员
 - 若同用户下已有同名未删除世界 → 400：`存在同名世界，请先修改名称后再恢复`
 
 ### 硬删除（保留）
@@ -58,13 +68,18 @@ POST /api/worlds/{world_id}/restore
 DELETE /api/worlds/{world_id}
 ```
 
-仍要求无角色/场景后物理删除。
+仍要求无角色、场景、道具后物理删除。有任一资产时返回 400，文案分别为「仍存在角色 / 场景 / 道具」。权限：创建者本人；**管理员（`users.role='admin'`）可删除自己或其他用户创建的世界**（独立空间模式下管理员需先通过 `GET /api/worlds?scope=all` 看到目标世界）。
+
+剧本页管理员永久删除失败时，与隐藏/恢复一样走 `readApiErrorText`：按 `message`、`error`、字符串 `detail`、校验数组 `detail[].msg` 的顺序取文案。世界下仍有角色、场景或道具时，后端拒绝原因会显示出来，不会落成「未知错误」。
+
+403 等 `HTTPException` 收成同时带 `message` 与 `detail`；角色或场景非空时的 400 只带 `message`。剧本页管理员永久删除（`adminDeleteWorld`）与隐藏、恢复一样走 `readApiErrorText`，按 `message` → `error` → `detail` 展示，不再落成固定「未知错误」。
 
 ## 前端
 
 | 入口 | 行为 |
 | --- | --- |
-| `script_writer` 侧栏 | 隐藏 / 查看已删除 / 恢复；当前世界被隐藏时跳转到未选世界 |
+| `script_writer` 侧栏 | 抽屉图标为隐藏。普通用户只有隐藏。底部入口是「查看已隐藏的世界」；当前世界被隐藏时跳转到未选世界 |
+| `script_writer` 侧栏（管理员） | 列表拉取 `scope=all` 展示全部用户世界；他人世界带「{昵称} 创建」标记（无昵称时回退「用户{id}」）。管理员对自己和他人的世界都显示永久删除（垃圾桶）。世界下仍有角色、场景或道具时删除失败 |
 | `video_workflow` / `video_workflow_list` / index / marketing 等 | 默认列表自动不展示已删；无伪删除 UI |
 | `storyboard` 编辑页 | 无世界列表；直链 `world_id` 仍可通过 `get_by_id` 访问 |
 

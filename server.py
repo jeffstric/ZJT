@@ -28,7 +28,7 @@ from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_a
 from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
-from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel, ComposeJobModel
 from model.video_workflow import compute_content_hash, content_hashes_for_cas
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
@@ -53,6 +53,9 @@ from config.constant import (
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
+    TASK_TYPE_COMPOSE_JOB,
+    ComposeJobStatus,
+    ComposeJobConstants,
     RECHARGE_PACKAGES,
     Commission,
     VIDEO_MODEL_DURATION_OPTIONS,
@@ -106,6 +109,7 @@ from config.constant import Edition, Action, StoryType
 from config.media_file_policy import MediaFilePolicy
 from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
+from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
 from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
@@ -121,9 +125,14 @@ from utils.video_resolution import validate_video_resolution
 from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
+    http_exception_message,
     check_resource_permission,
     ensure_resource_access,
     ensure_world_access,
+    ensure_world_owner_or_admin,
+    is_admin_user,
+    resolve_authenticated_user_id,
+    enforce_x_user_id_consistency,
 )
 from utils.media_upload import (
     UploadValidationError,
@@ -153,7 +162,16 @@ from services.video_frame_extract_service import (
     extract_last_frame,
     probe_stream_duration,
 )
-from config.constant import MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN
+from services.video_script_extract_service import (
+    create_extract_task,
+    get_extract_task,
+)
+from config.constant import (
+    VideoScriptExtractConstants,
+    MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
+    DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
+    DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
+)
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
 from api.system import router as system_router
@@ -175,6 +193,24 @@ def _asset_not_owner_response(message: str) -> JSONResponse:
     return JSONResponse(
         status_code=403,
         content={'code': -1, 'message': message, 'data': None}
+    )
+
+
+def _http_exception_response(exc: HTTPException) -> JSONResponse:
+    """权限等 HTTPException 收成 {code, message, detail}，与本接口成功体同形。
+
+    直接 raise 时 FastAPI 只回 detail，剧本页只读 message 就会显示「未知错误」。
+    """
+    message = http_exception_message(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            'code': -1,
+            'success': False,
+            'message': message,
+            'detail': message,
+            'data': None,
+        },
     )
 
 
@@ -519,6 +555,10 @@ app.include_router(script_writer_router)
 from api.storyboard import router as storyboard_router
 app.include_router(storyboard_router)
 
+# 故事板 ↔ 工作流画布互转（见 docs/storyboard/storyboard_workflow_conversion.md）
+from api.storyboard_conversion import router as storyboard_conversion_router
+app.include_router(storyboard_conversion_router)
+
 # 剧本分段拆分任务 API（见 docs/script/script_parser_incremental_split_design.md §13）
 from api.script_split import (
     router as script_split_router,
@@ -543,6 +583,10 @@ app.include_router(system_router)
 # 导入并注册媒体验证 API 路由
 from api.media import router as media_router
 app.include_router(media_router)
+
+# 火山引擎（豆包语音）TTS 快速合成 + 音色库（见 docs/audio/volcengine_tts.md）
+from api.tts import router as tts_router
+app.include_router(tts_router)
 
 from api.marketing_publications import router as marketing_publications_router
 app.include_router(marketing_publications_router)
@@ -697,6 +741,22 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     if translated and cookie_token and not path.startswith("/api/auth/"):
         set_auth_cookie(response, cookie_token, request)
     return response
+
+
+@app.middleware("http")
+async def x_user_id_consistency_middleware(request: Request, call_next):
+    """X-User-Id 自报身份与 token 属主一致性强制校验。
+
+    修复"伪主人"漏洞：历史上一批接口（/api/worlds*、storyboard 等）只读
+    X-User-Id 头认定身份，不校验 Authorization token 属主，任何人改一个
+    header 即可冒充他人删改资源。凡携带 X-User-Id 的 /api/ 请求在此统一
+    要求有效 token 且属主一致（细节见 utils/resource_access.py
+    enforce_x_user_id_consistency 与 docs/backend/auth_unification.md）。
+    """
+    error_response = await enforce_x_user_id_consistency(request)
+    if error_response is not None:
+        return error_response
+    return await call_next(request)
 
 
 # 安全响应头中间件（docs/security/xss_stored_chain_fix_plan.md 阶段 4a 第一步）：
@@ -1311,6 +1371,17 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
 
     return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, saved_name, host=SERVER_HOST)
 
+def _save_uploaded_audio_file(upload_file: UploadFile, index: int) -> str:
+    """
+    保存数字人分段音频到 upload/temp/date 目录并返回 URL。
+
+    复用 _save_uploaded_image 的安全链路（扩展名白名单 + 魔数校验 + 分块上限），
+    仅在文件名前加段序号避免同批多段互相覆盖。
+    """
+    original_name = upload_file.filename or f"segment_{index}.wav"
+    upload_file.filename = f"seg_{index}_{original_name}"
+    return _save_uploaded_image(upload_file)
+
 def _get_request_host(request: Request) -> str:
     """
     获取请求的基础主机地址，正确处理反向代理场景。
@@ -1540,16 +1611,60 @@ def _trim_audio_if_needed(audio_path: str, max_duration: float = 20.0) -> str:
         return audio_path
 
 
+async def _download_audio_url_to_tmp(audio_url: str) -> str:
+    """
+    下载音频 URL 到本地临时目录并返回本地路径。
+
+    用于 ref_audio_url 为本服务产出的音频（如音色库预置样例 /voice_presets/*、
+    火山 TTS 结果）等场景：IndexTTS 远端服务无法访问本服务的 localhost 地址，
+    须先落盘为本地文件，由 upload_reference 上传文件内容。
+
+    Returns:
+        下载后的本地文件路径
+
+    Raises:
+        HTTPException: 下载失败或文件过大
+    """
+    audio_dir = FilePathConstants.get_tts_audio_dir(APP_DIR)
+    os.makedirs(audio_dir, exist_ok=True)
+    parsed = urlparse(audio_url)
+    ext = os.path.splitext(parsed.path)[1].lower() or ".mp3"
+    local_path = os.path.join(audio_dir, f"ref_dl_{uuid.uuid4().hex[:8]}{ext}")
+
+    def _download():
+        with httpx.stream("GET", audio_url, timeout=60, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in resp.iter_bytes(65536):
+                    f.write(chunk)
+
+    try:
+        await asyncio.to_thread(_download)
+    except httpx.HTTPStatusError as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {e.response.status_code}")
+    except Exception as e:
+        if os.path.exists(local_path):
+            os.remove(local_path)
+        raise HTTPException(status_code=400, detail=f"参考音频下载失败: {str(e)}")
+
+    if os.path.getsize(local_path) > 20 * 1024 * 1024:
+        os.remove(local_path)
+        raise HTTPException(status_code=400, detail="参考音频文件不能超过 20MB")
+    return local_path
+
+
 async def _download_and_extract_audio_from_video(video_url: str) -> str:
     """
     Download video from URL, validate size and duration, extract audio, and clean up.
-    
+
     Args:
         video_url: URL of the video to download
-        
+
     Returns:
         Path to extracted audio file
-        
+
     Raises:
         HTTPException: If video is too large, too long, or processing fails
     """
@@ -2234,6 +2349,88 @@ async def runninghub_status(
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
+async def _get_compose_status_payload(project_id: str) -> Dict[str, Any]:
+    """compose_<id> 状态聚合（数字人分段拼接）。
+
+    对前端保持与 ai_tools 任务完全一致的响应结构（status/results/reason），
+    前端的 project_id 是不透明字符串，无需任何改动。
+    """
+    from utils.cdn_util import CDNUtil
+
+    try:
+        compose_id = int(project_id[len(ComposeJobConstants.PROJECT_ID_PREFIX):])
+    except (TypeError, ValueError):
+        return {
+            "project_id": project_id,
+            "status": "NOT_FOUND",
+            "results": [],
+            "reason": "任务记录不存在",
+            "is_content_violation": False,
+        }
+
+    job = await asyncio.to_thread(ComposeJobModel.get_by_id, compose_id)
+    if not job:
+        return {
+            "project_id": project_id,
+            "status": "NOT_FOUND",
+            "results": [],
+            "reason": "任务记录不存在",
+            "is_content_violation": False,
+        }
+
+    task_cost_time = 0
+    if job.create_at:
+        task_cost_time = int((datetime.now() - job.create_at).total_seconds())
+
+    if job.status == ComposeJobStatus.COMPLETED:
+        media_url, cdn_status = await asyncio.to_thread(
+            CDNUtil.get_media_url, job.media_mapping_id, job.result_url
+        )
+        file_url = media_url or job.result_url
+        if not file_url:
+            # 成片地址缺失（脏数据/人工改库）：不能报 SUCCESS 空结果，前端会白屏
+            return {
+                "project_id": project_id,
+                "status": "FAILED",
+                "results": [],
+                "reason": job.message or "拼接完成但成片地址缺失，请联系技术支持",
+                "is_content_violation": False,
+            }
+        results_payload = [{
+            "file_url": file_url,
+            "result_url": job.result_url,
+            "cdn_status": cdn_status,
+            "task_cost_time": task_cost_time,
+        }]
+        return {
+            "project_id": project_id,
+            "status": "SUCCESS",
+            "results": results_payload,
+            "reason": None,
+            "is_content_violation": False,
+        }
+
+    if job.status == ComposeJobStatus.FAILED:
+        reason = job.message or "分段拼接失败"
+        return {
+            "project_id": project_id,
+            "status": "FAILED",
+            "results": [],
+            "reason": reason,
+            # 与普通任务路径一致：审核失败原因透传后，前端按内容违规 UI 展示
+            "is_content_violation": is_content_moderation_user_message(reason),
+        }
+
+    # PENDING / COMPOSING：段仍在生成或正在拼接
+    return {
+        "project_id": project_id,
+        "status": "RUNNING",
+        "results": [],
+        "reason": None,
+        "is_content_violation": False,
+    }
+
+
 # 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
 # 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
 # 历史原因导致参数名与实际含义不一致，调用时请注意。
@@ -2258,6 +2455,11 @@ async def get_status(
         tasks_response = []
 
         for ai_tool_id in ai_tool_ids:
+            # 数字人分段拼接编排单：project_id 带 compose_ 前缀，聚合 compose_jobs 状态
+            if ai_tool_id.startswith(ComposeJobConstants.PROJECT_ID_PREFIX):
+                tasks_response.append(await _get_compose_status_payload(ai_tool_id))
+                continue
+
             # Query database to get task type
             task_record = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
             
@@ -2976,6 +3178,7 @@ async def get_user_role(auth_token: str = Header(None, alias="Authorization")):
         return {
             "code": 0,
             "data": {
+                "id": user.id,
                 "role": user.role,
                 "nickname": user.nickname,
                 "display_name": user.nickname or f"用户{user.id}",
@@ -4940,6 +5143,7 @@ async def digital_human_v2_generate(
     image: UploadFile = File(..., description="Input image for digital human"),
     text: str = Form(..., description="Text content for digital human to speak (max 1000 characters)"),
     audio: UploadFile = File(..., description="Reference audio file"),
+    duration: int = Form(None, description="Billable duration in seconds for audio-driven billing (LTX2.3); omit to keep legacy flat-rate behavior"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
@@ -4954,6 +5158,12 @@ async def digital_human_v2_generate(
                 detail="文本内容不能超过1000个字"
             )
 
+        if duration is not None and duration < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="时长参数无效（须为正整数秒）"
+            )
+
         # Save uploaded image
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
 
@@ -4963,7 +5173,12 @@ async def digital_human_v2_generate(
         # Task type for digital human v2
         task_type = TaskTypeId.DIGITAL_HUMAN_LTX2_3_VOICE
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.get_computing_power()
+        # 传 duration 时按音频时长档位计费（数据库 implementation_power 优先，兜底实现方默认值）；
+        # 缺省保持旧固定费率行为，向后兼容未携带 duration 的调用方
+        if task_config and duration:
+            computing_power = task_config.get_computing_power(duration=duration)
+        else:
+            computing_power = task_config.get_computing_power() if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -5019,6 +5234,7 @@ async def digital_human_v2_generate(
                     type=task_type,
                     image_path=image_url,
                     audio_path=audio_url,  # v2 uses audio_path field
+                    duration=duration,  # billable seconds (None keeps legacy NULL)
                     transaction_id=transaction_id,
                     status=AI_TOOL_STATUS_PENDING
                 )
@@ -5055,34 +5271,304 @@ async def digital_human_v2_generate(
         raise HTTPException(status_code=500, detail=f"数字人v2生成失败: {str(e)}")
 
 
+async def _refund_segment_deduction(auth_token: str, transaction_id: str, power: int, reason: str) -> None:
+    """分段提交回滚：按原扣费流水号派生幂等退费流水（refund-{原}）退回算力。
+
+    仅在「扣费成功但段记录未建全」的提交期失败路径使用；段进入正常生命周期后
+    的退费由调度器（超重试/过期）与 compose 补段流程各自负责，不在此处重复。
+    """
+    if not CHECK_AUTH_TOKEN or not power:
+        return
+    try:
+        success, message, _ = await async_make_perseids_request(
+            endpoint='user/calculate_computing_power',
+            method='POST',
+            headers={'Authorization': f'Bearer {auth_token}'},
+            data={
+                "computing_power": power,
+                "behavior": "increase",
+                "transaction_id": f"refund-{transaction_id}"
+            }
+        )
+        if success:
+            logger.info(f"[分段提交回滚] 已退回 {power} 算力（{reason}），原流水 {transaction_id}")
+        else:
+            logger.error(f"[分段提交回滚] 退费失败（{reason}）流水 {transaction_id}: {message}")
+    except Exception as e:
+        logger.error(f"[分段提交回滚] 退费异常（{reason}）流水 {transaction_id}: {e}")
+
+
+async def _submit_segmented_digital_human(
+    *,
+    user_id: int,
+    auth_token: Optional[str],
+    text: str,
+    image_url: str,
+    audio_url: str,
+    segment_paths: list,
+    segment_durations: list,
+    segment_powers: list,
+    duration: int,
+    max_edge: int,
+    start_second: int,
+) -> JSONResponse:
+    """分段数字人提交（口播 >15s）：逐段建标准任务 + 建 compose_job 编排单。
+
+    ⚠️ 设计要点（见 docs/digital_human_compose_job_plan.md）：
+    - 每段是一条**标准** ai_tools(type=35) + tasks(generate_video)，独立计费/退费，
+      走既有驱动非分段路径；段之间互不阻塞，不再独占 generate_video 调度槽。
+    - compose_job 是纯编排器：只持有有序段 id + 参数快照，不碰钱。
+    - 返回 project_id=compose_<id>；前端把 project_id 当不透明字符串，
+      轮询 get-status 时由 resolver 分发到 compose_jobs 聚合状态。
+    """
+    task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+    created: list = []            # [{'id': int, 'transaction_id': str, 'power': int}]
+    deducted: list = []           # [(transaction_id, power)] 已扣费（回滚需原额退回）
+    compose_id: Optional[int] = None
+
+    def _mark_segment_failed(reason: str) -> None:
+        """把已创建的段（ai_tools + tasks）置失败，防止调度器继续驱动。"""
+        for item in created:
+            seg_id = item['id']
+            try:
+                # tasks 表混存 generate_video(task_id=ai_tools.id) 与
+                # compose_job(task_id=compose_jobs.id) 两类行，id 可撞号；
+                # 必须按 (task_type, task_id) 定位后走主键更新
+                row = TasksModel.get_by_type_and_task_id(
+                    TASK_TYPE_GENERATE_VIDEO, seg_id)
+                if row:
+                    TasksModel.update(row.id, status=TASK_STATUS_FAILED)
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] 段 {seg_id} tasks 置失败异常: {e}")
+            try:
+                AIToolsModel.update(
+                    seg_id,
+                    status=AI_TOOL_STATUS_FAILED,
+                    message=reason,
+                    completed_time=datetime.now()
+                )
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] 段 {seg_id} ai_tools 置失败异常: {e}")
+
+    try:
+        for idx, (seg_path, seg_duration, seg_power) in enumerate(
+            zip(segment_paths, segment_durations, segment_powers), start=1
+        ):
+            seg_transaction_id = str(uuid.uuid4())
+
+            # 1) 逐段扣费（每段独立 transaction_id，退费按段幂等）
+            if CHECK_AUTH_TOKEN and seg_power:
+                success, message, _ = await async_make_perseids_request(
+                    endpoint='user/calculate_computing_power',
+                    method='POST',
+                    headers={'Authorization': f'Bearer {auth_token}'},
+                    data={
+                        "computing_power": seg_power,
+                        "behavior": "deduct",
+                        "transaction_id": seg_transaction_id
+                    }
+                )
+                if not success:
+                    logger.error(f"[分段提交] 第 {idx} 段扣费失败: {message}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"第 {idx} 段算力扣减失败: {message}"
+                    )
+                deducted.append((seg_transaction_id, seg_power))
+
+            # 2) 建段记录（extra_config 不含 dh_segments → 驱动走标准单段路径）
+            seg_extra = json.dumps({
+                "max_edge": max_edge,
+                "start_second": start_second,
+                "seg_index": idx,
+                "dh_segment": True,
+                "compose_id": 0,
+            }, ensure_ascii=False)
+            seg_id = AIToolsModel.create(
+                prompt=text,
+                user_id=user_id,
+                type=task_type,
+                image_path=image_url,
+                audio_path=seg_path,
+                duration=seg_duration,
+                extra_config=seg_extra,
+                transaction_id=seg_transaction_id,
+                status=AI_TOOL_STATUS_PENDING
+            )
+            created.append({
+                'id': seg_id,
+                'transaction_id': seg_transaction_id,
+                'power': seg_power,
+                'seg_index': idx,
+            })
+
+            # 3) 建调度行（与其他视频任务同队列，受槽位/退避统一管理）
+            TasksModel.create(
+                task_type=TASK_TYPE_GENERATE_VIDEO,
+                task_id=seg_id,
+                status=TASK_STATUS_QUEUED
+            )
+            try:
+                from task.pipeline_processor import PipelineProcessor
+                PipelineProcessor.attach_param_prepare_if_needed(seg_id, task_type)
+            except Exception as e:
+                logger.warning(f"Failed to create param_prepare steps for segment {seg_id}: {e}")
+
+        if not created:
+            raise HTTPException(status_code=400, detail="分段音频为空，无法提交")
+
+        # 4) 建编排单（段 id 顺序即拼接顺序）
+        compose_params = {
+            "prompt": text,
+            "max_edge": max_edge,
+            "start_second": start_second,
+            "duration": duration,
+            "image_url": image_url,
+            "audio_url": audio_url,
+            "segment_durations": list(segment_durations),
+            "segment_paths": list(segment_paths),
+        }
+        compose_id = ComposeJobModel.create(
+            user_id=user_id,
+            segment_ai_tool_ids=[item['id'] for item in created],
+            params=compose_params
+        )
+
+        # 5) 回写各段 compose_id（仅作排查线索；权威来源是 compose_jobs.segment_ai_tool_ids）
+        for item in created:
+            try:
+                AIToolsModel.update(
+                    item['id'],
+                    extra_config=json.dumps({
+                        "max_edge": max_edge,
+                        "start_second": start_second,
+                        "seg_index": item['seg_index'],
+                        "dh_segment": True,
+                        "compose_id": compose_id,
+                    }, ensure_ascii=False)
+                )
+            except Exception as e:
+                logger.warning(f"[分段提交] 段 {item['id']} 回写 compose_id 失败: {e}")
+
+        # 6) 编排任务入队（task_type='compose_job'，由 compose 专用主循环消费）
+        TasksModel.create(
+            task_type=TASK_TYPE_COMPOSE_JOB,
+            task_id=compose_id,
+            status=TASK_STATUS_QUEUED
+        )
+
+        logger.info(
+            f"[分段提交] compose_id={compose_id} user={user_id} 段数={len(created)} "
+            f"总时长={duration}s 总算力={sum(segment_powers)}"
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": f"{ComposeJobConstants.PROJECT_ID_PREFIX}{compose_id}",
+            "status": "submitted",
+            "image_url": image_url,
+            "audio_url": audio_url,
+            "segment_count": len(created),
+        })
+
+    except HTTPException:
+        _mark_segment_failed("分段提交失败，任务已取消")
+        for txn, power in deducted:
+            await _refund_segment_deduction(auth_token, txn, power, "分段提交失败")
+        if compose_id:
+            try:
+                ComposeJobModel.update(compose_id, status=-1, message="分段提交失败，任务已取消")
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] compose {compose_id} 置失败异常: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"[分段提交] 提交失败: {e}")
+        logger.error(traceback.format_exc())
+        _mark_segment_failed("分段提交失败，任务已取消")
+        for txn, power in deducted:
+            await _refund_segment_deduction(auth_token, txn, power, "分段提交失败")
+        if compose_id:
+            try:
+                ComposeJobModel.update(compose_id, status=-1, message="分段提交失败，任务已取消")
+            except Exception as up_err:
+                logger.warning(f"[分段提交回滚] compose {compose_id} 置失败异常: {up_err}")
+        raise HTTPException(status_code=500, detail=f"分段数字人提交失败: {str(e)}")
+
+
 @app.post("/api/digital-human-minimax-h3")
 @require_permission("digital_human:create")
 async def digital_human_minimax_h3_generate(
     request: Request,
     image: UploadFile = File(..., description="Input image for digital human"),
-    text: str = Form(..., description="Prompt text for digital human motion (max 1000 characters)"),
+    text: str = Form(..., description=f"Prompt text for digital human motion (max {H3_LOCKED_PROMPT_MAX_CHARS} characters)"),
     audio: UploadFile = File(..., description="Speaking audio file"),
-    duration: int = Form(10, description="Video duration in seconds (4-10)"),
+    duration: int = Form(10, description="Total video duration in seconds (4-15 single; 16-30 segmented)"),
     max_edge: int = Form(1280, description="Video max edge length: 720, 1280, 1920"),
     start_second: int = Form(0, description="Second when digital human starts speaking"),
+    segment_audio: List[UploadFile] = File(None, description="Segment audio files for >15s split pipeline (each 4-15s)"),
+    segment_durations: str = Form(None, description="JSON list of per-segment integer durations, e.g. [15,15]"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token")
 ):
     """
     Generate MiniMax H3 digital human video (image + audio + prompt)
+
+    duration <= 15: single-segment generation.
+    >15 with segment_audio: compose 模式——每段建一条标准 ai_tools + tasks
+    （独立计费/退费，走普通视频任务队列并发执行），另建 compose_jobs 编排单
+    负责聚合段状态、补缺口段与 ffmpeg 拼接；返回 project_id=compose_<id>。
     """
     try:
-        if len(text) > 1000:
+        # H3 的 text 是锁镜头动作提示词（integrated_multimodal_description），
+        # 不是口播文案；上限须与客户端 confirm 截断上限 H3_LOCKED_PROMPT_MAX_CHARS
+        # 保持一致，否则 VL 生成的长提示词（1300+ 字符）会被此处误拒
+        if len(text) > H3_LOCKED_PROMPT_MAX_CHARS:
             raise HTTPException(
                 status_code=400,
-                detail="文本内容不能超过1000个字"
+                detail=f"文本内容不能超过{H3_LOCKED_PROMPT_MAX_CHARS}个字"
             )
 
-        allowed_durations = {4, 5, 6, 7, 8, 9, 10}
-        if duration not in allowed_durations:
+        segment_files = list(segment_audio) if segment_audio else []
+        parsed_segment_durations: list = []
+        if segment_files:
+            try:
+                parsed_segment_durations = json.loads(segment_durations) if segment_durations else []
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="segment_durations 须为 JSON 整数数组")
+            if not isinstance(parsed_segment_durations, list) or \
+                    len(parsed_segment_durations) != len(segment_files):
+                raise HTTPException(
+                    status_code=400,
+                    detail="segment_durations 数量须与 segment_audio 文件数一致"
+                )
+            for sd in parsed_segment_durations:
+                if not isinstance(sd, int) or sd < 4 or sd > 15:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"分段时长须为 4-15 的整数，收到: {sd}"
+                    )
+            if sum(parsed_segment_durations) != duration:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"分段时长之和 {sum(parsed_segment_durations)} 须等于总时长 {duration}"
+                )
+        elif duration > DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS:
             raise HTTPException(
                 status_code=400,
-                detail=f"视频时长仅支持 {sorted(allowed_durations)} 秒"
+                detail=f"超过 {DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS} 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
+            )
+
+        # 单段 4-{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS}；分段模式总时长 8-600（≥2 段各 4s，
+        # 600 为异常兜底上限，实际受口播文案长度自然约束）
+        if segment_files:
+            if not (8 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"分段拼接模式总时长须为 8-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒，收到 {duration}"
+                )
+        elif duration not in set(range(4, DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS + 1)):
+            raise HTTPException(
+                status_code=400,
+                detail=f"视频时长仅支持 4-{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS} 秒（{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS}-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
             )
 
         allowed_max_edges = {720, 1280, 1920}
@@ -5101,9 +5587,24 @@ async def digital_human_minimax_h3_generate(
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
         audio_url = await asyncio.to_thread(_save_uploaded_image, audio)
 
+        # 分段音频落盘（wav/mp3 白名单由 media_upload 校验；每段作为独立 ai_tools.audio_path）
+        segment_paths: list = []
+        for idx, seg in enumerate(segment_files, start=1):
+            seg_url = await asyncio.to_thread(_save_uploaded_audio_file, seg, idx)
+            segment_paths.append(seg_url)
+
         task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
         task_config = TaskTypeRegistry.get(task_type)
-        computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
+        segment_power_list: list = []
+        if segment_files:
+            # 分段计费 = 各段档位之和；逐段独立扣费/退费（每段一条 ai_tools 记录）
+            segment_power_list = [
+                task_config.get_computing_power(duration=sd) if task_config else 0
+                for sd in parsed_segment_durations
+            ]
+            computing_power = sum(segment_power_list)
+        else:
+            computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
 
         if CHECK_AUTH_TOKEN:
             headers = {'Authorization': f'Bearer {auth_token}'}
@@ -5131,6 +5632,26 @@ async def digital_human_minimax_h3_generate(
                     detail="用户ID不匹配"
                 )
 
+        if not user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        if segment_files:
+            # ===== 分段拼接模式：逐段建标准任务 + compose_job 编排（不占调度槽）=====
+            return await _submit_segmented_digital_human(
+                user_id=user_id,
+                auth_token=auth_token,
+                text=text,
+                image_url=image_url,
+                audio_url=audio_url,
+                segment_paths=segment_paths,
+                segment_durations=parsed_segment_durations,
+                segment_powers=segment_power_list,
+                duration=duration,
+                max_edge=max_edge,
+                start_second=start_second,
+            )
+
+        # ===== 单段模式（≤15s）：行为与改造前完全一致 =====
         transaction_id = str(uuid.uuid4())
 
         if CHECK_AUTH_TOKEN:
@@ -5147,47 +5668,45 @@ async def digital_human_minimax_h3_generate(
             if not success:
                 logger.error(f"Computing power deduction failed: {message}")
 
-        if user_id:
+        try:
+            extra_data = {
+                "max_edge": max_edge,
+                "start_second": start_second,
+            }
+            extra_config = json.dumps(extra_data, ensure_ascii=False)
+
+            id = AIToolsModel.create(
+                prompt=text,
+                user_id=user_id,
+                type=task_type,
+                image_path=image_url,
+                audio_path=audio_url,
+                duration=duration,
+                extra_config=extra_config,
+                transaction_id=transaction_id,
+                status=AI_TOOL_STATUS_PENDING
+            )
+            TasksModel.create(
+                task_type=TASK_TYPE_GENERATE_VIDEO,
+                task_id=id,
+                status=TASK_STATUS_QUEUED
+            )
             try:
-                extra_config = json.dumps({
-                    "max_edge": max_edge,
-                    "start_second": start_second,
-                }, ensure_ascii=False)
+                from task.pipeline_processor import PipelineProcessor
+                PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
+            except Exception as e:
+                logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
-                id = AIToolsModel.create(
-                    prompt=text,
-                    user_id=user_id,
-                    type=task_type,
-                    image_path=image_url,
-                    audio_path=audio_url,
-                    duration=duration,
-                    extra_config=extra_config,
-                    transaction_id=transaction_id,
-                    status=AI_TOOL_STATUS_PENDING
-                )
-                TasksModel.create(
-                    task_type=TASK_TYPE_GENERATE_VIDEO,
-                    task_id=id,
-                    status=TASK_STATUS_QUEUED
-                )
-                try:
-                    from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
-                except Exception as e:
-                    logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
-
-                return JSONResponse({
-                    "success": True,
-                    "project_id": id,
-                    "status": "submitted",
-                    "image_url": image_url,
-                    "audio_url": audio_url
-                })
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-                raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
-        else:
-            raise HTTPException(status_code=400, detail="用户ID不能为空")
+            return JSONResponse({
+                "success": True,
+                "project_id": id,
+                "status": "submitted",
+                "image_url": image_url,
+                "audio_url": audio_url
+            })
+        except Exception as db_error:
+            logger.error(f"Failed to create database record: {db_error}")
+            raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
 
     except HTTPException:
         raise
@@ -5224,7 +5743,12 @@ async def audio_generate(
         if ref_audio:
             ref_path = await asyncio.to_thread(_save_uploaded_audio, ref_audio)  # Reuse upload function for audio
         elif ref_audio_url:
-            ref_path = ref_audio_url
+            # 本服务产出的音频 URL（如音色库预置样例）：IndexTTS 远端无法访问
+            # localhost 地址，先下载为本地文件再由 upload_reference 上传文件内容
+            if "/voice_presets/" in ref_audio_url or "localhost" in ref_audio_url:
+                ref_path = await _download_audio_url_to_tmp(ref_audio_url)
+            else:
+                ref_path = ref_audio_url
         
         # Handle emotion reference audio upload
         emo_ref_path = None
@@ -5921,6 +6445,25 @@ async def fit_video_workflow_environment(
     )
 
 
+async def _workflow_view_forbidden(workflow, user_id: int) -> bool:
+    """独立空间下，非创建者且非管理员不可查看。共享空间保持原样。"""
+    if not Edition.is_space_isolated():
+        return False
+    if getattr(workflow, 'user_id', None) == user_id:
+        return False
+    return not await asyncio.to_thread(is_admin_user, user_id)
+
+
+def _attach_workflow_owner_nicknames(rows, names: dict) -> None:
+    for item in rows or []:
+        try:
+            owner_id = int(item.get('user_id'))
+        except (TypeError, ValueError):
+            item['owner_nickname'] = ''
+            continue
+        item['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
+
+
 @app.get('/api/video-workflow/list')
 @require_permission("video_workflow:list")
 async def get_video_workflow_list(
@@ -5931,28 +6474,80 @@ async def get_video_workflow_list(
     keyword: Optional[str] = Query(None, description="搜索关键词"),
     order_by: str = Query("create_time", description="排序字段"),
     order_direction: str = Query("DESC", description="排序方向: ASC, DESC"),
+    scope: Optional[str] = Query(None, description="不传沿用原列表；mine 只看自己；all/user 仅管理员"),
+    owner: Optional[str] = Query(None, description="scope=user 时的昵称、手机号或邮箱"),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id")
 ):
     """
-    获取视频工作流列表（分页）
+    获取视频工作流列表（分页）。
+
+    不传 scope：沿用原列表。独立空间只含当前用户，共享空间含可见的全部工作流。
+    scope=mine 只看自己。scope=all 查看全部，scope=user 按昵称或账号查看，后两者仅管理员。
     """
     try:
         user_id = _get_user_id_from_header(user_id)
+        requested = (scope or '').strip().lower()
+        if requested not in ('mine', 'all', 'user'):
+            requested = ''
+        if requested in ('all', 'user'):
+            admin = await asyncio.to_thread(is_admin_user, user_id)
+            if not admin:
+                requested = ''
 
-        result = VideoWorkflowModel.list_by_user(
-            user_id=user_id,
-            page=page,
-            page_size=page_size,
-            status=status,
-            keyword=keyword,
-            order_by=order_by,
-            order_direction=order_direction
+        owner_ids = None
+        include_all = False
+        notice = ''
+        if requested == 'user':
+            query = (owner or '').strip()
+            if not query:
+                notice = '请输入昵称或账号'
+            else:
+                owner_ids = await asyncio.to_thread(
+                    UsersModel.find_ids_by_nickname_or_account, query
+                )
+                if not owner_ids:
+                    notice = '未找到该用户'
+                    owner_ids = []
+        elif requested == 'all':
+            include_all = True
+        elif requested == 'mine':
+            owner_ids = [user_id]
+
+        if notice and owner_ids is None:
+            return JSONResponse({
+                "code": 0,
+                "message": notice,
+                "data": {
+                    "total": 0,
+                    "page": page,
+                    "page_size": page_size,
+                    "data": [],
+                    "scope": "user",
+                },
+            })
+
+        result = await asyncio.to_thread(
+            VideoWorkflowModel.list_by_user,
+            user_id,
+            page,
+            page_size,
+            order_by,
+            order_direction,
+            status,
+            keyword,
+            include_all,
+            owner_ids,
         )
-        
+        names = await asyncio.to_thread(
+            UsersModel.get_display_names,
+            [item.get('user_id') for item in (result.get('data') or [])],
+        )
+        _attach_workflow_owner_nicknames(result.get('data') or [], names)
+        result['scope'] = requested or 'mine'
         return JSONResponse({
             "code": 0,
-            "message": "success",
+            "message": notice or "success",
             "data": result
         })
     except Exception as e:
@@ -5977,15 +6572,15 @@ async def get_video_workflow(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        workflow = await asyncio.to_thread(VideoWorkflowModel.get_by_id, workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
             )
 
-        # 独立空间模式才检查权限，共享空间所有人可访问
-        if Edition.is_space_isolated() and getattr(workflow, 'user_id', None) != user_id:
+        # 独立空间：创建者或管理员可查看。共享空间所有人可访问。
+        if await _workflow_view_forbidden(workflow, user_id):
             return JSONResponse(
                 status_code=403,
                 content={"code": -1, "message": "无权限访问该工作流"}
@@ -6025,15 +6620,15 @@ async def poll_workflow_node_status(
         user_id = _get_user_id_from_header(user_id)
         
         # 获取工作流数据
-        workflow = VideoWorkflowModel.get_by_id(workflow_id)
+        workflow = await asyncio.to_thread(VideoWorkflowModel.get_by_id, workflow_id)
         if not workflow:
             return JSONResponse(
                 status_code=404,
                 content={"code": -1, "message": "工作流不存在"}
             )
         
-        # 独立空间模式才检查权限，共享空间所有人可访问
-        if Edition.is_space_isolated() and getattr(workflow, 'user_id', None) != user_id:
+        # 独立空间：创建者或管理员可查看。共享空间所有人可访问。
+        if await _workflow_view_forbidden(workflow, user_id):
             return JSONResponse(
                 status_code=403,
                 content={"code": -1, "message": "无权限访问该工作流"}
@@ -6496,6 +7091,143 @@ async def extract_video_frame(
             status_code=500,
             content={"code": -1, "message": f"提取帧失败: {str(e)}"}
         )
+
+
+class ExtractScriptRequest(BaseModel):
+    video_url: str
+    max_frames: int = VideoScriptExtractConstants.DEFAULT_MAX_FRAMES
+    frame_height: int = VideoScriptExtractConstants.DEFAULT_FRAME_HEIGHT
+    # 提取模型：空则由后端按 VL 偏好挑选（与 describe-image 同语义）
+    model: Optional[str] = None
+    model_id: Optional[int] = None
+    vendor_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/extract-script')
+@require_permission("video_workflow:upload")
+async def extract_script_create(
+    request: Request,
+    body: ExtractScriptRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    创建"视频提取剧本"异步任务（剧本提取节点）。
+
+    链路：关键帧多批收集 + 音轨提取 → SenseVoice 分段 ASR →
+    关键帧图片 + 带时间戳转写稿 → 多模态 VL 模型生成文字剧本。
+    立即返回 task_id，前端轮询 GET /api/video-workflow/extract-script/status/{task_id}。
+    只接受本站 /upload/ 路径（前端先经 /api/video-workflow/upload 上传拿永久 URL）。
+
+    max_frames（4~200，默认 24）与 frame_height（720/480/360，默认 720）为节点
+    参数，用户可按视频内容与目标模型自行调整。
+    """
+    try:
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"},
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
+        user_id_val = auth_user_id
+        video_url = (body.video_url or "").strip()
+        if not video_url:
+            return JSONResponse(status_code=400, content={"code": -1, "message": "缺少视频 url"})
+
+        if body.max_frames < VideoScriptExtractConstants.MIN_FRAMES_LIMIT or \
+                body.max_frames > VideoScriptExtractConstants.MAX_FRAMES_LIMIT:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "max_frames 需在 "
+                         f"{VideoScriptExtractConstants.MIN_FRAMES_LIMIT}~{VideoScriptExtractConstants.MAX_FRAMES_LIMIT} 之间"}
+            )
+        if body.frame_height not in VideoScriptExtractConstants.FRAME_HEIGHT_ALLOWED:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "frame_height 仅支持 720 / 480 / 360"}
+            )
+
+        if "/upload/" not in video_url:
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "不支持外部视频URL，请先上传视频文件"}
+            )
+        video_path = resolve_upload_url_to_local_path(video_url)
+        if not video_path or not os.path.exists(video_path):
+            return JSONResponse(
+                status_code=400,
+                content={"code": -1, "message": "视频文件不存在，请重新上传"}
+            )
+
+        token = normalize_authorization_token(auth_token)
+        if not token:
+            token = normalize_authorization_token(request.query_params.get('auth_token'))
+
+        task_id, err = await create_extract_task(
+            video_path=video_path,
+            user_id=user_id_val,
+            auth_token=token or None,
+            max_frames=body.max_frames,
+            frame_height=body.frame_height,
+            model=body.model,
+            model_id=body.model_id,
+            vendor_id=body.vendor_id,
+        )
+        if err or not task_id:
+            return JSONResponse(status_code=409, content={"code": -1, "message": err or "任务创建失败"})
+        return JSONResponse({"code": 0, "message": "任务已创建", "data": {"task_id": task_id}})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"创建剧本提取任务失败: {str(e)}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"任务创建失败: {str(e)}"})
+
+
+@app.get('/api/video-workflow/extract-script/status/{task_id}')
+@require_permission("video_workflow:upload")
+async def extract_script_status(
+    request: Request,
+    task_id: str,
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """查询剧本提取任务状态（前端轮询，3s 间隔）。任务过期/服务重启后返回 404。"""
+    try:
+        auth_user_id = get_auth_user_id(request)
+        if auth_user_id is None:
+            return JSONResponse(
+                status_code=401,
+                content={"code": -1, "message": "未获取到登录身份，请重新登录"},
+            )
+        mismatch = check_claimed_user_id(user_id, auth_user_id)
+        if mismatch is not None:
+            return mismatch
+        user_id_val = auth_user_id
+        task = await get_extract_task(task_id)
+        if task is None or (user_id_val is not None and task.get("user_id") not in (None, user_id_val)):
+            return JSONResponse(
+                status_code=404,
+                content={"code": -1, "message": "任务不存在或已过期，请重新提取"}
+            )
+        return JSONResponse({
+            "code": 0,
+            "data": {
+                "task_id": task["task_id"],
+                "status": task["status"],
+                "stage": task["stage"],
+                "progress": task.get("progress") or {},
+                "error": task.get("error"),
+                "result": task.get("result"),
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"查询剧本提取任务失败: {str(e)}")
+        return JSONResponse(status_code=500, content={"code": -1, "message": f"查询失败: {str(e)}"})
 
 
 def _generate_thumbnail(file_path: str, media_type: str, thumb_dir: str, thumb_filename: str) -> Optional[str]:
@@ -7719,27 +8451,51 @@ async def get_worlds(
         'active',
         description="列表范围：active=未删除(默认) | deleted=已伪删除 | all=全部",
     ),
+    scope: str = Query(
+        'user',
+        description="数据范围：user=当前用户(默认) | all=全部用户（仅管理员生效，其余身份自动回退 user）",
+    ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
     获取世界列表。
 
+    身份以 Authorization token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
     传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
+    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         vis = (visibility or 'active').lower()
         if vis not in ('active', 'deleted', 'all'):
             vis = 'active'
+        include_all_users = (scope or 'user').lower() == 'all' and await asyncio.to_thread(
+            is_admin_user, user_id
+        )
         result = await asyncio.to_thread(
             WorldModel.list_by_user,
             user_id=user_id,
             page=page,
             page_size=page_size,
             visibility=vis,
+            include_all_users=include_all_users,
         )
+        if include_all_users:
+            worlds = result.get('data') or []
+            names = await asyncio.to_thread(
+                UsersModel.get_display_names,
+                [item.get('user_id') for item in worlds],
+            )
+            for item in worlds:
+                raw_owner_id = item.get('user_id')
+                try:
+                    owner_id = int(raw_owner_id)
+                except (TypeError, ValueError):
+                    item['owner_nickname'] = ''
+                    continue
+                item['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
         return JSONResponse(
             status_code=200,
             content={
@@ -7748,6 +8504,8 @@ async def get_worlds(
                 'data': result
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get worlds: {e}")
         return JSONResponse(
@@ -7766,9 +8524,9 @@ async def get_world_by_id(
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
 ):
-    """获取单个世界详情。协作者可查看（世界 VIEW）。"""
+    """获取单个世界详情。协作者可查看（世界 VIEW）。身份以 token 解析为准。"""
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = await asyncio.wait_for(
             asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.VIEW),
             timeout=ASSET_LIST_DB_QUERY_TIMEOUT,
@@ -7846,10 +8604,10 @@ async def create_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    创建世界
+    创建世界。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         
         if not request.name or not request.name.strip():
             return JSONResponse(
@@ -7894,6 +8652,8 @@ async def create_world(
                 'data': world.to_dict() if world else None
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to create world: {e}")
         return JSONResponse(
@@ -7914,10 +8674,10 @@ async def update_world(
     user_id: int = Header(None, alias="X-User-Id")
 ):
     """
-    编辑世界信息
+    编辑世界信息。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         world = _ensure_world_access(world_id, user_id, Action.EDIT)
 
         update_fields = {}
@@ -8007,11 +8767,12 @@ async def hide_world(
 ):
     """
     伪删除（隐藏）世界：仅标记 is_deleted=1，不删库、不删资产。
-    已隐藏时幂等成功。
+    不校验角色/场景是否为空。创建者或管理员可操作。
+    已隐藏时幂等成功。身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
-        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
+        world = await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
         await asyncio.to_thread(WorldModel.soft_delete, world_id)
         updated = await asyncio.to_thread(WorldModel.get_by_id, world_id)
@@ -8024,8 +8785,8 @@ async def hide_world(
                 'data': updated.to_dict() if updated else (world.to_dict() if world else None)
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to hide world {world_id}: {e}")
         return JSONResponse(
@@ -8046,16 +8807,17 @@ async def restore_world(
 ):
     """
     恢复伪删除世界：is_deleted=0，重新出现在正常列表。
-    若同用户下已有同名未删除世界，返回 400。
+    创建者或管理员可操作。若同用户下已有同名未删除世界，返回 400。
+    身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
-        world = await asyncio.to_thread(_ensure_world_access, world_id, user_id, Action.DELETE)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
+        world = await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
         # 仅对仍标记为删除的世界做重名校验
         if getattr(world, 'is_deleted', 0):
             existing = await asyncio.to_thread(
-                WorldModel.get_by_name, user_id, world.name, False
+                WorldModel.get_by_name, world.user_id, world.name, False
             )
             if existing and getattr(existing, 'id', None) != world_id:
                 return JSONResponse(
@@ -8078,8 +8840,8 @@ async def restore_world(
                 'data': updated.to_dict() if updated else (world.to_dict() if world else None)
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to restore world {world_id}: {e}")
         return JSONResponse(
@@ -8101,12 +8863,15 @@ async def delete_world(
     """
     硬删除世界（物理删除记录）。
     伪删除请使用 POST /api/worlds/{world_id}/hide。
+    创建者本人可删；管理员（role=admin）可删除自己或其他用户创建的世界。
+    世界下仍有角色、场景或道具时拒绝。
+    身份以 token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
-        _ensure_world_access(world_id, user_id, Action.DELETE)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
+        await asyncio.to_thread(ensure_world_owner_or_admin, world_id, user_id)
 
-        character_count = CharacterModel.count_by_world(world_id)
+        character_count = await asyncio.to_thread(CharacterModel.count_by_world, world_id)
         if character_count > 0:
             return JSONResponse(
                 status_code=400,
@@ -8117,7 +8882,7 @@ async def delete_world(
                 }
             )
 
-        location_count = LocationModel.count_by_world(world_id)
+        location_count = await asyncio.to_thread(LocationModel.count_by_world, world_id)
         if location_count > 0:
             return JSONResponse(
                 status_code=400,
@@ -8128,7 +8893,18 @@ async def delete_world(
                 }
             )
 
-        WorldModel.delete(world_id)
+        props_count = await asyncio.to_thread(PropsModel.count_by_world, world_id)
+        if props_count > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'code': -1,
+                    'message': '该世界下仍存在道具，请先删除所有道具后再尝试删除世界',
+                    'data': None
+                }
+            )
+
+        await asyncio.to_thread(WorldModel.delete, world_id)
 
         return JSONResponse(
             status_code=200,
@@ -8138,8 +8914,8 @@ async def delete_world(
                 'data': None
             }
         )
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        return _http_exception_response(exc)
     except Exception as e:
         logger.error(f"Failed to delete world {world_id}: {e}")
         return JSONResponse(
@@ -8728,6 +9504,7 @@ async def update_character(
     personality: Optional[str] = Form(None, description="性格"),
     behavior: Optional[str] = Form(None, description="行为习惯"),
     other_info: Optional[str] = Form(None, description="其他信息"),
+    voice_desc: Optional[str] = Form(None, description="音色描述（声学指纹，仅 MiniMax H3 提示词使用）"),
     sora_character: Optional[str] = Form(None, description="Sora角色卡ID"),
     reference_image: Optional[UploadFile] = File(None, description="参考图"),
     reference_images_labels: Optional[str] = Form(None, description="多参考图标签，JSON数组"),
@@ -8814,7 +9591,10 @@ async def update_character(
             'other_info': other_info.strip() if other_info else None,
             'sora_character': sora_character.strip() if sora_character else None,
         }
-        
+        # 未提交该字段时保留库里的指纹；显式空字符串仍清空。
+        if voice_desc is not None:
+            update_fields['voice_desc'] = voice_desc.strip() or None
+
         if image_path:
             update_fields['reference_image'] = image_path
         if voice_path:
@@ -10327,6 +11107,131 @@ async def delete_props(
         )
 
 
+class _TimelineMediaExportError(Exception):
+    """时间轴素材下载失败：携带 HTTP 状态码与用户可读错误信息。"""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.error = message
+
+
+async def _download_timeline_media_clips(clips, media_kind, temp_download_dir, request_origin):
+    """
+    下载时间轴素材（视频/音频）到 temp_download_dir，供草稿导出与素材包导出共用。
+
+    media_kind: 'video' | 'audio'（决定文件名前缀、扩展名推断与错误文案）。
+    本站 /upload/ 文件直接复用本地路径，相同素材（同 URL / 同本地文件）只下载一次。
+    失败时抛 _TimelineMediaExportError，由调用方转成对应状态的 JSONResponse。
+    """
+    is_video = media_kind == 'video'
+    kind_label = '视频' if is_video else '音频'
+    prefix = 'video' if is_video else 'audio'
+    default_ext = '.mp4' if is_video else '.mp3'
+    cache_hint = '生成视频缓存' if is_video else '生成结果缓存'
+    from utils.cdn_util import CDNUtil
+
+    downloaded_files = []
+    asset_cache = {}
+
+    for idx, clip in enumerate(clips):
+        media_url = clip.get('url')
+        media_name = clip.get('name', f'{prefix}_{idx}')
+
+        if not media_url:
+            logger.warning(f"跳过没有URL的片段: {media_name}")
+            continue
+
+        try:
+            asset_key = None
+            local_asset_path = _get_local_upload_file(media_url, request_origin)
+            if local_asset_path:
+                asset_key = f"local::{os.path.abspath(local_asset_path)}"
+            elif media_url:
+                asset_key = f"url::{media_url}"
+
+            if asset_key and asset_key in asset_cache:
+                file_path = asset_cache[asset_key]
+                safe_name = os.path.basename(file_path)
+                logger.info(f"复用已下载素材: {media_name} -> {safe_name}")
+            else:
+                if local_asset_path:
+                    file_ext = os.path.splitext(local_asset_path)[1] or default_ext
+                    safe_name = f"{prefix}_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                    file_path = os.path.join(temp_download_dir, safe_name)
+                    shutil.copy2(local_asset_path, file_path)
+                    logger.info(f"已复用本地上传{kind_label}文件: {local_asset_path} -> {file_path}")
+                else:
+                    logger.info(f"正在下载{kind_label} {idx + 1}/{len(clips)}: {media_name}")
+
+                    # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与草稿导出同理：
+                    # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
+                    if not media_url.lower().startswith(('http://', 'https://')):
+                        if media_url.startswith('/upload/'):
+                            hint = (f'该素材的源文件已被服务器到期清理'
+                                    f'（{cache_hint}只保留有限天数），'
+                                    f'请重新生成或重新上传后再导出')
+                        else:
+                            hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
+                                    '请刷新页面后重新上传该素材，再重新导出')
+                        raise _TimelineMediaExportError(
+                            400,
+                            f'素材 {media_name} 无法导出（{media_url[:80]}）：{hint}')
+
+                    # 刷新 CDN URL 签名（防止 token 过期导致 403）
+                    download_url = await asyncio.to_thread(
+                        CDNUtil.refresh_cdn_signed_url, media_url)
+
+                    # 下载媒体 (异步)
+                    async with httpx.AsyncClient(timeout=300.0) as http_client:
+                        async with http_client.stream('GET', download_url) as response:
+                            response.raise_for_status()
+
+                            # 确定文件扩展名
+                            file_ext = default_ext
+                            content_type = response.headers.get('content-type', '')
+                            if is_video:
+                                if 'video/quicktime' in content_type or media_url.endswith('.mov'):
+                                    file_ext = '.mov'
+                                elif 'video/x-msvideo' in content_type or media_url.endswith('.avi'):
+                                    file_ext = '.avi'
+                            else:
+                                if 'audio/wav' in content_type or media_url.endswith('.wav'):
+                                    file_ext = '.wav'
+                                elif 'audio/aac' in content_type or media_url.endswith('.aac'):
+                                    file_ext = '.aac'
+                                elif 'audio/mpeg' in content_type or media_url.endswith('.mp3'):
+                                    file_ext = '.mp3'
+
+                            # 保存文件
+                            safe_name = f"{prefix}_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
+                            file_path = os.path.join(temp_download_dir, safe_name)
+
+                            with open(file_path, 'wb') as f:
+                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                    f.write(chunk)
+
+                    logger.info(f"{kind_label}下载完成: {safe_name}")
+
+                if asset_key:
+                    asset_cache[asset_key] = file_path
+
+            downloaded_files.append({
+                'file_path': file_path,
+                'clip': clip,
+                'filename': safe_name
+            })
+
+        except _TimelineMediaExportError:
+            raise
+        except Exception as e:
+            logger.error(f"处理{kind_label}失败 {media_name}: {e}")
+            raise _TimelineMediaExportError(
+                500, f'处理{kind_label}失败: {media_name} - {str(e)}')
+
+    return downloaded_files
+
+
 class ExportTimelineDraftRequest(BaseModel):
     draft_path: str
     video_clips: List[dict] = []
@@ -10375,7 +11280,6 @@ async def export_timeline_draft(
         from core import JianyingMultiTrackLibrary
         from draft_generator import DraftGenerator
         from jianying.utils import seconds_to_microseconds
-        from utils.cdn_util import CDNUtil
         
         # 生成唯一的草稿名称（使用工作流名称作为前缀）
         # 清理工作流名称，移除不适合文件名的字符
@@ -10397,205 +11301,13 @@ async def export_timeline_draft(
         logger.info(f"草稿路径前缀: {payload.draft_path}")
 
         request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
-        
-        # 下载所有视频和音频
-        downloaded_video_files = []
-        downloaded_audio_files = []
-        asset_cache = {}
-        
-        # 下载视频文件
-        for idx, clip in enumerate(payload.video_clips):
-            video_url = clip.get('url')
-            video_name = clip.get('name', f'video_{idx}')
-            
-            if not video_url:
-                logger.warning(f"跳过没有URL的片段: {video_name}")
-                continue
-            
-            try:
-                asset_key = None
-                local_asset_path = _get_local_upload_file(video_url, request_origin)
-                if local_asset_path:
-                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
-                elif video_url:
-                    asset_key = f"url::{video_url}"
 
-                if asset_key and asset_key in asset_cache:
-                    file_path = asset_cache[asset_key]
-                    safe_name = os.path.basename(file_path)
-                    logger.info(f"复用已下载素材: {video_name} -> {safe_name}")
-                else:
-                    if local_asset_path:
-                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp4'
-                        safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        shutil.copy2(local_asset_path, file_path)
-                        logger.info(f"已复用本地上传文件: {local_asset_path} -> {file_path}")
-                    else:
-                        logger.info(f"正在下载视频 {idx + 1}/{len(payload.video_clips)}: {video_name}")
+        # 下载所有视频和音频（草稿导出与素材包导出共用 _download_timeline_media_clips）
+        downloaded_video_files = await _download_timeline_media_clips(
+            payload.video_clips, 'video', temp_download_dir, request_origin)
+        downloaded_audio_files = await _download_timeline_media_clips(
+            payload.audio_clips, 'audio', temp_download_dir, request_origin)
 
-                        # 无协议头的地址无法交给 httpx 下载。media_cache 到期清理时本地文件
-                        # 与七牛云端副本、映射记录是同步删除的，/upload/ 地址本地缺失即素材
-                        # 已被彻底清理、无法恢复，直接给出可行动的报错
-                        if not video_url.lower().startswith(('http://', 'https://')):
-                            if video_url.startswith('/upload/'):
-                                hint = ('该素材的源文件已被服务器到期清理'
-                                        '（生成视频缓存只保留有限天数），'
-                                        '请重新生成或重新上传后再导出')
-                            else:
-                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
-                                        '请刷新页面后重新上传该素材，再重新导出')
-                            return JSONResponse(
-                                status_code=400,
-                                content={
-                                    'success': False,
-                                    'error': f'素材 {video_name} 无法导出（{video_url[:80]}）：{hint}'
-                                }
-                            )
-
-                        # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        download_url = await asyncio.to_thread(
-                            CDNUtil.refresh_cdn_signed_url, video_url)
-
-                        # 下载视频 (异步)
-                        async with httpx.AsyncClient(timeout=300.0) as http_client:
-                            async with http_client.stream('GET', download_url) as response:
-                                response.raise_for_status()
-                                
-                                # 确定文件扩展名
-                                file_ext = '.mp4'
-                                content_type = response.headers.get('content-type', '')
-                                if 'video/quicktime' in content_type or video_url.endswith('.mov'):
-                                    file_ext = '.mov'
-                                elif 'video/x-msvideo' in content_type or video_url.endswith('.avi'):
-                                    file_ext = '.avi'
-                                
-                                # 保存文件
-                                safe_name = f"video_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                                file_path = os.path.join(temp_download_dir, safe_name)
-                                
-                                with open(file_path, 'wb') as f:
-                                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                                        f.write(chunk)
-                        
-                        logger.info(f"视频下载完成: {safe_name}")
-                    
-                    if asset_key:
-                        asset_cache[asset_key] = file_path
-                
-                downloaded_video_files.append({
-                    'file_path': file_path,
-                    'clip': clip,
-                    'filename': safe_name
-                })
-                
-            except Exception as e:
-                logger.error(f"处理视频失败 {video_name}: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        'success': False,
-                        'error': f'处理视频失败: {video_name} - {str(e)}'
-                    }
-                )
-        
-        # 下载音频文件
-        for idx, clip in enumerate(payload.audio_clips):
-            audio_url = clip.get('url')
-            audio_name = clip.get('name', f'audio_{idx}')
-            
-            if not audio_url:
-                logger.warning(f"跳过没有URL的音频片段: {audio_name}")
-                continue
-            
-            try:
-                asset_key = None
-                local_asset_path = _get_local_upload_file(audio_url, request_origin)
-                if local_asset_path:
-                    asset_key = f"local::{os.path.abspath(local_asset_path)}"
-                elif audio_url:
-                    asset_key = f"url::{audio_url}"
-
-                if asset_key and asset_key in asset_cache:
-                    file_path = asset_cache[asset_key]
-                    safe_name = os.path.basename(file_path)
-                    logger.info(f"复用已下载素材: {audio_name} -> {safe_name}")
-                else:
-                    if local_asset_path:
-                        file_ext = os.path.splitext(local_asset_path)[1] or '.mp3'
-                        safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                        file_path = os.path.join(temp_download_dir, safe_name)
-                        shutil.copy2(local_asset_path, file_path)
-                        logger.info(f"已复用本地上传音频文件: {local_asset_path} -> {file_path}")
-                    else:
-                        logger.info(f"正在下载音频 {idx + 1}/{len(payload.audio_clips)}: {audio_name}")
-
-                        # 无协议头的地址无法交给 httpx 下载，给出可行动的报错（与视频分支同理：
-                        # /upload/ 本地缺失即源文件已随云端副本一起被到期清理，无法恢复）
-                        if not audio_url.lower().startswith(('http://', 'https://')):
-                            if audio_url.startswith('/upload/'):
-                                hint = ('该素材的源文件已被服务器到期清理'
-                                        '（生成结果缓存只保留有限天数），'
-                                        '请重新生成或重新上传后再导出')
-                            else:
-                                hint = ('该地址是页面上传前的本地临时地址（blob:）或已失效，'
-                                        '请刷新页面后重新上传该素材，再重新导出')
-                            return JSONResponse(
-                                status_code=400,
-                                content={
-                                    'success': False,
-                                    'error': f'素材 {audio_name} 无法导出（{audio_url[:80]}）：{hint}'
-                                }
-                            )
-
-                        # 刷新 CDN URL 签名（防止 token 过期导致 403）
-                        download_url = await asyncio.to_thread(
-                            CDNUtil.refresh_cdn_signed_url, audio_url)
-
-                        # 下载音频 (异步)
-                        async with httpx.AsyncClient(timeout=300.0) as http_client:
-                            async with http_client.stream('GET', download_url) as response:
-                                response.raise_for_status()
-                                
-                                # 确定文件扩展名
-                                file_ext = '.mp3'
-                                content_type = response.headers.get('content-type', '')
-                                if 'audio/wav' in content_type or audio_url.endswith('.wav'):
-                                    file_ext = '.wav'
-                                elif 'audio/aac' in content_type or audio_url.endswith('.aac'):
-                                    file_ext = '.aac'
-                                elif 'audio/mpeg' in content_type or audio_url.endswith('.mp3'):
-                                    file_ext = '.mp3'
-                                
-                                # 保存文件
-                                safe_name = f"audio_{idx:03d}_{uuid.uuid4().hex[:8]}{file_ext}"
-                                file_path = os.path.join(temp_download_dir, safe_name)
-                                
-                                with open(file_path, 'wb') as f:
-                                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                                        f.write(chunk)
-                        
-                        logger.info(f"音频下载完成: {safe_name}")
-                    
-                    if asset_key:
-                        asset_cache[asset_key] = file_path
-                
-                downloaded_audio_files.append({
-                    'file_path': file_path,
-                    'clip': clip,
-                    'filename': safe_name
-                })
-                
-            except Exception as e:
-                logger.error(f"处理音频失败 {audio_name}: {e}")
-                return JSONResponse(
-                    status_code=500,
-                    content={
-                        'success': False,
-                        'error': f'处理音频失败: {audio_name} - {str(e)}'
-                    }
-                )
-        
         if not downloaded_video_files and not downloaded_audio_files:
             return JSONResponse(
                 status_code=400,
@@ -10958,6 +11670,16 @@ async def export_timeline_draft(
             }
         )
         
+    except _TimelineMediaExportError as e:
+        # 素材下载失败（URL 失效/清理等），按原始状态码返回可行动的提示
+        logger.warning(f"导出草稿失败(素材下载): {e.error}")
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                'success': False,
+                'error': e.error
+            }
+        )
     except Exception as e:
         logger.error(f"导出草稿失败: {e}")
         logger.error(traceback.format_exc())
@@ -10968,6 +11690,219 @@ async def export_timeline_draft(
                 'error': str(e)
             }
         )
+
+
+class ExportTimelineAssetsRequest(BaseModel):
+    video_clips: List[dict] = []
+    audio_clips: List[dict] = []
+    workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
+
+
+def _sanitize_timeline_asset_name(raw_name, fallback, used_names):
+    """清洗片段名为跨平台（Windows/Linux/macOS）安全的 zip 内文件名，冲突时加序号。"""
+    cleaned = "".join(
+        c for c in str(raw_name or '').strip()
+        if c not in '<>:"/\\|?*' and ord(c) >= 32
+    ).rstrip('. ')
+    cleaned = cleaned[:80] or fallback
+    candidate = cleaned
+    seq = 2
+    while candidate in used_names:
+        candidate = f"{cleaned}_{seq}"
+        seq += 1
+    used_names.add(candidate)
+    return candidate
+
+
+@app.post('/api/export_timeline_assets')
+async def export_timeline_assets(
+    payload: ExportTimelineAssetsRequest,
+    http_request: Request,
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """
+    导出时间轴素材包 zip（视频/ 音频/ 原素材 + manifest.json），上传 CDN 后返回
+    download_url。交付方式对齐故事板「导出素材包」（export-all-scenes）：不含剪影
+    草稿结构，只交付原始素材文件，供用户在任意剪辑软件中使用。
+    """
+    base_temp_dir = None
+    try:
+        user_id = _get_user_id_from_header(user_id)
+
+        if not payload.video_clips and not payload.audio_clips:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '时间轴为空，无法导出'
+                }
+            )
+
+        safe_workflow_name = "".join(
+            c for c in (payload.workflow_name or '未命名工作流')
+            if c.isalnum() or c in (' ', '-', '_')
+        ).strip()
+        safe_workflow_name = safe_workflow_name.replace(' ', '_') or 'workflow'
+        stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        package_name = f"{safe_workflow_name}_素材_{stamp}"
+        zip_filename = f"{package_name}.zip"
+
+        # 复用剪影导出的临时目录（files/tmp/jianying_export/日期/，按日期分组便于排查）
+        base_temp_dir = FilePathConstants.get_jianying_export_dir(APP_DIR, package_name)
+        temp_download_dir = os.path.join(base_temp_dir, 'downloads')
+        os.makedirs(temp_download_dir, exist_ok=True)
+
+        logger.info(f"开始导出时间轴素材包: {package_name}")
+        logger.info(f"临时下载目录: {temp_download_dir}")
+
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
+
+        downloaded_video_files = await _download_timeline_media_clips(
+            payload.video_clips, 'video', temp_download_dir, request_origin)
+        downloaded_audio_files = await _download_timeline_media_clips(
+            payload.audio_clips, 'audio', temp_download_dir, request_origin)
+
+        if not downloaded_video_files and not downloaded_audio_files:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    'success': False,
+                    'error': '没有成功下载任何媒体文件'
+                }
+            )
+
+        def _manifest_entry(item, order, zip_name):
+            clip = item['clip']
+            return {
+                'file': zip_name,
+                'order': order,
+                'name': clip.get('name'),
+                'url': clip.get('url'),
+                'duration': clip.get('duration'),
+                'startTime': clip.get('startTime', 0),
+                'endTime': clip.get('endTime', clip.get('duration', 0)),
+                'pillarId': clip.get('pillarId'),
+            }
+
+        def _build_zip():
+            import zipfile
+            used_names = set()
+
+            def _zip_names(items, prefix):
+                names = []
+                for i, item in enumerate(items, 1):
+                    ext = os.path.splitext(item['filename'])[1] or ''
+                    fallback = f"{prefix}_{i:02d}"
+                    base = _sanitize_timeline_asset_name(
+                        item['clip'].get('name'), fallback, used_names)
+                    names.append(f"{i:02d}_{base}{ext}")
+                return names
+
+            video_zip_names = _zip_names(downloaded_video_files, 'video')
+            audio_zip_names = _zip_names(downloaded_audio_files, 'audio')
+
+            manifest = {
+                'workflow_name': payload.workflow_name,
+                'exported_at': datetime.now().isoformat(),
+                'video_count': len(downloaded_video_files),
+                'audio_count': len(downloaded_audio_files),
+                'videos': [
+                    _manifest_entry(item, i, f"视频/{name}")
+                    for i, (item, name) in enumerate(zip(downloaded_video_files, video_zip_names), 1)
+                ],
+                'audios': [
+                    _manifest_entry(item, i, f"音频/{name}")
+                    for i, (item, name) in enumerate(zip(downloaded_audio_files, audio_zip_names), 1)
+                ],
+            }
+
+            manifest_path = os.path.join(base_temp_dir, 'manifest.json')
+            with open(manifest_path, 'w', encoding='utf-8') as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+            zip_path = os.path.join(base_temp_dir, zip_filename)
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                zf.write(manifest_path, 'manifest.json')
+                for item, name in zip(downloaded_video_files, video_zip_names):
+                    zf.write(item['file_path'], f"视频/{name}")
+                for item, name in zip(downloaded_audio_files, audio_zip_names):
+                    zf.write(item['file_path'], f"音频/{name}")
+            return zip_path
+
+        zip_path = await asyncio.to_thread(_build_zip)
+        logger.info(f"素材包已创建: {zip_path}")
+
+        # 根据 is_local 配置决定下载方式（与草稿导出一致）
+        is_local = get_dynamic_config_value("server", "is_local", default=True)
+        if is_local:
+            # 本地环境：放到 /upload 静态目录直接下载；返回相对路径，
+            # 避免配置 host=0.0.0.0 时浏览器拿到不可访问的绝对地址
+            date_folder = datetime.now().strftime('%Y-%m-%d')
+            upload_dir = get_upload_subdir(UploadPathConstants.DRAFT_DIR, date_folder)
+            final_zip_path = os.path.join(upload_dir, zip_filename)
+            await asyncio.to_thread(shutil.copy2, zip_path, final_zip_path)
+            download_url = f"/upload/draft/{date_folder}/{zip_filename}"
+            logger.info(f"本地环境，下载地址: {download_url}")
+        else:
+            # 非本地环境：上传到七牛云后返回 CDN 链接
+            logger.info("非本地环境，准备上传到七牛云...")
+            from utils.file_storage import get_file_storage
+            from config.config_util import get_config
+
+            storage = get_file_storage(get_config())
+            storage_key = storage.generate_key_with_datetime(zip_filename)
+            upload_result = await storage.upload_file(storage_key, zip_path, content_type='application/zip')
+
+            if not upload_result.success:
+                logger.error(f"上传到七牛云失败: {upload_result.error}")
+                return JSONResponse(
+                    status_code=500,
+                    content={
+                        'success': False,
+                        'error': f'上传素材包到云存储失败: {upload_result.error}'
+                    }
+                )
+
+            download_url = storage.get_download_url(upload_result.key)
+            logger.info(f"已上传到七牛云，CDN下载地址: {download_url}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                'success': True,
+                'download_url': download_url,
+                'filename': zip_filename,
+                'video_count': len(downloaded_video_files),
+                'audio_count': len(downloaded_audio_files),
+            }
+        )
+
+    except _TimelineMediaExportError as e:
+        logger.warning(f"导出素材包失败(素材下载): {e.error}")
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                'success': False,
+                'error': e.error
+            }
+        )
+    except Exception as e:
+        logger.error(f"导出素材包失败: {e}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={
+                'success': False,
+                'error': str(e) or '导出素材包失败'
+            }
+        )
+    finally:
+        if base_temp_dir:
+            try:
+                await asyncio.to_thread(shutil.rmtree, base_temp_dir, True)
+            except Exception as e:
+                logger.warning(f"清理素材包临时目录失败: {e}")
 
 
 @app.get("/video-workflow-list")

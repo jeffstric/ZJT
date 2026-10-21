@@ -284,6 +284,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddScriptExtract').addEventListener('click', () => {
+      const nodeId = createScriptExtractNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddCharacter').addEventListener('click', () => {
       openCharacterModal();
       addMenu.classList.remove('show');
@@ -759,6 +766,7 @@
       // 拖拽创建连接线时显示虚线预览
       if(state.connecting){
         const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+        const draggingVoice = state.connecting.fromPort === 'voice';
         const fromPos = getOutputPortPos(state.connecting.fromId);
         const containerRect = canvasContainer.getBoundingClientRect();
         const toX = (e.clientX - containerRect.left - state.panX) / state.zoom;
@@ -800,8 +808,9 @@
 
         
         // 如果从角色/场景/道具节点拖拽：优先吸附生视频图片口，其次图片节点参考口
+        // 角色音色输出口不参与图片吸附
         let nearestRefPort = null;
-        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+        if(fromNode && !draggingVoice && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
           const registryPort = findNearestConnectablePort(toX, toY, fromNode.type, 50);
           let nearestRefDist = 50;
           if(registryPort){
@@ -826,7 +835,7 @@
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
+        if(fromNode && !draggingVoice && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const targetNode of state.nodes){
@@ -898,12 +907,17 @@
           }
         }
 
-        // 如果从音频节点拖拽，通过注册表查找所有音频输入端口
+        // 音频节点，或角色音色输出口：吸附文字转语音音色口，以及其它接受 audio 的输入口
         let nearestAudioInputPort = null;
-        if(fromNode && fromNode.type === 'audio'){
-          const registryAudioPort = findNearestConnectablePort(toX, toY, 'audio', 50);
+        if(draggingVoice || (fromNode && fromNode.type === 'audio')){
+          const registryAudioPort = findNearestConnectablePort(toX, toY, draggingVoice ? 'voice' : 'audio', 50);
           if(registryAudioPort){
-            nearestAudioInputPort = { nodeId: registryAudioPort.nodeId, x: registryAudioPort.x, y: registryAudioPort.y };
+            nearestAudioInputPort = {
+              nodeId: registryAudioPort.nodeId,
+              portType: registryAudioPort.portType,
+              x: registryAudioPort.x,
+              y: registryAudioPort.y
+            };
           }
         }
         
@@ -962,7 +976,13 @@
         for(const portEl of canvasEl.querySelectorAll('.audio-input-port')){
           const nodeEl = portEl.closest('.node');
           const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
-          const isNearest = nearestAudioInputPort && nearestAudioInputPort.nodeId === nodeId;
+          const isNearest = nearestAudioInputPort && nearestAudioInputPort.portType !== 'voice' && nearestAudioInputPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        for(const portEl of canvasEl.querySelectorAll('.voice-input-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestAudioInputPort && nearestAudioInputPort.portType === 'voice' && nearestAudioInputPort.nodeId === nodeId;
           portEl.classList.toggle('can-connect', isNearest);
         }
         
@@ -1194,8 +1214,16 @@
           }
         }
 
-        // 如果从角色/场景/道具节点拖拽：先连生视频图片口，否则连图片节点参考口
-        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+        // 角色音色输出口只连文字转语音的音色输入，不走图片参考口
+        if(fromNode && state.connecting && state.connecting.fromPort === 'voice'){
+          const voicePort = findNearestConnectablePort(mouseX, mouseY, 'voice', PROXIMITY_DIST);
+          if(voicePort && fromNode.type === 'dialogue_group' && state.connecting.voiceLineIndex != null
+              && typeof window.attachDialogueLineVoice === 'function'){
+            window.attachDialogueLineVoice(fromNode, voicePort, state.connecting.voiceLineIndex);
+          } else if(voicePort && typeof window.attachVoiceConnection === 'function'){
+            window.attachVoiceConnection(fromNode, voicePort);
+          }
+        } else if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
           let assetConnected = false;
           const i2vPort = findNearestConnectablePort(mouseX, mouseY, fromNode.type, PROXIMITY_DIST);
           const i2vDist = i2vPort ? i2vPort.dist : Infinity;
@@ -1376,15 +1404,24 @@
                 }
               }
             } else {
-              const hasDisabledPort = state.nodes.some(node => {
-                if(node.type !== 'dialogue_group') return false;
+              let nearRetiredPort = false;
+              for(const node of state.nodes){
+                if(node.type !== 'dialogue_group') continue;
                 const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-                if(!toEl) return false;
+                if(!toEl) continue;
                 const portEl = toEl.querySelector('.port.video-input-port');
-                return portEl && portEl.classList.contains('disabled');
-              });
-              if(hasDisabledPort){
-                showToast('请先将对话组节点的”情感控制方式”切换为”使用情感参考音频”', 'warning');
+                if(!portEl || !portEl.classList.contains('disabled')) continue;
+                const { dist } = distToPort(portEl);
+                if(dist < PROXIMITY_DIST){
+                  nearRetiredPort = true;
+                  break;
+                }
+              }
+              if(nearRetiredPort){
+                const retiredMsg = (typeof window.t === 'function' && window.t('dialogue_video_port_retired') !== 'dialogue_video_port_retired')
+                  ? window.t('dialogue_video_port_retired')
+                  : '对话组已不再接收情感参考视频，请在文字转语音节点中设置情感参考音频。';
+                showToast(retiredMsg, 'warning');
               }
             }
           }
@@ -1393,7 +1430,9 @@
         // 如果从音频节点拖拽，通过注册表查找所有音频输入端口
         if(fromNode && fromNode.type === 'audio'){
           const audioPort = findNearestConnectablePort(mouseX, mouseY, 'audio', PROXIMITY_DIST);
-          if(audioPort){
+          if(audioPort && audioPort.portType === 'voice' && typeof window.attachVoiceConnection === 'function'){
+            window.attachVoiceConnection(fromNode, audioPort);
+          } else if(audioPort){
             const connArray = state[audioPort.portCfg.connectionType] || state.audioConnections;
             const exists = connArray.some(c =>
               c.from === fromNode.id && c.to === audioPort.nodeId
@@ -1530,6 +1569,11 @@
     document.getElementById('timelineExportDraftBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       exportTimelineToDraft();
+    });
+
+    document.getElementById('timelineExportAssetsBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportTimelineAssets();
     });
 
     // ========== 角色和场景选择功能 ==========
@@ -1948,6 +1992,7 @@
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
+        <div class="port output voice-output-port" data-port="voice" data-i18n="character_voice_output_port:title" title="${window.t ? window.t('character_voice_output_port') : '音色输出'}"></div>
       `;
       
       // 添加调试按钮
@@ -1960,6 +2005,7 @@
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
       const outputPort = el.querySelector('.port.output');
+      const voiceOutputPort = el.querySelector('.port.voice-output-port');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2025,6 +2071,14 @@
           e.preventDefault();
           e.stopPropagation();
           state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      if(voiceOutputPort) {
+        voiceOutputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY, fromPort: 'voice' };
           canvasEl.style.cursor = 'crosshair';
         });
       }
@@ -2105,6 +2159,7 @@
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
+        <div class="port output voice-output-port" data-port="voice" data-i18n="character_voice_output_port:title" title="${window.t ? window.t('character_voice_output_port') : '音色输出'}"></div>
       `;
 
       // 添加调试按钮
@@ -2117,6 +2172,7 @@
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
       const outputPort = el.querySelector('.port.output');
+      const voiceOutputPort = el.querySelector('.port.voice-output-port');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2182,6 +2238,14 @@
           e.preventDefault();
           e.stopPropagation();
           state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      if(voiceOutputPort) {
+        voiceOutputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY, fromPort: 'voice' };
           canvasEl.style.cursor = 'crosshair';
         });
       }
@@ -3197,6 +3261,7 @@
     
     // 编辑角色音频文件选择预览
     document.getElementById('editCharacterVoiceInput').addEventListener('change', async (e) => {
+      updateCanvasVoiceDescBtnState();
       const file = e.target.files[0];
       const voicePreview = document.getElementById('editCharacterVoicePreview');
       const voicePreviewAudio = document.getElementById('editCharacterVoicePreviewAudio');
@@ -4220,6 +4285,8 @@
       document.getElementById('editCharacterPersonalityInput').value = character.personality || '';
       document.getElementById('editCharacterBehaviorInput').value = character.behavior || '';
       document.getElementById('editCharacterOtherInfoInput').value = character.other_info || '';
+      document.getElementById('editCharacterVoiceDescInput').value = character.voice_desc || '';
+      updateCanvasVoiceDescBtnState();
       
       // 重置文件输入框，防止上一个角色的文件名残留
       document.getElementById('editCharacterImageInput').value = '';
@@ -4264,6 +4331,75 @@
 
       document.getElementById('editCharacterModal').classList.add('show');
     }
+
+    // 音色描述「自动生成」按钮状态：有参考音频（已存 URL 或新选文件）才可点
+    // （指纹与音频同源，音频是声音的最终事实）
+    function updateCanvasVoiceDescBtnState() {
+      const voiceInput = document.getElementById('editCharacterVoiceInput');
+      const btn = document.getElementById('editCharacterVoiceDescBtn');
+      if (!btn || !voiceInput) return;
+      const node = state.nodes.find(n => n.id === currentEditingCharacterNodeId);
+      const hasVoice = !!(voiceInput.value || (node && node.data && node.data.default_voice));
+      btn.disabled = !hasVoice;
+    }
+
+    // 按角色人设自动生成声学音色描述（与 script_writer 共用后端接口与口径）。
+    // 只回填输入框，随「保存」按钮经 /api/characters/update 落库；用户可手改。
+    async function generateCanvasCharacterVoiceDesc() {
+      const characterName = document.getElementById('editCharacterNameInput').value.trim();
+      if (!characterName) {
+        showToast('请输入角色名称', 'error');
+        return;
+      }
+      const voiceInput = document.getElementById('editCharacterVoiceInput');
+      const node = state.nodes.find(n => n.id === currentEditingCharacterNodeId);
+      const hasExistingVoice = !!(node && node.data && node.data.default_voice);
+      if (!voiceInput.value && !hasExistingVoice) {
+        showToast('请先上传参考音频，音色描述跟随参考音频生成', 'error');
+        return;
+      }
+      const btn = document.getElementById('editCharacterVoiceDescBtn');
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '生成中...';
+      try {
+        const authToken = getAuthToken();
+        const userId = getUserId();
+        // 表单值优先（用户可能改了还没保存），节点数据兜底补 appearance 等表单没有的字段
+        const characterData = Object.assign({}, (node && node.data) || {}, {
+          name: characterName,
+          age: document.getElementById('editCharacterAgeInput').value.trim(),
+          identity: document.getElementById('editCharacterIdentityInput').value.trim(),
+          personality: document.getElementById('editCharacterPersonalityInput').value.trim(),
+          behavior: document.getElementById('editCharacterBehaviorInput').value.trim(),
+          other_info: document.getElementById('editCharacterOtherInfoInput').value.trim(),
+        });
+        const response = await fetch('/api/script-writer/characters/voice-desc', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + authToken,
+            'X-User-Id': userId
+          },
+          body: JSON.stringify({
+            user_id: userId,
+            world_id: (node && node.data && node.data.world_id) || null,
+            character_id: (node && node.data && node.data.id) || null,
+            character_name: characterName,
+            character_data: characterData
+          })
+        });
+        const data = await response.json();
+        if (!data.success) throw new Error(data.error || '生成失败');
+        document.getElementById('editCharacterVoiceDescInput').value = data.voice_desc || '';
+        showToast('音色描述已生成，可手动修改后保存', 'success');
+      } catch (error) {
+        showToast('生成音色描述失败: ' + error.message, 'error');
+      } finally {
+        btn.textContent = originalText;
+        updateCanvasVoiceDescBtnState();
+      }
+    }
     
     // 保存角色编辑
     async function saveCharacterEdit() {
@@ -4273,6 +4409,7 @@
       const personalityInput = document.getElementById('editCharacterPersonalityInput');
       const behaviorInput = document.getElementById('editCharacterBehaviorInput');
       const otherInfoInput = document.getElementById('editCharacterOtherInfoInput');
+      const voiceDescInput = document.getElementById('editCharacterVoiceDescInput');
       const imageInput = document.getElementById('editCharacterImageInput');
       const voiceInput = document.getElementById('editCharacterVoiceInput');
       const saveBtn = document.getElementById('editCharacterSaveBtn');
@@ -4312,6 +4449,12 @@
         if (personalityInput.value.trim()) formData.append('personality', personalityInput.value.trim());
         if (behaviorInput.value.trim()) formData.append('behavior', behaviorInput.value.trim());
         if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
+        // 音色指纹：节点快照自带该字段时保持全量提交（空串=用户主动清除），与编辑表单语义一致；
+        // 旧节点快照无该字段（音色指纹功能上线前创建）且输入框为空时不提交，
+        // 避免空串把库里已生成的指纹误清成 NULL
+        if (Object.prototype.hasOwnProperty.call(node.data, 'voice_desc') || voiceDescInput.value.trim()) {
+          formData.append('voice_desc', voiceDescInput.value.trim());
+        }
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
         if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
 

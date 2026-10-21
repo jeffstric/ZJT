@@ -26,6 +26,7 @@ class Character:
         self.reference_image = kwargs.get('reference_image')
         self.reference_images = kwargs.get('reference_images')
         self.default_voice = kwargs.get('default_voice')
+        self.voice_desc = kwargs.get('voice_desc')
         self.emotion_voices = kwargs.get('emotion_voices')
         self.sora_character = kwargs.get('sora_character')
         self.source = kwargs.get('source')
@@ -62,6 +63,7 @@ class Character:
             'reference_image': self.reference_image,
             'reference_images': reference_images,
             'default_voice': self.default_voice,
+            'voice_desc': self.voice_desc,
             'emotion_voices': emotion_voices,
             'sora_character': self.sora_character,
             'source': self.source,
@@ -101,6 +103,7 @@ class CharacterModel:
         reference_image: Optional[str] = None,
         reference_images: Optional[List[Dict]] = None,
         default_voice: Optional[str] = None,
+        voice_desc: Optional[str] = None,
         emotion_voices: Optional[Dict] = None,
         sora_character: Optional[str] = None,
         source: Optional[str] = None
@@ -121,6 +124,7 @@ class CharacterModel:
             reference_image: Reference image path (optional)
             reference_images: Multiple reference images list (optional)
             default_voice: Default voice file path (optional)
+            voice_desc: 音色描述（声学指纹文本，optional）
             emotion_voices: Emotion voices dict (optional)
             sora_character: Sora character ID (optional)
             source: 角色来源（CharacterConstants.SOURCE_*，缺省 manual）
@@ -135,18 +139,21 @@ class CharacterModel:
         if age and len(age) > 50:
             logger.warning(f"Character age truncated from {len(age)} to {len(age)} chars")
             age = age[:50]
+        if voice_desc and len(voice_desc) > 1000:
+            logger.warning("Character voice_desc truncated from %d to 1000 chars", len(voice_desc))
+            voice_desc = voice_desc[:1000]
 
         sql = """
             INSERT INTO `character`
             (world_id, name, age, identity, appearance, personality, behavior, other_info,
-             reference_image, reference_images, default_voice, emotion_voices, sora_character,
+             reference_image, reference_images, default_voice, voice_desc, emotion_voices, sora_character,
              source, user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         emotion_voices_str = json.dumps(emotion_voices, ensure_ascii=False) if emotion_voices else None
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         params = (world_id, name, age, identity, appearance, personality, behavior, other_info, reference_image,
-                 reference_images_str, default_voice, emotion_voices_str, sora_character,
+                 reference_images_str, default_voice, voice_desc, emotion_voices_str, sora_character,
                  source or CharacterConstants.SOURCE_MANUAL, user_id)
 
         try:
@@ -171,6 +178,7 @@ class CharacterModel:
         reference_image: Optional[str] = None,
         reference_images: Optional[List[Dict]] = None,
         default_voice: Optional[str] = None,
+        voice_desc: Optional[str] = None,
         emotion_voices: Optional[Dict] = None,
         sora_character: Optional[str] = None,
         source: Optional[str] = None
@@ -189,15 +197,18 @@ class CharacterModel:
         if age and len(age) > 50:
             logger.warning(f"Character age truncated from {len(age)} to 50 chars: {age}")
             age = age[:50]
-        
+        if voice_desc and len(voice_desc) > 1000:
+            logger.warning("Character voice_desc truncated from %d to 1000 chars", len(voice_desc))
+            voice_desc = voice_desc[:1000]
+
         emotion_voices_str = json.dumps(emotion_voices, ensure_ascii=False) if emotion_voices else None
         reference_images_str = json.dumps(reference_images, ensure_ascii=False) if reference_images else None
         sql = """
             INSERT INTO `character`
             (world_id, name, age, identity, appearance, personality, behavior, other_info,
-             reference_image, reference_images, default_voice, emotion_voices, sora_character,
+             reference_image, reference_images, default_voice, voice_desc, emotion_voices, sora_character,
              source, user_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
                 age = VALUES(age),
                 identity = VALUES(identity),
@@ -208,12 +219,13 @@ class CharacterModel:
                 reference_image = VALUES(reference_image),
                 reference_images = VALUES(reference_images),
                 default_voice = VALUES(default_voice),
+                voice_desc = IF(VALUES(voice_desc) IS NULL, voice_desc, VALUES(voice_desc)),
                 emotion_voices = VALUES(emotion_voices),
                 sora_character = VALUES(sora_character),
                 user_id = VALUES(user_id)
         """
         params = (world_id, name, age, identity, appearance, personality, behavior, other_info, reference_image,
-                 reference_images_str, default_voice, emotion_voices_str, sora_character,
+                 reference_images_str, default_voice, voice_desc, emotion_voices_str, sora_character,
                  source or CharacterConstants.SOURCE_MANUAL, user_id)
         
         try:
@@ -427,7 +439,7 @@ class CharacterModel:
         """
         allowed_fields = ['world_id', 'name', 'age', 'identity',
                          'appearance', 'personality', 'behavior', 'other_info',
-                         'reference_image', 'reference_images', 'default_voice', 'emotion_voices', 'sora_character',
+                         'reference_image', 'reference_images', 'default_voice', 'voice_desc', 'emotion_voices', 'sora_character',
                          'source']
         
         update_fields = []
@@ -492,6 +504,7 @@ CREATE TABLE IF NOT EXISTS `character` (
   `other_info` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci COMMENT '其他信息',
   `reference_image` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '参考图片地址',
   `default_voice` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '默认声音文件路径',
+  `voice_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '音色描述（声学指纹文本，AI 按角色人设生成、用户可改，仅 MiniMax H3 提示词使用）',
   `emotion_voices` json DEFAULT NULL COMMENT '感情色彩声音(JSON格式)',
   `sora_character` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Sora角色卡任务ID',
   `source` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual' COMMENT '角色来源: manual=手动创建, script_split=剧本拆分自动入库',

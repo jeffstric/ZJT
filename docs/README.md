@@ -394,6 +394,12 @@ build 容器挂载 `/var/run/docker.sock` 直连宿主机 dockerd，不再使用
    注意 GC 不能用 `docker images` 默认排序——全缓存构建的新 tag 是旧镜像的 retag，
    `CreatedAt` 不更新，最新 tag 会排到队尾被并发流水线的 GC 误删
    （MR !594 的 pipeline 2028 曾因此 `No such image`）。
+6. **镜像源抖动重试**：daocloud 公共代理偶发 `502 Bad Gateway`（HEAD manifests），
+   曾把 `e2e_smoke` 的 build 直接打挂且 job 级 retry 不覆盖 `script_failure`，只能
+   人工重跑。现 `unit_tests`/`e2e_smoke` 的 `before_script` 预取基础镜像（本地已有
+   秒过，缺失时 5 次线性退避重试），`docker compose build` 整体重试 3 次（幂等 +
+   层缓存，代价低）。Playwright 预取 tag 与 `docker/Dockerfile.e2e` 的
+   `PLAYWRIGHT_BASE_IMAGE` 默认值同步。
 
 旧的 DinD 时代方案（每 job 全新 daemon、`docker save/load` 搬运 664MB 镜像包经 GitLab
 cache 中转）已废弃——曾两次出现 20 字节坏包导致全量重建连锁，socket 直连后不再有

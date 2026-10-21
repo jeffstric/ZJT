@@ -83,6 +83,14 @@ Only lines that are written in the source prompt may appear inside `<d>`. If the
 
 When the source prompt contains no spoken lines, also remove any speaking-intent action such as "ready to speak", "about to say", "opens his mouth to speak", or "wants to say". The video model makes any mouth-opening character vocalize; without `<d>` text it produces unintelligible speech. Rewrite such moments as silent actions: a slight nod, a deep breath, a lingering glance, lips staying closed.
 
+Voice casting (when the source prompt carries a 角色音色说明 block):
+
+- That block lists each character's acoustic voice profile (gender & age feel, pitch, texture, volume, pace, tone habit — written in Chinese). It is authoritative casting: whenever that character speaks, render the profile into the English voice wording of the spoken line.
+- Translate every acoustic trait into English (e.g. 「30岁左右的成熟男性，声音低沉沙哑，音量洪亮，语速缓慢沉稳」 → "a deep, slightly hoarse middle-aged male voice, full volume, slow steady delivery"). Keep all traits semantically intact — never drop, soften, or invent traits.
+- Attach the voice wording to the dialogue attribution, e.g. "The guard on the right (S1) says in a deep, slightly hoarse middle-aged male voice: <d>[Chinese] …</d>". Use identical voice wording for the same character across all of their lines.
+- Ignore the profiles of characters who do not speak in this shot; a profile never causes a silent character to speak.
+- Do not copy the 角色音色说明 block into the final prompt; it is casting input only.
+
 On-screen text stays in English double quotes, untranslated.
 
 ## 5. Examples

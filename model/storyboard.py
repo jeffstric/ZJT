@@ -149,6 +149,30 @@ class StoryboardModel:
             raise
 
     @staticmethod
+    def get_by_workflow_id(user_id: int, workflow_id: int) -> Optional[Storyboard]:
+        """按关联工作流查找故事板（工作流→故事板互转的幂等入口）。"""
+        sql = "SELECT * FROM storyboard WHERE workflow_id = %s AND user_id = %s ORDER BY id ASC"
+        try:
+            result = execute_query(sql, (workflow_id, user_id), fetch_one=True)
+            if result:
+                return Storyboard(**result)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get storyboard by workflow {workflow_id}: {e}")
+            raise
+
+    @staticmethod
+    def max_episode_number(user_id: int, world_id: int) -> int:
+        """某世界下该用户已有故事板的最大集数（无则 0），供工作流转故事板时分配新集数。"""
+        sql = "SELECT COALESCE(MAX(episode_number), 0) AS max_ep FROM storyboard WHERE user_id = %s AND world_id = %s"
+        try:
+            result = execute_query(sql, (user_id, world_id), fetch_one=True)
+            return int((result or {}).get('max_ep') or 0)
+        except Exception as e:
+            logger.error(f"Failed to get max episode for world {world_id}: {e}")
+            raise
+
+    @staticmethod
     def list_ratios_by_world(user_id: int, world_id: int) -> List[Dict[str, Any]]:
         """
         列出某世界下故事板的集数与画幅比例，按 episode_number ASC。
@@ -272,11 +296,30 @@ class StoryboardModel:
     def list_folders_by_user(
         user_id: int,
         world_id: Optional[int] = None,
+        include_all_users: bool = False,
+        owner_user_ids: Optional[List[int]] = None,
     ) -> List[Dict[str, Any]]:
         where_conditions = []
         params: list = []
 
-        if Edition.is_space_isolated():
+        if owner_user_ids is not None:
+            owners: List[int] = []
+            seen = set()
+            for raw in owner_user_ids:
+                try:
+                    owner_id = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if owner_id in seen:
+                    continue
+                seen.add(owner_id)
+                owners.append(owner_id)
+            if not owners:
+                return []
+            placeholders = ",".join(["%s"] * len(owners))
+            where_conditions.append(f"sb.user_id IN ({placeholders})")
+            params.extend(owners)
+        elif Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("sb.user_id = %s")
             params.append(user_id)
 
@@ -542,13 +585,15 @@ class StoryboardModel:
                 prompt_str = json.dumps(prompt, ensure_ascii=False) if prompt else None
                 video_config = scene_data.get('video_config')
                 video_config_str = json.dumps(video_config, ensure_ascii=False) if video_config else None
-                # audio_embedded：调用方未显式提供时，按 video_type 推导
-                # （digital_human 产物已含口型音轨，默认声音同出）。
+                # audio_embedded：调用方未显式提供时默认 1（视频原声）。
+                # 音源口径：无配音分镜一律视频原声，TTS 仅在用户显式选择时生效；
+                # 数字人分镜同为 1（口型音轨内嵌，声音同出）。
+                # 见 docs/storyboard/storyboard_timeline_playback.md
                 video_type_val = scene_data.get('video_type', SceneVideoType.VIDEO)
                 if 'audio_embedded' in scene_data and scene_data.get('audio_embedded') is not None:
                     audio_embedded_val = 1 if scene_data.get('audio_embedded') else 0
                 else:
-                    audio_embedded_val = 1 if video_type_val == SceneVideoType.DIGITAL_HUMAN else 0
+                    audio_embedded_val = 1
                 # 发布幂等：source_shot_key 稳定标识每个最终 shot
                 source_shot_key = scene_data.get('source_shot_key') if script_split_task_id else None
                 scene_params = (

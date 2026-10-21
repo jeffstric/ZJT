@@ -27,6 +27,7 @@
 | [world_export_import.md](./world_export_import.md) | 世界导出与导入接口说明 |
 | [world_soft_delete.md](./world_soft_delete.md) | 世界伪删除（隐藏）/ 恢复显示 |
 | [character_matching.md](./character_matching.md) | 剧本解析角色匹配功能 |
+| [character_voice_dimensions.md](./character_voice_dimensions.md) | 角色五维声音（对白身份指纹）：盖住名字也能认出谁在说话 |
 | [script_language_sync.md](./script_language_sync.md) | 剧本节点语言联动功能 |
 | [script_writer_sse_disconnect.md](./script_writer_sse_disconnect.md) | script_writer SSE 断线恢复；ask_user 选项点击不误清输入框 |
 | [location_multi_angle_task.md](./location_multi_angle_task.md) | 场景多角度生图任务：状态机、提交失败重试与终态判定 |

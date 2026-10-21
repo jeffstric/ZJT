@@ -448,6 +448,17 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'user_module_grantable': True
     },
 
+    # ==================== 火山引擎语音合成（豆包语音） ====================
+    # 新版控制台单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
+    {
+        'key': 'volcengine_tts.api_key',
+        'value_type': 'string',
+        'description': '火山引擎语音合成 API Key（豆包语音控制台，TTS 快速合成+音色库）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+
     # ==================== 火山引擎海外版配置 ====================
     {
         'key': 'volcengine_oversea.api_key',
@@ -1145,6 +1156,13 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'sync_task.check_interval',
         'value_type': 'int',
         'description': '同步任务结果检查间隔（秒）',
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
+        'key': 'sync_task.worker_start_method',
+        'value_type': 'string',
+        'description': '同步任务 worker 进程池启动方式：spawn（默认，全新解释器，根治 fork 继承线程池/锁导致的假超时与死锁）/ fork（旧行为，Windows 不支持自动回落 spawn）。环境变量 SYNC_TASK_WORKER_START_METHOD 优先级更高（应急开关）。⚠️修改后需重启服务或等下次进程池重建生效',
         'editable': True,
         'is_sensitive': False
     },

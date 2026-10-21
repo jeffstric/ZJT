@@ -367,11 +367,18 @@ class PipelineProcessor:
         处理所有待处理的 pipeline 步骤（调度器入口）
 
         流程：
+        0. 回收卡死的 PROCESSING 步骤（无 async_task_id 且超时），推进其所属 ai_tool 终态
         1. 获取所有 PENDING 状态的步骤，分发给驱动执行
         2. 获取所有 PROCESSING 状态的步骤，轮询 async_task 状态
         3. 处理重试步骤（next_retry_at <= NOW）
         4. 检查是否有 ai_tool 的所有步骤都完成了，推进 ai_tool 状态
         """
+        # 0. 回收卡死步骤（幂等，无卡死时开销为一次走索引的查询）
+        try:
+            await PipelineProcessor._recover_stuck_processing_steps()
+        except Exception as e:
+            logger.error(f"Error recovering stuck processing steps: {e}", exc_info=True)
+
         # 1. 处理 PENDING 状态的步骤（分发任务）
         waiting_steps = PipelineStepModel.get_all_waiting_steps(limit=50)
         if waiting_steps:
@@ -472,15 +479,67 @@ class PipelineProcessor:
         return PipelineStepModel.get_ready_to_retry_steps(limit)
 
     @staticmethod
+    async def _recover_stuck_processing_steps() -> int:
+        """
+        回收卡死的 PROCESSING 步骤（无 async_task_id 且 updated_at 超过阈值）。
+
+        dispatch_step 先把步骤置为 PROCESSING、执行后才写回 async_task_id；若进程在
+        两者之间异常退出，该步骤将成为永久孤儿（PROCESSING + async_task_id NULL），
+        所属 ai_tool 的阶段永久挂起、调度器每轮刷 WARNING（生产 step 6759 挂了 15+ 天）。
+
+        ⚠️ 只把步骤置 FAILED，**不要**在此调用 _check_ai_tool_stage_completion 推进
+        ai_tool：该函数的失败分支只改 ai_tools 表（不更新 tasks、不退款），会把
+        ai_tool 置为 FAILED，导致 visual_task 的 _check_pipeline_stage 分支
+        （要求 WAITING_PARAM_PREPARE/WAITING_BEFORE_FINISH）永远不再命中，退款与
+        tasks 终结只能退化到 30 次 max-retry 指数退避兜底。正确路径是把终态化留给
+        visual_task：其轮询周期（5s）内 _check_pipeline_stage 检测到步骤 FAILED 即
+        一步完成 ai_tool/tasks FAILED + 退款。所有带 pipeline 步骤的任务均为
+        TASK_TYPE_GENERATE_VIDEO（visual_task 轮询范围），此闭环完整。
+
+        Returns:
+            本轮回收的步骤数
+        """
+        from config.constant import PipelineConfig
+
+        stuck_steps = PipelineStepModel.get_stuck_processing_steps_without_async_task(
+            PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS,
+            limit=PipelineConfig.STUCK_PROCESSING_RECOVER_LIMIT,
+        )
+        if not stuck_steps:
+            return 0
+
+        step_ids = [s.id for s in stuck_steps]
+        logger.error(
+            "Recovering %s stuck PROCESSING step(s) without async_task_id: ids=%s, "
+            "ai_tools=%s (ai_tool 终态化与退款由 visual_task._check_pipeline_stage 完成)",
+            len(step_ids), step_ids,
+            sorted({s.ai_tool_id for s in stuck_steps}),
+        )
+        PipelineStepModel.fail_processing_steps_by_ids(
+            step_ids,
+            error_message=(
+                "步骤卡死回收：PROCESSING 状态超过 "
+                f"{PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS} 秒"
+                "且无 async_task_id（dispatch 异常中断遗留），已自动标记失败"
+            ),
+        )
+        return len(step_ids)
+
+    @staticmethod
     async def _process_single_step(step: PipelineStep):
         """处理单个步骤"""
         if not step.async_task_id:
             # 没有关联 async_task，可能是 implementation_retry 等直接执行的步骤
             # 这种情况应该在 dispatch_step 时就已经 COMPLETED 了
             # 如果还是 PROCESSING，可能是异常情况
+            # （超过 PipelineConfig 卡死阈值后由 _recover_stuck_processing_steps 回收）
+            stuck_seconds = None
+            reference_time = step.updated_at or step.created_at
+            if reference_time:
+                stuck_seconds = max(0, int((datetime.now() - reference_time).total_seconds()))
             logger.warning(
                 f"Step {step.id} is PROCESSING but has no async_task_id, "
-                f"step_type={step.step_type}"
+                f"step_type={step.step_type}, stuck_seconds={stuck_seconds}"
             )
             return
 

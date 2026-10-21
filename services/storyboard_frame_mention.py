@@ -11,8 +11,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from config.unified_config import DriverKey, TaskTypeId
 
 # 「@首帧图片」不能命中「@首帧图」。与前端正则一致。
-_FIRST_MENTION_RE = re.compile(r"@首帧图(?![\u4e00-\u9fff])")
-_LAST_MENTION_RE = re.compile(r"@尾帧图(?![\u4e00-\u9fff])")
+# 前端插入的标记带唯一短 id 后缀（@首帧图:1c88f7a9），id 仅用于前端
+# 胶囊与图片对位，服务端只按首帧/尾帧语义解析；消费时整体替换不留残渣。
+_MENTION_ID_SUFFIX = r"(?::[0-9a-f]{8})?"
+_FIRST_MENTION_RE = re.compile(r"@首帧图" + _MENTION_ID_SUFFIX + r"(?![0-9a-f:\u4e00-\u9fff])")
+_LAST_MENTION_RE = re.compile(r"@尾帧图" + _MENTION_ID_SUFFIX + r"(?![0-9a-f:\u4e00-\u9fff])")
 
 H3_REFERENCE_MODEL_KEYS = frozenset({
     "minimax_h3_r2v",

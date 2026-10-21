@@ -137,6 +137,8 @@
   "generation_violation": "Generation failed: content did not pass the safety review. Please check your prompt and reference images and try again.",
   "image_generating_progress": "Generating image... ({done}/{total})",
   "video_generating_progress": "Generating video... ({done}/{total})",
+  "image_generating_label": "Generating image…",
+  "video_generating_label": "Generating video…",
   "image_task_submitted": "Image generation task submitted",
   "video_task_submitted": "Video generation task submitted",
   "image_task_suffix": ", generating image...",

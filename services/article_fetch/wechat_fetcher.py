@@ -87,24 +87,32 @@ async def fetch_wechat_article(url: str, user_id=None, include_comments: bool = 
 async def _attach_image_descriptions(article: ArticleContent, user_id=None) -> None:
     """VL 识图：为已转存图片生成内容描述（best-effort，失败不阻断）。
 
-    让 Agent"看懂图片里是什么"再决定参考图，而不是见到图就传。
-    顺序执行控制 VL 并发；总耗时受 fetch_article_content 外层超时约束。
+    让 Agent"看懂图片是什么"再决定参考图，而不是见到图就传。
+    并发执行（信号量限 4）：单张 VL 约 10~15s，24 张串行要 ~5 分钟会把抓取
+    整体超时耗尽（2026-10-13 dev2 会话 4161a6d4 实测：230s 超时，识图 18/24
+    未完成）。并发 4 时 24 张约 90s，在超时预算内。
     """
     if not article.images:
         return
     try:
+        import asyncio
+
         from services.image_describe import describe_image
 
-        for img in article.images:
-            try:
-                # user_id=None：识图走 upload 根目录白名单（workflow/<uid> 子目录
-                # 白名单不含 marketing_fetched，传 uid 会被"非法的图片路径"拒绝）
-                result = await describe_image(img.url, user_id=None, purpose="image_prompt")
-                if result.get("success") and result.get("description"):
-                    img.description = str(result["description"])[:200]
-            except Exception as e:
-                logger.debug("[article_fetch] 单图识图失败（跳过）: %s", e)
-                continue
+        semaphore = asyncio.Semaphore(4)
+
+        async def _describe_one(img):
+            async with semaphore:
+                try:
+                    # user_id=None：识图走 upload 根目录白名单（workflow/<uid> 子目录
+                    # 白名单不含 marketing_fetched，传 uid 会被"非法的图片路径"拒绝）
+                    result = await describe_image(img.url, user_id=None, purpose="image_prompt")
+                    if result.get("success") and result.get("description"):
+                        img.description = str(result["description"])[:200]
+                except Exception as e:
+                    logger.debug("[article_fetch] 单图识图失败（跳过）: %s", e)
+
+        await asyncio.gather(*[_describe_one(img) for img in article.images])
         described = sum(1 for i in article.images if i.description)
         logger.info("[article_fetch] 图片识图完成: %d/%d", described, len(article.images))
     except Exception as e:

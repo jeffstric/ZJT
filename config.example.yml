@@ -258,6 +258,22 @@ tts:
   api_url: "http://47.98.190.124"  # TTS API 服务地址
   upload_url: "http://47.98.190.124/result_audio/"
 
+# 火山引擎（豆包语音）大模型语音合成 - 快速合成 + 音色库
+# 新版控制台（console.volcengine.com/speech/new）为单 API Key 鉴权，
+# 在「API Key 管理」页创建（密钥本体为 UUID 形式）；需开通「语音合成大模型」服务。
+# 未配置（留空）时 /api/tts/* 合成接口返回友好错误，IndexTTS 链路不受影响。
+volcengine_tts:
+  api_key: ""       # 豆包语音控制台 API Key（密钥本体，非 key 名称）
+  # resource_id: "seed-tts-2.0"  # 大模型语音合成资源 ID（默认即可）
+  # power_tiers: [[50, 1], [200, 4], [500, 10], [1000, 20], [2000, 40]]  # 字符档位算力计价（热更新可覆盖）
+  # ⚠️⚠️ 法律风险警示：请勿开启该配置！⚠️⚠️
+  # 开启后「参考音频克隆」模式会提供「从音色库选择声音」入口（取火山预置音色
+  # 样例喂给 IndexTTS 克隆）。预置音色版权归火山引擎、服务条款禁止从服务中
+  # 提取使用，且音色多源自真人配音员授权（授权链不覆盖第三方模型克隆），
+  # 存在侵犯配音员声音权益（《民法典》1023 条）与违约风险。
+  # 本开关仅可在此配置文件修改，无法通过管理后台（system_config）开启。默认关闭。
+  allow_clone_from_voice_library: false
+
 # ASR (SenseVoice 句级转写) configuration
 # 用于故事板导出完整视频时生成"按语音时间轴逐句显示"的字幕（smart 模式）。
 # opt-in：未配置 asr 段（或 enabled 缺省）时默认关闭，导出字幕使用 block 分页模式。
@@ -383,6 +399,7 @@ media_cache:
 sync_task:
   max_workers: 4                   # 进程池最大并发数
   check_interval: 5                # 结果检查间隔（秒）
+  worker_start_method: spawn       # worker 启动方式：spawn（默认，根治 fork 继承假超时）/ fork（回退）；环境变量 SYNC_TASK_WORKER_START_METHOD 优先级更高
   stale_detection_enabled: true     # 是否启用同步任务 stale future 检测与 worker 回收
   stale_timeout:
     seedream5_volcengine_v1: 180    # Seedream 国内同步任务 stale 超时；Seedance 等提交后轮询任务不要加入

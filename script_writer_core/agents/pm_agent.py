@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+
+from config.constant import AGENT_LLM_IMAGE_TOKEN_ESTIMATE, VIDEO_GENERATION_EXPERT_SKILLS
 from .base_agent import BaseAgent, InsufficientComputingPowerError, check_computing_power_sync
 from .expert_agent import ExpertAgent
 from .ask_user_mixin import AskUserMixin
@@ -614,13 +616,6 @@ class PMAgent(BaseAgent, AskUserMixin):
         logger.info(f"{self.agent_id}: 已加载 SOP '{sop_name}' ({len(sop_content)} 字符)")
         return {"success": True, "sop_name": sop_name, "content": sop_content}
 
-    # 产出视频类生成任务的专家清单：project_ids 必须以 video_task_submitted 推送，
-    # 前端按视频任务轮询并在完成后渲染 <video>。漏配会把视频任务当图片轮询，
-    # 任务完成后图片 URL 为空，前端误报"图片生成失败"（事故：会话 5847bc38，
-    # digital-human-creator 的数字人视频被推成 image_task_submitted，视频生成
-    # 成功但用户只看到"图片生成失败，请稍后重试"）。
-    VIDEO_GENERATION_EXPERT_SKILLS = ("marketing-video", "article-to-video", "digital-human-creator")
-
     def _resolve_generation_task_event(self, skill_name: str, count: int) -> tuple:
         """按专家技能类型决定推送前端的生成任务事件类型与文案
 
@@ -628,7 +623,8 @@ class PMAgent(BaseAgent, AskUserMixin):
             (event_type, event_message)：视频类专家发 video_task_submitted，
             其余（生图专家等）发 image_task_submitted。
         """
-        if skill_name in self.VIDEO_GENERATION_EXPERT_SKILLS:
+        # 视频类专家清单统一在 config.constant.VIDEO_GENERATION_EXPERT_SKILLS 维护
+        if skill_name in VIDEO_GENERATION_EXPERT_SKILLS:
             return 'video_task_submitted', f'已提交 {count} 个视频生成任务'
         return 'image_task_submitted', f'已提交 {count} 个图片生成任务'
 
@@ -1077,9 +1073,24 @@ class PMAgent(BaseAgent, AskUserMixin):
         """估算当前上下文 token 数：上次真实 input_token + 本次新增消息的字符估算 + 缓冲"""
         if messages is None:
             messages = self._build_messages_for_api()
-        # 极简字符估算：每 3 个字符约 1 个 token（对中英混合偏保守）
-        char_count = sum(len(str(m.get("content", ""))) for m in messages)
-        delta = char_count // 3
+        # 文本按每 3 字符 ≈ 1 token（中英混合偏保守）；图片按固定 token 估算
+        # （官方 API 对图片缩放后计量、上限 1024/图，base64 不进入模型上下文，
+        # 按 base64 字符量估算会虚高 40 倍导致压缩/max_tokens 误判）。
+        char_count = 0
+        image_count = 0
+        for m in messages:
+            content = m.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    if part.get("type") == "image_url":
+                        image_count += 1
+                    else:
+                        char_count += len(str(part.get("text", "")))
+            elif content:
+                char_count += len(str(content))
+        delta = char_count // 3 + image_count * AGENT_LLM_IMAGE_TOKEN_ESTIMATE
         return self.last_api_input_tokens + delta + extra_buffer
 
     def _should_compress(self) -> bool:

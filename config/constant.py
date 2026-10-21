@@ -214,6 +214,12 @@ MAX_VOICE_REFERENCE_AUDIOS = 2
 # KFRef 优化步骤携带的「分镜画面构成」原料（生成分镜图所用提示词）截断上限：
 # 说话人绑定句的外观/站位信息主要在前段，超长截断以控制优化调用 token 预算。
 H3_KFREF_IMAGE_PROMPT_NOTE_MAX_CHARS = 600
+# 注入提示词的「角色音色说明」（voice_desc 声学指纹，仅 MiniMax H3）总长截断上限：
+# 指纹每条约几十至一二百字，超过上限说明数据异常，截断以保住靠前角色。
+H3_VOICE_CASTING_NOTE_MAX_CHARS = 1200
+# 「角色音色说明」块标记：注入侧（storyboard_reference_prompt_service）拼前缀，
+# 优化侧（h3_prompt_optimize_util）按它检测原文携带指纹并追加渲染指令。
+H3_VOICE_CASTING_NOTE_MARKER = "角色音色说明："
 
 # ===== Windows uv 托盘启动器 =====
 # launcher bootstrap 运行在 Web 服务启动之前；所有外部进程仍必须有硬超时，
@@ -292,10 +298,17 @@ AGENT_LLM_CONTEXT_SAFETY_MARGIN_TOKENS = 65536
 # 避免算出 0 或负数导致 API 直接拒绝。
 AGENT_LLM_MIN_OUTPUT_TOKENS = 4096
 # 专家对话历史中保留的最大图片数（fetch_image_as_base64 注入的多模态 user 消息）。
-# VL 模型对图片 token 计费很高（实测 deepseek-v4-flash-vision-exp 单图约 4~5 万 tokens），
 # 无上限累积会击穿上下文（事故：16 张图 messages 达 74 万 tokens）。
 # 超出后最旧图片替换为文本占位，LLM 需要时可重新调用 fetch_image_as_base64 获取。
 EXPERT_HISTORY_MAX_IMAGES = 6
+# 单张图片输入 token 的估算值（用于 max_tokens 动态收缩的输入估算，只做保守上界）。
+# 2026-09-27 官方 API 实测（deepseek-flash）：1280×720 单图 prompt 差值 ≈ 1000 tokens，
+# 官方文档明确"每张图片存在 1024 token 上限"（大图缩放至约 1300×1300 后计量）；
+# doubao 系按 tile 计量同量级。历史事故中"单图 4~5 万 tokens"实为 tool 消息
+# base64 文本泄漏 + 旧实验模型计量共同造成（见 docs/backend/incidents/
+# 2026-09-09-asset-readiness-context-overflow.md 复核段），并非图片正常计量。
+# 估算仍取 2 倍安全系数，真实输入以 last_api_input_tokens 兜底（两者取大）。
+AGENT_LLM_IMAGE_TOKEN_ESTIMATE = 2048
 
 # ===== Agent 状态轮询工具等待与死循环豁免 =====
 # （事故：会话 3d07080b 数字人流程中，专家每 3~4 秒轮询一次 check_reference_audio_status，
@@ -390,6 +403,14 @@ SYNC_TASK_STALE_TIMEOUT_BY_DRIVER = {
     DriverImplementation.SEEDREAM5_VOLCENGINE_V1: 180,
     DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1: 180,
 }
+
+# SyncTask worker 进程池默认启动方式。spawn：worker 为全新解释器，结构性根治
+# 整类 fork 继承问题——线程池假空闲 token 假超时（2026-09-13 七牛上传 / 2026-10-18
+# seedream 下载写盘，均为 fork 继承的模块级 ThreadPoolExecutor 在子进程"有账无线程"）、
+# 继承锁死锁（2026-09-08）、管道/FD 继承放大（2026-09-12）。Windows/macOS 默认本就是
+# spawn，此处仅改变 Linux 行为（worker 冷启动毫秒→秒级，长寿池摊销）。可用动态配置
+# sync_task.worker_start_method=fork 回退（Windows 不支持 fork，自动回落 spawn）。
+SYNC_WORKER_DEFAULT_START_METHOD = "spawn"
 
 # ProcessPool worker initializer 看门狗超时（秒）。
 # fork 只复制调用线程，但会复制所有锁的当前状态：若 fork 瞬间父进程其他线程
@@ -495,6 +516,79 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
 PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
+# ---------------------------------------------------------------------------
+# Agent 生成类工具统一注册表（单一数据源，新增/修改生成工具必须在此登记）
+#
+# 同一批工具名曾散落 3 个文件共 6 份清单（expert_agent 的 project_ids 收集
+# 白名单、power_confirm 的计费/图片/视频/标签清单、pm_agent 的视频专家技能
+# 清单），两段式数字人上线时 confirm_digital_human 漏配 project_ids 白名单，
+# video_task_submitted 事件不推送，前端全程看不到"视频生成中"（事故：dev2
+# 会话 cf028375，project 12752 视频实际生成成功但界面无感知）。现集中于此，
+# 各使用点只允许从下方派生常量取用，禁止再在业务模块手写工具名清单。
+# 字段说明：
+#   emits_project_ids — 返回结构含 project_ids 且需推送前端轮询
+#       （expert_agent 收集进 pending_project_ids → pm_agent 推
+#       image/video_task_submitted SSE 事件）。四宫格三件套走独立前端
+#       展示且不返回 project_ids，故为 False。
+#   estimate — 算力预估分流类别："image"（_estimate_image）/ "video"
+#       （_estimate_video）/ "digital_human"（_estimate_digital_human 固定
+#       预估，与按参数预估的视频类分开）/ ""（不参与预估：不弹门或无
+#       独立预估规则）。
+#   billable — 是否纳入算力确认门（提交前弹窗确认）。两段式数字人
+#       prepare/confirm 流程自带 UI 确认、generate_marketing_video 的
+#       内部子工具各自过门，故二者不重复弹门（False）。
+#   label   — 算力确认弹窗等处的中文展示名。
+GENERATION_TOOL_REGISTRY: Dict[str, Dict[str, Union[bool, str]]] = {
+    "generate_text_to_image":           {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "文生图"},
+    "edit_image":                       {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "图片编辑"},
+    "generate_character_variant_image": {"emits_project_ids": True, "estimate": "image", "billable": True, "label": "角色变体图"},
+    "generate_4grid_character_images":  {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "角色四宫格"},
+    "generate_4grid_location_images":   {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "场景四宫格"},
+    "generate_4grid_prop_images":       {"emits_project_ids": False, "estimate": "image", "billable": True, "label": "道具四宫格"},
+    "generate_text_to_video":           {"emits_project_ids": True, "estimate": "video", "billable": True, "label": "文生视频"},
+    "image_to_video":                   {"emits_project_ids": True, "estimate": "video", "billable": True, "label": "图生视频"},
+    "generate_digital_human":           {"emits_project_ids": True, "estimate": "digital_human", "billable": True, "label": "数字人"},
+    "prepare_digital_human_draft":      {"emits_project_ids": False, "estimate": "", "billable": False, "label": "数字人口播草案"},
+    "confirm_digital_human":            {"emits_project_ids": True, "estimate": "", "billable": False, "label": "数字人提交生成"},
+    "generate_marketing_video":         {"emits_project_ids": True, "estimate": "", "billable": False, "label": "图文转视频"},
+}
+
+# —— 以下派生常量供业务代码直接引用 ——
+# 会返回 project_ids 并推送前端轮询的工具（expert_agent 收集白名单）
+GENERATION_TOOLS_EMIT_PROJECT_IDS = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["emits_project_ids"]
+)
+# 纳入算力确认门的计费生成工具
+GENERATION_TOOLS_BILLABLE = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["billable"]
+)
+# 图片 / 视频类生成工具（算力预估分流，见 power_confirm.estimate_tool_computing_power；
+# generate_digital_human 属 digital_human 分流，故意不在 VIDEO 一列）
+GENERATION_TOOLS_IMAGE = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "image"
+)
+GENERATION_TOOLS_VIDEO = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "video"
+)
+# 数字人固定预估分流
+GENERATION_TOOLS_ESTIMATE_DIGITAL_HUMAN = frozenset(
+    name for name, meta in GENERATION_TOOL_REGISTRY.items() if meta["estimate"] == "digital_human"
+)
+# 生成工具中文展示名（算力确认弹窗等）
+GENERATION_TOOL_LABELS = {
+    name: meta["label"] for name, meta in GENERATION_TOOL_REGISTRY.items()
+}
+
+# 产出视频类生成任务的专家技能清单（skill_name 维度，非工具名）：其
+# project_ids 必须以 video_task_submitted 推送，前端按视频任务轮询并在完成后
+# 渲染 <video>。漏配会把视频任务当图片轮询，任务完成后图片 URL 为空，前端
+# 误报"图片生成失败"（事故：会话 5847bc38）。新增视频类专家技能时必须登记。
+VIDEO_GENERATION_EXPERT_SKILLS = (
+    "marketing-video",
+    "article-to-video",
+    "digital-human-creator",
+)
+
 
 class MediaGenerationSurface:
     """媒体生成模型偏好的调用入口。"""
@@ -581,6 +675,42 @@ H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 # [已废弃] 原双模型路由阈值（Wan2.2 / LTX2.3）。分镜对口型已统一为 MiniMax H3，不再使用。
 # 保留常量以免外部引用硬崩；新代码请勿依赖。
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
+
+# ===== 营销数字人时长自动路由（H3 单段/分段拼接，2026-10-16 v3）=====
+# 实测背景：H3 webapp 默认实例上 15s/720P 曾处于显存边界（torch.OutOfMemoryError
+# 随机出现：322/323 同参数成功、324/326/329 首选段失败，见 RunningHub outputs
+# failedReason），10s 档长期生产稳定。2026-10-19 用户确认显存充裕后恢复 15s 档：
+# ≤15s H3 单段；15-30s 分段拼接（每段 15s，driver 内置 OOM 按 10s 降档兜底）；
+# >30s 拒绝提示拆分。
+# LTX2.3 数字人因效果问题自营销路由撤下。
+DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
+# 分段拼接的口播时长软上限。分段架构无技术上限（段数=ceil(时长/10s)），
+# 此值仅作为异常超长音频的兜底拒绝线（防 TTS 异常产物拖垮流水线）；
+# 实际时长由 prepare 的口播文案上限（2000 字 ≈ 6-7 分钟）自然约束，
+# 段数越多生成耗时越长。prepare 草案按每段 4~10 分钟预告总耗时区间
+# （段数 × DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN ~ 段数 × MAX）
+DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS = 600
+# 每段目标时长（整数秒，H3 duration 节点粒度）。2026-10-19 显存充裕后恢复
+# 15s（官方上限，减少切割次数）；若个别实例仍 OOM，driver 内置按 10s 降档重切兜底
+DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS = 15
+# wan2.2 参考音色模式（generate_digital_human）适用的口播时长上限（秒）：
+# 超过则引导改走两段式 H3 链路
+DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS = 10
+# 口播时长估算速率（字/秒），营销数字人草案在缺实测时长时按文案长度估算
+DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND = 4
+# 营销数字人分段生成的耗时预估（分钟/段）。prepare 草案在分段模式下写出区间：
+# 总耗时约 段数×MIN ~ 段数×MAX
+DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN = 4
+DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX = 10
+
+# ===== 数字人 VL 锁镜头提示词生成重试（2026-10-21，修复 12815「背景/衣服漂移」）=====
+# 背景：VL 看角色图生成 H3 锁镜头提示词时，角色图走远程下载；内网环境自访问
+# frp 公网地址偶发瞬时不通（12815 实证 12:02:44 httpx ConnectError
+# "All connection attempts failed"），单次失败即降级为无约束兜底模板 →
+# H3 丢失服装/背景约束、逐段自由发挥（段 1 灰衬衫演播室 vs 段 2-4 白大褂诊所）。
+# 整体重试次数（含首次尝试）；相邻尝试间隔秒数
+DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS = 3
+DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS = 2
 
 
 class AgentAuthConstants:
@@ -822,14 +952,18 @@ class TaskType:
     _LABELS = {
         'GENERATE_VIDEO': '生成视频',
         'GENERATE_AUDIO': '生成音频',
+        'COMPOSE_JOB': '数字人分段拼接',
     }
     GENERATE_VIDEO = 'generate_video'
     GENERATE_AUDIO = 'generate_audio'
+    # 数字人分段拼接编排任务（task/compose_task.py 专用主循环消费）
+    COMPOSE_JOB = 'compose_job'
 
 
 # 向后兼容别名
 TASK_TYPE_GENERATE_VIDEO = TaskType.GENERATE_VIDEO
 TASK_TYPE_GENERATE_AUDIO = TaskType.GENERATE_AUDIO
+TASK_TYPE_COMPOSE_JOB = TaskType.COMPOSE_JOB
 
 # ============ 从 TaskTypeRegistry 动态生成的向后兼容常量 ============
 # 
@@ -1113,11 +1247,12 @@ RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
-# 注意：以下四个状态类用于不同的数据库表，数值含义有差异，请勿混用：
+# 注意：以下状态类用于不同的数据库表，数值含义有差异，请勿混用：
 # - AIToolStatus: ai_tools 表（图片/视频生成任务）
 # - TaskStatus: tasks 表（定时任务队列）
 # - GridImageTaskStatus: grid_image_tasks 表（宫格生图任务，独有 TIMEOUT/CANCELLED/DOWNLOAD_FAILED 状态）
 # - AIAudioStatus: ai_audio 表（音频/TTS 生成任务）
+# - ComposeJobStatus: compose_jobs 表（数字人分段拼接编排，纯编排不涉及计费）
 #
 # 数值对比：
 #                  PENDING/QUEUED  PROCESSING  COMPLETED  FAILED  特有状态
@@ -1125,6 +1260,7 @@ TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 # TaskStatus:      0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
 # GridImageTaskStatus: 0           1           2          -1      TIMEOUT(-2), CANCELLED(-3), DOWNLOAD_FAILED(-4)
 # AIAudioStatus:   0               1           2          -1      （无特有状态）
+# ComposeJobStatus: 0(PENDING)    1(COMPOSING) 2         -1      （无特有状态）
 
 class AIToolStatus:
     """AI工具任务状态（用于 ai_tools 表，跟踪图片/视频生成任务）"""
@@ -1147,6 +1283,21 @@ class AIToolStatus:
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
     DOWNLOADING = 6
+
+
+class ComposeJobStatus:
+    """数字人分段拼接编排状态（用于 compose_jobs 表，纯编排不涉及计费）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING': '待拼接',
+        'COMPOSING': '拼接中',
+        'COMPLETED': '拼接完成',
+        'FAILED': '拼接失败',
+    }
+    PENDING = 0
+    COMPOSING = 1
+    COMPLETED = 2
+    FAILED = -1
 
 
 class TaskStatus:
@@ -1311,6 +1462,9 @@ class StoryboardFeatureFlags:
     _CONSTANT_GROUP = True
 
     QUALITY_GRID_FIRST_FRAME_ENABLED = True
+    # quality 宫格首帧失败后是否降级为逐场景单图直出。
+    # 关闭后回到旧行为：宫格失败 → fail_downstream 级联判死整条串行链。
+    GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED = True
 
 
 class StoryboardTimeouts:
@@ -1495,6 +1649,14 @@ class ScriptSplitConstants:
     注意：分段边界由模型按语义决定，本类不包含任何「每 N 个字符一段」的固定切割常量。
     """
     _CONSTANT_GROUP = True
+
+    # ---- 任务创建前置校验 ----
+    # 剧本正文字符数下限（strip 后）。低于该值视为「内容信息不足」：
+    # 规划阶段唯一锚点必然被模型整体归入 excluded_block_ids（非正文），
+    # segments 为空 → plan_all_blocks_excluded 重试耗尽后 paused。
+    # 与其在用户等待多轮规划 LLM 后才失败，不如创建任务时直接 4xx 提示补全剧本。
+    # 背景：2026-10-15 事故——剧本被 AI 探针文本覆盖为 13 字占位符后反复拆分失败。
+    MIN_SCRIPT_SPLIT_CHARS = 20
 
     # ---- 分段规划诊断日志 ----
     # 记录第一阶段语义分段的输入、提示词、原始响应、解析结果和业务校验结果。
@@ -1747,6 +1909,8 @@ class StoryboardAutoGenerateConstants:
     BALANCED_LOCATION_REFERENCE_WAIT_MAX_TICKS = 30
     QUALITY_GRID_BATCHES_PER_TICK = 2
     ERROR_GRID_FIRST_FRAME_FAILED = "grid_first_frame_failed"
+    # 宫格失败降级单图时，单图提交本身失败的错误码（与宫格失败码区分，不再二次降级）。
+    ERROR_GRID_FALLBACK_SUBMIT_FAILED = "grid_fallback_submit_failed"
     ERROR_LOCATION_REFERENCE_GENERATION_FAILED = "location_reference_generation_failed"
     ERROR_PREVIOUS_GROUP_FAILED = "previous_group_failed"
     ERROR_PREVIOUS_GROUP_REFERENCE_TIMEOUT = "previous_group_reference_timeout"
@@ -1907,7 +2071,11 @@ class StoryboardDigitalHumanConstants:
     """Storyboard digital-human (lip-sync) — 统一 MiniMax H3。"""
     # 分镜对口型固定 MiniMax H3（task_type=35）；不再路由 Wan2.2 / LTX2.3。
     TASK_TYPE = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
-    DEFAULT_PROMPT = "图片1中的角色在说话。"
+    # 手部微动用条件从句表达、由视频模型对照首帧自行判断（分镜链无 VL 分析步骤，
+    # 不新增 LLM 调用）：无手图片不生效，避免凭空"长出手"；幅度限定手指/手腕级别，
+    # 身体其余部分锁定，避免引入段间漂移（同 12815 教训）
+    DEFAULT_PROMPT = ("图片1中的角色在说话。如画面中可见手部，手部配合说话有细微自然的动作"
+                      "（手指轻动、手腕微转），身体其余部分保持不动。")
     ERROR_AUDIO_REQUIRED = "audio_required"
     ERROR_AUDIO_PENDING = "audio_pending"
     ERROR_AUDIO_FAILED = "audio_failed"
@@ -1951,6 +2119,38 @@ class StoryboardDigitalHumanConstants:
         "1080P": 1920,
         "1080p": 1920,
     }
+
+
+class ComposeJobConstants:
+    """数字人分段拼接编排（task/compose_task.py）。
+
+    编排任务自身不生成内容、不计费：只轮询各段状态、补缺口段、拼成片。
+    重试预算与「等待」解耦——等待段完成不消耗 try_count（否则长任务未跑完
+    就被判死），只有补段/拼接等真实动作失败才消耗。
+    """
+    # 对外 project_id 前缀（前端按不透明字符串透传，get-status 据此分发到 compose_jobs）
+    PROJECT_ID_PREFIX = "compose_"
+    # 编排主循环间隔（秒），与 generate_video 同频
+    POLL_INTERVAL_SECONDS = 5
+    # 等待段完成时的重新调度间隔（秒）；段平均 4-10 分钟，无需高频空转
+    WAIT_RESCHEDULE_SECONDS = 10
+    # 补段/拼接失败的重试预算（次）。按段数上限 40 段、每段最多补 2 次估算，
+    # 留足余量；超过则整单 FAILED。
+    MAX_RETRY_COUNT = 100
+    # 段已完成但 result_url 为远端地址（download_queue 兜底残留）时，
+    # compose 侧自行下载的最大尝试次数，超过则降级为缺口补段
+    SEGMENT_REMOTE_DOWNLOAD_MAX_ATTEMPTS = 3
+    # 每轮主循环最多自愈几个远端残留段（自愈是同步 HTTP 下载，串行做法会在
+    # 40 段全残留时把调度线程堵上数十分钟，导致其他编排单停摆）
+    SEGMENT_HEAL_PER_ROUND = 2
+    # 拼接失败重试上限（独立于补段的 MAX_RETRY_COUNT）。
+    # 拼接失败多为确定性错误（文件损坏/缺音轨），用 100 次补段预算重试会
+    # 在退避封顶 96s 下空转数小时并反复吃 CPU
+    CONCAT_MAX_ATTEMPTS = 3
+    # ffmpeg 拼接超时（秒）与执行线程池大小（AGENTS.md R9/R10：模块级长寿
+    # executor，future.result 必须显式 timeout）
+    CONCAT_TIMEOUT_SECONDS = 600
+    CONCAT_EXECUTOR_MAX_WORKERS = 2
 
 
 class StoryboardAgentReadConstants:
@@ -2050,6 +2250,13 @@ class GridConfig:
     # 避免全局调度器（task.pipeline_processor）每 13s 反复 skip 刷日志。
     GRID_SPLIT_ORPHAN_CLEANUP_LIMIT = 50
 
+    # 轮询 ComfyUI 时连续认证失败（401/403）的终止阈值：
+    # grid_image_tasks.auth_token 是任务创建时的快照，用户 token 失效/轮换后轮询必然 401，
+    # 重试毫无意义。连续失败达到该次数即把任务标记为 FAILED 终态，避免每 10s 无限刷
+    # 401 WARNING（生产事故见 app.2026-09-29：任务 1337_0_50937 连续 401 共 105 次）。
+    # 3 次 × 10s 轮询间隔 ≈ 30s，足以排除 ComfyUI 侧瞬时 401 误伤（如网关抖动）。
+    AUTH_FAILURE_TERMINATION_LIMIT = 3
+
     # 分镜首帧宫格（i2i）目标分辨率映射：4宫格→2K，9宫格→4K。
     # 模型不支持目标值时，由 _pick_grid_image_size 自动降级到不超过目标的最大支持档位。
     GRID_SIZE_IMAGE_SIZE_MAP = {
@@ -2084,6 +2291,25 @@ GRID_VALID_SIZES = GridConfig.VALID_SIZES
 GRID_DEFAULT_SIZE_BY_TYPE = GridConfig.DEFAULT_SIZE_BY_TYPE
 GRID_LOCK_TIMEOUT_SECONDS = GridConfig.LOCK_TIMEOUT_SECONDS
 GRID_IMAGE_DOWNLOAD_TIMEOUT = GridConfig.IMAGE_DOWNLOAD_TIMEOUT
+
+class PipelineConfig:
+    """ai_tool_pipeline_steps 卡死步骤回收配置。
+
+    背景（生产事故 app.2026-09-14 起）：step 6759（h3_prompt_optimize）长期停留在
+    PROCESSING 且 async_task_id 为 NULL——dispatch 将状态置为 PROCESSING 后、建立
+    async_task 关联前进程异常退出，留下永久孤儿。调度器每 13s 扫到即刷一条 WARNING，
+    且所属 ai_tool 的 param_prepare 阶段永久挂起（15+ 天、日均 ~6600 条日志）。
+
+    回收策略：updated_at 超过超时阈值仍无 async_task_id 的 PROCESSING 步骤，由调度器
+    每轮开始时批量标记为 FAILED；下游 visual_task._check_pipeline_stage 检测到步骤
+    失败后会终结 ai_tool/tasks 并退款（走正常失败链路，无需特殊处理）。
+    超时判定在 SQL 层用 NOW() - INTERVAL 完成，不受应用与数据库时区差异影响。
+    """
+    # 卡死判定阈值（秒）：PROCESSING 且无 async_task_id 持续超过该时长即回收。
+    # 正常步骤 dispatch 后 13s 内就会写回 async_task_id 或转终态，1 小时余量充足。
+    STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS = 3600
+    # 单轮最大回收条数，避免一次回收过多导致日志/下游处理突刺。
+    STUCK_PROCESSING_RECOVER_LIMIT = 20
 
 class LocationReferenceStatus:
     """
@@ -2248,6 +2474,63 @@ class MediaConstants:
     VIDEO_FRAME_SCENE_DETECT_MAX_DURATION_SECONDS = 600.0
     # 相邻候选时间点最小间隔（秒），低于该值的点合并。
     VIDEO_FRAME_MIN_POINT_GAP_SECONDS = 0.2
+
+
+class VideoScriptExtractConstants:
+    """
+    视频提取剧本（video_workflow 剧本提取节点，services/video_script_extract_service.py）。
+
+    链路：视频 → 关键帧多批收集 + 音轨提取 → SenseVoice 分段 ASR →
+    关键帧图片（压缩 base64）+ 带时间戳转写稿 → 多模态 VL 模型一次性生成文字剧本。
+    任务为内存注册表 + 前端轮询（与 extract-frame 的同步接口区分：本链路分钟级耗时）。
+    """
+
+    # 任务执行阶段（前端轮询展示进度）
+    STAGE_FRAMES = "frames"   # 关键帧提取
+    STAGE_AUDIO = "audio"     # 音轨提取
+    STAGE_ASR = "asr"         # 语音转写
+    STAGE_LLM = "llm"         # 剧本生成
+    STAGE_DONE = "done"
+
+    # 支持的视频时长上限（秒）。关键帧按时长取点、音频分段转写，耗时随时长线性增长；
+    # 超长视频建议先剪辑。超出即拒绝创建任务。
+    MAX_VIDEO_DURATION_SECONDS = 900.0
+    # 送入多模态模型的关键帧数量与分辨率开放为节点参数（用户自调，默认值按常用场景定，
+    # 后续按使用反馈优化）。这里只定义默认值与防呆边界。
+    # 默认帧数：多批收集（复用 build_keyframe_points 翻页语义）后按时间均匀抽稀；
+    # 帧数防呆上限：官方单请求 ≤600 图，payload 与提帧耗时随帧数线性增长。
+    DEFAULT_MAX_FRAMES = 24
+    MIN_FRAMES_LIMIT = 4
+    MAX_FRAMES_LIMIT = 200
+    # 帧分辨率档位（短边高度）→ (压缩像素上限, 压缩体积上限 MB)。
+    # 对齐目标模型视觉规格：deepseek 缩放上限约 169 万像素、每图 ≤1024 token，
+    # token 随面积线性下降（720p≈1000 / 480p≈520 / 360p≈290），payload 同步下降；
+    # 像素上限即帧高 × 16/9 宽度，实测典型 JPEG q85 体积远低于上限（上限防异常大图）。
+    DEFAULT_FRAME_HEIGHT = 720
+    FRAME_HEIGHT_ALLOWED = (720, 480, 360)
+    FRAME_BUDGET_BY_HEIGHT = {
+        720: (921_600, 0.5),
+        480: (409_600, 0.25),
+        360: (230_400, 0.15),
+    }
+    # 音频分段转写每段时长（秒）：SenseVoice 单次请求读超时 60s（ASR_TIMEOUT），
+    # 长音频按段切开逐段转写，时间戳加段偏移还原为全片时间。
+    ASR_SLICE_SECONDS = 60.0
+    # 分段转写并发上限（httpx 异步请求，asyncio.Semaphore）。
+    ASR_CONCURRENCY = 3
+    # 单帧压缩外层超时（秒）。
+    FRAME_COMPRESS_TIMEOUT = 20
+    # 剧本生成 LLM 超时（秒）与输出 token 上限（多场景长剧本）。
+    LLM_TIMEOUT = 180
+    LLM_MAX_TOKENS = 8000
+    LLM_TEMPERATURE = 0.4
+    # 剧本文本长度上限（字符），超出截断，防止异常输出撑爆 workflow JSON。
+    MAX_SCRIPT_CHARS = 30000
+    # 内存任务记录保留时长（秒），超期惰性清理；服务重启任务即失联（前端提示重新提取）。
+    TASK_TTL_SECONDS = 1800
+    # 默认推荐模型：与图片描述一致的 VL 偏好（须已在模型表配置密钥且 supports_vl）。
+    PREFERRED_VENDOR = "volcengine"
+    PREFERRED_MODEL = "doubao-seed-2-0-lite"
 
 
 class BrandingConstants:
@@ -3162,7 +3445,7 @@ ARTICLE_FETCH_HTTP_TIMEOUT = 20              # 公众号文章页 HTTP 超时（
 ARTICLE_FETCH_IMAGE_TIMEOUT = 30             # 图片下载超时（秒）
 ARTICLE_FETCH_XHS_TIMEOUT = 30               # 小红书抓取超时（秒，下期 provider 实现启用）
 ARTICLE_FETCH_XHS_MIN_INTERVAL = 10          # 同来源两次小红书抓取最小间隔（秒，下期启用）
-ARTICLE_FETCH_MAX_IMAGES = 9                 # 单篇图片上限（对齐 Seedance 2.0 多参考图上限）
+ARTICLE_FETCH_MAX_IMAGES = 24                # 单篇图片上限（对齐抖音图文实际上限；Agent 按 VL 识图描述选相关图作参考）
 ARTICLE_FETCH_MAX_TEXT_CHARS = 8000          # 正文注入 LLM 的最大字符数
 ARTICLE_FETCH_IMAGE_MAX_BYTES = 15 * 1024 * 1024   # 单图大小上限
 ARTICLE_FETCH_RATE_LIMIT_PER_USER_HOUR = 10  # 每用户每小时抓取次数上限（进程内滑动窗口）
@@ -3170,7 +3453,11 @@ ARTICLE_FETCH_ALLOWED_HOSTS = (
     'mp.weixin.qq.com',        # 微信公众号
     'xiaohongshu.com',         # 小红书（www./探查页）
     'www.xiaohongshu.com',
-    'xhslink.com',             # 小红书分享短链（下期实现时先跟随跳转再校验最终域名）
+    'xhslink.com',             # 小红书分享短链（先跟随跳转再校验最终域名）
+    'douyin.com',              # 抖音（www./note|video 页）
+    'www.douyin.com',
+    'v.douyin.com',            # 抖音分享短链（整链传供应商解析）
+    'iesdouyin.com',           # 抖音分享链接备用域
 )
 ARTICLE_FETCH_WECHAT_UA = (
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '

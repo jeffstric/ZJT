@@ -18,6 +18,28 @@
         // auth_token 从 localStorage 读取，不再从 URL 获取，避免敏感信息暴露
         const AUTH_TOKEN = localStorage.getItem('auth_token') || '';
 
+        // 当前登录用户角色（'admin' 时世界侧栏展示全部用户世界，并可硬删除自己或他人的世界）
+        let currentUserRole = null;
+
+        // 拉取当前用户角色；失败保持 null（按普通用户处理，不影响主流程）
+        async function loadCurrentUserRole() {
+            try {
+                const resp = await fetch('/api/user/role', {
+                    headers: { 'Authorization': AUTH_TOKEN }
+                });
+                const data = await resp.json().catch(() => null);
+                if (data && data.code === 0 && data.data) {
+                    currentUserRole = data.data.role || null;
+                }
+            } catch (e) {
+                console.warn('获取用户角色失败:', e);
+            }
+        }
+
+        function isAdminUser() {
+            return currentUserRole === 'admin';
+        }
+
         // 纯转义走 web/js/escape.js。必须用 const 包一层，禁止 function 声明：
         // 非 module 脚本里 function escapeHtml 会挂到 window，覆盖权威实现并自递归爆栈。
         const escapeHtmlShared = window.escapeHtml;
@@ -153,6 +175,20 @@
         // 401——不设防重入会连环 alert，且反复重设跳转目标，会把刚登录成功的用户
         // 又拽回登录页（表现为"登录后进页面仍提示过期"的回环）。
         let tokenExpiredHandled = false;
+        let userMismatchHandled = false;
+
+        // X-User-Id 与 token 属主不一致（账号已切换、页面 URL 仍是旧账号的 user_id）：
+        // token 本身有效，绝不能走 handleTokenExpired 的「清 token + 跳登录页」——
+        // 登录页 redirect_url 会原样带回旧 user_id，重新登录后依旧 mismatch，形成回环。
+        // 正确做法是回首页，由首页按当前登录账号重新导航。
+        function handleUserMismatch() {
+            if (userMismatchHandled) {
+                return;
+            }
+            userMismatchHandled = true;
+            alert('⚠️ ' + (window.t ? window.t('alert_user_mismatch') : '当前页面所属账号与登录账号不一致\n\n请从首页重新进入。'));
+            window.location.href = window.location.origin + '/';
+        }
 
         async function handleTokenExpired() {
             if (tokenExpiredHandled) {
@@ -194,7 +230,11 @@
                 return true;
             }
             if (response && response.status === 401) {
-                handleTokenExpired();
+                if (data && data.error_code === 'user_mismatch') {
+                    handleUserMismatch();
+                } else {
+                    handleTokenExpired();
+                }
                 return true;
             }
             return false;
@@ -324,7 +364,85 @@
         const savedLocale = localStorage.getItem('zjt_locale') || 'zh-CN';
         document.documentElement.lang = savedLocale === 'en' ? 'en' : 'zh-CN';
 
+        function isBlankUserId(value) {
+            const text = String(value == null ? '' : value).trim();
+            return !text || text === 'null' || text === 'undefined';
+        }
+
+        function readApiErrorText(data) {
+            const unknown = window.t ? window.t('error_unknown') : '未知错误';
+            if (!data || typeof data !== 'object') return unknown;
+            const direct = [data.message, data.error];
+            if (typeof data.detail === 'string') direct.push(data.detail);
+            for (let i = 0; i < direct.length; i++) {
+                if (typeof direct[i] === 'string' && direct[i].trim()) return direct[i].trim();
+            }
+            if (Array.isArray(data.detail)) {
+                const parts = data.detail.map(function (item) {
+                    if (!item) return '';
+                    if (typeof item === 'string') return item.trim();
+                    if (typeof item.msg === 'string') return item.msg.trim();
+                    if (typeof item.message === 'string') return item.message.trim();
+                    return '';
+                }).filter(Boolean);
+                if (parts.length) return parts.join('；');
+            }
+            if (data.detail && typeof data.detail === 'object') {
+                const nested = data.detail.message || data.detail.error || data.detail.msg;
+                if (typeof nested === 'string' && nested.trim()) return nested.trim();
+            }
+            return unknown;
+        }
+
+        async function resolveLoggedInUserId() {
+            try {
+                const headers = {};
+                if (AUTH_TOKEN) {
+                    headers.Authorization = AUTH_TOKEN.startsWith('Bearer ')
+                        ? AUTH_TOKEN
+                        : `Bearer ${AUTH_TOKEN}`;
+                }
+                const resp = await fetch('/api/user/role', {
+                    headers: headers,
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json().catch(function () { return null; });
+                const resolved = data && data.code === 0 && data.data ? data.data.id : null;
+                if (resp.ok && !isBlankUserId(resolved)) {
+                    const id = String(resolved).trim();
+                    try { localStorage.setItem('user_id', id); } catch (e) { /* 隐私模式忽略 */ }
+                    return id;
+                }
+            } catch (e) {
+                // 角色接口失败时退回登录时写入的 user_id
+            }
+            const cached = localStorage.getItem('user_id');
+            return isBlankUserId(cached) ? '' : String(cached).trim();
+        }
+
+        // 分享链接或旧书签可能带上别人的 user_id。页面身份若继续用这个值，
+        // 后续世界/会话请求都会 403，用户停在当前页无法操作。入口处改成登录身份并刷新。
+        async function reconcileScriptWriterUserId() {
+            const authUserId = await resolveLoggedInUserId();
+            if (!authUserId) return false;
+            const params = new URLSearchParams(window.location.search);
+            const urlUserId = (params.get('user_id') || '').trim();
+            if (!isBlankUserId(urlUserId) && urlUserId === authUserId) return false;
+            params.set('user_id', authUserId);
+            // 错误 user_id 搭配的 world_id 属于对方。留下会继续卡在无权操作的世界里。
+            if (!isBlankUserId(urlUserId)) {
+                params.delete('world_id');
+            }
+            const qs = params.toString();
+            window.location.replace(window.location.pathname + (qs ? `?${qs}` : ''));
+            return true;
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
+            if (await reconcileScriptWriterUserId()) {
+                return;
+            }
+
             // i18n 初始化
             try {
                 // 初始化所有所需的命名空间
@@ -379,6 +497,7 @@
             await loadDriverStatus();
             await loadTextToImageModels();
             await loadComputingPower();
+            await loadCurrentUserRole();
             await loadUserWorlds();
             bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
@@ -2239,11 +2358,15 @@
                 console.error('Failed to submit verification:', error);
                 const input = document.getElementById('message-input');
 
-                // 401: token 过期
+                // 401: token 过期 / 身份不一致
                 if (error.response && error.response.status === 401) {
                     pendingVerificationId = null;
                     pendingVerificationData = null;
-                    handleTokenExpired();
+                    if (error.response.data && error.response.data.error_code === 'user_mismatch') {
+                        handleUserMismatch();
+                    } else {
+                        handleTokenExpired();
+                    }
                     return;
                 }
 
@@ -4311,13 +4434,13 @@
                         let deleteButtonHtml = '';
                         let storyboardButtonHtml = '';
 
-                        // 角色、场景、道具显示图片预览图标
+                        // 角色、场景、道具显示图片预览图标（无图时也保持可点：角色打开参考图片快捷弹窗）
                         if (['characters', 'locations', 'props'].includes(fileType)) {
                             // reference_image 在 json_data 对象里
                             const referenceImage = file.json_data?.reference_image || file.reference_image;
                             const hasImage = referenceImage && referenceImage.trim() !== '';
                             const iconClass = hasImage ? 'has-image' : 'no-image';
-                            const iconTitle = hasImage ? '预览图片' : '暂无参考图';
+                            const iconTitle = hasImage ? '预览图片' : '暂无参考图，点击设置';
                             imageIconHtml = `
                                 <button class="file-btn image-preview-btn ${iconClass}" data-action="preview-image" data-file-type="${escapeHtmlAttr(fileType)}" data-file-name="${escapeHtmlAttr(file.name || '')}" title="${iconTitle}">
                                     ${IMAGE_PREVIEW_ICON_SVG}
@@ -4328,17 +4451,15 @@
                                 fileItem.classList.add('image-generating');
                             }
                         }
-                        
-                        // 角色显示音色播放按钮
+
+                        // 角色显示音色播放按钮（无声时也保持可点：打开参考音频快捷弹窗设置音色）
                         if (fileType === 'characters') {
                             const defaultVoice = file.json_data?.default_voice || '';
                             const hasVoice = defaultVoice && defaultVoice.trim() !== '';
                             const voiceClass = hasVoice ? 'has-voice' : 'no-voice';
-                            const voiceTitle = hasVoice ? '播放音色' : '暂无音色';
-                            const voiceDisabled = hasVoice ? '' : 'disabled';
-                            const voiceDataAttr = hasVoice ? `data-action="play-voice" data-file-name="${escapeHtmlAttr(file.name || '')}"` : 'data-action="play-voice"';
+                            const voiceTitle = hasVoice ? '播放音色' : '暂无音色，点击设置';
                             voiceIconHtml = `
-                                <button class="file-btn voice-play-btn ${voiceClass}" ${voiceDataAttr} title="${voiceTitle}" ${voiceDisabled}>
+                                <button class="file-btn voice-play-btn ${voiceClass}" data-action="play-voice" data-file-name="${escapeHtmlAttr(file.name || '')}" title="${voiceTitle}">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                                         <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
@@ -4431,9 +4552,19 @@
                             if (!btn) return;
                             var action = btn.dataset.action;
                             if (action === 'preview-image') {
-                                previewItemImage(btn.dataset.fileType, btn.dataset.fileName);
+                                // 角色无参考图时：点击打开参考图片快捷弹窗（与编辑界面同构）；有图维持预览
+                                if (btn.dataset.fileType === 'characters' && btn.classList.contains('no-image')) {
+                                    openCharacterAssetModal(btn.dataset.fileName, 'image');
+                                } else {
+                                    previewItemImage(btn.dataset.fileType, btn.dataset.fileName);
+                                }
                             } else if (action === 'play-voice') {
-                                if (!btn.disabled) playCharacterVoice(btn.dataset.fileName);
+                                // 角色无声时：点击打开参考音频快捷弹窗（与编辑界面同构）；有声维持播放
+                                if (btn.classList.contains('no-voice')) {
+                                    openCharacterAssetModal(btn.dataset.fileName, 'voice');
+                                } else {
+                                    playCharacterVoice(btn.dataset.fileName);
+                                }
                             } else if (action === 'delete') {
                                 deleteStagingFile(btn.dataset.filePath);
                             } else if (action === 'open-storyboard') {
@@ -4441,6 +4572,7 @@
                             } else if (action === 'view') {
                                 viewFile(btn.dataset.fileType, btn.dataset.fileKey);
                             } else if (action === 'edit') {
+                                editModalSectionFocus = null;
                                 editFile(btn.dataset.fileType, btn.dataset.fileKey);
                             }
                         });
@@ -4841,8 +4973,32 @@
             }
         }
 
+        // 编辑弹窗区块聚焦模式：null=完整编辑弹窗；'voice'/'image'=角色资产快捷弹窗
+        // （复用编辑弹窗，仅显示参考音频/参考图片区块，交互与编辑界面完全一致）
+        let editModalSectionFocus = null;
+
+        async function openCharacterAssetModal(fileName, section) {
+            if (!fileName) return;
+            editModalSectionFocus = (section === 'image') ? 'image' : 'voice';
+            await editFile('characters', fileName);
+        }
+
+        function applyEditModalSectionFocus() {
+            const groups = document.querySelectorAll('#character-edit-form .form-group');
+            groups.forEach(function (g) { g.style.display = ''; });
+            if (!editModalSectionFocus) return;
+            const targetId = editModalSectionFocus === 'image' ? 'char-form-group-image' : 'char-form-group-voice';
+            groups.forEach(function (g) {
+                if (g.id !== targetId) g.style.display = 'none';
+            });
+            const modalBody = document.querySelector('#edit-modal .modal-body');
+            if (modalBody) modalBody.scrollTop = 0;
+        }
+
         function showCharacterEditor(fileName, data) {
-            document.getElementById('edit-modal-title').textContent = `✏️ 编辑角色 - ${fileName}`;
+            const focusTitle = editModalSectionFocus === 'voice' ? '🎙️ 参考音频'
+                : (editModalSectionFocus === 'image' ? '🖼️ 参考图片' : '✏️ 编辑角色');
+            document.getElementById('edit-modal-title').textContent = `${focusTitle} - ${fileName}`;
             document.getElementById('character-edit-form').style.display = 'block';
             document.getElementById('char-name').value = data.name || '';
             document.getElementById('char-age').value = data.age || '';
@@ -4852,6 +5008,8 @@
             document.getElementById('char-behavior').value = data.behavior || '';
             document.getElementById('char-other').value = data.other_info || '';
             document.getElementById('char-default-voice').value = data.default_voice || '';
+            document.getElementById('char-voice-desc').value = data.voice_desc || '';
+            updateVoiceDescButtonState();
             document.getElementById('char-image').value = data.reference_image || '';
 
             showCharacterDefaultVoicePreview(data.default_voice || '');
@@ -4871,6 +5029,9 @@
                     addCharMultiImageItem(multiImageList, img.label || '服装', img.url, img.id);
                 });
             }
+
+            // 快捷弹窗模式：仅显示目标区块（参考音频/参考图片）
+            applyEditModalSectionFocus();
         }
 
         function showCharacterDefaultVoicePreview(audioUrl) {
@@ -4888,6 +5049,293 @@
         function clearCharacterDefaultVoice() {
             document.getElementById('char-default-voice').value = '';
             showCharacterDefaultVoicePreview('');
+            updateVoiceDescButtonState();
+        }
+
+        // 音色描述「自动生成」按钮：有参考音频才可点击（指纹与音频同源，
+        // 音频是声音的最终事实）。参考音频输入框为 readonly，仅在
+        // 打开编辑器 / 上传 / 生成 / 清空这四个入口变化，各处调用本函数刷新状态。
+        function updateVoiceDescButtonState() {
+            const hasVoice = !!document.getElementById('char-default-voice').value.trim();
+            document.getElementById('generate-voice-desc-btn').disabled = !hasVoice;
+        }
+
+        // ==================== 公共音色库选择（角色参考音频） ====================
+        // 与 index.html 声音页「音色合成-参考音频-从音色库选择」同源（GET /api/tts/voices），
+        // 仅保留 provider='reference_audio' 的 AI 合成预置音色，火山（豆包）音色不展示、不可选。
+        let voiceLibraryVoices = [];
+        let voiceLibraryLoaded = false;
+        let voiceLibraryLoading = false;
+        let voiceLibraryPlayingAudio = null;
+        let voiceLibraryPlayingBtn = null;
+
+        function openCharacterVoiceLibrary() {
+            document.getElementById('voice-library-modal').classList.add('show');
+            if (!voiceLibraryLoaded && !voiceLibraryLoading) {
+                loadCharacterVoiceLibrary();
+            } else {
+                renderVoiceLibraryList();
+            }
+        }
+
+        function closeCharacterVoiceLibrary() {
+            document.getElementById('voice-library-modal').classList.remove('show');
+            stopVoiceLibraryPreview();
+        }
+
+        async function loadCharacterVoiceLibrary() {
+            const listEl = document.getElementById('voice-library-list');
+            voiceLibraryLoading = true;
+            listEl.innerHTML = '';
+            const loadingTip = document.createElement('div');
+            loadingTip.className = 'voice-lib-empty';
+            loadingTip.textContent = window.t ? window.t('voice_library_loading') : '正在加载音色库...';
+            listEl.appendChild(loadingTip);
+            try {
+                const response = await fetch('/api/tts/voices?page_size=300', {
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    listEl.innerHTML = '';
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || data.detail || 'load failed');
+                }
+                voiceLibraryVoices = (data.voices || []).filter(function (v) {
+                    return v && v.provider === 'reference_audio' && v.audio_url;
+                });
+                voiceLibraryVoices.sort(function (a, b) { return (a.sort_order || 0) - (b.sort_order || 0); });
+                voiceLibraryLoaded = true;
+                renderVoiceLibraryList();
+            } catch (error) {
+                listEl.innerHTML = '';
+                const failTip = document.createElement('div');
+                failTip.className = 'voice-lib-empty';
+                failTip.textContent = window.t ? window.t('error_voice_library_load_failed') : '音色库加载失败';
+                listEl.appendChild(failTip);
+            } finally {
+                voiceLibraryLoading = false;
+            }
+        }
+
+        function renderVoiceLibraryList() {
+            if (!voiceLibraryLoaded) return;
+            const listEl = document.getElementById('voice-library-list');
+            stopVoiceLibraryPreview();
+            const keyword = (document.getElementById('voice-library-search').value || '').trim().toLowerCase();
+            const gender = document.getElementById('voice-library-gender').value || '';
+            const filtered = voiceLibraryVoices.filter(function (v) {
+                if (gender && (v.gender || '') !== gender) return false;
+                if (keyword) {
+                    const haystack = ((v.name || '') + ' ' + (v.style || '')).toLowerCase();
+                    if (haystack.indexOf(keyword) === -1) return false;
+                }
+                return true;
+            });
+            listEl.innerHTML = '';
+            if (!filtered.length) {
+                const empty = document.createElement('div');
+                empty.className = 'voice-lib-empty';
+                empty.textContent = window.t ? window.t('voice_library_empty') : '没有匹配的音色';
+                listEl.appendChild(empty);
+                return;
+            }
+            filtered.forEach(function (voice) {
+                listEl.appendChild(buildVoiceLibraryItem(voice));
+            });
+        }
+
+        function buildVoiceLibraryItem(voice) {
+            const t = window.t ? window.t : function (k) { return k; };
+            const item = document.createElement('div');
+            item.className = 'voice-lib-item';
+
+            const info = document.createElement('div');
+            info.className = 'voice-lib-info';
+            const title = document.createElement('div');
+            title.className = 'voice-lib-title';
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'voice-lib-name';
+            nameSpan.textContent = voice.name || '';
+            title.appendChild(nameSpan);
+            if (voice.style) {
+                const styleBadge = document.createElement('span');
+                styleBadge.className = 'voice-lib-style';
+                styleBadge.textContent = voice.style;
+                title.appendChild(styleBadge);
+            }
+            info.appendChild(title);
+            if (voice.description) {
+                const desc = document.createElement('div');
+                desc.className = 'voice-lib-desc';
+                desc.textContent = voice.description;
+                desc.title = voice.description;
+                info.appendChild(desc);
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'voice-lib-actions';
+
+            const previewBtn = document.createElement('button');
+            previewBtn.type = 'button';
+            previewBtn.className = 'btn btn-secondary btn-sm';
+            previewBtn.textContent = t('voice_library_preview');
+            previewBtn.onclick = function () { toggleVoiceLibraryPreview(voice, previewBtn); };
+
+            const selectBtn = document.createElement('button');
+            selectBtn.type = 'button';
+            selectBtn.className = 'btn btn-primary btn-sm';
+            selectBtn.textContent = t('voice_library_select');
+            selectBtn.onclick = function () { selectVoiceLibraryPreset(voice, selectBtn); };
+
+            actions.appendChild(previewBtn);
+            actions.appendChild(selectBtn);
+
+            item.appendChild(info);
+            item.appendChild(actions);
+            return item;
+        }
+
+        function stopVoiceLibraryPreview() {
+            if (voiceLibraryPlayingAudio) {
+                voiceLibraryPlayingAudio.pause();
+                voiceLibraryPlayingAudio = null;
+            }
+            if (voiceLibraryPlayingBtn) {
+                voiceLibraryPlayingBtn.textContent = window.t ? window.t('voice_library_preview') : '试听';
+                voiceLibraryPlayingBtn = null;
+            }
+        }
+
+        function toggleVoiceLibraryPreview(voice, btn) {
+            const audioUrl = voice.audio_url || voice.sample_url || '';
+            if (!audioUrl) return;
+            const absUrl = /^https?:\/\//.test(audioUrl) ? audioUrl : window.location.origin + audioUrl;
+            // 再次点击正在播放的同一试听 → 停止
+            if (voiceLibraryPlayingBtn === btn && voiceLibraryPlayingAudio) {
+                stopVoiceLibraryPreview();
+                return;
+            }
+            stopVoiceLibraryPreview();
+            const audio = new Audio(absUrl);
+            voiceLibraryPlayingAudio = audio;
+            voiceLibraryPlayingBtn = btn;
+            btn.textContent = window.t ? window.t('voice_library_stop') : '停止';
+            audio.addEventListener('ended', function () {
+                if (voiceLibraryPlayingAudio === audio) stopVoiceLibraryPreview();
+            });
+            audio.play().catch(function () {
+                stopVoiceLibraryPreview();
+            });
+        }
+
+        async function selectVoiceLibraryPreset(voice, btn) {
+            const t = window.t ? window.t : function (k) { return k; };
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = t('voice_library_selecting');
+            try {
+                const response = await fetch('/api/script-writer/characters/preset-voice', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        voice_id: voice.id,
+                        world_id: parseInt(WORLD_ID)
+                    })
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || 'select failed');
+                }
+                // 与「上传音频」同一入口契约：回填 readonly 输入框 + 刷新预览，由用户点「保存」落库
+                document.getElementById('char-default-voice').value = data.url;
+                showCharacterDefaultVoicePreview(data.url);
+                // 音色描述自动填入（后端按预置音色 style/gender 确定性推导，无需 LLM 识别）；
+                // 选中的音频即声音事实，指纹随之刷新，用户仍可手动修改
+                if (data.voice_desc) {
+                    document.getElementById('char-voice-desc').value = data.voice_desc;
+                }
+                updateVoiceDescButtonState();
+                closeCharacterVoiceLibrary();
+                showSuccess(t('success_preset_voice_applied'));
+            } catch (error) {
+                const prefix = t('error_voice_library_apply_failed');
+                showError(error && error.message ? prefix + ': ' + error.message : prefix);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        // 按角色人设自动生成声学音色描述（character.voice_desc）。
+        // 只回填输入框，随角色卡保存链路持久化；用户可手改。
+        async function generateCharacterVoiceDesc() {
+            if (!currentEditFile || currentEditFile.fileType !== 'characters') {
+                showError(window.t ? window.t('error_open_character_first') : '请先打开一个角色进行编辑');
+                return;
+            }
+            const voiceUrl = document.getElementById('char-default-voice').value.trim();
+            if (!voiceUrl) {
+                showError(window.t ? window.t('error_voice_desc_need_audio') : '请先生成或上传参考音频');
+                return;
+            }
+            const characterName = document.getElementById('char-name').value.trim();
+            if (!characterName) {
+                showError(window.t ? window.t('error_character_name_required') : '角色名称不能为空');
+                return;
+            }
+            const btn = document.getElementById('generate-voice-desc-btn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '生成中...';
+            try {
+                updateStatus(window.t ? window.t('status_generating_voice_desc') : '正在生成音色描述...');
+                const modelSelector = document.getElementById('model-selector');
+                const selectedModelOption = modelSelector?.options[modelSelector.selectedIndex];
+                const response = await fetch('/api/script-writer/characters/voice-desc', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    },
+                    body: JSON.stringify({
+                        user_id: USER_ID,
+                        world_id: parseInt(WORLD_ID),
+                        character_name: characterName,
+                        character_data: JSON.parse(collectCharacterData()),
+                        model: modelSelector?.value || '',
+                        model_id: selectedModelOption?.dataset?.modelId ? parseInt(selectedModelOption.dataset.modelId) : null,
+                        vendor_id: selectedModelOption?.dataset?.vendorId ? parseInt(selectedModelOption.dataset.vendorId) : null
+                    })
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (!data.success) {
+                    throw new Error(data.error || '生成失败');
+                }
+                document.getElementById('char-voice-desc').value = data.voice_desc || '';
+                showSuccess(window.t ? window.t('success_voice_desc_generated') : '音色描述已生成，可手动修改后保存');
+            } catch (error) {
+                showError((window.t ? window.t('error_voice_desc_failed', {error: error.message}) : '生成音色描述失败: ' + error.message));
+            } finally {
+                btn.textContent = originalText;
+                updateVoiceDescButtonState();
+            }
         }
 
         function triggerCharacterVoiceUpload() {
@@ -4936,12 +5384,13 @@
                 if (data.success) {
                     document.getElementById('char-default-voice').value = data.url;
                     showCharacterDefaultVoicePreview(data.url);
+                    updateVoiceDescButtonState();
                     showSuccess(window.t ? window.t('success_audio_uploaded') : '音频上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
@@ -4992,6 +5441,11 @@
                 }
                 document.getElementById('char-default-voice').value = data.default_voice || data.result_url || '';
                 showCharacterDefaultVoicePreview(data.default_voice || data.result_url || '');
+                // 音频重新生成 → 音色指纹同步刷新（同一次音色分析的产物）
+                if (data.voice_desc) {
+                    document.getElementById('char-voice-desc').value = data.voice_desc;
+                }
+                updateVoiceDescButtonState();
                 await saveEditedFile();
                 showSuccess(window.t ? window.t('success_audio_generated') : '角色参考音频生成成功');
                 updateStatus(window.t ? window.t('status_audio_generated') : '角色参考音频已生成');
@@ -5064,9 +5518,8 @@
                 return;
             }
 
-            // 验证文件大小 (10MB)
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            // 验证文件大小（上限来自 server-config 动态配置）
+            if (!checkImageFileSize(file)) {
                 event.target.value = '';
                 return;
             }
@@ -5102,10 +5555,10 @@
                     labelInput.value = '';
                     showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
@@ -5164,6 +5617,7 @@
         function closeEditModal() {
             document.getElementById('edit-modal').classList.remove('show');
             currentEditFile = { fileType: '', fileName: '' };
+            editModalSectionFocus = null;
         }
 
         // 多图预览全局状态
@@ -6193,6 +6647,48 @@
             return 'front view';
         }
 
+        // 上传失败提示：透传后端具体原因（i18n 文案含 {error} 占位符），后端未返回原因时兜底“未知错误”
+        function uploadErrorText(rawError) {
+            const detail = rawError || (window.t ? window.t('error_unknown') : '未知错误');
+            return window.t ? window.t('error_upload_failed', {error: detail}) : '上传失败: ' + detail;
+        }
+
+        // 图片大小限制（MB）：从 server-config 动态获取后端配置，拉取失败时退回默认 10MB
+        let uploadImageLimitMb = 10;
+
+        async function fetchUploadImageLimit() {
+            try {
+                const response = await fetch('/api/system/server-config');
+                const result = await response.json();
+                const limitMb = result && result.data ? Number(result.data.max_image_size_mb) : NaN;
+                if (Number.isFinite(limitMb) && limitMb > 0) {
+                    uploadImageLimitMb = limitMb;
+                }
+            } catch (error) {
+                // 拉取失败保持默认限制，不阻塞上传
+            }
+        }
+
+        function formatFileSize(bytes) {
+            const mb = bytes / (1024 * 1024);
+            if (mb >= 1) return mb.toFixed(1) + 'MB';
+            return Math.max(1, Math.round(bytes / 1024)) + 'KB';
+        }
+
+        // 统一图片大小预检：超限直接提示后端配置的上限与文件实际大小，不发无效请求
+        function checkImageFileSize(file) {
+            if (file.size > uploadImageLimitMb * 1024 * 1024) {
+                const actual = formatFileSize(file.size);
+                showError(window.t
+                    ? window.t('error_image_too_large', {size: uploadImageLimitMb, actual: actual})
+                    : '图片大小不能超过' + uploadImageLimitMb + 'MB，当前文件' + actual);
+                return false;
+            }
+            return true;
+        }
+
+        fetchUploadImageLimit();
+
         function triggerImageUpload(inputId, itemType) {
             const fileInputId = inputId + '-file';
             const fileInput = document.getElementById(fileInputId);
@@ -6210,8 +6706,7 @@
                 return false;
             }
 
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            if (!checkImageFileSize(file)) {
                 return false;
             }
 
@@ -6248,10 +6743,10 @@
                     }
                     return true;
                 }
-                showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                showError(uploadErrorText(data.error));
                 return false;
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
                 return false;
             }
         }
@@ -6833,13 +7328,22 @@
             }
         }
 
+        let isSavingEditedFile = false;  // 防重入：保存请求进行中时忽略再次点击，避免重复保存与重复通知
+
         async function saveEditedFile() {
+            if (isSavingEditedFile) return;
             if (window.ScriptWriterLibrary && currentEditFile && currentEditFile.source === 'database') {
                 await window.ScriptWriterLibrary.saveLibraryAsset();
                 return;
             }
+            // closeEditModal() 会把 currentEditFile 重置为 {'',''}，必须在任何 await 之前快照，
+            // 否则并发保存时成功回调读到空值，会向智能体发出「系统通知：undefined ""」畸形消息
+            const fileType = currentEditFile.fileType;
+            const fileName = currentEditFile.fileName;
+            if (!fileType || !fileName) return;
+            isSavingEditedFile = true;
             let newContent = '';
-            
+
             if (document.getElementById('world-edit-form').style.display !== 'none') {
                 newContent = collectWorldData();
             } else if (document.getElementById('character-edit-form').style.display !== 'none') {
@@ -6853,13 +7357,13 @@
             } else if (document.getElementById('text-edit-form').style.display !== 'none') {
                 newContent = document.getElementById('edit-modal-content').value;
             }
-            
-            if (!newContent.trim()) {
-                showError(window.t ? window.t('error_file_content_empty') : '文件内容不能为空');
-                return;
-            }
-            
+
             try {
+                if (!newContent.trim()) {
+                    showError(window.t ? window.t('error_file_content_empty') : '文件内容不能为空');
+                    return;
+                }
+
                 const apiMap = {
                     'worlds': '/api/world-files',
                     'characters': '/api/characters-files',
@@ -6867,8 +7371,8 @@
                     'locations': '/api/locations-files',
                     'props': '/api/props-files'
                 };
-                
-                const response = await fetch(`${apiMap[currentEditFile.fileType]}/${encodeURIComponent(currentEditFile.fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
+
+                const response = await fetch(`${apiMap[fileType]}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
                     body: JSON.stringify({
@@ -6878,15 +7382,13 @@
                         auth_token: AUTH_TOKEN
                     })
                 });
-                
+
                 const data = await response.json();
                 if (data.success) {
-                    const fileType = currentEditFile.fileType;
-                    const fileName = currentEditFile.fileName;
                     showSuccess(window.t ? window.t('success_file_updated', {name: fileName}) : `✓ 文件已更新: ${fileName}`);
                     closeEditModal();
                     await loadFiles(fileType);
-                    
+
                     const fileTypeMap = {
                         'characters': '角色卡',
                         'locations': '场景',
@@ -6901,6 +7403,8 @@
                 }
             } catch (error) {
                 showError((window.t ? window.t('error_save_file_failed', {error: error.message}) : '保存文件失败: ' + error.message));
+            } finally {
+                isSavingEditedFile = false;
             }
         }
 
@@ -6914,6 +7418,7 @@
                 behavior: document.getElementById('char-behavior').value.trim(),
                 other_info: document.getElementById('char-other').value.trim(),
                 default_voice: document.getElementById('char-default-voice').value.trim(),
+                voice_desc: document.getElementById('char-voice-desc').value.trim(),
                 reference_image: document.getElementById('char-image').value.trim()
             };
             // 收集多服装参考图
@@ -6952,9 +7457,8 @@
                 return;
             }
 
-            // 验证文件大小 (10MB)
-            if (file.size > 10 * 1024 * 1024) {
-                showError(window.t ? window.t('error_image_too_large') : '图片大小不能超过10MB');
+            // 验证文件大小（上限来自 server-config 动态配置）
+            if (!checkImageFileSize(file)) {
                 event.target.value = '';
                 return;
             }
@@ -6988,10 +7492,10 @@
                     labelInput.value = '';
                     showSuccess(window.t ? window.t('success_image_uploaded') : '图片上传成功');
                 } else {
-                    showError((window.t ? window.t('error_upload_failed', {error: data.error}) : '上传失败: ' + data.error));
+                    showError(uploadErrorText(data.error));
                 }
             } catch (error) {
-                showError((window.t ? window.t('error_upload_failed', {error: error.message}) : '上传失败: ' + error.message));
+                showError(uploadErrorText(error.message));
             }
 
             event.target.value = '';
@@ -7260,7 +7764,7 @@
 
         // 缓存世界列表，用于侧边栏搜索
         let cachedWorlds = [];
-        // 侧栏列表模式：active=正常 | deleted=已伪删除
+        // 侧栏列表模式：active=正常 | deleted=已隐藏（接口参数仍是 visibility=deleted）
         let worldListMode = 'active';
 
         function updateWorldDeletedToggleUI() {
@@ -7268,7 +7772,7 @@
             if (!btn) return;
             const label = worldListMode === 'deleted'
                 ? (window.t ? window.t('back_to_world_list') : '返回世界列表')
-                : (window.t ? window.t('view_deleted_worlds') : '查看已删除的世界');
+                : (window.t ? window.t('view_deleted_worlds') : '查看已隐藏的世界');
             btn.innerHTML = `<span>${label}</span>`;
             btn.classList.toggle('active-mode', worldListMode === 'deleted');
         }
@@ -7284,8 +7788,8 @@
                 let emptyText;
                 if (isDeletedMode) {
                     emptyText = hasKeyword
-                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已删除世界')
-                        : (window.t ? window.t('no_deleted_worlds') : '暂无已删除的世界');
+                        ? (window.t ? window.t('no_deleted_worlds_found') : '未找到匹配的已隐藏世界')
+                        : (window.t ? window.t('no_deleted_worlds') : '暂无已隐藏的世界');
                 } else {
                     emptyText = hasKeyword
                         ? (window.t ? window.t('no_worlds_found') : '未找到匹配的世界')
@@ -7312,6 +7816,18 @@
                 worldName.className = 'world-name';
                 worldName.textContent = world.name;
                 worldInfo.appendChild(worldName);
+
+                // 管理员查看他人世界时展示归属标记，便于区分
+                const isOwnWorld = String(world.user_id) === String(USER_ID);
+                if (isAdminUser() && !isOwnWorld) {
+                    const ownerTag = document.createElement('div');
+                    ownerTag.className = 'world-owner-tag';
+                    const ownerName = String(world.owner_nickname || '').trim();
+                    ownerTag.textContent = window.t
+                        ? window.t('world_owner_badge', { name: ownerName || String(world.user_id) })
+                        : `${ownerName || ('用户' + world.user_id)} 创建`;
+                    worldInfo.appendChild(ownerTag);
+                }
 
                 if (world.description) {
                     const worldDesc = document.createElement('div');
@@ -7361,16 +7877,35 @@
                         hideWorld(world.id, world.name);
                     };
                     hideBtn.innerHTML = `
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                            <path d="M10 11v6M14 11v6"/>
-                            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="2" y="3" width="20" height="5" rx="1"/>
+                            <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/>
+                            <path d="M10 12h4"/>
                         </svg>
                     `;
 
                     worldActions.appendChild(editBtn);
                     worldActions.appendChild(hideBtn);
+
+                    // 管理员可永久删除自己或他人的世界（物理删除，区别于「隐藏」）
+                    if (isAdminUser()) {
+                        const deleteBtn = document.createElement('button');
+                        deleteBtn.className = 'world-delete-btn';
+                        deleteBtn.title = window.t ? window.t('delete_world_admin') : '永久删除（管理员）';
+                        deleteBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            adminDeleteWorld(world.id, world.name);
+                        };
+                        deleteBtn.innerHTML = `
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3 6 5 6 21 6"/>
+                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                <path d="M10 11l4 4M14 11l-4 4"/>
+                                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                            </svg>
+                        `;
+                        worldActions.appendChild(deleteBtn);
+                    }
                 }
 
                 worldItem.appendChild(worldInfo);
@@ -7419,8 +7954,10 @@
         async function loadUserWorlds() {
             try {
                 const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
+                // 管理员可见全部用户的世界（后端对非管理员自动回退 user 范围）
+                const scopeParam = isAdminUser() ? '&scope=all' : '';
                 const response = await fetch(
-                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}`,
+                    `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}${scopeParam}`,
                     {
                         headers: {
                             'Authorization': AUTH_TOKEN,
@@ -7463,7 +8000,7 @@
         async function hideWorld(worldId, worldName) {
             const confirmMsg = window.t
                 ? window.t('confirm_hide_world', { name: worldName || '' })
-                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已删除的世界」中恢复。数据不会丢失。`;
+                : `确定隐藏世界「${worldName || ''}」吗？隐藏后不会出现在列表中，可在「已隐藏的世界」中恢复。数据不会丢失。`;
             if (!confirm(confirmMsg)) return;
 
             try {
@@ -7492,10 +8029,11 @@
                     }
                     await loadUserWorlds();
                 } else {
+                    const errorText = readApiErrorText(data);
                     showError(
                         window.t
-                            ? window.t('error_hide_world_failed', { error: data.message || data.error || '未知错误' })
-                            : `隐藏世界失败: ${data.message || data.error || '未知错误'}`
+                            ? window.t('error_hide_world_failed', { error: errorText })
+                            : `隐藏世界失败: ${errorText}`
                     );
                 }
             } catch (error) {
@@ -7504,6 +8042,56 @@
                     window.t
                         ? window.t('error_hide_world_failed', { error: error.message })
                         : `隐藏世界失败: ${error.message}`
+                );
+            }
+        }
+
+        // 管理员硬删除世界（含自己的；世界下仍有角色/场景/道具时后端会拒绝）
+        async function adminDeleteWorld(worldId, worldName) {
+            const confirmMsg = window.t
+                ? window.t('confirm_delete_world_admin', { name: worldName || '' })
+                : `【管理员操作】确定永久删除世界「${worldName || ''}」吗？\n\n该操作将物理删除世界记录，不可恢复；世界下仍存在角色、场景或道具时会被拒绝。`;
+            if (!confirm(confirmMsg)) return;
+
+            try {
+                const response = await fetch(`/api/worlds/${worldId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': AUTH_TOKEN,
+                        'X-User-Id': USER_ID
+                    }
+                });
+                const data = await response.json();
+                if (data.code === 0 || data.success) {
+                    showSuccess(
+                        window.t
+                            ? window.t('success_world_deleted', { name: worldName || '' })
+                            : `✓ 世界「${worldName || ''}」已删除`
+                    );
+                    // 删除的是当前正在使用的世界 → 退出到未选世界状态
+                    if (String(worldId) === String(WORLD_ID)) {
+                        let newUrl = `${window.location.pathname}?user_id=${USER_ID}`;
+                        if (WORKFLOW_ID) {
+                            newUrl += `&workflow_id=${WORKFLOW_ID}`;
+                        }
+                        window.location.href = newUrl;
+                        return;
+                    }
+                    await loadUserWorlds();
+                } else {
+                    const errorText = readApiErrorText(data);
+                    showError(
+                        window.t
+                            ? window.t('error_delete_world_failed', { error: errorText })
+                            : `删除世界失败: ${errorText}`
+                    );
+                }
+            } catch (error) {
+                console.error('删除世界失败:', error);
+                showError(
+                    window.t
+                        ? window.t('error_delete_world_failed', { error: error.message })
+                        : `删除世界失败: ${error.message}`
                 );
             }
         }
@@ -7526,7 +8114,7 @@
                     );
                     await loadUserWorlds();
                 } else {
-                    const msg = data.message || data.error || '未知错误';
+                    const msg = readApiErrorText(data);
                     showError(
                         window.t
                             ? window.t('error_restore_world_failed', { error: msg })
@@ -7696,7 +8284,7 @@
                 if (data.code === 0) {
                     showSuccess(window.t ? window.t('success_world_created_detail', {name: name}) : `✓ 世界 "${name}" 创建成功！`);
                     closeNewWorldModal();
-                    // 新建世界一定出现在正常列表；若当前在「已删除」视图则切回
+                    // 新建世界一定出现在正常列表；若当前在「已隐藏」视图则切回
                     worldListMode = 'active';
                     updateWorldDeletedToggleUI();
                     await loadUserWorlds();

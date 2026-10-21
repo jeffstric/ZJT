@@ -58,6 +58,7 @@ import {
     updatePlayheadPosition,
     isPreviewMediaBusy,
 } from './playback.js';
+import { syncChatMentionChips, shortImageId } from './chat_mention_chips.js';
 import {
     SCENE_AUDIO_MODE,
     resolveSceneAudioMode,
@@ -96,6 +97,9 @@ const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml ==
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+const escapeHtmlAttr = (typeof window !== 'undefined' && typeof window.escapeHtmlAttr === 'function')
+    ? window.escapeHtmlAttr
+    : escapeHtml;
 
 /** Map scene.videoType to Chinese label for UI. */
 export function videoTypeLabel(videoType) {
@@ -843,26 +847,69 @@ function episodeFolderStatusLabel(folder) {
     return i18nT('status_can_create', '可新建');
 }
 
+function renderEpisodeOwnerScope() {
+    if (!state.isStoryboardAdmin) return '';
+    const scope = state.episodeOwnerScope || 'mine';
+    const button = (value, label) => `
+        <button type="button" class="episode-owner-scope-btn ${scope === value ? 'is-active' : ''}"
+            data-action="set-episode-owner-scope" data-scope="${value}">${label}</button>`;
+    const search = scope === 'user'
+        ? `
+            <div class="episode-owner-search">
+                <input type="search" class="episode-owner-input" data-episode-owner-input
+                    placeholder="${i18nT('placeholder_storyboard_owner', '昵称或账号')}"
+                    value="${escapeHtml(state.episodeOwnerQuery || '')}">
+                <button type="button" class="episode-picker-go" data-action="search-episode-owner">${i18nT('btn_storyboard_owner_search', '查看')}</button>
+            </div>`
+        : '';
+    const hint = state.episodeOwnerHint
+        ? `<p class="episode-owner-hint">${escapeHtml(state.episodeOwnerHint)}</p>`
+        : '';
+    return `
+        <div class="episode-owner-scope" role="group" aria-label="${i18nT('label_episode_owner_scope', '故事板范围')}">
+            ${button('mine', i18nT('scope_storyboard_mine', '只看自己'))}
+            ${button('all', i18nT('scope_storyboard_all', '查看全部'))}
+            ${button('user', i18nT('scope_storyboard_user', '查看指定用户'))}
+            ${search}
+            ${hint}
+        </div>`;
+}
+
 function renderEpisodePicker() {
     if (!state.showEpisodePicker) return '';
     const folders = [...(state.episodeFolders || [])]
-        .sort((a, b) => (Number(a.episode_number) || 0) - (Number(b.episode_number) || 0));
+        .sort((a, b) => {
+            const epDiff = (Number(a.episode_number) || 0) - (Number(b.episode_number) || 0);
+            if (epDiff) return epDiff;
+            return String(a.owner_nickname || '').localeCompare(String(b.owner_nickname || ''), 'zh');
+        });
     const currentEp = Number(state.episodeNumber) || 1;
+    const currentOwner = Number(state.userId) || 0;
     const rows = folders.length
         ? folders.map((f) => {
             const ep = Number(f.episode_number) || 1;
-            const active = ep === currentEp ? 'active' : '';
+            const sameEpisode = ep === currentEp;
+            const sameOwner = !f.owner_user_id || Number(f.owner_user_id) === currentOwner;
+            const active = sameEpisode && sameOwner ? 'active' : '';
             const title = f.script_title || f.storyboard_title || `${i18nT('label_episode_prefix', '第')}${ep}${i18nT('label_episode_suffix', '集')}`;
             const status = episodeFolderStatusLabel(f);
+            const owner = String(f.owner_nickname || '').trim();
+            const ownerHtml = owner
+                ? `<span class="episode-picker-owner">${escapeHtml(owner)}</span>`
+                : '';
             return `
                 <button type="button" class="episode-picker-item ${active}"
                     data-action="switch-episode"
                     data-episode="${ep}"
                     data-script-id="${f.script_id || ''}"
                     data-storyboard-id="${f.storyboard_id || ''}"
+                    data-owner-user-id="${f.owner_user_id || ''}"
                     title="${escapeHtml(title)}">
                     <span class="episode-picker-ep">${i18nT('label_episode_prefix', '第')}${ep}${i18nT('label_episode_suffix', '集')}</span>
-                    <span class="episode-picker-title">${escapeHtml(truncateText(title, 18))}</span>
+                    <span class="episode-picker-main">
+                        <span class="episode-picker-title">${escapeHtml(truncateText(title, 18))}</span>
+                        ${ownerHtml}
+                    </span>
                     <span class="episode-picker-status">${escapeHtml(status)}</span>
                 </button>`;
         }).join('')
@@ -870,6 +917,7 @@ function renderEpisodePicker() {
 
     return `
         <div class="episode-picker-panel" data-episode-picker-panel>
+            ${renderEpisodeOwnerScope()}
             <div class="episode-picker-list">${rows}</div>
             <div class="episode-picker-custom">
                 <label class="episode-picker-custom-label">${i18nT('label_other_episode', '其他集数')}</label>
@@ -1096,7 +1144,8 @@ function renderDialogueAudioSource(scene) {
     const hasVideo = Boolean(String(scene.videoUrl || '').trim());
     const hasTts = sceneHasDialogueAudio(scene.dialogues);
     const preferredVideo = Boolean(scene.audioEmbedded);
-    // 有效音源与预览/导出一致：无配音时自动视频原声；配音就绪后 audio_embedded=0 自动回 TTS
+    // 有效音源与预览/导出一致。音源口径：audio_embedded=0 仅在「有配音且用户显式选 TTS」
+    // 时成立——无配音一律视频原声（存量 0 值分镜靠自动兜底过渡，首条配音落地时后端锁回 1）。
     const audioMode = resolveSceneAudioMode({
         visualType: hasVideo ? 'video' : 'empty',
         audioEmbedded: preferredVideo,
@@ -1108,7 +1157,7 @@ function renderDialogueAudioSource(scene) {
 
     let hint = i18nT('hint_video_muted_use_dialogue_audio', '视频保持静音，连续预览和完整视频导出按顺序使用下方对话配音。');
     if (autoVideoFallback) {
-        hint = i18nT('hint_no_dialogue_use_video_audio', '当前没有对话配音，已自动使用视频原声；生成配音后会自动改回对话配音。');
+        hint = i18nT('hint_no_dialogue_use_video_audio', '当前没有对话配音，暂用视频原声。');
     } else if (useVideoAudio && hasVideo) {
         hint = i18nT('hint_video_audio_track_used', '连续预览和完整视频导出使用视频自带音轨，不再播放下方对话配音。');
     } else if (preferredVideo && !hasVideo) {
@@ -1122,6 +1171,10 @@ function renderDialogueAudioSource(scene) {
     const videoLabel = autoVideoFallback
         ? `${i18nT('label_video_audio', '视频原声')}<span class="dialogue-audio-source-auto-badge">${i18nT('label_auto', '自动')}</span>`
         : i18nT('label_video_audio', '视频原声');
+    // 无配音时不允许选 TTS（音源口径：TTS 仅在有配音时可选）
+    const ttsTitle = hasTts
+        ? i18nT('title_use_dialogue_audio', '使用下方对话配音')
+        : i18nT('title_tts_source_disabled', '请先生成对话配音，再选择此来源');
 
     return `
         <section class="dialogue-audio-source" aria-labelledby="dialogue-audio-source-title">
@@ -1133,8 +1186,8 @@ function renderDialogueAudioSource(scene) {
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? '' : 'active'}"
                     data-action="set-scene-audio-source" data-audio-source="tts"
-                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}"
-                    title="${i18nT('title_use_dialogue_audio', '使用下方对话配音；无配音时会自动使用视频原声')}">${i18nT('btn_dialogue_audio_tts', '对话配音（TTS）')}</button>
+                    role="radio" aria-checked="${useVideoAudio ? 'false' : 'true'}" ${hasTts ? '' : 'disabled'}
+                    title="${ttsTitle}">${i18nT('btn_dialogue_audio_tts', '对话配音（TTS）')}</button>
                 <button type="button"
                     class="dialogue-audio-source-option ${useVideoAudio ? 'active' : ''}"
                     data-action="set-scene-audio-source" data-audio-source="video"
@@ -1255,8 +1308,8 @@ function renderDialoguePanel(scene) {
 
     return `
         <div class="tab-panel dialogue-panel">
-            ${renderDialogueAudioSource(scene)}
-            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>}
+            ${(scene.dialogues || []).length ? renderDialogueAudioSource(scene) : ''}
+            ${rows || `<div class="empty-note">${i18nT('msg_no_dialogues', '还没有对话，点击下方添加。')}</div>
             <button class="panel-button" data-action="add-dialogue">${icon('add', 16)} ${i18nT('btn_add_dialogue', '添加对话')}</button>`}
         </div>`;
 }
@@ -1333,11 +1386,13 @@ function renderLeftSidebar(scene) {
  * - 全能参考：图1 / 图2 / …（对齐 marketing_agent 的编号展示）
  */
 function videoRoleLabel(role, mode, index = 0) {
-    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
-    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
+    // mode 必须先于 role 判断：参考模式槽位有意保留 first_frame/last_frame 角色
+    // （供 @首帧图/@尾帧图 路由），角标仍按编号展示
     if (mode === 'multi_reference') {
         return `${i18nT('label_image_short', '图')}${index + 1}`;
     }
+    if (role === 'first_frame') return i18nT('label_first_frame', '首帧');
+    if (role === 'last_frame') return i18nT('label_last_frame', '尾帧');
     return `${i18nT('label_image_short', '图')}${index + 1}`;
 }
 
@@ -1589,7 +1644,7 @@ function renderAiPanel() {
                     ${dhHint}
                     <div class="chat-textarea-row">
                         ${mediaStack}
-                        ${isDhDirectVideo ? '' : `<textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea>`}
+                        ${isDhDirectVideo ? '' : `<div class="chat-textarea-wrap"><div class="chat-textarea-mirror" data-chat-textarea-mirror aria-hidden="true"></div><textarea id="chat-textarea" class="chat-textarea" placeholder="${isDhScene && isVideo && !isAiVideoLocked ? i18nT('placeholder_dh_video', '描述对口型表演/镜头（台词以配音为准，需先生成配音）') : placeholder}" ${effectiveDisabled}>${escapeHtml(state.inputMessage)}</textarea></div>`}
                     </div>
                     <div class="chat-toolbar">
                         <button class="tool-button" data-action="open-model-config" title="${i18nT('title_model_config_detail', '模型配置（对话模型按供应商分组，图片/视频模型按当前助手模式）')}">${icon('settings', 14)}</button>
@@ -2591,19 +2646,42 @@ function renderGenerateFromScriptDialog() {
 function renderFrameMentionButton(token, url, label) {
     const safeLabel = escapeHtml(label);
     const thumb = escapeHtml(getThumbnailUrl(url, 28));
-    return `<button type="button" data-mention-item="${escapeHtml(token)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+    return `<button type="button" data-mention-item="${escapeHtml(token)}" data-hover-preview="${escapeHtmlAttr(url)}"><img src="${thumb}" alt=""><span>${safeLabel}</span></button>`;
+}
+
+/**
+ * 提及菜单里首尾帧按钮的展示名：按媒体槽顺序编号（图1/图2/…），
+ * 与左侧媒体槽角标一致。token 仍是 @首帧图/@尾帧图（服务端按标记解析）。
+ */
+export function frameMentionRowLabels() {
+    const frames = mentionableVideoFrameUrls();
+    const items = state.videoMediaItems || [];
+    const indexByUrl = (url) => items.findIndex(
+        item => String(item.url || '').trim() === String(url || '').trim(),
+    );
+    const firstIdx = frames.frame_first_url ? indexByUrl(frames.frame_first_url) : -1;
+    const lastIdx = frames.frame_last_url ? indexByUrl(frames.frame_last_url) : -1;
+    // 槽位被移除、URL 来自分镜图兜底时不在媒体栈里：按自然槽位序取默认编号
+    const lastFallback = items.some(item => item.role === 'first_frame') ? 1 : 0;
+    const num = (idx) => `${i18nT('label_image_short', '图')}${idx + 1}`;
+    return {
+        first: frames.frame_first_url ? num(firstIdx >= 0 ? firstIdx : 0) : '',
+        last: frames.frame_last_url ? num(lastIdx >= 0 ? lastIdx : lastFallback) : '',
+    };
 }
 
 function renderFrameMentionButtons() {
     const videoChat = state.chatMode === 'video' || state.chatMode === 'aivideo';
     if (!videoChat || state.videoImageMode !== 'multi_reference') return '';
     const frames = mentionableVideoFrameUrls();
+    const labels = frameMentionRowLabels();
     const buttons = [];
     if (frames.frame_first_url) {
-        buttons.push(renderFrameMentionButton('首帧图', frames.frame_first_url, i18nT('label_mention_first_frame', '首帧图')));
+        // token 携带图片唯一短 id：插入后底层文本与胶囊展示一致，服务端按前缀语义解析
+        buttons.push(renderFrameMentionButton(`首帧图:${shortImageId(frames.frame_first_url)}`, frames.frame_first_url, labels.first));
     }
     if (frames.frame_last_url) {
-        buttons.push(renderFrameMentionButton('尾帧图', frames.frame_last_url, i18nT('label_mention_last_frame', '尾帧图')));
+        buttons.push(renderFrameMentionButton(`尾帧图:${shortImageId(frames.frame_last_url)}`, frames.frame_last_url, labels.last));
     }
     if (!buttons.length) return '';
     return `<div class="mention-frames">${buttons.join('')}</div>`;
@@ -2627,7 +2705,10 @@ function renderMentionPopup() {
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => `<button data-mention-item="${escapeHtml(item.name)}">${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${items.map(item => {
+                    const preview = item.avatar || item.reference_image || '';
+                    return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
+                }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
             </div>
         </div>`;
 }
@@ -3370,7 +3451,9 @@ export function patchAgentPanel() {
     const section = document.querySelector('.ai-chat-section');
     if (!section) return false;
     const html = renderAiPanel();
-    return Boolean(replaceElWithHtml(section, html));
+    const patched = Boolean(replaceElWithHtml(section, html));
+    if (patched) syncChatMentionChips();
+    return patched;
 }
 
 /** 整块 header（含集数选择器等） */
@@ -3992,6 +4075,7 @@ function renderAppFull() {
         state.workflowRatio || '16:9'
     );
     bindPreviewCanvasObserver();
+    syncChatMentionChips();
 
     requestAnimationFrame(() => {
         savedScrolls.forEach(({ selector, prop, value }) => {
@@ -4218,7 +4302,7 @@ export function updateCurrentSceneDetail(scene) {
 }
 
 // 更新某条 dialogue 行的 audio 控件（仅在当前选中分镜 + 对话 Tab 时）。
-// 按 dialogue 行粒度替换，避免触碰用户正在编辑的其他行。返回 true 表示更新了。
+// 按行粒度替换，避免触碰用户正在编辑的其他行。返回 true 表示更新了。
 export function updateDialogueRow(scene, dialogueId) {
     if (!scene || scene.id !== state.currentSceneId || state.activeTab !== 'dialogue') return false;
     const dialogue = (scene.dialogues || []).find(d => d.id === dialogueId);
@@ -4226,6 +4310,30 @@ export function updateDialogueRow(scene, dialogueId) {
     const row = document.querySelector(`.dialogue-row[data-dialogue-id="${dialogueId}"]`);
     if (!row) return false;
     row.outerHTML = renderDialogueRowOuter(dialogue);
+    return true;
+}
+
+// 局部刷新左侧「音频来源」面板（仅当前选中分镜 + 对话 Tab 时）。
+// 配音落地（TTS 按钮禁用→可选）、后端音源翻转（audio_embedded 锁定）、
+// 音色替换收尾都会改变面板状态；轮询局部刷新必须覆盖，否则高亮/禁用态陈旧。
+// 签名防抖：面板渲染的全部输入未变时不重建 DOM，调用方可无脑调。
+export function updateDialogueAudioSourcePanel(scene) {
+    if (!scene || scene.id !== state.currentSceneId || state.activeTab !== 'dialogue') return false;
+    const panel = document.querySelector('.dialogue-audio-source');
+    if (!panel) return false;
+    const hasVideo = Boolean(String(scene.videoUrl || '').trim());
+    const sig = [
+        scene.audioEmbedded ? 1 : 0,
+        sceneHasDialogueAudio(scene.dialogues) ? 1 : 0,
+        hasVideo ? 1 : 0,
+        String(state.voiceReplaceBySceneId?.[scene.id]?.status || ''),
+    ].join('|');
+    if (panel.dataset.audioSig === sig) return false;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = renderDialogueAudioSource(scene);
+    const next = tmp.querySelector('.dialogue-audio-source');
+    if (!next) return false;
+    panel.replaceWith(next);
     return true;
 }
 

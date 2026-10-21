@@ -145,3 +145,32 @@ def test_explicit_h3_keyframe_ref_task_is_accepted_when_hidden():
         TaskCategory.IMAGE_TO_VIDEO,
         preferred_task_id=task_id,
     ) == task_id
+
+
+def test_token_with_unique_id_suffix_is_consumed_without_residue():
+    """前端插入的标记带唯一短 id 后缀：按同一语义解析，改写后不残留 :id。"""
+    assert prompt_has_frame_mention("看 @首帧图:1c88f7a9 就行") is True
+    assert prompt_has_frame_mention("从 @尾帧图:0be032f5 出发") is True
+    prompt, urls, items = prepare_frame_mentions(
+        "从 @首帧图:1c88f7a9 开始",
+        [
+            "https://cdn.test/first.png",
+            "https://cdn.test/lin.png",
+        ],
+        [
+            {"type": "分镜图", "source_type": "asset", "name": "", "url": "https://cdn.test/first.png"},
+            {"type": "角色", "source_type": "character", "name": "Lin", "url": "https://cdn.test/lin.png"},
+        ],
+        image_mode="multi_reference",
+        first_url="https://cdn.test/first.png",
+        last_url="https://cdn.test/last.png",
+    )
+    assert prompt == "从 图1 开始"
+    assert ":1c88f7a9" not in prompt
+    assert urls[0] == "https://cdn.test/first.png"
+
+
+def test_malformed_id_suffix_degrades_to_plain_text():
+    """手改坏的非 8 位 id 不再命中标记：按普通文本提交，不误判点名。"""
+    assert prompt_has_frame_mention("看 @首帧图:1c88f7") is False
+    assert prompt_has_frame_mention("看 @首帧图1c88") is False

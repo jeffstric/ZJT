@@ -728,6 +728,23 @@ body {
     height: 360px;
 }
 
+/* 每日统计（用户算力消耗） */
+.daily-power-detail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 6px 12px;
+    font-size: 12px;
+    color: var(--admin-text-muted);
+}
+
+.daily-power-detail-item {
+    background: #f1f5f9;
+    border-radius: 4px;
+    padding: 2px 8px;
+    white-space: nowrap;
+}
+
 .model-rate-chart,
 .model-usage-chart {
     display: flex;
@@ -2062,6 +2079,30 @@ body {
     width: 100%;
     padding: 6px 10px;
     font-size: 13px;
+}
+
+/* 签到奖励预览表（两列：天数区间 / 当日奖励） */
+.streak-preview-table {
+    border: 1px solid var(--admin-border);
+    border-radius: 8px;
+    padding: 12px;
+    max-width: 420px;
+}
+
+.streak-preview-row {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.streak-preview-row.header {
+    font-size: 12px;
+    color: var(--admin-muted);
+    font-weight: 500;
+    margin-bottom: 10px;
 }
 
 /* ==================== 快速配置弹窗 - 两栏布局 ==================== */

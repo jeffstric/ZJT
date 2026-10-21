@@ -10,9 +10,10 @@ from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
+from task.compose_task import process_compose_jobs
 from task.subscription_renewal_task import process_subscription_renewals
 from functools import partial
-from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition, SubscriptionConstants
+from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition, SubscriptionConstants, ComposeJobConstants
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 from config.constant import LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
@@ -428,6 +429,19 @@ def init_scheduler(app):
         coalesce=True
     )
 
+    # 数字人分段拼接编排：纯编排任务（聚合段状态/补段/拼接），
+    # 不占 generate_video 槽位（详见 docs/digital_human_compose_job_plan.md）
+    logger.info(f'启用数字人分段拼接编排任务（间隔 {ComposeJobConstants.POLL_INTERVAL_SECONDS} 秒）')
+    scheduler.add_job(
+        func=process_compose_jobs,
+        trigger=IntervalTrigger(seconds=ComposeJobConstants.POLL_INTERVAL_SECONDS),
+        id='compose_job',
+        name=f'Compose digital human segments every {ComposeJobConstants.POLL_INTERVAL_SECONDS} seconds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
     # 下载队列消费者：异步消费 download_queue，解耦主循环的分钟级 IO 下载
     task_with_app_download = partial(_run_async_task, process_download_queue)
     logger.info(f'启用下载队列消费者任务（间隔 {DOWNLOAD_POLL_INTERVAL} 秒）')
@@ -449,6 +463,20 @@ def init_scheduler(app):
         trigger=IntervalTrigger(minutes=5),
         id='download_queue_health_check',
         name='Download queue health check every 5 minutes',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # RunningHub 槽位对账回收：周期核对活跃槽位与任务真实状态，回收
+    # 「任务已终态但槽位未释放」的残留（兜底，不感知具体业务动作）
+    from task.runninghub_slot_reclaimer import reclaim_stale_slots, get_reclaim_interval_seconds
+    logger.info(f'启用 RunningHub 槽位对账回收（间隔 {get_reclaim_interval_seconds()} 秒）')
+    scheduler.add_job(
+        func=reclaim_stale_slots,
+        trigger=IntervalTrigger(seconds=get_reclaim_interval_seconds()),
+        id='runninghub_slot_reclaim',
+        name='Reconcile and reclaim stale RunningHub slots',
         replace_existing=True,
         max_instances=1,
         coalesce=True,

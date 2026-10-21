@@ -26,6 +26,9 @@ from config.constant import (
     AGENT_CHECK_TOOL_WAIT_SECONDS,
     AGENT_CHECK_TOOL_POLL_INTERVAL_SECONDS,
     AGENT_TASK_IN_PROGRESS_STATUSES,
+    DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS,
+    DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND,
+    DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
 )
 from utils.script_duration import (
     budget_tolerance_upper,
@@ -1064,7 +1067,7 @@ def check_image_status(user_id: str, world_id: str, auth_token: str, project_id:
                 result['waited_seconds'] = waited
             if _is_in_progress_status(result):
                 result['message'] = (
-                    f'任务仍在处理中（本次已等待约 {waited} 秒）。图片生成通常需要 30~120 秒，'
+                    f'任务仍在处理中（本次已等待约 {waited} 秒）。图片生成通常需要 30-120 秒，'
                     f'请稍后再次查询，无需高频重试。'
                 )
 
@@ -1605,6 +1608,7 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 def create_character_json(user_id: str, world_id: str, auth_token: str, name: str, age: str = None, identity: str = None,
                          appearance: str = None, personality: str = None, behavior: str = None,
                          other_info: str = None, reference_image: str = None, default_voice: str = None,
+                         voice_desc: str = None,
                          _temp_filename: str = None, language: str = "zh-CN",
                          _skip_image_validation: bool = False, **additional_fields) -> Dict[str, Any]:
     """
@@ -1682,6 +1686,8 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
             character_data['reference_image'] = reference_image
         if default_voice is not None:
             character_data['default_voice'] = default_voice
+        if voice_desc is not None:
+            character_data['voice_desc'] = voice_desc
 
         # 添加额外字段
         for key, value in additional_fields.items():
@@ -1699,6 +1705,9 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
         if not _temp_filename:
             old_json = file_manager.get_character_json(validated_name, user_id, world_id)
             FileManager._archive_character_image_history(old_json, character_data)
+            # agent 整文件重写通常不带 voice_desc，缺省时沿用旧指纹。
+            if voice_desc is None and isinstance(old_json, dict) and old_json.get('voice_desc'):
+                character_data['voice_desc'] = old_json.get('voice_desc')
 
         success = file_manager.save_json_content(user_id, world_id, "characters", filename, character_data)
         
@@ -4189,7 +4198,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "自定义风格提示词（可选），不填则根据角色设定自动生成，强调平静、自然的语气"
+                    "description": "自定义音色描述（可选，建议按以下规范提供）。描述会直接传给 VoxCPM2 声音设计模型，需 60-100 字并依次包含五要素：①性别+年龄段（含地域口音，如有设定）②音色质感（音高/沙哑/清亮等）③个性气质 ④语速与说话方式 ⑤以'录音干净清晰，像在耳边近距离说话'收尾；语气保持平静自然（参考音频用于声音克隆）。不填则按同一规范根据角色设定自动生成"
                 },
                 "text": {
                     "type": "string",
@@ -4211,7 +4220,7 @@ MCP_TOOLS = [
                 },
                 "style_prompt": {
                     "type": "string",
-                    "description": "声音风格提示词（可选），例如：自然、平静、年轻女性声音、语速适中。不填则使用默认自然声音"
+                    "description": "音色描述（可选）。建议写 60-100 字丰富描述：性别+年龄段（含口音，如有）、音色质感、个性气质、语速与说话方式，并以'录音干净清晰，像在耳边近距离说话'收尾。过短的描述会导致音色不稳定。不填则使用默认自然声音"
                 }
             },
             "required": ["text"]
@@ -4237,7 +4246,7 @@ MCP_TOOLS = [
     },
     {
         "name": "generate_digital_human",
-        "description": "生成数字人视频（非阻塞）。根据人物图片、口播文本和参考音频 URL 立即提交数字人生成任务，返回 project_ids。必须传入真实 audio_url；如果用户没有提供音频，请先调用 generate_reference_audio 生成并查询到 audio_url。",
+        "description": "生成数字人视频（wan2.2 参考音色模式，非阻塞）。⚠️ 仅当用户要求'用某段音频的音色说新的文案'且文案较短（口播 ≤10 秒，约 40 字内）时使用——audio_url 只用于提取音色，口播内容由 text 驱动，超长文案会被拒绝并引导改走 prepare_digital_human_draft + confirm_digital_human（按时长自动路由 MiniMax H3 单段/分段拼接）。若用户想让人物说某段音频（音频驱动口播），请直接用 prepare_digital_human_draft + confirm_digital_human。根据人物图片、口播文本和参考音频 URL 提交任务，返回 project_ids。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -4259,6 +4268,60 @@ MCP_TOOLS = [
                 }
             },
             "required": ["image_url", "text", "audio_url"]
+        }
+    },
+    {
+        "name": "prepare_digital_human_draft",
+        "description": "准备数字人口播草案（确认制，不直接生成视频）。确定音色（VL 看角色图挑选/用户指定/默认，同时生成固定镜头动作提示词）→ 用火山 TTS 合成驱动音频（立即消耗字符算力）→ 产出草案 draft_id。生成方式按口播时长自动路由：≤15 秒用 MiniMax H3 单段直出；15 秒以上用 MiniMax H3 分段拼接（每段 15 秒、固定镜头，切点落在句间停顿，后端自动拼接，段数随时长增加；草案按每段 4-10 分钟给出总耗时区间）；口播文案上限 2000 字。用户确认草案后必须调用 confirm_digital_human 提交视频生成。注意：script_text 必须是最终口播文案（用户未提供时请先自行撰写）；image_url 必须来自对话中用户上传或已生成的真实图片。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "image_url": {
+                    "type": "string",
+                    "description": "角色图片 URL（必填），必须来自对话中的真实图片 URL"
+                },
+                "script_text": {
+                    "type": "string",
+                    "description": "口播文案（必填，数字人要说的最终内容，≤2000 字）"
+                },
+                "voice_id": {
+                    "type": "integer",
+                    "description": "音色库音色 ID（可选）。用户明确指定音色时传入；未指定则由视觉模型看角色图自动挑选"
+                },
+                "voice_requirement": {
+                    "type": "string",
+                    "description": "对声音的要求描述（可选，如'成熟男性、纪录片感'），辅助视觉模型挑选"
+                },
+                "motion_prompt": {
+                    "type": "string",
+                    "description": "动作提示词（可选，默认由视觉模型看图生成）。描述人物说话情绪与镜头方式，如'角色面向镜头深情的说话，固定镜头。'。注意：不是口播内容"
+                },
+                "audio_url": {
+                    "type": "string",
+                    "description": "用户上传的驱动音频 URL（可选）。用户提供音频且想让人物说这段音频时传入（跳过 TTS）；此时不再需要音色"
+                },
+                "resolution": {
+                    "type": "string",
+                    "enum": ["480P", "720P", "1080P"],
+                    "description": "视频分辨率档位（可选，默认 720P）。档位→最长边像素：480P=720、720P=1280、1080P=1920。注意档位与像素值同名不同义：用户要 720P 就传 \"720P\"，不要传 720（720 像素是 480P 档）",
+                    "default": "720P"
+                }
+            },
+            "required": ["image_url", "script_text"]
+        }
+    },
+    {
+        "name": "confirm_digital_human",
+        "description": "确认数字人口播草案并提交视频生成（消耗视频时长算力）。按草案路由自动选择生成方式：≤15 秒提交 MiniMax H3 单段；15 秒以上提交 MiniMax H3 分段拼接（每段 15 秒固定镜头，切点落在句间停顿，后端自动逐段生成并拼接，每段约 4-10 分钟、总耗时约段数×4-段数×10 分钟）。仅当用户明确确认草案后调用；草案一次性消费，提交后不可重复。生成失败或草案过期时请重新 prepare。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "draft_id": {
+                    "type": "string",
+                    "description": "prepare_digital_human_draft 返回的草案 ID"
+                }
+            },
+            "required": ["draft_id"]
         }
     },
     {
@@ -4479,7 +4542,8 @@ def _create_reference_audio_task(
 
     final_style_prompt = (
         style_prompt
-        or '声音自然清晰，语气平稳，语速适中，适合数字人口播'
+        or '一位成年人的自然声音，音色真实干净，语气平静亲和，吐字清晰，语速适中，'
+        '录音干净清晰，像在耳边近距离说话，适合数字人口播'
     )
     final_text = (text or '').strip()
     if not final_text:
@@ -4562,7 +4626,7 @@ def generate_character_reference_audio(user_id: str, world_id: str, auth_token: 
         world_id: 世界ID（必填）
         auth_token: 认证令牌（必填）
         character_name: 角色名称（必填）
-        style_prompt: 自定义风格提示词（可选），不填则根据角色设定自动生成
+        style_prompt: 自定义音色描述（可选），建议 60-100 字并覆盖性别年龄/口音/音色质感/个性气质/语速/录音质感五要素；不填则按同一规范根据角色设定自动生成
         text: 自定义文本内容（可选），不填则根据角色设定自动生成
 
     Returns:
@@ -4672,7 +4736,7 @@ def check_reference_audio_status(user_id: str, world_id: str, auth_token: str,
                 result['waited_seconds'] = waited
             if _is_in_progress_status(result):
                 result['message'] = (
-                    f'任务仍在处理中（本次已等待约 {waited} 秒）。音频生成通常需要 30~90 秒，'
+                    f'任务仍在处理中（本次已等待约 {waited} 秒）。音频生成通常需要 30-90 秒，'
                     f'请稍后再次查询，无需高频重试。'
                 )
 
@@ -4834,6 +4898,12 @@ def _resolve_digital_human_image_url(raw_image_url: str) -> Tuple[str, Optional[
     )
 
 
+from script_writer_core.digital_human_tts_tools import (
+    prepare_digital_human_draft,
+    confirm_digital_human,
+)
+
+
 def generate_digital_human(
     user_id: str,
     world_id: str,
@@ -4881,6 +4951,20 @@ def generate_digital_human(
 
         if len(text) > 1000:
             return {'success': False, 'error': '文本内容不能超过1000个字'}
+
+        # 口播时长估算：>10s 时 wan2.2 参考音色模式不适用（长口播口型/音色不稳），
+        # 引导改走两段式链路（prepare+confirm 会自动路由 H3，分段支持至
+        # DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS 秒兜底上限）
+        est_seconds = len(text) / DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND
+        if est_seconds > DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS:
+            return {
+                'success': False,
+                'error': (f'口播文案约 {est_seconds:.0f} 秒，超过 10 秒，不适合 wan2.2 参考音色模式。'
+                          f'请改用 prepare_digital_human_draft + confirm_digital_human'
+                          f'（将按口播时长自动路由 MiniMax H3，15 秒以上分段拼接，'
+                          f'最长支持 {DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒），'
+                          f'或把文案缩短到约 {DIGITAL_HUMAN_WAN22_MAX_TEXT_SECONDS * DIGITAL_HUMAN_SPEECH_CHARS_PER_SECOND} 字以内。'),
+            }
 
         if not audio_url:
             return {

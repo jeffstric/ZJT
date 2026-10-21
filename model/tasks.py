@@ -151,7 +151,36 @@ class TasksModel:
         except Exception as e:
             logger.error(f"Failed to get task record by task_id {task_id}: {e}")
             raise
-    
+
+    @staticmethod
+    def get_by_type_and_task_id(task_type: str, task_id: int) -> Optional['Task']:
+        """
+        Get task record by (task_type, task_id).
+
+        tasks 表混存多种业务行（generate_video 的 task_id=ai_tools.id、
+        compose_job 的 task_id=compose_jobs.id），各业务表 id 独立自增、
+        数值可重合；只按 task_id 查询/更新会撞号误中无关任务，必须带
+        task_type 过滤后再按主键操作。
+
+        Args:
+            task_type: Task type
+            task_id: Task ID (business record id)
+
+        Returns:
+            Task object or None
+        """
+        sql = "SELECT * FROM tasks WHERE task_type = %s AND task_id = %s"
+
+        try:
+            result = execute_query(sql, (task_type, task_id), fetch_one=True)
+            if result:
+                return Task(**result)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Failed to get task record by task_type={task_type} task_id={task_id}: {e}")
+            raise
+
     @staticmethod
     def list_by_type(
         task_type: str,

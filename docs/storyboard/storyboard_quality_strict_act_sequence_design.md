@@ -300,3 +300,13 @@ storyboard_scene.selected_first_frame_id
 6. 运行全程不出现 `degraded_previous_group_reference=true`。
 7. `speed`、`balanced` 行为和吞吐量不受影响。
 
+## 16. 修订（2026-10-20）：宫格终态失败的受控降级
+
+线上事故：模型对"少真实格 + 空占位格"的宫格 prompt 经常输出满幅单图（无分割线），几何校验正确拒收后，本文档定义的失败传播把整条串行链全部判死——一次宫格失败 = 整批报废。为此对本文档的"绝不降级"规则做**受控放宽**：
+
+- 放宽范围：仅限 `error_code=grid_first_frame_failed` 的宫格**终态失败**（几何校验失败重试耗尽、宫格超时、ComfyUI FAILED、下载/拆分回写失败）。参考图缺失类失败（`quality_parent_reference_missing`、`waiting_location_references`）**不放宽**，仍严格失败——前者降级会破坏画面一致性，后者换通道不解决缺图。
+- 降级动作：失败 item 复活为 PENDING 后逐场景**单图直出**（`generate_image`），模型沿用批任务锁定快照、参考图照常携带（含前一幕末帧 `previous_group_reference_url`），不切换模型、不丢参考图，因此不违反本文档一致性目标。
+- 门控与一次性：`StoryboardFeatureFlags.GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED`（默认开）+ 每 item 每批任务仅降级一次（`extra_json.degraded_from_grid_to_single` 标记）。降级提交也失败（`grid_fallback_submit_failed`）时回到本文档原有的失败传播语义。
+- 验收标准第 4 条相应调整为：上一幕（含降级单图）最终失败时，后续幕没有 `ai_tool_id`；降级提交进行中（RUNNING）时后续幕保持等待，不判死。
+- 实现与细节见 `docs/storyboard/storyboard_auto_missing_images.md` 的"宫格失败降级单图直出"一节。
+
