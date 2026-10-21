@@ -9,10 +9,13 @@
 与 llm/script_parser.py、services/image_describe.py 同为"纯 LLM 提取模块"模式；
 模型挑选 / 图片压缩 / LLM 调用复用 services/vl_gateway.py 共享网关。
 
-任务模型：内存注册表 + asyncio.create_task 后台执行 + 前端轮询状态接口
-（链路分钟级耗时，不能像 extract-frame 一样同步返回；单进程 uvicorn 部署，
-服务重启任务失联，前端提示重新提取）。全链路异步（ffmpeg 子进程 / httpx / to_thread），
-不阻塞事件循环（web 接口红线）。
+任务模型：DB 状态表（script_extract_task，跨进程共享）+ asyncio.create_task 在创建
+请求的进程内后台执行 + 前端轮询状态接口（链路分钟级耗时，不能像 extract-frame
+一样同步返回）。gunicorn 多 worker 部署下 POST 与轮询 GET 可能落在不同进程，
+内存注册表会 404；落库后任意 worker 均可查状态，重启也只丢失"进行中"任务
+（updated_at 超 TTL 判失联，前端提示重新提取）。全链路异步（ffmpeg 子进程 /
+httpx / to_thread），不阻塞事件循环（web 接口红线）；同步 pymysql 调用一律
+经 asyncio.to_thread 包装。
 """
 from __future__ import annotations
 
@@ -22,7 +25,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from config.constant import (
     MediaConstants as MC,
@@ -30,6 +33,7 @@ from config.constant import (
     VL_GATEWAY_CLIENT_INIT_TIMEOUT,
 )
 from llm.llm_client_factory import get_llm_client
+from model.script_extract_task import ScriptExtractTaskModel
 from services.video_frame_extract_service import (
     FrameExtractError,
     detect_scene_cut_points,
@@ -79,45 +83,37 @@ class ScriptExtractError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# 内存任务注册表（单进程事件循环内读写，无锁；TTL 惰性清理）
+# DB 任务状态表（script_extract_task）：跨进程共享；执行进程内另起 asyncio 后台任务
 # ---------------------------------------------------------------------------
 
-_EXTRACT_TASKS: Dict[str, Dict[str, Any]] = {}
-# user_id -> 运行中 task_id（每用户同时只允许一个提取任务，防重复提交刷 LLM 算力）
-_RUNNING_BY_USER: Dict[int, str] = {}
+# 本进程内后台 pipeline 的强引用集合（防止 asyncio task 被 GC 回收）
+_BG_TASKS: Set[asyncio.Task] = set()
 
 
-def _cleanup_expired_tasks() -> None:
-    now = time.time()
-    expired = [
-        tid for tid, task in _EXTRACT_TASKS.items()
-        if now - task["created_at"] > C.TASK_TTL_SECONDS
-    ]
-    for tid in expired:
-        _EXTRACT_TASKS.pop(tid, None)
-
-
-def get_extract_task(task_id: str) -> Optional[Dict[str, Any]]:
-    _cleanup_expired_tasks()
-    task = _EXTRACT_TASKS.get(str(task_id or ""))
-    if task is None:
+async def get_extract_task(task_id: str) -> Optional[Dict[str, Any]]:
+    """查询任务状态（任意 worker 均可查到）。记录不存在或 running 超 TTL（执行进程
+    失联/服务重启）返回 None，接口侧回 404 提示重新提取。"""
+    task = await asyncio.to_thread(ScriptExtractTaskModel.get_by_task_id, str(task_id or ""))
+    if task is None or task.is_expired(C.TASK_TTL_SECONDS):
         return None
     return {
-        "task_id": task["task_id"],
-        "user_id": task["user_id"],
-        "status": task["status"],
-        "stage": task["stage"],
-        "progress": dict(task["progress"]),
-        "error": task["error"],
-        "result": task["result"],
+        "task_id": task.task_id,
+        "user_id": task.user_id,
+        "status": task.status,
+        "stage": task.stage,
+        "progress": dict(task.progress or {}),
+        "error": task.error,
+        "result": task.result,
     }
 
 
-def _update_task(task_id: str, **fields: Any) -> None:
-    task = _EXTRACT_TASKS.get(task_id)
-    if task is None:
-        return
-    task.update(fields)
+async def _update_task(task_id: str, **fields: Any) -> None:
+    """更新任务字段到 DB。DB 异常只记日志不打断 pipeline（提取结果优先落库成功，
+    状态丢失最多导致前端多轮询几次）。"""
+    try:
+        await asyncio.to_thread(ScriptExtractTaskModel.update, task_id, **fields)
+    except Exception:
+        logger.exception("[script-extract] 任务状态落库失败 task=%s", task_id)
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +375,7 @@ async def _transcribe_audio(
         nonlocal done
         result = await _transcribe_one_slice(driver, sem, wav_path, temp_dir, idx, offset, stamp)
         done += 1
-        _update_task(task_id, progress={"asr_done": done, "asr_total": total})
+        await _update_task(task_id, progress={"asr_done": done, "asr_total": total})
         return result
 
     tasks = [_run_one(idx, offset) for idx, (offset, _end) in enumerate(ranges)]
@@ -526,7 +522,7 @@ async def _run_extract_task(
     frame_paths: List[str] = []
     try:
         # 阶段 1：时长校验 + 关键帧收集
-        _update_task(task_id, stage=C.STAGE_FRAMES)
+        await _update_task(task_id, stage=C.STAGE_FRAMES)
         duration = await probe_stream_duration(video_path)
         if duration is None or duration <= 0:
             raise ScriptExtractError("无法读取视频时长，请确认视频文件有效")
@@ -539,26 +535,26 @@ async def _run_extract_task(
         frame_paths = [f["path"] for f in frames]
 
         # 阶段 2：音轨提取
-        _update_task(task_id, stage=C.STAGE_AUDIO)
+        await _update_task(task_id, stage=C.STAGE_AUDIO)
         wav_path = await _extract_audio_track(video_path, temp_dir, stamp)
 
         # 阶段 3：分段 ASR
         transcript = ""
         if wav_path:
-            _update_task(task_id, stage=C.STAGE_ASR, progress={
+            await _update_task(task_id, stage=C.STAGE_ASR, progress={
                 "asr_done": 0,
                 "asr_total": len(build_slice_ranges(duration, C.ASR_SLICE_SECONDS)),
             })
             transcript = await _transcribe_audio(wav_path, duration, temp_dir, task_id, stamp)
 
         # 阶段 4：多模态 LLM 生成剧本
-        _update_task(task_id, stage=C.STAGE_LLM)
+        await _update_task(task_id, stage=C.STAGE_LLM)
         script, used_model, used_vendor_id = await _generate_script(
             transcript, frames, duration, auth_token, frame_height,
             model=model, vendor_id=vendor_id, model_id=model_id,
         )
 
-        _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
+        await _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
             "script": script,
             "meta": {
                 "duration_sec": round(duration, 2),
@@ -576,19 +572,18 @@ async def _run_extract_task(
         )
     except ScriptExtractError as exc:
         logger.warning("[script-extract] 任务失败 task=%s: %s", task_id, exc)
-        _update_task(task_id, status="failed", error=str(exc))
+        await _update_task(task_id, status="failed", error=str(exc))
     except FrameExtractError as exc:
         logger.warning("[script-extract] 任务失败(帧提取) task=%s: %s", task_id, exc)
-        _update_task(task_id, status="failed", error=str(exc))
+        await _update_task(task_id, status="failed", error=str(exc))
     except asyncio.CancelledError:
-        _update_task(task_id, status="failed", error="任务已取消")
+        await _update_task(task_id, status="failed", error="任务已取消")
         raise
     except Exception as exc:
         logger.exception("[script-extract] 任务异常 task=%s", task_id)
-        _update_task(task_id, status="failed", error=f"剧本提取失败：{exc}")
+        await _update_task(task_id, status="failed", error=f"剧本提取失败：{exc}")
     finally:
-        _update_task(task_id, stage=C.STAGE_DONE)
-        _RUNNING_BY_USER.pop(_EXTRACT_TASKS.get(task_id, {}).get("user_id"), None)
+        await _update_task(task_id, stage=C.STAGE_DONE)
         _cleanup_files(frame_paths + [wav_path])
 
 
@@ -605,29 +600,31 @@ async def create_extract_task(
     """创建提取任务。返回 (task_id, None) 或 (None, error)。
 
     max_frames / frame_height / model 为节点参数（用户可调），
-    调用方需先做边界校验。"""
-    _cleanup_expired_tasks()
-    if user_id is not None and user_id in _RUNNING_BY_USER:
-        running_id = _RUNNING_BY_USER[user_id]
-        running = _EXTRACT_TASKS.get(running_id)
-        if running and running["status"] == "running":
-            return None, "已有剧本提取任务进行中，请等待完成后再试"
-        _RUNNING_BY_USER.pop(user_id, None)
+    调用方需先做边界校验。任务状态落 script_extract_task 表（跨进程共享），
+    每用户同时只允许 1 个活跃任务（防重复提交刷 LLM 算力）；执行进程失联
+    （updated_at 超 TTL）的 running 记录判失效并释放占用。"""
+    if user_id is None:
+        return None, "未获取到登录身份，请重新登录"
+
+    # 先把该用户失联的 running 记录标记失败（执行 worker 重启/崩溃场景）
+    await asyncio.to_thread(
+        ScriptExtractTaskModel.mark_stale_running_failed,
+        user_id, C.TASK_TTL_SECONDS, "执行进程已失联，请重新提取",
+    )
+    running = await asyncio.to_thread(
+        ScriptExtractTaskModel.get_running_by_user, user_id, C.TASK_TTL_SECONDS
+    )
+    if running is not None:
+        return None, "已有剧本提取任务进行中，请等待完成后再试"
 
     task_id = uuid.uuid4().hex
-    now = time.time()
-    _EXTRACT_TASKS[task_id] = {
-        "task_id": task_id,
-        "user_id": user_id,
-        "status": "running",
-        "stage": C.STAGE_FRAMES,
-        "progress": {},
-        "error": None,
-        "result": None,
-        "created_at": now,
-    }
-    if user_id is not None:
-        _RUNNING_BY_USER[user_id] = task_id
+    await asyncio.to_thread(ScriptExtractTaskModel.create, task_id, int(user_id), C.STAGE_FRAMES)
+
+    # 惰性清理过期记录（含失联 running），防表膨胀；失败不影响任务创建
+    try:
+        await asyncio.to_thread(ScriptExtractTaskModel.cleanup_expired, C.TASK_TTL_SECONDS)
+    except Exception:
+        logger.exception("[script-extract] 过期任务清理失败")
 
     bg_task = asyncio.create_task(
         _run_extract_task(
@@ -635,7 +632,7 @@ async def create_extract_task(
             model=model, model_id=model_id, vendor_id=vendor_id,
         )
     )
-    _EXTRACT_TASKS[task_id]["asyncio_task"] = bg_task
-    bg_task.add_done_callback(lambda _t: _EXTRACT_TASKS.get(task_id, {}).pop("asyncio_task", None))
+    _BG_TASKS.add(bg_task)
+    bg_task.add_done_callback(_BG_TASKS.discard)
     logger.info("[script-extract] 任务创建 task=%s user=%s video=%s", task_id, user_id, video_path)
     return task_id, None

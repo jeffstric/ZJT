@@ -718,6 +718,15 @@ DIGITAL_HUMAN_BLACK_SEG_YAVG_FLOOR = 50.0
 # 该比例判定黑段（自然漂移 ~10% 以内放行，灾难性偏暗才重提）
 DIGITAL_HUMAN_BLACK_SEG_DARK_RATIO = 0.25
 
+# ===== 数字人 VL 锁镜头提示词生成重试（2026-10-21，修复 12815「背景/衣服漂移」）=====
+# 背景：VL 看角色图生成 H3 锁镜头提示词时，角色图走远程下载；内网环境自访问
+# frp 公网地址偶发瞬时不通（12815 实证 12:02:44 httpx ConnectError
+# "All connection attempts failed"），单次失败即降级为无约束兜底模板 →
+# H3 丢失服装/背景约束、逐段自由发挥（段 1 灰衬衫演播室 vs 段 2-4 白大褂诊所）。
+# 整体重试次数（含首次尝试）；相邻尝试间隔秒数
+DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS = 3
+DIGITAL_HUMAN_VL_PROMPT_RETRY_DELAY_SECONDS = 2
+
 
 class AgentAuthConstants:
     """Agent/API token exchange constants."""

@@ -16,8 +16,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from config.constant import TaskTypeId  # noqa: E402
 from script_writer_core.digital_human_tts_tools import (  # noqa: E402
+    LOCKED_CAMERA_PROMPT_FALLBACK,
     SEGMENTED_MOTION_PROMPT,
     _DRAFT_STORE,
+    _generate_locked_camera_prompt,
     _pick_voice_by_image,
     _resolve_preset_local_path,
     _store_draft,
@@ -223,6 +225,98 @@ class TestPickVoiceByImage(_VoiceModelMockBase):
             result = asyncio.run(_pick_voice_by_image("http://x/img.png", self.CANDIDATES, 1))
         self.assertEqual(result["voice_id"], _default_vid())
         self.assertIn("视觉模型", result["reason"])
+
+
+class TestLockedCameraPrompt(unittest.TestCase):
+    """H3 锁镜头英文提示词生成：瞬时故障重试、本地映射兜底、兜底模板约束。
+
+    背景（12815）：内网自访问 frp 公网地址瞬断导致角色图远程下载失败，
+    单次失败即降级无约束兜底模板 → H3 逐段自由发挥、段间换装/换背景。
+    """
+
+    PROMPT = ("integrated_multimodal_description: [Shot 1] A static medium shot of "
+              "a doctor, The camera is strictly locked.")
+
+    def test_retry_until_success(self):
+        """瞬时读取失败应重试并最终成功，不应首轮失败即降级"""
+        from config.constant import DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS
+        calls = {"n": 0}
+
+        async def fake_base64(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] < DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS:
+                return False, None, "All connection attempts failed"
+            return True, "data:x", None
+
+        async def fake_call_vl(system, user, img, **kw):
+            return True, self.PROMPT, None
+
+        with patch("script_writer_core.digital_human_tts_tools.pick_vl_model",
+                   async_fn(lambda: {"name": "vl"})), \
+             patch("script_writer_core.digital_human_tts_tools.image_url_to_base64", fake_base64), \
+             patch("script_writer_core.digital_human_tts_tools.call_vl", fake_call_vl), \
+             patch("utils.image_upload_utils.try_map_url_to_local_file", lambda *a, **k: None), \
+             patch("script_writer_core.digital_human_tts_tools.asyncio.sleep", async_fn(None)):
+            result = asyncio.run(_generate_locked_camera_prompt("http://x/img.png", 1))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["prompt"], self.PROMPT)
+        self.assertEqual(calls["n"], DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS)
+
+    def test_remote_failure_uses_local_mapping(self):
+        """远程下载失败时应改用本地映射文件直读（frp 自访问瞬断场景），直接成功"""
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+        tmp.close()
+        self.addCleanup(os.remove, tmp.name)
+        local_attempts = []
+
+        async def fake_base64(*a, **kw):
+            if kw.get("local_path"):
+                local_attempts.append(kw["local_path"])
+                return True, "data:x", None
+            return False, None, "All connection attempts failed"
+
+        async def fake_call_vl(system, user, img, **kw):
+            return True, self.PROMPT, None
+
+        with patch("script_writer_core.digital_human_tts_tools.pick_vl_model",
+                   async_fn(lambda: {"name": "vl"})), \
+             patch("script_writer_core.digital_human_tts_tools.image_url_to_base64", fake_base64), \
+             patch("script_writer_core.digital_human_tts_tools.call_vl", fake_call_vl), \
+             patch("utils.image_upload_utils.try_map_url_to_local_file",
+                   lambda *a, **k: tmp.name):
+            result = asyncio.run(_generate_locked_camera_prompt("http://x/img.png", 1))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(local_attempts, [tmp.name])
+
+    def test_exhausted_attempts_returns_failure(self):
+        """重试耗尽后返回 success=False，由调用方使用兜底模板"""
+        from config.constant import DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS
+        calls = {"n": 0}
+
+        async def fake_base64(*a, **kw):
+            calls["n"] += 1
+            return False, None, "All connection attempts failed"
+
+        with patch("script_writer_core.digital_human_tts_tools.pick_vl_model",
+                   async_fn(lambda: {"name": "vl"})), \
+             patch("script_writer_core.digital_human_tts_tools.image_url_to_base64", fake_base64), \
+             patch("utils.image_upload_utils.try_map_url_to_local_file", lambda *a, **k: None), \
+             patch("script_writer_core.digital_human_tts_tools.asyncio.sleep", async_fn(None)):
+            result = asyncio.run(_generate_locked_camera_prompt("http://x/img.png", 1))
+
+        self.assertFalse(result["success"])
+        self.assertIn("角色图读取失败", result["error"])
+        self.assertEqual(calls["n"], DIGITAL_HUMAN_VL_PROMPT_MAX_ATTEMPTS)
+
+    def test_fallback_template_keeps_outfit_background_constraint(self):
+        """兜底模板必须约束服装/发型/背景与参考图一致，防 H3 逐段自由发挥"""
+        self.assertIn("same outfit", LOCKED_CAMERA_PROMPT_FALLBACK)
+        self.assertIn("hairstyle", LOCKED_CAMERA_PROMPT_FALLBACK)
+        self.assertIn("background", LOCKED_CAMERA_PROMPT_FALLBACK)
+        self.assertIn("integrated_multimodal_description", LOCKED_CAMERA_PROMPT_FALLBACK)
 
 
 def _default_vid():

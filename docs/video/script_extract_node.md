@@ -10,7 +10,9 @@ Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布�
 ## 功能特点
 
 1. **双输入方式**：连接视频节点，或节点内上传本地视频（上传走 `/api/video-workflow/upload`
-   拿永久 URL，刷新/重试后仍可用）
+   拿永久 URL，刷新/重试后仍可用）；已引用的视频可点"移除"清空，重新上传或连线
+2. **横向两栏布局**：节点加宽为左右两栏——左栏（源视频 + 提取模型/帧分辨率/最大帧数），
+   右栏（提取操作 + 剧本结果），压缩纵向占用
 2. **多模态智能体**：关键帧截图（按时间序、带时间标签）+ 带时间戳的语音转写稿
    同时送入 VL 模型，画面与声音互相印证
 3. **异步任务 + 轮询**：链路分钟级耗时，创建任务立即返回 task_id，前端 3s 轮询
@@ -50,9 +52,14 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS] 文本` 转写稿；单段失败跳过 |
 | llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
 
-任务为**内存注册表**（单进程 uvicorn）：每用户同时只允许 1 个运行中任务（重复提交
-返回 409）；记录 TTL 30 分钟惰性清理；**服务重启任务失联**，轮询返回 404，前端提示
-"任务已失效，请重新提取"。单飞槽和状态查询按登录用户。`X-User-Id` 可省略；
+任务状态落 **`script_extract_task` 表**（跨 gunicorn worker 共享，迁移脚本
+`no_154_20261021_add_script_extract_task`）：POST 创建记录后由创建请求的 worker
+在进程内起 asyncio 后台任务执行 pipeline，各阶段更新写库，任意 worker 的状态
+查询接口读库。每用户同时只允许 1 个活跃 running 任务（重复提交返回 409）；
+running 记录 `updated_at` 超 `TASK_TTL_SECONDS`（30 分钟）未更新即判**执行进程
+失联**（worker 重启/崩溃），创建新任务时自动标记失败并释放占用，状态查询按
+过期处理（404，前端提示重新提取）。历史记录惰性清理（创建任务时顺带删除超
+TTL 行）。单飞槽和状态查询按登录用户。`X-User-Id` 可省略；
 若携带则必须与登录身份一致，否则 403。LLM 计费 token 取 `Authorization`，
 为空时用 `?auth_token=`。
 
@@ -95,7 +102,7 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 | `FRAME_COMPRESS_TIMEOUT` | 20 | 单帧压缩外层超时（秒） |
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 180 / 8000 / 0.4 | 剧本生成调用参数 |
 | `MAX_SCRIPT_CHARS` | 30000 | 剧本文本截断上限（与前端 textarea maxlength 一致） |
-| `TASK_TTL_SECONDS` | 1800 | 内存任务记录保留时长 |
+| `TASK_TTL_SECONDS` | 1800 | 任务记录保留时长；running 记录超期未更新判执行进程失联（过期 404 / 释放并发占用），历史记录惰性清理 |
 | `PREFERRED_VENDOR` / `PREFERRED_MODEL` | volcengine / doubao-seed-2-0-lite | VL 模型偏好（须已在模型表配置密钥且 supports_vl） |
 
 ## 设计取舍：为什么不走 PM/ExpertAgent 重栈
@@ -114,12 +121,14 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
    deepseek-flash 每图约 1000 token（文档上限 1024/图，随分辨率按面积线性下降），
    24 帧 720p ≈ 2.4 万 token；帧多时建议搭配 480P/360P 档位控制 payload 与 token。
 2. SenseVoice ASR 不区分说话人，对白中的"角色名"由智能体从画面与语境推断
-3. 任务状态存内存：重启后进行中任务失联（结果未写入前），需重新提取
+3. 任务执行绑定创建时所在 worker 的进程内 asyncio 任务：该进程重启后进行中任务
+   失联（updated_at 超 TTL 判过期，需重新提取）；已成功/失败的结果已落库，不受重启影响
 4. 外部视频 URL 不支持（与 extract-frame 一致），必须先上传到本站
 5. 帧图与 wav 为临时文件（`upload/temp/`），任务结束即清理；源视频不动
 
 ## 测试
 
 - 单元测试：`tests/services/test_video_script_extract_service.py`（切片计划、ASR 分段
-  合并、转写稿格式化、帧抽稀、多模态消息构造、剧本清洗、任务注册表并发限制/TTL）
+  合并、转写稿格式化、帧抽稀、多模态消息构造、剧本清洗、DB 任务状态表并发限制/
+  TTL 失联判定；DB 层用同接口内存假模型替代，不依赖真实数据库）
 - 集成验证：浏览器实测（上传视频 → 提取 → 写入剧本节点 → 刷新复原）
