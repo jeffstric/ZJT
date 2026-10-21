@@ -127,6 +127,7 @@ from utils.resource_access import (
     is_admin_user,
     resolve_authenticated_user_id,
     enforce_x_user_id_consistency,
+    decide_auth_cookie_renewal,
 )
 from utils.media_upload import (
     UploadValidationError,
@@ -692,29 +693,33 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     把 token 注入请求头再放行。浏览器自动带 cookie、各接口继续从标准 Authorization
     头取 token；SameSite=Strict 保证 cookie 不会被跨站请求携带（CSRF 防线）。
 
-    滑动续期：带认证 cookie 的 /api/ 请求在响应阶段顺延 cookie 有效期。
-    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；若只续 DB 不续
-    cookie，持续活跃用户的 cookie 仍会在固定 max_age 后消失，"活跃免登录"不生效。
+    滑动续期：响应阶段按 decide_auth_cookie_renewal 判定顺延 cookie 有效期。
+    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；cookie 必须
+    同步跟随续期，否则持续活跃用户的 cookie 仍会在固定 max_age 后消失，
+    "活跃免登录"不生效（此前只续"无 Authorization 头"的请求，页面日常心跳/SSE
+    全带 Bearer → DB token 持续续期而 cookie 不续，cookie 先于 DB token 死亡，
+    无显式凭证的轮询请求 401 → 401 自愈误清仍有效的 localStorage token，
+    活跃用户被"假过期"踢到登录页）。
     """
     path = request.url.path
     cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
-    translated = False
+    bearer_token = None
     if path == "/api" or path.startswith("/api/"):
-        current = extract_bearer_token(request.headers.get("authorization"))
-        if not current and cookie_token:
+        bearer_token = extract_bearer_token(request.headers.get("authorization"))
+        if not bearer_token and cookie_token:
             headers = [
                 (k, v) for k, v in request.scope.get("headers", [])
                 if k != b"authorization"
             ]
             headers.append((b"authorization", f"Bearer {cookie_token}".encode("latin-1")))
             request.scope["headers"] = headers
-            translated = True
     response = await call_next(request)
     # 登录/登出/注册端点自己管理 cookie（login 种新值、logout 删除），
     # 不能用请求带来的旧值覆盖它们的 Set-Cookie——否则登录成功后浏览器
     # 拿回的仍是被顶号的旧 token，永远无法重新登录
-    if translated and cookie_token and not path.startswith("/api/auth/"):
-        set_auth_cookie(response, cookie_token, request)
+    renew_token = decide_auth_cookie_renewal(path, bearer_token, cookie_token)
+    if renew_token:
+        set_auth_cookie(response, renew_token, request)
     return response
 
 

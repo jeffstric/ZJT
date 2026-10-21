@@ -221,3 +221,49 @@ async def enforce_x_user_id_consistency(request):
             },
         )
     return None
+
+
+def decide_auth_cookie_renewal(
+    path: Optional[str],
+    bearer_token: Optional[str],
+    cookie_token: Optional[str],
+) -> Optional[str]:
+    """认证 cookie 滑动续期判定（auth_cookie_translation_middleware 响应阶段调用）。
+
+    背景：DB token 由 UserTokensModel.get_user_id_by_token 统一滑动续期，但 cookie
+    此前只在"无 Authorization 头、靠 cookie 翻译鉴权"的请求上续期。页面日常心跳 / SSE
+    全带 Bearer → DB token 持续续期、cookie 不续；距上次生成类（无显式凭证）请求
+    超过 7 天的用户 cookie 先死、DB token 仍活，此时轮询 get-status 401 → 401 自愈
+    误清仍有效的 localStorage token → 用户被"假过期"踢到登录页。
+
+    续期规则（返回待续期的 token，None 表示不续）：
+    - 非 /api/ 路径、无 cookie → 不续
+    - /api/auth/ 前缀（登录/登出/注册端点自管理 cookie）→ 不续，防止用旧值
+      覆盖登录响应的新 cookie
+    - 无 Authorization 头（请求靠 cookie 翻译鉴权）→ 续，保持既有行为
+    - 自带 Bearer 且与 cookie token 相同（正常单会话页面，localStorage token
+      即 cookie token）→ 续，cookie 寿命跟随 DB token 的活跃期
+    - Bearer 与 cookie token 不同（多标签页/顶号后各持不同 token）→ 不续，
+      绝不用旧 token 覆盖浏览器里较新的 cookie
+
+    Args:
+        path: 请求路径（request.url.path）
+        bearer_token: 已从 Authorization 头提取的裸 token（未携带为 None）
+        cookie_token: 认证 cookie 中的 token（未携带为 None）
+
+    Returns:
+        Optional[str]: 需要续期的 token 值；不续期返回 None
+    """
+    if not cookie_token or not path:
+        return None
+    if not (path == "/api" or path.startswith("/api/")):
+        return None
+    if path.startswith("/api/auth/"):
+        return None
+    if not bearer_token:
+        # 无 Authorization 头：请求靠 cookie 翻译鉴权（translated 路径）
+        return cookie_token
+    if bearer_token == cookie_token:
+        # 单会话正常页面：Bearer 与 cookie 同源，续期让 cookie 寿命跟随活跃期
+        return cookie_token
+    return None
