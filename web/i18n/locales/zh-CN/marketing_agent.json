@@ -151,7 +151,7 @@
   "verification_timeout": "等待回答超时，请重新发送消息。",
   "stream_error": "处理出错，请重试",
   "connection_error": "连接出错，请重试",
-  "request_timeout": "请求超时，请稍后重试",
+  "request_timeout": "请求超时，任务可能仍在后台生成，请稍后刷新查看或重新发送",
   "generating_placeholder": "生成中...",
   "task_restore_failed": "任务状态恢复失败，请重新生成。",
   "ai_question": "AI 向您提问",
