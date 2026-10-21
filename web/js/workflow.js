@@ -674,7 +674,7 @@
         lastFrameConnections: (state.lastFrameConnections || []).map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
-        audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType, voiceLineIndex: c.voiceLineIndex })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
@@ -2099,6 +2099,11 @@
             }
             return conn;
           });
+          state.nodes.forEach(function(n) {
+            if (n && n.type === 'text_to_speech' && typeof n.syncConnectedVoice === 'function') {
+              n.syncConnectedVoice();
+            }
+          });
         }
         
         // 恢复分组（重算包围盒依赖节点尺寸，需在节点恢复之后执行）
@@ -3160,6 +3165,10 @@
         if(nodeData.data.dialogueIndex !== undefined){
           node.data.dialogueIndex = nodeData.data.dialogueIndex;
         }
+        // 恢复文字转语音溯源字段（生成该音频的 text_to_speech 节点）
+        if(nodeData.data.ttsNodeId !== undefined){
+          node.data.ttsNodeId = nodeData.data.ttsNodeId;
+        }
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -3179,8 +3188,8 @@
               previewField.style.display = 'block';
               if(previewActionsField) previewActionsField.style.display = 'block';
             }
-            // 显示"添加到时间轴"按钮（当音频来自对话组时）
-            if(addTimelineBtn && node.data.sourceNodeId !== undefined){
+            // 显示"添加到时间轴"按钮（有音频即可加入时间轴）
+            if(addTimelineBtn){
               addTimelineBtn.style.display = 'inline-block';
             }
           }

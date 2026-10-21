@@ -12,7 +12,7 @@
 | 快速合成 | `POST /api/tts/synthesize` | 同步秒级返回 `audio_url`；预扣算力，失败退款 |
 | 试听 | `GET /api/tts/preview/{voice_id}` | 服务端固定示例句 + 按音色落盘缓存，**免费** |
 | 声音页 UI | `web/js/pages/audio_generate.js` | 顶部模式切换：音色库合成 / 参考音频克隆 |
-| 工作流节点 | `web/js/text_to_speech_node.js` | TTS 节点"合成引擎"下拉，重载后自动复原 |
+| 工作流节点 | `web/js/text_to_speech_node.js` | TTS 节点「合成引擎」下拉，重载后自动复原。音色库之外，角色音色输出或音频节点可以连到音色输入，作为克隆参考音 |
 | 管理配置 | admin 快速配置 → 多媒体 | 「火山引擎语音合成」卡片，单 API Key |
 
 ## 二、开通与配置（部署前置）
