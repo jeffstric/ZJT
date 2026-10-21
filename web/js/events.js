@@ -4449,8 +4449,12 @@
         if (personalityInput.value.trim()) formData.append('personality', personalityInput.value.trim());
         if (behaviorInput.value.trim()) formData.append('behavior', behaviorInput.value.trim());
         if (otherInfoInput.value.trim()) formData.append('other_info', otherInfoInput.value.trim());
-        // 音色指纹无条件提交（含空串=清除），与编辑表单全量提交语义一致
-        formData.append('voice_desc', voiceDescInput.value.trim());
+        // 音色指纹：节点快照自带该字段时保持全量提交（空串=用户主动清除），与编辑表单语义一致；
+        // 旧节点快照无该字段（音色指纹功能上线前创建）且输入框为空时不提交，
+        // 避免空串把库里已生成的指纹误清成 NULL
+        if (Object.prototype.hasOwnProperty.call(node.data, 'voice_desc') || voiceDescInput.value.trim()) {
+          formData.append('voice_desc', voiceDescInput.value.trim());
+        }
         if (imageInput.files.length > 0) formData.append('reference_image', imageInput.files[0]);
         if (voiceInput.files.length > 0) formData.append('default_voice', voiceInput.files[0]);
 

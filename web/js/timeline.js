@@ -1957,7 +1957,7 @@
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'X-User-Id': window.USER_ID || '1'
+              'X-User-Id': localStorage.getItem('user_id') || '1'
             },
             body: JSON.stringify({
               draft_path: draftPath,
@@ -2031,7 +2031,7 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-User-Id': window.USER_ID || '1'
+            'X-User-Id': localStorage.getItem('user_id') || '1'
           },
           body: JSON.stringify({
             video_clips: videoClipsData,
