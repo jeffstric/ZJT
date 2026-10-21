@@ -69,11 +69,6 @@
       const clearBtn = el.querySelector('.audio-clear');
       const addTimelineBtn = el.querySelector('.audio-add-timeline-btn');
 
-      // 显示"添加到时间轴"按钮（当音频来自对话组时）
-      if(node.data.sourceNodeId !== undefined && node.data.sourceNodeId !== null){
-        addTimelineBtn.style.display = 'inline-block';
-      }
-
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         removeNode(id);
@@ -113,11 +108,14 @@
           nameEl.title = node.data.name;
           previewField.style.display = 'block';
           previewActionsField.style.display = 'block';
+          // 有音频即可加入时间轴：向上追溯分镜命中则归入对应镜头，否则按独立片段处理
+          addTimelineBtn.style.display = 'inline-block';
         } else {
           playerEl.removeAttribute('src');
           playerEl.load();
           previewField.style.display = 'none';
           previewActionsField.style.display = 'none';
+          addTimelineBtn.style.display = 'none';
           nameEl.textContent = '';
         }
       }

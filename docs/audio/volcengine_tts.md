@@ -12,7 +12,7 @@
 | 快速合成 | `POST /api/tts/synthesize` | 同步秒级返回 `audio_url`；预扣算力，失败退款 |
 | 试听 | `GET /api/tts/preview/{voice_id}` | 服务端固定示例句 + 按音色落盘缓存，**免费** |
 | 声音页 UI | `web/js/pages/audio_generate.js` | 顶部模式切换：音色库合成 / 参考音频克隆 |
-| 工作流节点 | `web/js/text_to_speech_node.js` | TTS 节点"合成引擎"下拉，重载后自动复原 |
+| 工作流节点 | `web/js/text_to_speech_node.js` | TTS 节点「合成引擎」下拉，重载后自动复原。音色库之外，角色音色输出或音频节点可以连到音色输入，作为克隆参考音 |
 | 管理配置 | admin 快速配置 → 多媒体 | 「火山引擎语音合成」卡片，单 API Key |
 
 ## 二、开通与配置（部署前置）
@@ -84,11 +84,17 @@ volcengine_tts:
 | `alembic/versions/no_146_*` | 音色种子切换到 2.0（旧 BV 音色下线） |
 | `utils/volcengine_tts_util.py` | 2.0 客户端（httpx 全 async）+ `TtsJsonBlockDecoder` 块流解析 |
 | `api/tts.py` | 三个接口 + 计价/预检/预扣/退款链路 |
-| `web/js/voice_library_api.js` | 前端共享 API（声音页 Vue 与工作流画布共用） |
+| `web/js/voice_library_api.js` | 前端共享 API（声音页 Vue 与工作流画布共用，fetch，不依赖 axios） |
 | `web/js/components/voice_picker.js` | Vue 音色选择器（卡片/筛选/试听） |
 | `web/js/pages/audio_generate.js` | 声音页双模式表单 |
 | `web/js/text_to_speech_node.js` | 工作流 TTS 节点引擎切换 |
 | `web/js/admin.js` + `config/default_configs.py` | 管理后台快速配置（volcengine_tts.api_key） |
+
+工作流画布注意：
+
+- `video_workflow.html` 不加载 axios。音色列表、试听、快速合成都走 `voice_library_api.js` 的 `fetch`，并带 `Authorization` 头。
+- 节点文案键在 `web/i18n/locales/{zh-CN,en}/video_workflow.json`。`window.t` 缺键时返回键名本身（标题会显示 `tts_title`，按钮会显示 `tts_generate_btn`），节点里的中文兜底不会生效，新增文案必须同时写入中英语言包。
+- 快速合成下拉只请求 `provider=volcengine`。`reference_audio` 是克隆参考，不能走 `/api/tts/synthesize`。
 
 ## 六、音色维护
 

@@ -2299,6 +2299,67 @@ html.theme-dark .node.image-node .image-camera-control-btn{
 }
 .port.input{ left: -9px; top: 50%; transform: translateY(-50%); }
 .port.output{ right: -9px; top: 50%; transform: translateY(-50%); }
+.port.output.voice-output-port{
+  top: calc(50% + 20px);
+  bottom: auto;
+  transform: none;
+  border-color: #8b5cf6;
+}
+.port.output.voice-output-port:hover{
+  background: #c4b5fd;
+  transform: scale(1.2);
+}
+.tts-voice-socket{ position: relative; }
+.port.input.voice-input-port{
+  left: -21px;
+  border-color: #8b5cf6;
+}
+.port.input.voice-input-port:hover{
+  background: #c4b5fd;
+  transform: translateY(-50%) scale(1.2);
+}
+.port.input.voice-input-port.can-connect{
+  background: #c4b5fd;
+  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.3);
+  transform: translateY(-50%) scale(1.3);
+}
+/* 文字转语音节点左上角"对话来源"锚点：仅作对话组→语音节点关联线的落点，不可拖拽 */
+.port.input.tts-dialogue-link-port{
+  left: -9px;
+  top: 14px;
+  transform: none;
+  border-color: #22c55e;
+  background: #f0fdf4;
+  cursor: default;
+}
+.port.input.tts-dialogue-link-port:hover{
+  background: #dcfce7;
+  transform: none;
+}
+.dialogue-item{ position: relative; }
+/* 对话条目输出端口：每句对话一个，生成的文字转语音节点由此引出关联线 */
+.port.dialogue-item-output{
+  right: -21px;
+  left: auto;
+  top: 25%;
+  transform: translateY(-50%);
+}
+.port.dialogue-voice-output{
+  right: -21px;
+  left: auto;
+  top: 50%;
+  transform: translateY(-50%);
+  border-color: #cbd5e1;
+  background: #fff;
+}
+.port.dialogue-voice-output.is-ready{
+  border-color: #8b5cf6;
+}
+.port.dialogue-voice-output.is-ready:hover,
+.port.dialogue-voice-output.is-ready.can-connect{
+  background: #c4b5fd;
+  transform: translateY(-50%) scale(1.2);
+}
 .port:hover{ 
   background: var(--primary-light); 
   transform: translateY(-50%) scale(1.2);

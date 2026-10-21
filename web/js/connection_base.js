@@ -157,7 +157,13 @@ function renderConnectionType(cfg) {
       var toEl = canvasEl.querySelector('.node[data-node-id="' + conn.to + '"]');
       if (!fromEl || !toEl) continue;
 
-      var outputPort = fromEl.querySelector('.port.output');
+      var fromSelector = '.port.output';
+      if (typeof cfg.fromPortSelector === 'function') {
+        fromSelector = cfg.fromPortSelector(conn) || fromSelector;
+      } else if (cfg.fromPortSelector) {
+        fromSelector = cfg.fromPortSelector;
+      }
+      var outputPort = fromEl.querySelector(fromSelector);
       var toSelector = typeof cfg.toPortSelector === 'function'
         ? cfg.toPortSelector(conn)
         : cfg.toPortSelector;
@@ -186,6 +192,10 @@ function renderConnectionType(cfg) {
         if (cfg.strokeDasharray) {
           visiblePath.style.strokeDasharray = isSelected ? 'none' : cfg.strokeDasharray;
         }
+      }
+      // 单条连线的覆盖样式（如对话组→文字转语音的来源关联线换色）
+      if (typeof cfg.connStyle === 'function') {
+        cfg.connStyle(conn, isSelected, visiblePath);
       }
 
       connectionsSvg.appendChild(group);
@@ -269,11 +279,36 @@ var CONNECTION_TYPES = {
     selectedKey: 'selectedAudioConnId',
     groupClass: 'audio-conn-group',
     datasetKey: 'audioConnId',
-    toPortSelector: '.port.audio-input-port',
+    fromPortSelector: function(conn) {
+      // 对话组→文字转语音的来源关联线：从对应序号对话条目的输出端口出发
+      if (conn.portType === 'dialogue_link') {
+        return '.dialogue-item[data-index="' + Number(conn.voiceLineIndex) + '"] .port.dialogue-item-output';
+      }
+      if (conn.portType !== 'voice') return '.port.output';
+      var fromNode = state.nodes.find(function(n) { return n.id === conn.from; });
+      if (fromNode && fromNode.type === 'character') return '.port.voice-output-port';
+      if (fromNode && fromNode.type === 'dialogue_group' && conn.voiceLineIndex != null) {
+        return '.dialogue-item[data-index="' + Number(conn.voiceLineIndex) + '"] .port.dialogue-voice-output';
+      }
+      return '.port.output';
+    },
+    toPortSelector: function(conn) {
+      // 对话组→文字转语音的来源关联线：落在文字转语音节点左上角的来源锚点
+      if (conn.portType === 'dialogue_link') return '.port.tts-dialogue-link-port';
+      if (conn.portType === 'voice') return '.port.voice-input-port';
+      return '.port.audio-input-port';
+    },
     stroke: '#8b5cf6',
     strokeWidth: '2',
     strokeDasharray: '6,3',
-    selectedStroke: '#6d28d9'
+    selectedStroke: '#6d28d9',
+    // 来源关联线用绿色实线，与紫色虚线音色线区分
+    connStyle: function(conn, isSelected, visiblePath) {
+      if (!conn || conn.portType !== 'dialogue_link') return;
+      visiblePath.style.stroke = isSelected ? '#16a34a' : '#22c55e';
+      visiblePath.style.strokeWidth = isSelected ? '3' : '2';
+      visiblePath.style.strokeDasharray = 'none';
+    }
   },
   reference: {
     connections: function() { return state.referenceConnections; },
@@ -378,7 +413,13 @@ function updateSelectedConnDeleteBtnPos() {
     var fromEl = canvasEl.querySelector('.node[data-node-id="' + selConn.from + '"]');
     var toEl = canvasEl.querySelector('.node[data-node-id="' + selConn.to + '"]');
     if (!fromEl || !toEl) continue;
-    var outputPort = fromEl.querySelector('.port.output');
+    var fromSelector = '.port.output';
+    if (typeof cfg.fromPortSelector === 'function') {
+      fromSelector = cfg.fromPortSelector(selConn) || fromSelector;
+    } else if (cfg.fromPortSelector) {
+      fromSelector = cfg.fromPortSelector;
+    }
+    var outputPort = fromEl.querySelector(fromSelector);
     var toSelector = typeof cfg.toPortSelector === 'function' ? cfg.toPortSelector(selConn) : cfg.toPortSelector;
     var inputPort = toEl.querySelector(toSelector);
     if (!outputPort || !inputPort) continue;
@@ -525,6 +566,9 @@ function deleteSelectedConnection() {
     if (audioConn) {
       var audioFrom = state.nodes.find(function(n) { return n.id === audioConn.from; });
       var audioTarget = state.nodes.find(function(n) { return n.id === audioConn.to; });
+      if (audioConn.portType === 'voice' && audioTarget && typeof audioTarget.clearConnectedVoice === 'function') {
+        audioTarget.clearConnectedVoice();
+      }
       if (audioFrom && audioTarget && audioTarget.data.audioUrls) {
         var audioIdx = audioTarget.data.audioUrls.findIndex(function(a) { return a.url === audioFrom.data.url; });
         if (audioIdx >= 0) audioTarget.data.audioUrls.splice(audioIdx, 1);

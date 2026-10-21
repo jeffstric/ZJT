@@ -251,10 +251,8 @@
         }
       }
       
-      // 如果是对话组节点
-      if (node.type === 'dialogue_group' && node.data.shotNumber) {
-        shotNumber = node.data.shotNumber;
-        // 查找关联的剧本节点（通过分镜节点连接）
+      // 如果是对话组节点：优先从入边分镜节点解析柱子（分镜节点自身带有剧本与镜号）
+      if (node.type === 'dialogue_group') {
         const incomingConns = state.connections.filter(c => c.to === nodeId);
         for (const conn of incomingConns) {
           const sourceNode = state.nodes.find(n => n.id === conn.from);
@@ -265,14 +263,39 @@
         }
       }
 
-      // 如果是音频节点（来自对话组生成的独立音频节点）
+      // 如果是文字转语音节点：通过来源关联线/音色线向上找对话组，再追溯到分镜
+      if (node.type === 'text_to_speech') {
+        const linkConn = (state.audioConnections || []).find(c =>
+          c.to === nodeId && (c.portType === 'dialogue_link' || c.portType === 'voice')
+        );
+        if (linkConn) {
+          const parentNode = state.nodes.find(n => n.id === linkConn.from);
+          if (parentNode && parentNode.type === 'dialogue_group') {
+            const pillar = getPillarForNode(parentNode.id);
+            if (pillar) return pillar;
+          }
+        }
+      }
+
+      // 如果是音频节点（文字转语音生成，或来自对话组的独立音频节点）
       if (node.type === 'audio') {
-        // 优先通过 sourceNodeId 找到父对话组节点
+        // 1) 文字转语音生成的音频节点：优先沿产出连线向上追溯
+        const ttsConn = (state.audioConnections || []).find(c => c.to === nodeId && !c.portType);
+        if (ttsConn) {
+          const pillar = getPillarForNode(ttsConn.from);
+          if (pillar) return pillar;
+        }
+        if (node.data.ttsNodeId != null) {
+          const pillar = getPillarForNode(node.data.ttsNodeId);
+          if (pillar) return pillar;
+        }
+        // 2) 通过 sourceNodeId 找到父对话组节点
         let dialogueGroupNode = null;
         if (node.data.sourceNodeId) {
-          dialogueGroupNode = state.nodes.find(n => n.id === node.data.sourceNodeId);
+          const byIdNode = state.nodes.find(n => n.id === node.data.sourceNodeId);
+          if (byIdNode && byIdNode.type === 'dialogue_group') dialogueGroupNode = byIdNode;
         }
-        // 如果 sourceNodeId 不存在，尝试通过音频连接线查找父对话组
+        // 3) 如果 sourceNodeId 不存在，尝试通过音频连接线查找父对话组
         if (!dialogueGroupNode) {
           const audioConn = (state.audioConnections || []).find(c => c.to === nodeId);
           if (audioConn) {

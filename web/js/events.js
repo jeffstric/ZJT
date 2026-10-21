@@ -766,6 +766,7 @@
       // 拖拽创建连接线时显示虚线预览
       if(state.connecting){
         const fromNode = state.nodes.find(n => n.id === state.connecting.fromId);
+        const draggingVoice = state.connecting.fromPort === 'voice';
         const fromPos = getOutputPortPos(state.connecting.fromId);
         const containerRect = canvasContainer.getBoundingClientRect();
         const toX = (e.clientX - containerRect.left - state.panX) / state.zoom;
@@ -807,8 +808,9 @@
 
         
         // 如果从角色/场景/道具节点拖拽：优先吸附生视频图片口，其次图片节点参考口
+        // 角色音色输出口不参与图片吸附
         let nearestRefPort = null;
-        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+        if(fromNode && !draggingVoice && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
           const registryPort = findNearestConnectablePort(toX, toY, fromNode.type, 50);
           let nearestRefDist = 50;
           if(registryPort){
@@ -833,7 +835,7 @@
         // 如果从图生视频节点拖拽，查找视频节点输入端口
         // 如果从剧本节点拖拽，查找分镜组节点输入端口
         // 如果从角色节点拖拽，查找视频节点输入端口
-        if(fromNode && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
+        if(fromNode && !draggingVoice && (fromNode.type === 'image_to_video' || fromNode.type === 'video_watermark' || fromNode.type === 'script' || fromNode.type === 'character')){
           let nearestDist = 50;
           const targetType = fromNode.type === 'script' ? 'shot_group' : 'video';
           for(const targetNode of state.nodes){
@@ -905,12 +907,17 @@
           }
         }
 
-        // 如果从音频节点拖拽，通过注册表查找所有音频输入端口
+        // 音频节点，或角色音色输出口：吸附文字转语音音色口，以及其它接受 audio 的输入口
         let nearestAudioInputPort = null;
-        if(fromNode && fromNode.type === 'audio'){
-          const registryAudioPort = findNearestConnectablePort(toX, toY, 'audio', 50);
+        if(draggingVoice || (fromNode && fromNode.type === 'audio')){
+          const registryAudioPort = findNearestConnectablePort(toX, toY, draggingVoice ? 'voice' : 'audio', 50);
           if(registryAudioPort){
-            nearestAudioInputPort = { nodeId: registryAudioPort.nodeId, x: registryAudioPort.x, y: registryAudioPort.y };
+            nearestAudioInputPort = {
+              nodeId: registryAudioPort.nodeId,
+              portType: registryAudioPort.portType,
+              x: registryAudioPort.x,
+              y: registryAudioPort.y
+            };
           }
         }
         
@@ -969,7 +976,13 @@
         for(const portEl of canvasEl.querySelectorAll('.audio-input-port')){
           const nodeEl = portEl.closest('.node');
           const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
-          const isNearest = nearestAudioInputPort && nearestAudioInputPort.nodeId === nodeId;
+          const isNearest = nearestAudioInputPort && nearestAudioInputPort.portType !== 'voice' && nearestAudioInputPort.nodeId === nodeId;
+          portEl.classList.toggle('can-connect', isNearest);
+        }
+        for(const portEl of canvasEl.querySelectorAll('.voice-input-port')){
+          const nodeEl = portEl.closest('.node');
+          const nodeId = nodeEl ? Number(nodeEl.dataset.nodeId) : null;
+          const isNearest = nearestAudioInputPort && nearestAudioInputPort.portType === 'voice' && nearestAudioInputPort.nodeId === nodeId;
           portEl.classList.toggle('can-connect', isNearest);
         }
         
@@ -1201,8 +1214,16 @@
           }
         }
 
-        // 如果从角色/场景/道具节点拖拽：先连生视频图片口，否则连图片节点参考口
-        if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
+        // 角色音色输出口只连文字转语音的音色输入，不走图片参考口
+        if(fromNode && state.connecting && state.connecting.fromPort === 'voice'){
+          const voicePort = findNearestConnectablePort(mouseX, mouseY, 'voice', PROXIMITY_DIST);
+          if(voicePort && fromNode.type === 'dialogue_group' && state.connecting.voiceLineIndex != null
+              && typeof window.attachDialogueLineVoice === 'function'){
+            window.attachDialogueLineVoice(fromNode, voicePort, state.connecting.voiceLineIndex);
+          } else if(voicePort && typeof window.attachVoiceConnection === 'function'){
+            window.attachVoiceConnection(fromNode, voicePort);
+          }
+        } else if(fromNode && (fromNode.type === 'character' || fromNode.type === 'location' || fromNode.type === 'props')){
           let assetConnected = false;
           const i2vPort = findNearestConnectablePort(mouseX, mouseY, fromNode.type, PROXIMITY_DIST);
           const i2vDist = i2vPort ? i2vPort.dist : Infinity;
@@ -1383,15 +1404,24 @@
                 }
               }
             } else {
-              const hasDisabledPort = state.nodes.some(node => {
-                if(node.type !== 'dialogue_group') return false;
+              let nearRetiredPort = false;
+              for(const node of state.nodes){
+                if(node.type !== 'dialogue_group') continue;
                 const toEl = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
-                if(!toEl) return false;
+                if(!toEl) continue;
                 const portEl = toEl.querySelector('.port.video-input-port');
-                return portEl && portEl.classList.contains('disabled');
-              });
-              if(hasDisabledPort){
-                showToast('请先将对话组节点的”情感控制方式”切换为”使用情感参考音频”', 'warning');
+                if(!portEl || !portEl.classList.contains('disabled')) continue;
+                const { dist } = distToPort(portEl);
+                if(dist < PROXIMITY_DIST){
+                  nearRetiredPort = true;
+                  break;
+                }
+              }
+              if(nearRetiredPort){
+                const retiredMsg = (typeof window.t === 'function' && window.t('dialogue_video_port_retired') !== 'dialogue_video_port_retired')
+                  ? window.t('dialogue_video_port_retired')
+                  : '对话组已不再接收情感参考视频，请在文字转语音节点中设置情感参考音频。';
+                showToast(retiredMsg, 'warning');
               }
             }
           }
@@ -1400,7 +1430,9 @@
         // 如果从音频节点拖拽，通过注册表查找所有音频输入端口
         if(fromNode && fromNode.type === 'audio'){
           const audioPort = findNearestConnectablePort(mouseX, mouseY, 'audio', PROXIMITY_DIST);
-          if(audioPort){
+          if(audioPort && audioPort.portType === 'voice' && typeof window.attachVoiceConnection === 'function'){
+            window.attachVoiceConnection(fromNode, audioPort);
+          } else if(audioPort){
             const connArray = state[audioPort.portCfg.connectionType] || state.audioConnections;
             const exists = connArray.some(c =>
               c.from === fromNode.id && c.to === audioPort.nodeId
@@ -1960,6 +1992,7 @@
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
+        <div class="port output voice-output-port" data-port="voice" data-i18n="character_voice_output_port:title" title="${window.t ? window.t('character_voice_output_port') : '音色输出'}"></div>
       `;
       
       // 添加调试按钮
@@ -1972,6 +2005,7 @@
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
       const outputPort = el.querySelector('.port.output');
+      const voiceOutputPort = el.querySelector('.port.voice-output-port');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2037,6 +2071,14 @@
           e.preventDefault();
           e.stopPropagation();
           state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      if(voiceOutputPort) {
+        voiceOutputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY, fromPort: 'voice' };
           canvasEl.style.cursor = 'crosshair';
         });
       }
@@ -2117,6 +2159,7 @@
           </div>
         </div>
         <div class="port output" data-port="output" title="输出"></div>
+        <div class="port output voice-output-port" data-port="voice" data-i18n="character_voice_output_port:title" title="${window.t ? window.t('character_voice_output_port') : '音色输出'}"></div>
       `;
 
       // 添加调试按钮
@@ -2129,6 +2172,7 @@
       const deleteBtn = el.querySelector('[data-action="delete"]');
       const editBtn = el.querySelector('.character-edit-btn');
       const outputPort = el.querySelector('.port.output');
+      const voiceOutputPort = el.querySelector('.port.voice-output-port');
 
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2194,6 +2238,14 @@
           e.preventDefault();
           e.stopPropagation();
           state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY };
+          canvasEl.style.cursor = 'crosshair';
+        });
+      }
+      if(voiceOutputPort) {
+        voiceOutputPort.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          state.connecting = { fromId: id, startX: e.clientX, startY: e.clientY, fromPort: 'voice' };
           canvasEl.style.cursor = 'crosshair';
         });
       }

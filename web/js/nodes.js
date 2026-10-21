@@ -2419,7 +2419,15 @@
       if(!node) return {x:0, y:0};
       const el = canvasEl.querySelector(`.node[data-node-id="${nid}"]`);
       if(!el) return {x: node.x, y: node.y};
-      const portEl = el.querySelector('.port.output');
+      var portSelector = '.port.output';
+      if (state.connecting && Number(state.connecting.fromId) === nid && state.connecting.fromPort === 'voice') {
+        if (state.connecting.voiceLineIndex != null) {
+          portSelector = '.dialogue-item[data-index="' + Number(state.connecting.voiceLineIndex) + '"] .port.dialogue-voice-output';
+        } else {
+          portSelector = '.port.voice-output-port';
+        }
+      }
+      const portEl = el.querySelector(portSelector) || el.querySelector('.port.output');
       if(portEl){
         // 获取端口相对于节点的偏移位置
         const portRect = portEl.getBoundingClientRect();
@@ -2901,103 +2909,13 @@
     }
 
     // ===== 渲染音频连接线 =====
+    // 委托给 connection_base.js 的统一渲染（renderConnectionType 支持 voice /
+    // dialogue_link 等 portType 的端口定位），避免两处渲染逻辑失同步：
+    // 旧实现只画 .port.output → .port.audio-input-port，会把 voice/关联线擦掉。
     function renderAudioConnections(){
       try {
-        if(!connectionsSvg || !canvasEl || !canvasContainer) return;
-        if(!state.audioConnections) state.audioConnections = [];
-
-        const oldLines = document.querySelectorAll('.audio-conn-group');
-        oldLines.forEach(l => l.remove());
-
-        if(state.selectedAudioConnId !== null){
-          const stillExists = state.audioConnections.some(c => c.id === state.selectedAudioConnId);
-          if(!stillExists){
-            state.selectedAudioConnId = null;
-            if(connDeleteBtn) connDeleteBtn.style.display = 'none';
-          }
-        }
-
-        for(const conn of state.audioConnections){
-          const fromEl = canvasEl.querySelector(`.node[data-node-id="${conn.from}"]`);
-          const toEl = canvasEl.querySelector(`.node[data-node-id="${conn.to}"]`);
-          if(!fromEl || !toEl) continue;
-
-          const outputPort = fromEl.querySelector('.port.output');
-          const audioInputPort = toEl.querySelector('.port.audio-input-port');
-          if(!outputPort || !audioInputPort) continue;
-
-          const fromRect = outputPort.getBoundingClientRect();
-          const toRect = audioInputPort.getBoundingClientRect();
-          const containerRect = canvasContainer.getBoundingClientRect();
-
-          const fromX = (fromRect.left + fromRect.width/2 - containerRect.left - state.panX) / state.zoom;
-          const fromY = (fromRect.top + fromRect.height/2 - containerRect.top - state.panY) / state.zoom;
-          const toX = (toRect.left + toRect.width/2 - containerRect.left - state.panX) / state.zoom;
-          const toY = (toRect.top + toRect.height/2 - containerRect.top - state.panY) / state.zoom;
-
-          const dx = Math.abs(toX - fromX) * 0.5;
-          const pathD = `M${fromX},${fromY} C${fromX+dx},${fromY} ${toX-dx},${toY} ${toX},${toY}`;
-
-          const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-          group.setAttribute('class', 'audio-conn-group');
-          group.dataset.audioConnId = String(conn.id);
-
-          const hitbox = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          hitbox.setAttribute('d', pathD);
-          hitbox.setAttribute('class', 'hitbox');
-          hitbox.style.fill = 'none';
-          hitbox.style.stroke = 'transparent';
-          hitbox.style.strokeWidth = '20';
-          hitbox.style.cursor = 'pointer';
-
-          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-          path.setAttribute('d', pathD);
-          path.setAttribute('class', 'visible');
-          path.style.fill = 'none';
-          path.style.stroke = '#8b5cf6';
-          path.style.strokeWidth = '2';
-          path.style.strokeDasharray = '6,3';
-          path.style.pointerEvents = 'none';
-
-          if(state.selectedAudioConnId === conn.id){
-            path.style.stroke = '#6d28d9';
-            path.style.strokeWidth = '3';
-            path.style.strokeDasharray = 'none';
-          }
-
-          group.appendChild(hitbox);
-          group.appendChild(path);
-          connectionsSvg.appendChild(group);
-
-          hitbox.addEventListener('click', (e) => {
-            e.stopPropagation();
-            state.selectedConnId = null;
-            state.selectedImgConnId = null;
-            state.selectedFirstFrameConnId = null;
-            state.selectedLastFrameConnId = null;
-            state.selectedVideoConnId = null;
-            state.selectedReferenceConnId = null;
-            state.selectedAudioConnId = conn.id;
-            renderAllConnections();
-          });
-
-          if(state.selectedAudioConnId === conn.id){
-            const cx1 = fromX + dx;
-            const cy1 = fromY;
-            const cx2 = toX - dx;
-            const cy2 = toY;
-            const t = 0.5;
-            const mt = 1 - t;
-            const bezierX = mt*mt*mt*fromX + 3*mt*mt*t*cx1 + 3*mt*t*t*cx2 + t*t*t*toX;
-            const bezierY = mt*mt*mt*fromY + 3*mt*mt*t*cy1 + 3*mt*t*t*cy2 + t*t*t*toY;
-            const screenX = bezierX * state.zoom + state.panX;
-            const screenY = bezierY * state.zoom + state.panY;
-            if(connDeleteBtn){
-              connDeleteBtn.style.display = 'flex';
-              connDeleteBtn.style.left = (screenX - 12) + 'px';
-              connDeleteBtn.style.top = (screenY - 12) + 'px';
-            }
-          }
+        if(typeof renderConnectionType === 'function' && typeof CONNECTION_TYPES !== 'undefined'){
+          renderConnectionType(CONNECTION_TYPES.audio);
         }
       } catch(error) {
         console.error('[renderAudioConnections] Error:', error);
