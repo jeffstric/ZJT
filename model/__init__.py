@@ -25,6 +25,7 @@ from .announcements import AnnouncementsModel, AnnouncementEntity, AnnouncementS
 from .announcement_reads import AnnouncementReadsModel, AnnouncementReadEntity
 from .async_tasks import AsyncTasksModel, AsyncTask, AsyncTaskStatus
 from .script_extract_task import ScriptExtractTaskModel, ScriptExtractTask
+from .compose_jobs import ComposeJobModel, ComposeJob, ComposeJobStatus
 from .ai_tool_pipeline_steps import PipelineStepModel, PipelineStep, PipelineStepStatus, PipelineStage, PipelineStepType
 from .implementation_attempts import ImplementationAttemptModel, ImplementationAttempt
 from .commission_log import CommissionLogModel, CommissionLog
@@ -103,6 +104,9 @@ __all__ = [
     'AsyncTaskStatus',
     'ScriptExtractTaskModel',
     'ScriptExtractTask',
+    'ComposeJobModel',
+    'ComposeJob',
+    'ComposeJobStatus',
     'PipelineStepModel',
     'PipelineStep',
     'PipelineStepStatus',

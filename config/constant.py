@@ -952,14 +952,18 @@ class TaskType:
     _LABELS = {
         'GENERATE_VIDEO': '生成视频',
         'GENERATE_AUDIO': '生成音频',
+        'COMPOSE_JOB': '数字人分段拼接',
     }
     GENERATE_VIDEO = 'generate_video'
     GENERATE_AUDIO = 'generate_audio'
+    # 数字人分段拼接编排任务（task/compose_task.py 专用主循环消费）
+    COMPOSE_JOB = 'compose_job'
 
 
 # 向后兼容别名
 TASK_TYPE_GENERATE_VIDEO = TaskType.GENERATE_VIDEO
 TASK_TYPE_GENERATE_AUDIO = TaskType.GENERATE_AUDIO
+TASK_TYPE_COMPOSE_JOB = TaskType.COMPOSE_JOB
 
 # ============ 从 TaskTypeRegistry 动态生成的向后兼容常量 ============
 # 
@@ -1243,11 +1247,12 @@ RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
-# 注意：以下四个状态类用于不同的数据库表，数值含义有差异，请勿混用：
+# 注意：以下状态类用于不同的数据库表，数值含义有差异，请勿混用：
 # - AIToolStatus: ai_tools 表（图片/视频生成任务）
 # - TaskStatus: tasks 表（定时任务队列）
 # - GridImageTaskStatus: grid_image_tasks 表（宫格生图任务，独有 TIMEOUT/CANCELLED/DOWNLOAD_FAILED 状态）
 # - AIAudioStatus: ai_audio 表（音频/TTS 生成任务）
+# - ComposeJobStatus: compose_jobs 表（数字人分段拼接编排，纯编排不涉及计费）
 #
 # 数值对比：
 #                  PENDING/QUEUED  PROCESSING  COMPLETED  FAILED  特有状态
@@ -1255,6 +1260,7 @@ TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 # TaskStatus:      0               1           2          -1      SYNC_QUEUED(3), WAITING_PARAM_PREPARE(4), WAITING_BEFORE_FINISH(5)
 # GridImageTaskStatus: 0           1           2          -1      TIMEOUT(-2), CANCELLED(-3), DOWNLOAD_FAILED(-4)
 # AIAudioStatus:   0               1           2          -1      （无特有状态）
+# ComposeJobStatus: 0(PENDING)    1(COMPOSING) 2         -1      （无特有状态）
 
 class AIToolStatus:
     """AI工具任务状态（用于 ai_tools 表，跟踪图片/视频生成任务）"""
@@ -1277,6 +1283,21 @@ class AIToolStatus:
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
     DOWNLOADING = 6
+
+
+class ComposeJobStatus:
+    """数字人分段拼接编排状态（用于 compose_jobs 表，纯编排不涉及计费）"""
+    _CONSTANT_GROUP = True
+    _LABELS = {
+        'PENDING': '待拼接',
+        'COMPOSING': '拼接中',
+        'COMPLETED': '拼接完成',
+        'FAILED': '拼接失败',
+    }
+    PENDING = 0
+    COMPOSING = 1
+    COMPLETED = 2
+    FAILED = -1
 
 
 class TaskStatus:
@@ -2100,19 +2121,36 @@ class StoryboardDigitalHumanConstants:
     }
 
 
-class DigitalHumanSegmentConstants:
-    """营销专家 MiniMax H3 分段数字人流水线
-    （task/visual_drivers/digital_human_minimax_h3_runninghub_v1_driver.py）。
+class ComposeJobConstants:
+    """数字人分段拼接编排（task/compose_task.py）。
 
-    分段策略：各段首帧统一用输入角色图（角色图只上传一次、各段共用 URL，
-    不做末帧接力——MiniMax H3 成片末尾渐暗，接力帧会污染后续段落）；
-    缺失段全并发提交（每段独立 RunningHub 任务），全部到齐后 ffmpeg 拼接。
+    编排任务自身不生成内容、不计费：只轮询各段状态、补缺口段、拼成片。
+    重试预算与「等待」解耦——等待段完成不消耗 try_count（否则长任务未跑完
+    就被判死），只有补段/拼接等真实动作失败才消耗。
     """
-    # 分段并发执行线程池大小（模块级长寿 ThreadPoolExecutor）
-    SEGMENT_EXECUTOR_MAX_WORKERS = 8
-    # 单段 future 等待超时（秒）：须 > 单段轮询上限
-    # （SEGMENT_POLL_MAX_TRIES × SEGMENT_POLL_INTERVAL_SECONDS = 20 分钟）+ 下载余量
-    SEGMENT_FUTURE_TIMEOUT_SECONDS = 1800
+    # 对外 project_id 前缀（前端按不透明字符串透传，get-status 据此分发到 compose_jobs）
+    PROJECT_ID_PREFIX = "compose_"
+    # 编排主循环间隔（秒），与 generate_video 同频
+    POLL_INTERVAL_SECONDS = 5
+    # 等待段完成时的重新调度间隔（秒）；段平均 4-10 分钟，无需高频空转
+    WAIT_RESCHEDULE_SECONDS = 10
+    # 补段/拼接失败的重试预算（次）。按段数上限 40 段、每段最多补 2 次估算，
+    # 留足余量；超过则整单 FAILED。
+    MAX_RETRY_COUNT = 100
+    # 段已完成但 result_url 为远端地址（download_queue 兜底残留）时，
+    # compose 侧自行下载的最大尝试次数，超过则降级为缺口补段
+    SEGMENT_REMOTE_DOWNLOAD_MAX_ATTEMPTS = 3
+    # 每轮主循环最多自愈几个远端残留段（自愈是同步 HTTP 下载，串行做法会在
+    # 40 段全残留时把调度线程堵上数十分钟，导致其他编排单停摆）
+    SEGMENT_HEAL_PER_ROUND = 2
+    # 拼接失败重试上限（独立于补段的 MAX_RETRY_COUNT）。
+    # 拼接失败多为确定性错误（文件损坏/缺音轨），用 100 次补段预算重试会
+    # 在退避封顶 96s 下空转数小时并反复吃 CPU
+    CONCAT_MAX_ATTEMPTS = 3
+    # ffmpeg 拼接超时（秒）与执行线程池大小（AGENTS.md R9/R10：模块级长寿
+    # executor，future.result 必须显式 timeout）
+    CONCAT_TIMEOUT_SECONDS = 600
+    CONCAT_EXECUTOR_MAX_WORKERS = 2
 
 
 class StoryboardAgentReadConstants:

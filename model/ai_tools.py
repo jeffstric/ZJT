@@ -32,6 +32,19 @@ def parse_extra_config_dict(extra_config) -> Dict[str, Any]:
     return {}
 
 
+def is_segment_ai_tool(tool) -> bool:
+    """是否为「分段数字人的单段」记录（extra_config.dh_segment=true）。
+
+    段是拼接编排的中间产物：成片由 compose_job 拼接后再统一上传 CDN，
+    段自身不需要 CDN 映射（否则 40 段 = 40 次无谓上传 + 40 条 mapping 记录）。
+    见 docs/digital_human_compose_job_plan.md §4.7。
+    """
+    try:
+        return bool(parse_extra_config_dict(getattr(tool, 'extra_config', None)).get('dh_segment'))
+    except Exception:
+        return False
+
+
 def apply_implementation_lock_snapshot(extra_config, locked: bool):
     """
     把 implementation_lock 写入 extra_config JSON。
@@ -811,6 +824,14 @@ class AIToolsModel:
         if not tool:
             logger.warning(f"未找到 project_id={project_id} 的 ai_tools 记录")
             return 0
+
+        # 段记录（分段数字人中间产物）：只更新状态，不建 CDN 映射。
+        # 成片由 compose_job 拼接后单独上传 CDN（见 compose 方案 §4.7）。
+        if is_segment_ai_tool(tool):
+            logger.info(f"project_id={project_id} 为分段中间产物，跳过 CDN 上传")
+            if result_url is not None:
+                kwargs['result_url'] = result_url
+            return AIToolsModel.update_by_project_id(project_id, **kwargs)
 
         # 如果已经有 media_mapping_id，不再重复创建
         if tool.media_mapping_id:

@@ -29,6 +29,10 @@ def client(monkeypatch):
         server.AIToolsModel, "create", staticmethod(lambda **kwargs: 999)
     )
     monkeypatch.setattr(server.TasksModel, "create", staticmethod(lambda **kwargs: None))
+    # 分段提交会建 compose_jobs 编排单（compose_job 重构后的固定路径）
+    monkeypatch.setattr(
+        server.ComposeJobModel, "create", staticmethod(lambda **kwargs: 1001)
+    )
     return TestClient(server.app)
 
 
@@ -85,10 +89,11 @@ def test_single_segment_below_4s_rejected(client):
 
 
 def test_segmented_mode_within_15s_total_accepted(client):
-    """显式分段（2 段 6+5=11s）：走分段模式放行，不受单段口径牵连。"""
+    """显式分段（2 段 6+5=11s）：走 compose_job 编排路径放行，对外 project_id 带前缀。"""
     resp = _post(client, 11, segment_durations=[6, 5])
     assert resp.status_code == 200, resp.text
     assert resp.json()["success"] is True
+    assert resp.json()["project_id"] == "compose_1001"
 
 
 def test_segmented_mode_durations_must_match_total(client):
