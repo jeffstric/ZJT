@@ -6872,7 +6872,7 @@ async def extract_script_status(
         if mismatch is not None:
             return mismatch
         user_id_val = auth_user_id
-        task = get_extract_task(task_id)
+        task = await get_extract_task(task_id)
         if task is None or (user_id_val is not None and task.get("user_id") not in (None, user_id_val)):
             return JSONResponse(
                 status_code=404,

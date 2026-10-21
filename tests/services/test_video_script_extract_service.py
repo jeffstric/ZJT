@@ -2,8 +2,9 @@
 """视频提取剧本服务（services/video_script_extract_service.py）单元测试。
 
 覆盖：纯函数（切片计划 / ASR 分段合并 / 转写稿格式化 / 帧抽稀 /
-多模态消息构造 / 剧本清洗）+ 内存任务注册表（创建 / 状态读取 /
-每用户并发限制 / TTL 过期清理）。
+多模态消息构造 / 剧本清洗）+ DB 任务状态表（创建 / 状态读取 /
+每用户并发限制 / TTL 过期失联）。任务状态已落库（script_extract_task），
+测试用同接口的内存假模型替换 DB 层，不依赖真实数据库。
 
 pipeline 各阶段的 ffmpeg / httpx / LLM 交互不在此覆盖（外部依赖打桩成本高，
 纯函数已覆盖拼装逻辑；集成验证走浏览器实测）。
@@ -11,6 +12,7 @@ pipeline 各阶段的 ffmpeg / httpx / LLM 交互不在此覆盖（外部依赖�
 import asyncio
 import sys
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,9 +20,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from model.script_extract_task import ScriptExtractTask  # noqa: E402
 from services.video_script_extract_service import (  # noqa: E402
-    _EXTRACT_TASKS,
-    _RUNNING_BY_USER,
     ScriptExtractError,
     build_extract_sample_points,
     build_script_llm_messages,
@@ -35,6 +36,78 @@ from services.video_script_extract_service import (  # noqa: E402
     thin_points_by_time,
 )
 from config.constant import VideoScriptExtractConstants as C  # noqa: E402
+
+
+class _FakeScriptExtractTaskModel:
+    """内存版假模型：与 ScriptExtractTaskModel 同接口（替代 DB 层）。"""
+
+    rows: dict = {}
+
+    @classmethod
+    def reset(cls):
+        cls.rows = {}
+
+    @classmethod
+    def create(cls, task_id, user_id, stage):
+        cls.rows[task_id] = {
+            "task_id": task_id,
+            "user_id": user_id,
+            "status": "running",
+            "stage": stage,
+            "progress": {},
+            "error": None,
+            "result": None,
+            "updated_at": datetime.now(),
+        }
+        return 1
+
+    @classmethod
+    def get_by_task_id(cls, task_id):
+        row = cls.rows.get(task_id)
+        return ScriptExtractTask(**row) if row else None
+
+    @classmethod
+    def update(cls, task_id, **fields):
+        row = cls.rows.get(task_id)
+        if row is None:
+            return 0
+        row.update(fields)
+        row["updated_at"] = datetime.now()
+        return 1
+
+    @classmethod
+    def get_running_by_user(cls, user_id, stale_seconds):
+        fresh = [
+            row for row in cls.rows.values()
+            if row["user_id"] == user_id and row["status"] == "running"
+            and not ScriptExtractTask(**row).is_expired(stale_seconds)
+        ]
+        if not fresh:
+            return None
+        fresh.sort(key=lambda r: r["updated_at"], reverse=True)
+        return ScriptExtractTask(**fresh[0])
+
+    @classmethod
+    def mark_stale_running_failed(cls, user_id, stale_seconds, error):
+        affected = 0
+        for row in cls.rows.values():
+            if row["user_id"] != user_id or row["status"] != "running":
+                continue
+            if ScriptExtractTask(**row).is_expired(stale_seconds):
+                row["status"] = "failed"
+                row["error"] = error
+                affected += 1
+        return affected
+
+    @classmethod
+    def cleanup_expired(cls, ttl_seconds, limit=500):
+        expired = [
+            tid for tid, row in cls.rows.items()
+            if ScriptExtractTask(**row).is_expired(ttl_seconds)
+        ]
+        for tid in expired[:limit]:
+            cls.rows.pop(tid, None)
+        return len(expired[:limit])
 
 
 class TestBuildSliceRanges(unittest.TestCase):
@@ -198,10 +271,13 @@ class TestFrameBudget(unittest.TestCase):
 
 class TestTaskRegistry(unittest.TestCase):
     def setUp(self):
-        _EXTRACT_TASKS.clear()
-        _RUNNING_BY_USER.clear()
-
-    tearDown = setUp
+        _FakeScriptExtractTaskModel.reset()
+        patcher = patch(
+            "services.video_script_extract_service.ScriptExtractTaskModel",
+            _FakeScriptExtractTaskModel,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_create_and_get_task(self):
         async def _noop(*_args, **_kwargs):
@@ -210,7 +286,7 @@ class TestTaskRegistry(unittest.TestCase):
         with patch("services.video_script_extract_service._run_extract_task", _noop):
             task_id, err = asyncio.run(create_extract_task("/tmp/v.mp4", 7, "tok"))
         self.assertIsNone(err)
-        task = get_extract_task(task_id)
+        task = asyncio.run(get_extract_task(task_id))
         self.assertEqual(task["status"], "running")
         self.assertEqual(task["stage"], C.STAGE_FRAMES)
         self.assertEqual(task["user_id"], 7)
@@ -232,15 +308,11 @@ class TestTaskRegistry(unittest.TestCase):
         self.assertIn("已有剧本提取任务进行中", err)
 
     def test_new_task_allowed_after_failure(self):
-        async def _fail_then_clear(task_id, *_args, **_kwargs):
-            # 模拟任务立即失败并释放并发位（复用真实 finally 语义）
-            task = _EXTRACT_TASKS.get(task_id)
-            if task is not None:
-                task["status"] = "failed"
-                task["error"] = "boom"
-                _RUNNING_BY_USER.pop(task["user_id"], None)
+        async def _fail(task_id, *_args, **_kwargs):
+            # 模拟任务立即失败（真实语义：pipeline 把 DB 行标记 failed）
+            _FakeScriptExtractTaskModel.update(task_id, status="failed", error="boom")
 
-        with patch("services.video_script_extract_service._run_extract_task", _fail_then_clear):
+        with patch("services.video_script_extract_service._run_extract_task", _fail):
             first, _ = asyncio.run(create_extract_task("/tmp/v.mp4", 7, "tok"))
             second, err = asyncio.run(create_extract_task("/tmp/v2.mp4", 7, "tok"))
         self.assertIsNotNone(first)
@@ -253,8 +325,37 @@ class TestTaskRegistry(unittest.TestCase):
 
         with patch("services.video_script_extract_service._run_extract_task", _noop):
             task_id, _ = asyncio.run(create_extract_task("/tmp/v.mp4", 7, "tok"))
-        _EXTRACT_TASKS[task_id]["created_at"] -= (C.TASK_TTL_SECONDS + 10)
-        self.assertIsNone(get_extract_task(task_id))
+        # running 记录超 TTL 未更新（执行进程失联/服务重启）→ 视为不存在
+        _FakeScriptExtractTaskModel.rows[task_id]["updated_at"] = (
+            datetime.now() - timedelta(seconds=C.TASK_TTL_SECONDS + 10)
+        )
+        self.assertIsNone(asyncio.run(get_extract_task(task_id)))
+
+    def test_stale_running_released_and_marked_failed(self):
+        async def _noop(*_args, **_kwargs):
+            return None
+
+        with patch("services.video_script_extract_service._run_extract_task", _noop):
+            old_id, _ = asyncio.run(create_extract_task("/tmp/v.mp4", 7, "tok"))
+        # 上一个任务的执行进程失联（updated_at 超 TTL）→ 新任务可创建，旧任务判失败
+        _FakeScriptExtractTaskModel.rows[old_id]["updated_at"] = (
+            datetime.now() - timedelta(seconds=C.TASK_TTL_SECONDS + 10)
+        )
+        with patch("services.video_script_extract_service._run_extract_task", _noop):
+            new_id, err = asyncio.run(create_extract_task("/tmp/v2.mp4", 7, "tok"))
+        self.assertIsNone(err)
+        self.assertIsNotNone(new_id)
+        self.assertNotEqual(new_id, old_id)
+        self.assertEqual(_FakeScriptExtractTaskModel.rows[old_id]["status"], "failed")
+
+    def test_create_requires_user(self):
+        async def _noop(*_args, **_kwargs):
+            return None
+
+        with patch("services.video_script_extract_service._run_extract_task", _noop):
+            task_id, err = asyncio.run(create_extract_task("/tmp/v.mp4", None, "tok"))
+        self.assertIsNone(task_id)
+        self.assertIsNotNone(err)
 
 
 if __name__ == "__main__":

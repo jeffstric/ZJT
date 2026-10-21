@@ -884,6 +884,7 @@
   "script_extract_input_port": "视频输入",
   "script_extract_source_label": "源视频",
   "script_extract_source_hint": "连接视频节点，或点击上方上传本地视频",
+  "script_extract_remove_video": "移除",
   "script_extract_no_video": "请先上传视频或连接视频节点",
   "script_extract_btn": "提取剧本",
   "script_extract_extracting": "提取中...",

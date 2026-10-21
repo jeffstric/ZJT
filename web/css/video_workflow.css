@@ -1266,6 +1266,14 @@ svg.connections path.reference-line.selected{
 .node-body{ padding: 12px; display:flex; flex-direction:column; gap:12px; }
 .field{ display:flex; flex-direction:column; gap:6px; }
 
+/* 剧本提取节点：横向两栏（左：源视频+参数，右：操作+剧本结果），压缩纵向高度 */
+.script-extract-body{ display:flex; gap:12px; align-items:stretch; }
+.script-extract-col{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+.script-extract-col-left{ width:220px; flex-shrink:0; }
+.script-extract-col-right{ flex:1; }
+.script-extract-video-name-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; margin-top:6px; }
+.script-extract-video-name-row .gen-meta{ margin-top:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
 .field-always-visible{
   display: flex;
   flex-direction: column;

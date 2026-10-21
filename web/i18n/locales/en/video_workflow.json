@@ -884,6 +884,7 @@
   "script_extract_input_port": "Video In",
   "script_extract_source_label": "Source Video",
   "script_extract_source_hint": "Connect a video node, or upload a local video above",
+  "script_extract_remove_video": "Remove",
   "script_extract_no_video": "Upload a video or connect a video node first",
   "script_extract_btn": "Extract Script",
   "script_extract_extracting": "Extracting...",
