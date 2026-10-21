@@ -52,51 +52,64 @@
         vendorId: null
       },
       ports: SCRIPT_EXTRACT_PORTS,
-      width: 600,
-      height: 320,
+      width: 620,
+      height: 360,
       titleIcon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: middle; margin-right: 4px;"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H14l6 6v11.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 20.5v-15Z"/><path d="M14 3v6h6"/><path d="M8 13h8M8 16.5h5"/></svg>',
       bodyHtml: function() {
         // 横向两栏：左栏（源视频 + 提取参数），右栏（操作 + 剧本结果），降低纵向高度
         return '<div class="script-extract-body">' +
           '<div class="script-extract-col script-extract-col-left">' +
             '<div class="field">' +
-              '<div class="label" style="margin:0;" data-i18n="script_extract_source_label">' + tr('script_extract_source_label', '源视频') + '</div>' +
-              '<div class="muted script-extract-source-hint" style="font-size:11px;">' + tr('script_extract_source_hint', '连接视频节点，或点击上方上传本地视频') + '</div>' +
-              '<input class="script-extract-file" type="file" accept="video/*" />' +
+              '<div class="label" data-i18n="script_extract_source_label">' + tr('script_extract_source_label', '源视频') + '</div>' +
+              '<div class="muted script-extract-source-hint">' + tr('script_extract_source_hint', '连接视频节点，或点击上传本地视频') + '</div>' +
+              '<label class="script-extract-upload">' +
+                '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4m0 0 4 4m-4-4-4 4"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>' +
+                '<span data-i18n="script_extract_upload_local">' + tr('script_extract_upload_local', '上传本地视频') + '</span>' +
+                '<input class="script-extract-file" type="file" accept="video/*" />' +
+              '</label>' +
               '<div class="video-preview-field" style="display:none;">' +
                 '<div class="video-preview"><video class="script-extract-thumb" playsinline muted></video></div>' +
                 '<div class="script-extract-video-name-row">' +
-                  '<div class="gen-meta script-extract-video-name" style="margin-top:0;"></div>' +
+                  '<div class="gen-meta script-extract-video-name"></div>' +
                   '<button type="button" class="mini-btn script-extract-remove-video" data-i18n="script_extract_remove_video">' + tr('script_extract_remove_video', '移除') + '</button>' +
                 '</div>' +
               '</div>' +
             '</div>' +
             '<div class="field">' +
               '<div class="label" data-i18n="script_extract_model_label">' + tr('script_extract_model_label', '提取模型') + '</div>' +
-              '<select class="script-extract-model" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;"></select>' +
+              '<select class="script-extract-model"></select>' +
+            '</div>' +
+            '<div class="field">' +
               '<div class="label" data-i18n="script_extract_frame_height_label">' + tr('script_extract_frame_height_label', '帧分辨率') + '</div>' +
-              '<select class="script-extract-frame-height" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; background:#fff; font-size:12px;">' +
+              '<select class="script-extract-frame-height">' +
                 '<option value="720" data-i18n="script_extract_frame_height_720">' + tr('script_extract_frame_height_720', '720P（清晰，读清字幕）') + '</option>' +
                 '<option value="480" data-i18n="script_extract_frame_height_480">' + tr('script_extract_frame_height_480', '480P（均衡）') + '</option>' +
                 '<option value="360" data-i18n="script_extract_frame_height_360">' + tr('script_extract_frame_height_360', '360P（省量，帧多）') + '</option>' +
               '</select>' +
-              '<div class="label" style="margin-top:6px;" data-i18n="script_extract_max_frames_label">' + tr('script_extract_max_frames_label', '最大帧数') + '</div>' +
-              '<input class="script-extract-max-frames" type="number" min="4" max="200" step="1" value="24" style="width:100%; box-sizing:border-box; padding:4px 6px; border:1px solid #e5e7eb; border-radius:6px; font-size:12px;" />' +
-              '<div class="muted" style="font-size:11px;" data-i18n="script_extract_max_frames_hint">' + tr('script_extract_max_frames_hint', '4~200，按镜头切换自动取帧，超出均匀抽稀') + '</div>' +
+              '<div class="label script-extract-max-frames-label" data-i18n="script_extract_max_frames_label">' + tr('script_extract_max_frames_label', '最大帧数') + '</div>' +
+              '<input class="script-extract-max-frames" type="number" min="4" max="200" step="1" value="24" />' +
+              '<div class="muted" data-i18n="script_extract_max_frames_hint">' + tr('script_extract_max_frames_hint', '4~200，按镜头切换自动取帧，超出均匀抽稀') + '</div>' +
             '</div>' +
           '</div>' +
           '<div class="script-extract-col script-extract-col-right">' +
-            '<div class="field">' +
-              '<button type="button" class="gen-btn gen-btn-main script-extract-btn" style="width:100%;" data-i18n="script_extract_btn">' + tr('script_extract_btn', '提取剧本') + '</button>' +
-              '<div class="muted script-extract-status" style="display:none; font-size:11px;"></div>' +
-            '</div>' +
-            '<div class="field" style="flex:1;">' +
+            '<button type="button" class="script-extract-btn" data-i18n="script_extract_btn">' +
+              '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/></svg>' +
+              '<span data-i18n="script_extract_btn">' + tr('script_extract_btn', '提取剧本') + '</span>' +
+            '</button>' +
+            '<div class="muted script-extract-status" style="display:none;"></div>' +
+            '<div class="field script-extract-result-field">' +
               '<div class="label" data-i18n="script_extract_result_label">' + tr('script_extract_result_label', '剧本（可编辑）') + '</div>' +
-              '<textarea class="script-extract-content" rows="10" maxlength="30000" placeholder="' + tr('script_extract_result_placeholder', '提取的文字剧本将显示在这里') + '" style="resize:vertical; min-height:120px; width:100%; box-sizing:border-box; padding:6px 8px; border:1px solid #e5e7eb; border-radius:6px; font-size:12px; line-height:1.6; background:#fff;"></textarea>' +
-              '<div class="gen-meta script-extract-meta" style="display:none;"></div>' +
-              '<div style="display:flex; gap:6px; margin-top:6px;">' +
-                '<button type="button" class="gen-btn script-extract-copy-btn" style="flex:1;" data-i18n="script_extract_copy">' + tr('script_extract_copy', '复制') + '</button>' +
-                '<button type="button" class="gen-btn gen-btn-main script-extract-write-btn" style="flex:2;" data-i18n="script_extract_write_node">' + tr('script_extract_write_node', '写入剧本节点') + '</button>' +
+              '<textarea class="script-extract-content" maxlength="30000" placeholder="' + tr('script_extract_result_placeholder', '提取的文字剧本将显示在这里') + '"></textarea>' +
+              '<div class="gen-meta script-extract-meta"></div>' +
+              '<div class="script-extract-actions">' +
+                '<button type="button" class="script-extract-copy-btn" data-i18n="script_extract_copy">' +
+                  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>' +
+                  tr('script_extract_copy', '复制') +
+                '</button>' +
+                '<button type="button" class="script-extract-write-btn" data-i18n="script_extract_write_node">' +
+                  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>' +
+                  tr('script_extract_write_node', '写入剧本节点') +
+                '</button>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -104,6 +117,7 @@
       },
       onCreated: function(node, el) {
         var sourceHint = el.querySelector('.script-extract-source-hint');
+        var uploadLabel = el.querySelector('.script-extract-upload');
         var fileEl = el.querySelector('.script-extract-file');
         var previewField = el.querySelector('.video-preview-field');
         var thumbVideo = el.querySelector('.script-extract-thumb');
@@ -266,6 +280,8 @@
           statusEl.style.display = text ? 'block' : 'none';
           statusEl.style.color = color || '';
           statusEl.textContent = text || '';
+          // 无颜色的状态即"进行中"（关键帧/音轨/转写/撰写阶段），带呼吸圆点
+          statusEl.classList.toggle('is-busy', !!text && !color);
         }
 
         function setBusy(busy) {
@@ -297,6 +313,7 @@
           if (previewField) previewField.style.display = '';
           if (nameEl) nameEl.textContent = node.data.videoName || '';
           if (sourceHint) sourceHint.style.display = 'none';
+          if (uploadLabel) uploadLabel.style.display = 'none';
         }
 
         // 移除已引用的视频：清空节点数据并恢复上传/连线入口（连线本身由用户在画布上删除）
@@ -307,6 +324,7 @@
           if (previewField) previewField.style.display = 'none';
           if (nameEl) nameEl.textContent = '';
           if (sourceHint) sourceHint.style.display = '';
+          if (uploadLabel) uploadLabel.style.display = '';
           safeAutoSave();
         }
         if (removeVideoBtn) removeVideoBtn.addEventListener('click', clearVideo);

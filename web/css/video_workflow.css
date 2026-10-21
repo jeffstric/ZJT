@@ -1267,12 +1267,170 @@ svg.connections path.reference-line.selected{
 .field{ display:flex; flex-direction:column; gap:6px; }
 
 /* 剧本提取节点：横向两栏（左：源视频+参数，右：操作+剧本结果），压缩纵向高度 */
-.script-extract-body{ display:flex; gap:12px; align-items:stretch; }
+/* 全局 .node 固定 300px，该节点内容需要更宽，按 data-type 覆盖（宽度不随工作流持久化，重载复原不受影响） */
+.node[data-type="script_extract"]{ width:620px; }
+.script-extract-body{ display:flex; gap:0; align-items:stretch; }
 .script-extract-col{ display:flex; flex-direction:column; gap:12px; min-width:0; }
-.script-extract-col-left{ width:220px; flex-shrink:0; }
-.script-extract-col-right{ flex:1; }
+.script-extract-col-left{ width:228px; flex-shrink:0; padding-right:12px; }
+.script-extract-col-right{ flex:1; min-width:0; padding-left:12px; border-left:1px solid var(--border); }
+.script-extract-col .muted{ font-size:11px; line-height:1.5; }
+.script-extract-source-hint{ font-size:11px; line-height:1.5; }
+
+/* 上传入口：隐藏原生 file input，整卡可点击；disabled 时由 JS 禁用 input 联动 */
+.script-extract-upload{
+  position:relative;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  padding:12px 8px;
+  border:1.5px dashed var(--border-strong);
+  border-radius:10px;
+  background:var(--surface-2);
+  color:var(--muted);
+  font-size:12px; font-weight:600;
+  text-align:center;
+  cursor:pointer;
+  transition:border-color .15s, background .15s, color .15s;
+}
+.script-extract-upload:hover{
+  border-color:var(--primary);
+  background:var(--primary-light);
+  color:var(--primary-text);
+}
+.script-extract-upload:has(input:focus-visible){
+  border-color:var(--primary);
+  background:var(--primary-light);
+  color:var(--primary-text);
+}
+.script-extract-upload:has(input:disabled){
+  opacity:.55;
+  cursor:not-allowed;
+}
+.script-extract-upload input[type="file"]{
+  position:absolute; inset:0;
+  width:100%; height:100%;
+  margin:0; padding:0;
+  border:0; border-radius:0;
+  background:transparent; color:transparent;
+  opacity:0;
+  cursor:pointer;
+}
+
+/* 左栏参数控件统一风格 */
+.script-extract-col select,
+.script-extract-col input[type="number"]{
+  width:100%; box-sizing:border-box;
+  padding:6px 8px;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  background:var(--input-bg);
+  color:var(--text);
+  font-size:12px; font-family:inherit;
+  outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.script-extract-col select{ cursor:pointer; }
+.script-extract-col select:focus,
+.script-extract-col input[type="number"]:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px var(--primary-light);
+}
+.script-extract-max-frames-label{ margin-top:6px; }
+
+/* 视频预览（复用 video-preview，左栏内压低高度） */
+.script-extract-col .video-preview{ height:104px; }
 .script-extract-video-name-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; margin-top:6px; }
 .script-extract-video-name-row .gen-meta{ margin-top:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* 提取按钮：主操作，整行宽 */
+.script-extract-btn{
+  width:100%; box-sizing:border-box;
+  padding:10px 12px;
+  border:0; border-radius:8px;
+  background:var(--primary);
+  color:#fff;
+  font-size:13px; font-weight:700; font-family:inherit;
+  cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  white-space:nowrap;
+  box-shadow:0 2px 6px rgba(34,197,94,0.35);
+  transition:opacity .15s, box-shadow .15s;
+}
+.script-extract-btn:hover{ opacity:.92; }
+.script-extract-btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+  box-shadow:none;
+}
+
+/* 状态行：进行中带呼吸圆点 */
+.script-extract-status{ font-size:11px; color:var(--muted); }
+.script-extract-status.is-busy{ display:flex !important; align-items:center; gap:6px; }
+.script-extract-status.is-busy::before{
+  content:'';
+  width:8px; height:8px; border-radius:50%;
+  background:var(--primary);
+  flex-shrink:0;
+  animation:scriptExtractPulse 1s ease-in-out infinite;
+}
+@keyframes scriptExtractPulse{
+  0%,100%{ opacity:.35; transform:scale(.85); }
+  50%{ opacity:1; transform:scale(1); }
+}
+
+/* 剧本结果 */
+.script-extract-result-field{ flex:1; }
+.script-extract-content{
+  flex:1;
+  width:100%; box-sizing:border-box;
+  min-height:170px; resize:vertical;
+  padding:8px 10px;
+  border:1px solid var(--border-strong);
+  border-radius:8px;
+  background:var(--input-bg);
+  color:var(--text);
+  font-size:12px; line-height:1.7; font-family:inherit;
+  outline:none;
+  transition:border-color .15s, box-shadow .15s;
+}
+.script-extract-content:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px var(--primary-light);
+}
+.script-extract-content::placeholder{ color:var(--muted); }
+.script-extract-meta{
+  display:none;
+  margin-top:0;
+  padding:5px 8px;
+  background:var(--panel);
+  border-radius:6px;
+  font-size:11px; line-height:1.5;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+/* 底部操作：复制（次要）+ 写入剧本节点（主要） */
+.script-extract-actions{ display:flex; gap:8px; }
+.script-extract-actions button{
+  padding:7px 10px;
+  border-radius:8px;
+  font-size:12px; font-weight:600; font-family:inherit;
+  cursor:pointer;
+  display:inline-flex; align-items:center; justify-content:center; gap:5px;
+  white-space:nowrap;
+  transition:background .15s, border-color .15s, opacity .15s;
+}
+.script-extract-copy-btn{
+  flex:1;
+  border:1px solid var(--border-strong);
+  background:var(--surface);
+  color:var(--text-secondary);
+}
+.script-extract-copy-btn:hover{ background:var(--surface-3); border-color:var(--muted); }
+.script-extract-write-btn{
+  flex:2;
+  border:1px solid var(--primary);
+  background:var(--primary);
+  color:#fff;
+}
+.script-extract-write-btn:hover{ opacity:.92; }
 
 .field-always-visible{
   display: flex;
