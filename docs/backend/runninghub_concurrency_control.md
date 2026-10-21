@@ -242,7 +242,9 @@ if error_code or error_message:
         # => {"success": False, "retry": True, "retry_reason": "UPSTREAM_CONGESTED", ...}
 ```
 
-所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / digital_human_minimax_h3（含单段与分段链路）/ minimax_h3 系列 / qwen_multi_angle）和异步驱动均接入该识别。其中 digital_human_minimax_h3 的分段链路在各段提交时命中 421 会抛 `_SegmentedCongestedError`，由 `submit_task` 入口统一转换为上述可重试结果（不得落入通用异常分支被判为硬失败）。
+所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / digital_human_minimax_h3 / minimax_h3 系列 / qwen_multi_angle）和异步驱动均接入该识别。
+
+> **注意（2026-10 起）**：digital_human_minimax_h3 的驱动内分段链路（sync_mode 全流水线、`_SegmentedCongestedError`/`_SegmentedPipelineError`）已随 compose_job 改造整体删除（见 `docs/digital_human_compose_job_plan.md`）。>15s 口播改为「每段一条标准 ai_tools + compose_jobs 纯编排」，每段走标准单段提交路径——段提交命中 421 时与单段一致，直接返回 `_build_upstream_congested_result()` 可重试结果交回调度层，不再有分段专属异常类。
 
 ##### 2. 视频任务（tasks 表）—— 不消耗重试次数的延迟重试
 

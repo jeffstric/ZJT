@@ -49,6 +49,7 @@ from config.constant import (  # noqa: E402
     AI_TOOL_STATUS_PROCESSING,
     AI_TOOL_STATUS_FAILED,
     TASK_STATUS_FAILED,
+    TASK_TYPE_GENERATE_VIDEO,
 )
 from perseids_server.client import make_perseids_request  # noqa: E402
 from utils.computing_power import (  # noqa: E402
@@ -135,7 +136,13 @@ def main() -> int:
         ai_tool_id = row['id']
         try:
             # 1) 调度行置失败，阻止调度器继续驱动
-            affected = TasksModel.update_by_task_id(ai_tool_id, status=TASK_STATUS_FAILED)
+            #    tasks 表混存 generate_video / compose_job 两类行，task_id 可撞号，
+            #    必须按 (task_type, task_id) 定位后走主键更新
+            row = TasksModel.get_by_type_and_task_id(
+                TASK_TYPE_GENERATE_VIDEO, ai_tool_id)
+            affected = (
+                TasksModel.update(row.id, status=TASK_STATUS_FAILED) if row else 0
+            )
             # 2) 任务主记录置失败
             AIToolsModel.update(
                 ai_tool_id,

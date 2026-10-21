@@ -464,6 +464,7 @@ def _refill_segment(job, task, seg_index: int) -> Optional[int]:
         "compose_refill": True,
     }, ensure_ascii=False)
 
+    seg_id: Optional[int] = None
     try:
         seg_id = AIToolsModel.create(
             prompt=params.get('prompt') or '',
@@ -489,6 +490,16 @@ def _refill_segment(job, task, seg_index: int) -> Optional[int]:
             logger.warning(f"[compose_job] 补段 {seg_id} param_prepare 失败: {e}")
     except Exception as e:
         logger.error(f"[compose_job] compose={job.id} 段 {seg_index} 建记录失败: {e}")
+        # 段主记录已建但调度行未建成 → 先把段置 FAILED，避免留下永远 PENDING 的脏数据
+        if seg_id:
+            try:
+                AIToolsModel.update(
+                    seg_id,
+                    status=AI_TOOL_STATUS_FAILED,
+                    message="补段建调度行失败，已退费取消",
+                    completed_time=datetime.now())
+            except Exception as mark_err:
+                logger.warning(f"[compose_job] 补段 {seg_id} 置失败异常: {mark_err}")
         # 已扣费但未建成记录 → 立即原额退回
         try:
             _refund_by_transaction(job.user_id, transaction_id, power, "补段建记录失败")

@@ -5331,7 +5331,13 @@ async def _submit_segmented_digital_human(
         for item in created:
             seg_id = item['id']
             try:
-                TasksModel.update_by_task_id(seg_id, status=TASK_STATUS_FAILED)
+                # tasks 表混存 generate_video(task_id=ai_tools.id) 与
+                # compose_job(task_id=compose_jobs.id) 两类行，id 可撞号；
+                # 必须按 (task_type, task_id) 定位后走主键更新
+                row = TasksModel.get_by_type_and_task_id(
+                    TASK_TYPE_GENERATE_VIDEO, seg_id)
+                if row:
+                    TasksModel.update(row.id, status=TASK_STATUS_FAILED)
             except Exception as e:
                 logger.warning(f"[分段提交回滚] 段 {seg_id} tasks 置失败异常: {e}")
             try:
