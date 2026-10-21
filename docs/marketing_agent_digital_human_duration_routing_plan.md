@@ -385,3 +385,10 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 **注意**（遗留观察，未改）：VL 分支内 `voice_id = picked["voice_id"]` 仍会**覆盖**显式指定的 voice_id（只传 voice_id 不传 motion_prompt 时命中）——与 docstring"voice_id 显式指定 > VL 看图挑选"的优先级表述不一致，但属存量行为且 SOP 常规传 motion_prompt 不会命中，留待需要时单独处理。
 
 **测试**：`tests/agents/test_digital_human_tts_tools.py` 新增 2 项——`test_motion_prompt_does_not_skip_vl_voice_picking`（回归：传 motion_prompt 仍走 VL 选音色、voice_id 正确、显式 motion_prompt 优先；已验证在旧代码上复现 int(None) TypeError 失败）、`test_explicit_voice_and_motion_skip_vl_analysis`（快速路径：双显式不触发 VL 分析）。
+
+**加固（同日追加，用户反馈同型报错再次出现 2 次）**：对 prepare 全链路做 int(None) 风险盘点——当前代码上 :573/:590/:606/:667 的 `int(voice_id)` 均被 2.5 防御与门条件覆盖、`_pick_voice_by_image` 的 JSON 解析异常被自身 try 降级、`_resolve_draft_resolution`/`synthesize_speech_for_user` 入参均有保护，**已无 reachable 的 int(None) 路径**（再现已推未部署时段的旧版本）。仍追加两层防御防回归：
+
+- 入口规范化 `voice_id`：非数字（LLM 传 `'abc'` 等脏值）立即返回"voice_id 必须是数字音色 ID，收到: ..."，0/负数归一为未指定——下游所有 int(voice_id) 拿到的只会是 int 或 None。
+- 外层兜底错误文案带异常类型名：`准备数字人草案异常(TypeError): ...`，专家上报可直接引用类型、命中对应降级规则（服务端堆栈本就有 `logger.error(exc_info=True)` 记录）。
+
+新增 `test_invalid_voice_id_rejected_with_clear_error`：脏 voice_id 返回参数级明确错误，不再冒"准备数字人草案异常"笼统文案。

@@ -544,6 +544,16 @@ async def prepare_digital_human_draft(
         if len(script_text) > 2000:
             return {'success': False, 'error': '口播文案不能超过 2000 字'}
         motion_prompt = (motion_prompt or '').strip()[:200] or None
+        # 参数规范化：LLM 工具调用可能传入字符串/空串等非法 voice_id，统一在此归一，
+        # 让下游所有 int(voice_id)（:573/:590/:606/:667）拿到的都是 int 或 None，
+        # 报错也指向参数本身，而不是深处抛出 int() TypeError（750aba96 同类报错）
+        if voice_id is not None:
+            try:
+                voice_id = int(voice_id)
+            except (TypeError, ValueError):
+                return {'success': False,
+                        'error': f'voice_id 必须是数字音色 ID，收到: {voice_id!r}'}
+            voice_id = voice_id or None  # 0/负数视为未指定，走 VL 挑选/默认音色
 
         # 1. 用户提供驱动音频：跳过音色选择与 TTS
         user_audio_url = (audio_url or '').strip() or None
@@ -722,7 +732,10 @@ async def prepare_digital_human_draft(
         }
     except Exception as e:  # noqa: BLE001
         logger.error(f"prepare_digital_human_draft error: {e}", exc_info=True)
-        return {'success': False, 'error': f'准备数字人草案异常: {str(e)}'}
+        # 带异常类型名透出：专家上报时可直接引用（如 TypeError），便于区分参数错误与
+        # 服务故障，命中对应降级规则
+        return {'success': False,
+                'error': f'准备数字人草案异常({type(e).__name__}): {str(e)}'}
 
 
 def _resolve_local_media_path(url: str) -> Optional[str]:

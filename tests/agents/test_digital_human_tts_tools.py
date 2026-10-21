@@ -607,6 +607,18 @@ class TestPrepareTool(_VoiceModelMockBase):
         self.assertEqual(result["draft"]["voice_id"], 9)
         self.assertIn("专业讲解", result["draft"]["motion_prompt"])
 
+    def test_invalid_voice_id_rejected_with_clear_error(self):
+        """LLM 工具调用可能传入非数字 voice_id（如 'abc'）：必须返回指向参数本身的
+        明确错误，而不是在深处抛出 int() TypeError 被包装成"准备数字人草案异常"
+        （750aba96 同类报错的加固）"""
+        result = asyncio.run(prepare_digital_human_draft(
+            user_id="1", world_id="w", auth_token="t",
+            image_url="http://x/img.png", script_text="文案", voice_id="abc"))
+
+        self.assertFalse(result["success"])
+        self.assertIn("voice_id 必须是数字", result["error"])
+        self.assertNotIn("准备数字人草案异常", result["error"])
+
 
 class TestConfirmTool(_VoiceModelMockBase):
 
