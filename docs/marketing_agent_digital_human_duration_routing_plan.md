@@ -332,3 +332,12 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 - `_download_validated_segment` 返回 `(ok, err, was_black)`，黑段败因显式上抛；`_check_segment_brightness` 新增 `reject_black=False` 告警模式。
 
 **测试**：`test_submit_segments_brakes_when_black_segment_twice` 改写为 `test_submit_segments_falls_back_to_role_image_on_persistent_black`（双黑→回退角色图→放行，断言回退后首帧均角色图 URL 且不再抽接力帧），新增 `test_submit_segments_brakes_when_fallback_generation_fails`（回退后生成失败才抛错）。20 项驱动测试全过。
+
+
+### 附录 C.14 恢复 15s 档后端点校验漏改——11-15s 路由死角回归（2026-10-21）
+
+**背景**：c3d48902（2026-10-19，用户确认显存充裕）恢复路由层 11-15s 单段（`DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS` 10→15、分段段长 10→15、计费档位 4-15、driver OOM 降档兜底），但其对 `server.py` 的改动只覆盖分段档位校验（各段 4-15），**漏改单段模式两处校验**（仍是 4-10 口径）：无分段时 `duration > 10` 即 400「超过 10 秒的视频须提供 segment_audio」、单段白名单 `range(4, 11)`。路由把 11-15s 分到单段（不带 segment_audio）→ 端点必 400，11-15s 口播完全不可用（400 在扣费校验之前，无资损）。与 C.6 同类：端点校验与路由层口径漂移。
+
+**修复**：端点校验不再写死数字，统一引用常量——单段上限 `duration > DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`、白名单 `range(4, DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS + 1)`，错误信息随常量口径；server.py import 补 `DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`。confirm docstring、SOP（`sop-digital-human.md` 路由表与 11-15s 引用块）、`mcp_tool.py` 工具 description 与 wan2.2 引导文案、`docs/marketing_agent.md` 中残留的 10s 口径一并同步。
+
+**防回归**：`tests/api/test_digital_human_h3_duration_validation.py` 新增 11 项端点校验用例（11-15s 单段放行 / 16s 无分段 400 / <4s 400 / 显式分段不受单段口径牵连 / 分段和校验保留）。红线：端点校验与路由层必须共用 `DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS`，禁止再写死 10/15。

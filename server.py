@@ -166,6 +166,7 @@ from config.constant import (
     VideoScriptExtractConstants,
     MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
+    DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
 )
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -5233,13 +5234,13 @@ async def digital_human_minimax_h3_generate(
                     status_code=400,
                     detail=f"分段时长之和 {sum(parsed_segment_durations)} 须等于总时长 {duration}"
                 )
-        elif duration > 10:
+        elif duration > DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS:
             raise HTTPException(
                 status_code=400,
-                detail="超过 10 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
+                detail=f"超过 {DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS} 秒的视频须提供 segment_audio 分段音频文件（分段拼接模式）"
             )
 
-        # 单段 4-10（10s 生产稳定档）；分段模式总时长 8-600（≥2 段各 4s，
+        # 单段 4-{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS}；分段模式总时长 8-600（≥2 段各 4s，
         # 600 为异常兜底上限，实际受口播文案长度自然约束）
         if segment_files:
             if not (8 <= duration <= DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS):
@@ -5247,10 +5248,10 @@ async def digital_human_minimax_h3_generate(
                     status_code=400,
                     detail=f"分段拼接模式总时长须为 8-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒，收到 {duration}"
                 )
-        elif duration not in set(range(4, 11)):
+        elif duration not in set(range(4, DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS + 1)):
             raise HTTPException(
                 status_code=400,
-                detail=f"视频时长仅支持 4-10 秒（10-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
+                detail=f"视频时长仅支持 4-{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS} 秒（{DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS}-{DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS} 秒走分段拼接模式）"
             )
 
         allowed_max_edges = {720, 1280, 1920}

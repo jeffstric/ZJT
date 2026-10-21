@@ -677,10 +677,11 @@ H3_PROMPT_OPTIMIZE_VARIANT_KF_REF = "KFRef"
 WAN_MAX_SPEECH_DURATION_SECONDS = 1.0
 
 # ===== 营销数字人时长自动路由（H3 单段/分段拼接，2026-10-16 v3）=====
-# 实测依据：H3 webapp 默认实例上 15s/720P 处于显存边界（torch.OutOfMemoryError
+# 实测背景：H3 webapp 默认实例上 15s/720P 曾处于显存边界（torch.OutOfMemoryError
 # 随机出现：322/323 同参数成功、324/326/329 首选段失败，见 RunningHub outputs
-# failedReason），10s 档长期生产稳定。营销路由与档位全部回到 10s 上限：
-# ≤10s H3 单段；10-30s 分段拼接（每段 10s，如 30s=3×10s）；>30s 拒绝提示拆分。
+# failedReason），10s 档长期生产稳定。2026-10-19 用户确认显存充裕后恢复 15s 档：
+# ≤15s H3 单段；15-30s 分段拼接（每段 15s，driver 内置 OOM 按 10s 降档兜底）；
+# >30s 拒绝提示拆分。
 # LTX2.3 数字人因效果问题自营销路由撤下。
 DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS = 15
 # 分段拼接的口播时长软上限。分段架构无技术上限（段数=ceil(时长/10s)），

@@ -643,7 +643,7 @@ async def prepare_digital_human_draft(
             est_lo = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN
             est_hi = seg_count * DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX
             mode_note = (
-                f"，将切分为 {seg_count} 段（每段 ≤10 秒）生成后自动拼接，"
+                f"，将切分为 {seg_count} 段（每段 ≤{DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS} 秒）生成后自动拼接，"
                 f"预计耗时约 {est_lo}~{est_hi} 分钟"
                 f"（每段约 {DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MIN}~"
                 f"{DIGITAL_HUMAN_SEGMENT_EST_MINUTES_MAX} 分钟），画面全程固定镜头"
@@ -731,8 +731,8 @@ async def confirm_digital_human(
 ) -> Dict[str, Any]:
     """确认数字人口播草案：按草案路由提交 H3 单段 / H3 分段拼接（扣视频时长算力）。
 
-    路由规则见 prepare_digital_human_draft：≤10s → MiniMax H3 单段，
-    10-30s → MiniMax H3 分段拼接（均走 /api/digital-human-minimax-h3）。
+    路由规则见 prepare_digital_human_draft：≤15s → MiniMax H3 单段，
+    15-30s → MiniMax H3 分段拼接（均走 /api/digital-human-minimax-h3）。
     存量草案缺 model_task_type 时按 H3 处理。
     仅在用户明确确认后调用。拿到 project_id 后草案才消费，防止重复出片；
     配置、素材、切分或 H3 失败时放回原草案，同一 draft_id 可再确认，不必重新 prepare。
@@ -816,7 +816,7 @@ async def confirm_digital_human(
         motion_text = (draft.get("h3_locked_prompt")
                        or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000]
 
-        # 分段模式（口播 10-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
+        # 分段模式（口播 15-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
         # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致。
         # 驱动音频优先本地映射；外链等无法落地时，用上方已下载的 audio_bytes 落临时
         # 文件再切（切分失败不阻塞提交——分段文件缺失时按单段提交的异常路径上报）
