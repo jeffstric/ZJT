@@ -383,19 +383,19 @@ def test_extract_last_frame_png_two_stage_true_last(monkeypatch, tmp_path):
 
 
 def test_is_reanchor_segment():
-    """回锚点：每接力 N=3 段后回锚一次 → 段 4/7/10，段 1 与接力段不回锚。"""
+    """回锚点：每接力 N=2 段后回锚一次 → 段 3/5/7，段 1 与接力段不回锚。"""
     from task.visual_drivers.digital_human_minimax_h3_runninghub_v1_driver import (
         DIGITAL_HUMAN_REANCHOR_SEGMENT_INTERVAL as N,
     )
 
-    assert N == 3
+    assert N == 2
     reanchors = [i for i in range(1, 11)
                  if DigitalHumanMinimaxH3RunninghubV1Driver._is_reanchor_segment(i)]
-    assert reanchors == [4, 7, 10]
+    assert reanchors == [3, 5, 7, 9]
 
 
-def test_submit_segments_reanchors_to_role_image_every_3(monkeypatch, tmp_path):
-    """每接力 3 段回锚角色原图：seg_2/seg_3 首帧接力末帧，seg_4 回锚角色图，
+def test_submit_segments_reanchors_to_role_image_every_2(monkeypatch, tmp_path):
+    """每接力 2 段回锚角色原图：seg_2/seg_4 首帧接力末帧，seg_3 回锚角色图，
     阻断「抽帧→再生成」循环的亮度/噪声累积漂移。"""
     monkeypatch.chdir(tmp_path)
     driver = make_driver()
@@ -430,8 +430,8 @@ def test_submit_segments_reanchors_to_role_image_every_3(monkeypatch, tmp_path):
     images = [c[0][0] for c in submit_mock.call_args_list]
     assert images[0] == "https://rh.example/role.png"   # seg_1 角色图
     assert "relay" in images[1]                         # seg_2 接力末帧
-    assert "relay" in images[2]                         # seg_3 接力末帧
-    assert images[3] == "https://rh.example/role.png"   # seg_4 回锚角色原图
+    assert images[2] == "https://rh.example/role.png"   # seg_3 回锚角色原图
+    assert "relay" in images[3]                         # seg_4 接力末帧
 
 
 def test_submit_segments_resubmits_once_on_black_segment(monkeypatch, tmp_path):
