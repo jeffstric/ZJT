@@ -96,3 +96,35 @@ def test_segmented_mode_durations_must_match_total(client):
     resp = _post(client, 12, segment_durations=[6, 5])
     assert resp.status_code == 400
     assert "须等于总时长" in resp.json()["detail"]
+
+
+def _post_with_text(client, text):
+    files = [
+        ("image", ("img.png", b"\x89PNG\r\n\x1a\nfake", "image/png")),
+        ("audio", ("a.wav", b"RIFFfake", "audio/wav")),
+    ]
+    return client.post(
+        "/api/digital-human-minimax-h3",
+        files=files,
+        data={"text": text, "duration": "10", "user_id": "1"},
+        headers={"Authorization": "Bearer valid-token", "X-User-Id": "1"},
+    )
+
+
+def test_motion_prompt_1001_to_4000_chars_accepted(client):
+    """回归：H3 的 text 是锁镜头动作提示词（VL 产出可达 1300+ 字符），
+    端点上限必须与客户端 H3_LOCKED_PROMPT_MAX_CHARS 一致（旧 1000 限会误拒）。"""
+    from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
+
+    assert H3_LOCKED_PROMPT_MAX_CHARS > 1000
+    resp = _post_with_text(client, "x" * 1500)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["success"] is True
+
+
+def test_motion_prompt_over_limit_rejected(client):
+    from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
+
+    resp = _post_with_text(client, "x" * (H3_LOCKED_PROMPT_MAX_CHARS + 1))
+    assert resp.status_code == 400
+    assert str(H3_LOCKED_PROMPT_MAX_CHARS) in resp.json()["detail"]

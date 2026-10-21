@@ -106,6 +106,7 @@ from config.constant import Edition, Action, StoryType
 from config.media_file_policy import MediaFilePolicy
 from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
+from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
 from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
@@ -5185,7 +5186,7 @@ async def digital_human_v2_generate(
 async def digital_human_minimax_h3_generate(
     request: Request,
     image: UploadFile = File(..., description="Input image for digital human"),
-    text: str = Form(..., description="Prompt text for digital human motion (max 1000 characters)"),
+    text: str = Form(..., description=f"Prompt text for digital human motion (max {H3_LOCKED_PROMPT_MAX_CHARS} characters)"),
     audio: UploadFile = File(..., description="Speaking audio file"),
     duration: int = Form(10, description="Total video duration in seconds (4-15 single; 16-30 segmented)"),
     max_edge: int = Form(1280, description="Video max edge length: 720, 1280, 1920"),
@@ -5204,10 +5205,13 @@ async def digital_human_minimax_h3_generate(
     concatenates them into the final result.
     """
     try:
-        if len(text) > 1000:
+        # H3 的 text 是锁镜头动作提示词（integrated_multimodal_description），
+        # 不是口播文案；上限须与客户端 confirm 截断上限 H3_LOCKED_PROMPT_MAX_CHARS
+        # 保持一致，否则 VL 生成的长提示词（1300+ 字符）会被此处误拒
+        if len(text) > H3_LOCKED_PROMPT_MAX_CHARS:
             raise HTTPException(
                 status_code=400,
-                detail="文本内容不能超过1000个字"
+                detail=f"文本内容不能超过{H3_LOCKED_PROMPT_MAX_CHARS}个字"
             )
 
         segment_files = list(segment_audio) if segment_audio else []
