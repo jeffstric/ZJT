@@ -289,6 +289,40 @@ class TestPrepareTool(_VoiceModelMockBase):
         # 草案已入库存
         self.assertIsNotNone(get_draft(draft["draft_id"]))
 
+    def test_resolution_maps_to_max_edge(self):
+        """resolution 档位由服务端映射最长边：720P→1280（修复 720P 被误传 max_edge=720）"""
+        voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
+                          voice_type="zh_female_vv_uranus_bigtts")
+
+        async def fake_tts(**kw):
+            return {"success": True, "audio_url": "http://x/a.mp3", "duration": 5.2,
+                    "computing_power": 2, "voice_name": "Vivi 2.0", "voice_type": "zh",
+                    "voice_id": 7}
+
+        cases = [
+            ({"resolution": "720P"}, "720P", 1280),
+            ({"resolution": "1080P"}, "1080P", 1920),
+            ({"resolution": "480P"}, "480P", 720),
+            ({"resolution": "720p"}, "720P", 1280),   # 小写归一
+            ({"resolution": "4K"}, "720P", 1280),     # 非法档位回落默认
+            ({"max_edge": 1920}, "1080P", 1920),      # 兼容旧像素值参数
+            ({"max_edge": 720}, "480P", 720),         # 旧像素值按档归位
+            ({}, "720P", 1280),                       # 缺省默认
+        ]
+        for kwargs, label, edge in cases:
+            with self.subTest(kwargs=kwargs):
+                with patch("script_writer_core.digital_human_tts_tools.VoiceModel") as vm, \
+                     patch("script_writer_core.digital_human_tts_tools.synthesize_speech_for_user", fake_tts):
+                    vm.get_by_id.return_value = voice
+                    result = asyncio.run(prepare_digital_human_draft(
+                        user_id="1", world_id="w", auth_token="t",
+                        image_url="http://x/img.png", script_text="测试文案", voice_id=7,
+                        **kwargs))
+                self.assertTrue(result["success"])
+                self.assertEqual(result["draft"]["resolution"], label)
+                self.assertEqual(result["draft"]["max_edge"], edge)
+                self.assertIn(f"{label}（最长边 {edge}）", result["message"])
+
     def test_long_speech_routes_segmented_h3(self):
         """TTS 实测 20s（>15s）→ H3 分段拼接模式，billable=ceil(20)"""
         voice = MagicMock(id=7, is_active=1, provider="volcengine", name="Vivi 2.0",
