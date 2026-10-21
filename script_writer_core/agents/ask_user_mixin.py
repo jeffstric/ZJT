@@ -56,6 +56,26 @@ def _strip_degraded_tail(question: str) -> str:
     return question
 
 
+# 编号列表项粘连换行（会话 0aa4dc0a 事故，2026-10-21）：LLM 生成的 question 偶发把
+# 编号列表全部挤在一行且项间无分隔（"…如下：1. 匹配音色…2. 试听链接…"），前端
+# 裸音频 URL 转 <audio> 播放器的正则要求扩展名后紧跟空白/结尾，列表粘连既会让
+# 试听链接不渲染播放器、列表也不换行。仅在标点（冒号/句号/括号/问号）后粘连时
+# 补换行——数字紧跟数字的歧义形态（"…mp33. …"，前端扩展名后允许数字终止可正确处理）
+# 与中文字母正常行文（"第4季度"无点号）不在此强拆；CJK 结尾（"文案4. "）同样补换行。
+_GLUED_LIST_ITEM_RE = re.compile(r'([：:。！？!?）)\u4e00-\u9fff])(\d{1,2}[.、](?=\s))')
+
+
+def _normalize_question_list_layout(question: str) -> str:
+    """编号列表项与上文粘连时强制换行（"：1. " → "：\\n1. "），无粘连原样返回。"""
+    if not question:
+        return question
+    normalized = _GLUED_LIST_ITEM_RE.sub(r'\1\n\2', question)
+    if normalized != question:
+        logger.info("[ask_user] question 编号列表粘连，已强制换行: %s",
+                    question[:120])
+    return normalized
+
+
 def _validate_question_payload(question: str) -> Optional[str]:
     """校验 question 携带的结构化负载，返回错误文案（打回让 LLM 重新生成）或 None。
 
@@ -213,6 +233,9 @@ class AskUserMixin:
         # `, "parameter name="options" string="false">` ——LLM 写长转义 JSON 时输出
         # 退化，恰好不破坏 arguments 整体 JSON 解析，残片随 question 透到前端渲染）。
         question = _strip_degraded_tail(question)
+
+        # 编号列表粘连强制换行（0aa4dc0a）：保证前端裸媒体 URL 转换与列表渲染正常
+        question = _normalize_question_list_layout(question)
 
         # 负载质量校验：清洗覆盖不了的残片新形态 + ```json 块非法 → 直接报错打回，
         # 让 LLM 重新生成（不做修复式兜底：残缺 JSON 会让前端确认卡渲染降级成

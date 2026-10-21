@@ -1823,30 +1823,36 @@
                     return `__LINK_PH_${linkPlaceholders.length - 1}__`;
                 });
 
-                // 步骤3：将裸视频 URL 转换为 <video> 标签（路径含视频扩展名，可带查询参数）
-                const videoUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp4|webm|mov|avi|mkv))(\?[^\s<>"'\]]*)?(?=[\s\n\]|,)]|$)/gi;
+                // 步骤3：处理普通 URL 边界 —— URL 后紧跟中文等非空白字符时插入空格
+                // 防止 marked.js 将中文字符错误包含进 URL。提前到媒体 URL 转换之前
+                // 执行（0aa4dc0a）：粘连形态（"…mp33. 口播"）先被拆出空格，后面的
+                // 音视频 URL 正则才能命中扩展名边界
+                text = text.replace(/(https?:\/\/[^\s<>"'\]]+)([^\x00-\x7F\s])/g, '$1 $2');
+
+                // 步骤4：将裸视频 URL 转换为 <video> 标签（路径含视频扩展名，可带查询参数）
+                // 扩展名后必须是「URL 不可能继续」的字符（空白/全半角标点/结尾/纯数字）；
+                // 紧跟字母或路径符号（. / ? = & % # + ~ -）视为 URL 仍在继续，保守不转换
+                // ——旧前瞻（空白/]/,/)/结尾）过窄，全角标点（mp3。/mp3））、粘连数字
+                // （mp33.，扩展名后数字不可能是文件 URL 的一部分）与句点会让转换静默
+                // 失败，裸 URL 降级成普通链接（0aa4dc0a 事故）
+                const videoUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp4|webm|mov|avi|mkv))(\?[^\s<>"'\]]*)?(?=$|[^\w?=&%#+~./-]|\d)/gi;
                 text = text.replace(videoUrlPattern, (match, base, query) => {
                     const fullUrl = query ? base + query : base;
                     return `\n<video src="${escapeHtml(fullUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>\n`;
                 });
 
-                // 步骤3.5：将裸音频 URL 转换为 <audio controls> 播放器（TTS 试听等）
-                const audioUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp3|wav|m4a|ogg|aac|flac))(\?[^\s<>"'\]]*)?(?=[\s\n\]|,)]|$)/gi;
+                // 步骤4.5：将裸音频 URL 转换为 <audio controls> 播放器（TTS 试听等）
+                const audioUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp3|wav|m4a|ogg|aac|flac))(\?[^\s<>"'\]]*)?(?=$|[^\w?=&%#+~./-]|\d)/gi;
                 text = text.replace(audioUrlPattern, (match, base, query) => {
                     const fullUrl = query ? base + query : base;
                     return `\n<audio src="${escapeHtml(fullUrl)}" controls preload="none" style="width:100%;max-width:340px;height:40px;border-radius:8px;display:block;margin:6px 0;"></audio>\n`;
                 });
 
-                // 步骤4：将裸图片 URL 转换为 Markdown 图片格式
-                // 图片扩展名结尾，后面不允许紧跟非空白字符（防止吞入中文）
-                const imageUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?=[\s\n\]|,)]|$)/gi;
+                // 步骤5：将裸图片 URL 转换为 Markdown 图片格式（扩展名边界规则同步步骤4）
+                const imageUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?=$|[^\w?=&%#+~./-]|\d)/gi;
                 text = text.replace(imageUrlPattern, (url) => {
                     return `\n![${window.t('image_alt')}](${url})\n`;
                 });
-
-                // 步骤5：处理普通 URL 边界 —— URL 后紧跟中文等非空白字符时插入空格
-                // 防止 marked.js 将中文字符错误包含进 URL
-                text = text.replace(/(https?:\/\/[^\s<>"'\]]+)([^\x00-\x7F\s])/g, '$1 $2');
 
                 // 步骤6：恢复链接占位符
                 text = text.replace(/__LINK_PH_(\d+)__/g, (match, idx) => {

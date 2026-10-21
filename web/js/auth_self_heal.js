@@ -12,7 +12,8 @@
  *      auth_cookie_translation_middleware 仅在 Authorization 为空时注入
  *      HttpOnly cookie 凭证）；
  *   2. 裸 fetch（不带 Authorization 头，浏览器自动带 HttpOnly cookie）探测
- *      cookie 会话是否仍有效；
+ *      cookie 会话是否仍有效；/api/user/role 鉴权失败也返回 HTTP 200 + {code:-1}
+ *      （实测确认），探测必须解析业务码 code===0，只看 resp.ok 会恒真；
  *   3. cookie 有效 → reload 无感自愈（重载后页面不再携带失效 Bearer，同源
  *      请求走 cookie 翻译）；60 秒内只自愈一次，防 reload 循环；
  *   4. cookie 也失效 → 回调 onLoginExpired（页面自行跳登录页）。
@@ -36,10 +37,18 @@
     }
 
     // 不带 Authorization 头：残留失效 Bearer 会压住服务端 cookie 翻译
+    // /api/user/role 鉴权失败仍返回 HTTP 200 + {"code":-1}（server.py get_user_role
+    // 所有失败分支均为 200，实测确认），不能只看 resp.ok——否则探测恒真：cookie
+    // 失效也走 reload 分支（多一轮整页闪烁），且后续轮询 401 误删仍有效的凭证
     function probeSession(probePath) {
         return fetch(probePath || '/api/user/role', { credentials: 'same-origin' })
             .then(function (resp) {
-                return resp.ok;
+                if (!resp.ok) {
+                    return false;
+                }
+                return resp.json().then(function (data) {
+                    return !!(data && data.code === 0);
+                });
             })
             .catch(function () {
                 return false;
