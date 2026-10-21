@@ -733,6 +733,57 @@ class TestConfirmTool(_VoiceModelMockBase):
         # 草案一次性消费
         self.assertIsNone(get_draft(draft_id))
 
+    def test_confirm_long_locked_prompt_not_truncated(self):
+        """12824 回归：VL 生成的锁镜头提示词超 1000 字符时，提交给 webapp 214 节点的
+        text 必须完整下发——旧实现 [:1000] 把提示词切断在单词中间并丢掉
+        overall_soundscape / non_diegetic_music 结构化结尾，诱发 H3 尾部淡出黑屏"""
+        long_prompt = ("integrated_multimodal_description: [Shot 1] A static medium shot of "
+                       + "a female Asian doctor with detailed scene description. " * 22
+                       + "\noverall_soundscape: gentle ambient sounds.\n"
+                         "non_diegetic_music: [leave empty]")
+        self.assertGreater(len(long_prompt), 1000)
+        draft_id = _store_draft({
+            "script_text": "测试", "image_url": "http://x/img.png",
+            "audio_url": "http://x/a.mp3", "voice_name": "Vivi 2.0",
+            "h3_locked_prompt": long_prompt,
+            "model_task_type": TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3,
+            "h3_duration": 5, "h3_computing_power": 6, "max_edge": 1280,
+        })
+
+        class FakeResp:
+            def __init__(self, payload, status=200):
+                self._payload = payload
+                self.status_code = status
+                self.content = payload if isinstance(payload, bytes) else b'{}'
+            def raise_for_status(self):
+                pass
+            def json(self):
+                return self._payload
+
+        async def fake_get(*a, **k):
+            return FakeResp(b"file-bytes")
+
+        captured = {}
+
+        def fake_post(*a, **kw):
+            captured["url"] = kw.get("url") or (a[0] if a else None)
+            captured["data"] = kw.get("data")
+            captured["files"] = kw.get("files")
+            return FakeResp({"success": True, "project_id": 556})
+
+        cfg = MagicMock()
+        cfg.get.return_value = {"host": "http://localhost:13003"}
+        with patch("script_writer_core.digital_human_tts_tools.get_config", return_value=cfg), \
+             patch("script_writer_core.digital_human_tts_tools.httpx.AsyncClient.get", fake_get), \
+             patch("script_writer_core.digital_human_tts_tools.httpx.post", side_effect=fake_post):
+            result = asyncio.run(confirm_digital_human(
+                user_id="1", world_id="w", auth_token="tok", draft_id=draft_id))
+
+        self.assertTrue(result["success"])
+        self.assertEqual(captured["data"]["text"], long_prompt,
+                         "超 1000 字符的锁镜头提示词不得截断，须含结构化结尾")
+        self.assertTrue(captured["data"]["text"].endswith("non_diegetic_music: [leave empty]"))
+
     def test_confirm_dispatches_segmented(self):
         """分段草案 → 提交 /api/digital-human-minimax-h3：
         text 强制固定镜头提示词、segment_durations JSON、segment_audio 文件随 multipart 上传"""

@@ -87,6 +87,12 @@ LOCKED_CAMERA_PROMPT_FALLBACK = LOCKED_CAMERA_PROMPT_TEMPLATE.format(
     scene='a person facing the camera directly, keeping the exact same outfit, '
           'hairstyle and background as the reference image')
 
+# 提交给 webapp 214 节点的提示词长度防御上限。不可取得太小：VL 生成的场景描述
+# 较长时完整提示词可达 1300+ 字符，旧 1000 截断会把提示词切断在单词中间并丢掉
+# overall_soundscape / non_diegetic_music 结构化结尾（12824 实证：截断后的残句
+# 诱发 H3 在尾部自行淡出至黑屏并幻觉出无关物体）。
+H3_LOCKED_PROMPT_MAX_CHARS = 4000
+
 VL_LOCKED_CAMERA_INSTRUCTION = (
     '你是一个专业的AI视频提示词生成专家。请观察这张参考图，提取人物的性别、发型、'
     '服装细节以及背景环境；同时检查画面中是否有清晰可见的手部：若有，在画面描述中'
@@ -882,7 +888,7 @@ async def confirm_digital_human(
         # H3 锁镜头 webapp 的 214 要求英文 integrated_multimodal_description 格式
         # （prepare 阶段 VL 生成，存于 h3_locked_prompt；旧草案无此字段时用兜底模板）
         motion_text = (draft.get("h3_locked_prompt")
-                       or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000]
+                       or LOCKED_CAMERA_PROMPT_FALLBACK)[:H3_LOCKED_PROMPT_MAX_CHARS]
 
         # 分段模式（口播 15-30s）：先按静音切分音频并对齐整数秒，再连同段文件一起提交，
         # 后端 driver 编排逐段生成与拼接；提示词强制固定镜头，保证段间构图一致。
@@ -938,7 +944,7 @@ async def confirm_digital_human(
             # 格式（prepare 阶段 VL 生成，存于 h3_locked_prompt；旧草案无此字段
             # 时用英文兜底模板）。口播内容在 audio 里，勿传口播文案
             'text': (draft.get("h3_locked_prompt")
-                     or LOCKED_CAMERA_PROMPT_FALLBACK)[:1000],
+                     or LOCKED_CAMERA_PROMPT_FALLBACK)[:H3_LOCKED_PROMPT_MAX_CHARS],
             'duration': str(billable),
             'max_edge': str(draft.get("max_edge")
                             or int(StoryboardDigitalHumanConstants.DEFAULT_MAX_EDGE)),
