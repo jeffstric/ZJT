@@ -438,3 +438,33 @@ LTX2.3 数字人实测效果不达标（画面失真、牙齿不清晰、尾部�
 **测试**：删除 `_extract_last_frame` 与黑段检测用例；断点续跑/缓存损坏/失败重提/双败刹车用例改为并发语义断言（首帧=角色图、集合断言替代顺序断言）；`tests/drivers` 778 项通过。
 
 **注意（并发上限）**：全并发提交可能触发上游 421 拥堵，由既有 `_SegmentedCongestedError` 回队机制兜底；若分段数增大（超长口播）导致上游排队严重，可再引入分段窗口（如每批 4 段），届时断点续跑可直接复用。
+
+### 附录 C.22 分段编排迁出驱动：compose_job 编排器（2026-10-21）
+
+**背景**：C.21 的「驱动内全流水线」在 `submit_task` 一次调用内完成"上传角色图 → 并发提交各段 → 轮询 → 下载 → 拼接"，随后以 `sync_mode` 返回。该实现有两个结构性问题：
+
+1. **独占 `generate_video` 调度槽**（`max_instances=1`、串行），一个分段单把图片/视频等所有生成任务一起堵住（实测两个数字人任务排队约 29 分钟）。
+2. **段不是标准任务**：段状态只存在于 `extra_config.dh_segment_task_ids`，无法复用任务的过期/重试/退避/退费/日志体系。
+
+**方案**：`docs/digital_human_compose_job_plan.md`。核心是「请求 / 编排 / 结果」三层分离：
+
+- **段** = 标准 `ai_tools(type=35)` + `tasks(generate_video)`，独立计费与退费，走驱动**单段标准路径**；
+- **编排** = 新表 `compose_jobs` + 独立主循环 `task/compose_task.py::process_compose_jobs`（不碰钱，只聚合段状态、补缺口段、拼接）；
+- **对外** `project_id = compose_<id>`，前端与营销 agent 都按不透明字符串透传，`get-status` 前缀分发。
+
+**本次删除（驱动内旧流水线全部下线，驱动 965 → 474 行）**：
+
+- 模块级 `_SEGMENT_EXECUTOR`、`SEGMENT_POLL_INTERVAL_SECONDS`/`SEGMENT_POLL_MAX_TRIES`/`SEGMENT_SUBMIT_RETRY`/`SEGMENT_FALLBACK_MAX_SEG`；
+- 异常类 `_SegmentedPipelineError` / `_SegmentedCongestedError`；
+- 方法 `_submit_segments_async` / `_run_one_segment` / `_is_valid_segment` / `_lookup_segment_task_ids` / `_check_segmented_status` / `_resubmit_failed_segment` / `_save_segment_task_ids` / `_concat_and_store` / `_segmented_failure` / `_upload_segment_audio` / `_submit_one_segment` / `_poll_segment_status` / `_fetch_segment_video_url` / `_wait_and_download_segment` / `_upload_to_runninghub_sync`；
+- `submit_task` 的 `extra_config.dh_segments` 分支、`check_status` 的分段聚合分支；
+- `config/constant.py::DigitalHumanSegmentConstants`（`SEGMENT_EXECUTOR_MAX_WORKERS` / `SEGMENT_FUTURE_TIMEOUT_SECONDS`）。
+
+**语义变化（排障须知）**：
+
+- 段不再由一次 `sync_mode` 调用同步产出，而是各自走完整异步生命周期；`dh_segment_task_ids` / `dh_segment_durations` 两个 extra_config 键不再写入。
+- 段失败由标准任务重试/退费兜底，不再有「双败刹车 + 降档重切」；`SEGMENT_FALLBACK_MAX_SEG` 的 15s OOM 降档逻辑随之废弃。
+- 拼接改由 `compose_task._concat_videos`（线程池 + `CONCAT_TIMEOUT_SECONDS`），ffmpeg 参数与原 `_concat_and_store` 一致（首段尺寸基准 + yuv420p + aac）。
+- 段完成不再上传 CDN（`is_segment_ai_tool()` 早退），成片由 `compose_jobs` 拼接后单独建 mapping 上传。
+
+**兼容**：本方案未发布，无线上在途分段任务；开发环境旧任务用 `scripts/cleanup_dh_segment_tasks.py` 关闭（默认 dry-run）。

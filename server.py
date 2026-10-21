@@ -28,7 +28,7 @@ from api.clients.runninghub_client import RunningHubClient, TaskStatus, run_ai_a
 from config.config_util import resolve_bin_path
 from config.version import get_app_version
 from perseids_server.client import make_perseids_request, get_device_uuid, async_make_perseids_request, async_call_external_auth_server
-from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel
+from model import AIToolsModel, VideoWorkflowModel,TasksModel, AIAudioModel, PaymentOrdersModel, ComposeJobModel
 from model.video_workflow import compute_content_hash, content_hashes_for_cas
 from model.ai_tools_log import AIToolsLogModel
 from model.users import UsersModel
@@ -53,6 +53,9 @@ from config.constant import (
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
+    TASK_TYPE_COMPOSE_JOB,
+    ComposeJobStatus,
+    ComposeJobConstants,
     RECHARGE_PACKAGES,
     Commission,
     VIDEO_MODEL_DURATION_OPTIONS,
@@ -2346,6 +2349,88 @@ async def runninghub_status(
         raise HTTPException(status_code=500, detail=f"Failed to check runninghub status: {str(e)}")
 
 
+async def _get_compose_status_payload(project_id: str) -> Dict[str, Any]:
+    """compose_<id> 状态聚合（数字人分段拼接）。
+
+    对前端保持与 ai_tools 任务完全一致的响应结构（status/results/reason），
+    前端的 project_id 是不透明字符串，无需任何改动。
+    """
+    from utils.cdn_util import CDNUtil
+
+    try:
+        compose_id = int(project_id[len(ComposeJobConstants.PROJECT_ID_PREFIX):])
+    except (TypeError, ValueError):
+        return {
+            "project_id": project_id,
+            "status": "NOT_FOUND",
+            "results": [],
+            "reason": "任务记录不存在",
+            "is_content_violation": False,
+        }
+
+    job = await asyncio.to_thread(ComposeJobModel.get_by_id, compose_id)
+    if not job:
+        return {
+            "project_id": project_id,
+            "status": "NOT_FOUND",
+            "results": [],
+            "reason": "任务记录不存在",
+            "is_content_violation": False,
+        }
+
+    task_cost_time = 0
+    if job.create_at:
+        task_cost_time = int((datetime.now() - job.create_at).total_seconds())
+
+    if job.status == ComposeJobStatus.COMPLETED:
+        media_url, cdn_status = await asyncio.to_thread(
+            CDNUtil.get_media_url, job.media_mapping_id, job.result_url
+        )
+        file_url = media_url or job.result_url
+        if not file_url:
+            # 成片地址缺失（脏数据/人工改库）：不能报 SUCCESS 空结果，前端会白屏
+            return {
+                "project_id": project_id,
+                "status": "FAILED",
+                "results": [],
+                "reason": job.message or "拼接完成但成片地址缺失，请联系技术支持",
+                "is_content_violation": False,
+            }
+        results_payload = [{
+            "file_url": file_url,
+            "result_url": job.result_url,
+            "cdn_status": cdn_status,
+            "task_cost_time": task_cost_time,
+        }]
+        return {
+            "project_id": project_id,
+            "status": "SUCCESS",
+            "results": results_payload,
+            "reason": None,
+            "is_content_violation": False,
+        }
+
+    if job.status == ComposeJobStatus.FAILED:
+        reason = job.message or "分段拼接失败"
+        return {
+            "project_id": project_id,
+            "status": "FAILED",
+            "results": [],
+            "reason": reason,
+            # 与普通任务路径一致：审核失败原因透传后，前端按内容违规 UI 展示
+            "is_content_violation": is_content_moderation_user_message(reason),
+        }
+
+    # PENDING / COMPOSING：段仍在生成或正在拼接
+    return {
+        "project_id": project_id,
+        "status": "RUNNING",
+        "results": [],
+        "reason": None,
+        "is_content_violation": False,
+    }
+
+
 # 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
 # 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
 # 历史原因导致参数名与实际含义不一致，调用时请注意。
@@ -2370,6 +2455,11 @@ async def get_status(
         tasks_response = []
 
         for ai_tool_id in ai_tool_ids:
+            # 数字人分段拼接编排单：project_id 带 compose_ 前缀，聚合 compose_jobs 状态
+            if ai_tool_id.startswith(ComposeJobConstants.PROJECT_ID_PREFIX):
+                tasks_response.append(await _get_compose_status_payload(ai_tool_id))
+                continue
+
             # Query database to get task type
             task_record = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
             
@@ -5181,6 +5271,223 @@ async def digital_human_v2_generate(
         raise HTTPException(status_code=500, detail=f"数字人v2生成失败: {str(e)}")
 
 
+async def _refund_segment_deduction(auth_token: str, transaction_id: str, power: int, reason: str) -> None:
+    """分段提交回滚：按原扣费流水号派生幂等退费流水（refund-{原}）退回算力。
+
+    仅在「扣费成功但段记录未建全」的提交期失败路径使用；段进入正常生命周期后
+    的退费由调度器（超重试/过期）与 compose 补段流程各自负责，不在此处重复。
+    """
+    if not CHECK_AUTH_TOKEN or not power:
+        return
+    try:
+        success, message, _ = await async_make_perseids_request(
+            endpoint='user/calculate_computing_power',
+            method='POST',
+            headers={'Authorization': f'Bearer {auth_token}'},
+            data={
+                "computing_power": power,
+                "behavior": "increase",
+                "transaction_id": f"refund-{transaction_id}"
+            }
+        )
+        if success:
+            logger.info(f"[分段提交回滚] 已退回 {power} 算力（{reason}），原流水 {transaction_id}")
+        else:
+            logger.error(f"[分段提交回滚] 退费失败（{reason}）流水 {transaction_id}: {message}")
+    except Exception as e:
+        logger.error(f"[分段提交回滚] 退费异常（{reason}）流水 {transaction_id}: {e}")
+
+
+async def _submit_segmented_digital_human(
+    *,
+    user_id: int,
+    auth_token: Optional[str],
+    text: str,
+    image_url: str,
+    audio_url: str,
+    segment_paths: list,
+    segment_durations: list,
+    segment_powers: list,
+    duration: int,
+    max_edge: int,
+    start_second: int,
+) -> JSONResponse:
+    """分段数字人提交（口播 >15s）：逐段建标准任务 + 建 compose_job 编排单。
+
+    ⚠️ 设计要点（见 docs/digital_human_compose_job_plan.md）：
+    - 每段是一条**标准** ai_tools(type=35) + tasks(generate_video)，独立计费/退费，
+      走既有驱动非分段路径；段之间互不阻塞，不再独占 generate_video 调度槽。
+    - compose_job 是纯编排器：只持有有序段 id + 参数快照，不碰钱。
+    - 返回 project_id=compose_<id>；前端把 project_id 当不透明字符串，
+      轮询 get-status 时由 resolver 分发到 compose_jobs 聚合状态。
+    """
+    task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
+    created: list = []            # [{'id': int, 'transaction_id': str, 'power': int}]
+    deducted: list = []           # [(transaction_id, power)] 已扣费（回滚需原额退回）
+    compose_id: Optional[int] = None
+
+    def _mark_segment_failed(reason: str) -> None:
+        """把已创建的段（ai_tools + tasks）置失败，防止调度器继续驱动。"""
+        for item in created:
+            seg_id = item['id']
+            try:
+                TasksModel.update_by_task_id(seg_id, status=TASK_STATUS_FAILED)
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] 段 {seg_id} tasks 置失败异常: {e}")
+            try:
+                AIToolsModel.update(
+                    seg_id,
+                    status=AI_TOOL_STATUS_FAILED,
+                    message=reason,
+                    completed_time=datetime.now()
+                )
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] 段 {seg_id} ai_tools 置失败异常: {e}")
+
+    try:
+        for idx, (seg_path, seg_duration, seg_power) in enumerate(
+            zip(segment_paths, segment_durations, segment_powers), start=1
+        ):
+            seg_transaction_id = str(uuid.uuid4())
+
+            # 1) 逐段扣费（每段独立 transaction_id，退费按段幂等）
+            if CHECK_AUTH_TOKEN and seg_power:
+                success, message, _ = await async_make_perseids_request(
+                    endpoint='user/calculate_computing_power',
+                    method='POST',
+                    headers={'Authorization': f'Bearer {auth_token}'},
+                    data={
+                        "computing_power": seg_power,
+                        "behavior": "deduct",
+                        "transaction_id": seg_transaction_id
+                    }
+                )
+                if not success:
+                    logger.error(f"[分段提交] 第 {idx} 段扣费失败: {message}")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"第 {idx} 段算力扣减失败: {message}"
+                    )
+                deducted.append((seg_transaction_id, seg_power))
+
+            # 2) 建段记录（extra_config 不含 dh_segments → 驱动走标准单段路径）
+            seg_extra = json.dumps({
+                "max_edge": max_edge,
+                "start_second": start_second,
+                "seg_index": idx,
+                "dh_segment": True,
+                "compose_id": 0,
+            }, ensure_ascii=False)
+            seg_id = AIToolsModel.create(
+                prompt=text,
+                user_id=user_id,
+                type=task_type,
+                image_path=image_url,
+                audio_path=seg_path,
+                duration=seg_duration,
+                extra_config=seg_extra,
+                transaction_id=seg_transaction_id,
+                status=AI_TOOL_STATUS_PENDING
+            )
+            created.append({
+                'id': seg_id,
+                'transaction_id': seg_transaction_id,
+                'power': seg_power,
+                'seg_index': idx,
+            })
+
+            # 3) 建调度行（与其他视频任务同队列，受槽位/退避统一管理）
+            TasksModel.create(
+                task_type=TASK_TYPE_GENERATE_VIDEO,
+                task_id=seg_id,
+                status=TASK_STATUS_QUEUED
+            )
+            try:
+                from task.pipeline_processor import PipelineProcessor
+                PipelineProcessor.attach_param_prepare_if_needed(seg_id, task_type)
+            except Exception as e:
+                logger.warning(f"Failed to create param_prepare steps for segment {seg_id}: {e}")
+
+        if not created:
+            raise HTTPException(status_code=400, detail="分段音频为空，无法提交")
+
+        # 4) 建编排单（段 id 顺序即拼接顺序）
+        compose_params = {
+            "prompt": text,
+            "max_edge": max_edge,
+            "start_second": start_second,
+            "duration": duration,
+            "image_url": image_url,
+            "audio_url": audio_url,
+            "segment_durations": list(segment_durations),
+            "segment_paths": list(segment_paths),
+        }
+        compose_id = ComposeJobModel.create(
+            user_id=user_id,
+            segment_ai_tool_ids=[item['id'] for item in created],
+            params=compose_params
+        )
+
+        # 5) 回写各段 compose_id（仅作排查线索；权威来源是 compose_jobs.segment_ai_tool_ids）
+        for item in created:
+            try:
+                AIToolsModel.update(
+                    item['id'],
+                    extra_config=json.dumps({
+                        "max_edge": max_edge,
+                        "start_second": start_second,
+                        "seg_index": item['seg_index'],
+                        "dh_segment": True,
+                        "compose_id": compose_id,
+                    }, ensure_ascii=False)
+                )
+            except Exception as e:
+                logger.warning(f"[分段提交] 段 {item['id']} 回写 compose_id 失败: {e}")
+
+        # 6) 编排任务入队（task_type='compose_job'，由 compose 专用主循环消费）
+        TasksModel.create(
+            task_type=TASK_TYPE_COMPOSE_JOB,
+            task_id=compose_id,
+            status=TASK_STATUS_QUEUED
+        )
+
+        logger.info(
+            f"[分段提交] compose_id={compose_id} user={user_id} 段数={len(created)} "
+            f"总时长={duration}s 总算力={sum(segment_powers)}"
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": f"{ComposeJobConstants.PROJECT_ID_PREFIX}{compose_id}",
+            "status": "submitted",
+            "image_url": image_url,
+            "audio_url": audio_url,
+            "segment_count": len(created),
+        })
+
+    except HTTPException:
+        _mark_segment_failed("分段提交失败，任务已取消")
+        for txn, power in deducted:
+            await _refund_segment_deduction(auth_token, txn, power, "分段提交失败")
+        if compose_id:
+            try:
+                ComposeJobModel.update(compose_id, status=-1, message="分段提交失败，任务已取消")
+            except Exception as e:
+                logger.warning(f"[分段提交回滚] compose {compose_id} 置失败异常: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"[分段提交] 提交失败: {e}")
+        logger.error(traceback.format_exc())
+        _mark_segment_failed("分段提交失败，任务已取消")
+        for txn, power in deducted:
+            await _refund_segment_deduction(auth_token, txn, power, "分段提交失败")
+        if compose_id:
+            try:
+                ComposeJobModel.update(compose_id, status=-1, message="分段提交失败，任务已取消")
+            except Exception as up_err:
+                logger.warning(f"[分段提交回滚] compose {compose_id} 置失败异常: {up_err}")
+        raise HTTPException(status_code=500, detail=f"分段数字人提交失败: {str(e)}")
+
+
 @app.post("/api/digital-human-minimax-h3")
 @require_permission("digital_human:create")
 async def digital_human_minimax_h3_generate(
@@ -5199,10 +5506,10 @@ async def digital_human_minimax_h3_generate(
     """
     Generate MiniMax H3 digital human video (image + audio + prompt)
 
-    duration <= 10: single-segment generation.
-    10 < duration <= 30 with segment_audio: split pipeline — driver generates one
-    video per segment (image as shared first frame, fixed-camera prompt) and
-    concatenates them into the final result.
+    duration <= 15: single-segment generation.
+    >15 with segment_audio: compose 模式——每段建一条标准 ai_tools + tasks
+    （独立计费/退费，走普通视频任务队列并发执行），另建 compose_jobs 编排单
+    负责聚合段状态、补缺口段与 ffmpeg 拼接；返回 project_id=compose_<id>。
     """
     try:
         # H3 的 text 是锁镜头动作提示词（integrated_multimodal_description），
@@ -5274,7 +5581,7 @@ async def digital_human_minimax_h3_generate(
         image_url = await asyncio.to_thread(_save_uploaded_image, image)
         audio_url = await asyncio.to_thread(_save_uploaded_image, audio)
 
-        # 分段音频落盘（wav/mp3 白名单由 media_upload 校验；路径写入 extra_config 供 driver 编排）
+        # 分段音频落盘（wav/mp3 白名单由 media_upload 校验；每段作为独立 ai_tools.audio_path）
         segment_paths: list = []
         for idx, seg in enumerate(segment_files, start=1):
             seg_url = await asyncio.to_thread(_save_uploaded_audio_file, seg, idx)
@@ -5282,11 +5589,14 @@ async def digital_human_minimax_h3_generate(
 
         task_type = TaskTypeId.DIGITAL_HUMAN_MINIMAX_H3
         task_config = TaskTypeRegistry.get(task_type)
+        segment_power_list: list = []
         if segment_files:
-            # 分段计费 = 各段档位之和
-            computing_power = sum(
-                task_config.get_computing_power(duration=sd) for sd in parsed_segment_durations
-            ) if task_config else 0
+            # 分段计费 = 各段档位之和；逐段独立扣费/退费（每段一条 ai_tools 记录）
+            segment_power_list = [
+                task_config.get_computing_power(duration=sd) if task_config else 0
+                for sd in parsed_segment_durations
+            ]
+            computing_power = sum(segment_power_list)
         else:
             computing_power = task_config.get_computing_power(duration=duration) if task_config else 0
 
@@ -5316,6 +5626,26 @@ async def digital_human_minimax_h3_generate(
                     detail="用户ID不匹配"
                 )
 
+        if not user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        if segment_files:
+            # ===== 分段拼接模式：逐段建标准任务 + compose_job 编排（不占调度槽）=====
+            return await _submit_segmented_digital_human(
+                user_id=user_id,
+                auth_token=auth_token,
+                text=text,
+                image_url=image_url,
+                audio_url=audio_url,
+                segment_paths=segment_paths,
+                segment_durations=parsed_segment_durations,
+                segment_powers=segment_power_list,
+                duration=duration,
+                max_edge=max_edge,
+                start_second=start_second,
+            )
+
+        # ===== 单段模式（≤15s）：行为与改造前完全一致 =====
         transaction_id = str(uuid.uuid4())
 
         if CHECK_AUTH_TOKEN:
@@ -5332,51 +5662,45 @@ async def digital_human_minimax_h3_generate(
             if not success:
                 logger.error(f"Computing power deduction failed: {message}")
 
-        if user_id:
+        try:
+            extra_data = {
+                "max_edge": max_edge,
+                "start_second": start_second,
+            }
+            extra_config = json.dumps(extra_data, ensure_ascii=False)
+
+            id = AIToolsModel.create(
+                prompt=text,
+                user_id=user_id,
+                type=task_type,
+                image_path=image_url,
+                audio_path=audio_url,
+                duration=duration,
+                extra_config=extra_config,
+                transaction_id=transaction_id,
+                status=AI_TOOL_STATUS_PENDING
+            )
+            TasksModel.create(
+                task_type=TASK_TYPE_GENERATE_VIDEO,
+                task_id=id,
+                status=TASK_STATUS_QUEUED
+            )
             try:
-                extra_data = {
-                    "max_edge": max_edge,
-                    "start_second": start_second,
-                }
-                if segment_files:
-                    extra_data["dh_segments"] = segment_paths
-                    extra_data["dh_segment_durations"] = parsed_segment_durations
-                extra_config = json.dumps(extra_data, ensure_ascii=False)
+                from task.pipeline_processor import PipelineProcessor
+                PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
+            except Exception as e:
+                logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
 
-                id = AIToolsModel.create(
-                    prompt=text,
-                    user_id=user_id,
-                    type=task_type,
-                    image_path=image_url,
-                    audio_path=audio_url,
-                    duration=duration,
-                    extra_config=extra_config,
-                    transaction_id=transaction_id,
-                    status=AI_TOOL_STATUS_PENDING
-                )
-                TasksModel.create(
-                    task_type=TASK_TYPE_GENERATE_VIDEO,
-                    task_id=id,
-                    status=TASK_STATUS_QUEUED
-                )
-                try:
-                    from task.pipeline_processor import PipelineProcessor
-                    PipelineProcessor.attach_param_prepare_if_needed(id, task_type)
-                except Exception as e:
-                    logger.warning(f"Failed to create param_prepare steps for ai_tool {id}: {e}")
-
-                return JSONResponse({
-                    "success": True,
-                    "project_id": id,
-                    "status": "submitted",
-                    "image_url": image_url,
-                    "audio_url": audio_url
-                })
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-                raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
-        else:
-            raise HTTPException(status_code=400, detail="用户ID不能为空")
+            return JSONResponse({
+                "success": True,
+                "project_id": id,
+                "status": "submitted",
+                "image_url": image_url,
+                "audio_url": audio_url
+            })
+        except Exception as db_error:
+            logger.error(f"Failed to create database record: {db_error}")
+            raise HTTPException(status_code=500, detail=f"数据库错误: {str(db_error)}")
 
     except HTTPException:
         raise

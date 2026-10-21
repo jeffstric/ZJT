@@ -10,9 +10,10 @@ from task.visual_task import generate_video_task
 from task.audio_task import generate_audio_task
 from task.token_task import process_token_task
 from task.download_queue_task import process_download_queue
+from task.compose_task import process_compose_jobs
 from task.subscription_renewal_task import process_subscription_renewals
 from functools import partial
-from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition, SubscriptionConstants
+from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstants, Edition, SubscriptionConstants, ComposeJobConstants
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 from config.constant import LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
@@ -423,6 +424,19 @@ def init_scheduler(app):
         trigger=IntervalTrigger(seconds=5),
         id='generate_video',
         name='Generate video every 5 seconds',  # ⚠️ 实际间隔5秒，之前name描述错误
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True
+    )
+
+    # 数字人分段拼接编排：纯编排任务（聚合段状态/补段/拼接），
+    # 不占 generate_video 槽位（详见 docs/digital_human_compose_job_plan.md）
+    logger.info(f'启用数字人分段拼接编排任务（间隔 {ComposeJobConstants.POLL_INTERVAL_SECONDS} 秒）')
+    scheduler.add_job(
+        func=process_compose_jobs,
+        trigger=IntervalTrigger(seconds=ComposeJobConstants.POLL_INTERVAL_SECONDS),
+        id='compose_job',
+        name=f'Compose digital human segments every {ComposeJobConstants.POLL_INTERVAL_SECONDS} seconds',
         replace_existing=True,
         max_instances=1,
         coalesce=True
