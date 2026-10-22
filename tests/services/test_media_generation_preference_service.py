@@ -24,10 +24,12 @@ def _config(
     enabled=True,
     supported_image_modes=None,
     supports_ref_audio_video=False,
+    short_key=None,
 ):
     return SimpleNamespace(
         id=task_id,
         key=f"model-{task_id}",
+        short_key=short_key,
         name=f"Model {task_id}",
         category=category,
         categories=categories or [],
@@ -304,3 +306,73 @@ def test_default_model_keeps_legacy_order_when_drivers_unregistered(monkeypatch)
         MediaGenerationMode.REFERENCE_TO_VIDEO,
     )
     assert config.id == 19
+
+
+def test_default_model_prefers_value_track(monkeypatch):
+    """无偏好默认解析与前端 59009cf3 同口径：目录性价比档优先于 sort_order。
+
+    事故：图生视频 sort_order 最小是 LTX2.3(30)，服务端首次初始化偏好时按
+    sort_order 落库 LTX2.3，从此短路前端 track='value'（MiniMax H3）兜底。
+    """
+    ltx = _config(
+        20,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        short_key="ltx2_3",
+    )
+    h3 = _config(
+        34,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        short_key="minimax_h3",
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_category",
+        lambda category: [ltx, h3],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: {20: ltx, 34: h3}[task_id],
+    )
+    fake_factory = SimpleNamespace(_registered_drivers={})
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "task.visual_drivers.driver_factory",
+        SimpleNamespace(VideoDriverFactory=fake_factory),
+    )
+
+    config = MediaGenerationPreferenceService.default_model(
+        MediaGenerationType.VIDEO,
+        MediaGenerationMode.IMAGE_TO_VIDEO,
+    )
+    assert config.id == 34
+
+
+def test_default_model_falls_back_when_value_track_missing(monkeypatch):
+    """目录性价比档无命中（模型缺失/下线）时回退 sort_order 第一。"""
+    first = _config(
+        20,
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME],
+        short_key="ltx2_3",
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_category",
+        lambda category: [first],
+    )
+    monkeypatch.setattr(
+        "services.media_generation_preference_service.UnifiedConfigRegistry.get_by_id",
+        lambda task_id: first,
+    )
+    fake_factory = SimpleNamespace(_registered_drivers={})
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "task.visual_drivers.driver_factory",
+        SimpleNamespace(VideoDriverFactory=fake_factory),
+    )
+
+    config = MediaGenerationPreferenceService.default_model(
+        MediaGenerationType.VIDEO,
+        MediaGenerationMode.IMAGE_TO_VIDEO,
+    )
+    assert config.id == 20

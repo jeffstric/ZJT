@@ -25,7 +25,11 @@
   中的 `【【短名】】` 标记同步替换为 `【【完整名】】`，保证生图按名查找能命中；
 - 其余新角色用 `CharacterModel.create(source='script_split')` 建库，LLM 输出的
   `description→appearance`、`role→identity`、`gender/age_range→age` 随行落库，
-  `other_info` 写入自动创建提示文案；
+  `other_info` 写入自动创建提示文案；**属主取世界属主**（`world.user_id`，
+  而非拆分任务发起人 `task.user_id`；世界行缺失时回退任务发起人）——admin/课堂
+  代跑场景下任务发起人不是世界主人，若按任务属主落库，世界主人在按属主校验的
+  角色接口（voice-desc / reference-audio）会被误拦 403（2026-10-19 事故，
+  见下文「属主口径」）；
 - 多义短名（对应多个库内角色）不自动入库，记 warning；
 - 单角色失败仅记 warning 不阻塞发布；整体异常放行（角色按未入库处理）。
 
@@ -83,7 +87,35 @@ video_workflow 旧页（`web/js/shot_frame_generator.js`）：
 拆分完成后除 `loadStoryboardData` 外，同步 `fetchCharacters/fetchLocations/fetchProps`
 刷新 `state` 资产缓存（发布可能自动创建了新角色）。
 
+## 属主口径（2026-10-19 403 事故修复）
+
+**事故**：dev 环境 world 284（世界属主 55）由 admin（user 2）代跑剧本拆分，自动入库的
+角色行属主写成了任务发起人 2；世界主人在 script_writer 角色编辑点「音色描述自动生成」，
+`POST /api/script-writer/characters/voice-desc` 按 `(world_id, name)` 查到该行后做
+属主校验 `character.user_id != 登录用户` → 403「无权限访问该角色」。
+
+**修复（两层）**：
+
+1. 数据层（本服务）：入库属主改为世界属主，与手动建角色口径一致；
+2. 接口层（`api/script_writer.py` voice-desc / reference-audio）：这两个接口只做
+   文本生成/任务提交、不落角色库，取消「属主为他人 → 403」的拦截，改为
+   **DB 行属主为当前登录用户且属于请求世界时才采用该行，否则忽略该行、
+   用请求方提交的 `character_data` 生成**（与查无此行同路径）。
+   不泄露他人数据：LLM 输入要么是自己属主的 DB 行，要么是请求方自己提交的数据。
+   其余角色链路（`list_by_world`、拆分契约、参考图）本就只按 `world_id` 过滤、
+   不看角色行属主，属世界级口径。
+
+**存量数据修正**（一次性 SQL，各环境按需执行——接口层修复后不改数据也不影响功能，
+修正可防未来新链路再踩属主坑）：
+
+```sql
+UPDATE `character` c JOIN world w ON c.world_id = w.id
+SET c.user_id = w.user_id
+WHERE c.source = 'script_split' AND c.user_id <> w.user_id;
+```
+
 ## 相关测试
 
 - `tests/services/test_storyboard_character_bootstrap_service.py`：新角色入库、
-  已有 db_id 复用、同名复用、短名归一化（含 shot 标记改写）、多义短名、单角色失败韧性。
+  已有 db_id 复用、同名复用、短名归一化（含 shot 标记改写）、多义短名、单角色失败韧性、
+  入库属主取世界属主（admin 代跑场景）、世界行缺失回退任务发起人。

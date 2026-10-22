@@ -232,6 +232,48 @@ class StoryboardDialogueAudioModel:
             raise
 
     @staticmethod
+    def count_assets_by_scene(scene_id: int) -> int:
+        """分镜下配音资产记录总数（不论是否选中/是否有 URL）。
+
+        供「首条配音落地锁定视频原声」判定：总数==1 说明本条是该分镜第一条配音
+        （重新生成时旧资产记录仍在，总数≥2），见 docs/storyboard/storyboard_timeline_playback.md。
+        """
+        sql = """
+            SELECT COUNT(*) AS cnt
+            FROM storyboard_dialogue_audio da
+            JOIN storyboard_dialogue d ON d.id = da.dialogue_id
+            WHERE d.scene_id = %s
+        """
+        try:
+            row = execute_query(sql, (scene_id,), fetch_one=True)
+            return int(row.get('cnt') or 0) if row else 0
+        except Exception as e:
+            logger.error(f"Failed to count audio assets for scene {scene_id}: {e}")
+            raise
+
+    @staticmethod
+    def count_landed_selected_by_scene(scene_id: int) -> int:
+        """分镜下「当前选中且已有结果 URL」的配音条数。
+
+        供「删除对话后音频来源归位」判定：==0 即分镜已无可用配音，
+        见 docs/storyboard/storyboard_timeline_playback.md。
+        """
+        sql = """
+            SELECT COUNT(*) AS cnt
+            FROM storyboard_dialogue d
+            JOIN storyboard_dialogue_audio da ON da.id = d.selected_audio_id
+            WHERE d.scene_id = %s
+              AND da.audio_url IS NOT NULL
+              AND da.audio_url <> ''
+        """
+        try:
+            row = execute_query(sql, (scene_id,), fetch_one=True)
+            return int(row.get('cnt') or 0) if row else 0
+        except Exception as e:
+            logger.error(f"Failed to count landed selected audios for scene {scene_id}: {e}")
+            raise
+
+    @staticmethod
     def delete(record_id: int) -> int:
         sql = "DELETE FROM storyboard_dialogue_audio WHERE id = %s"
         try:

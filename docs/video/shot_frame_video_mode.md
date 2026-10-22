@@ -26,7 +26,7 @@
 ### 参考图模式
 
 - 可以不生成分镜图，直接使用角色、场景、道具参考图生成视频
-- 视频提示词编辑框按 `@`、`/` 或 `、` 打开下拉。已设置首帧图时置顶「首帧图」，已设置尾帧图时置顶「尾帧图」，选中后插入字面量 `@首帧图` 或 `@尾帧图`。角色仍插入 `【【角色名】】`。图片提示词的 `@` 只插入角色
+- 视频提示词编辑框按 `@`、`/` 或 `、` 打开下拉。已设置首帧图时置顶「首帧图」，已设置尾帧图时置顶「尾帧图」，选中后插入字面量 `@首帧图` 或 `@尾帧图`。角色仍插入 `【【角色名】】`。图片提示词的 `@` 只插入角色。下拉条目悬停时在右侧浮出原图大图预览（`.wf-hover-preview`，图生视频节点的 @ 下拉同样支持），机制与 storyboard 页面一致
 - 节点上把这两个标记画成带缩略图的标签。保存的仍是 `videoPromptText`，重新加载走原有恢复
 - 提交时若提示词含 `@首帧图` 但没有首帧图，或含 `@尾帧图` 但没有尾帧图，提示后中止，不提交
 - 被点名的首帧是参考图列表的图1，说明为「图1是首帧」；原有角色/场景/道具参考依次后移。被点名的尾帧是最后一张，说明为「图N是尾帧」。提交给接口的提示词把标记改写成对应的「图N」，并沿用原来的「图N是…」后缀。节点里保存的提示词仍是 `@首帧图` / `@尾帧图`
@@ -113,13 +113,16 @@
 
 ## 相关文件
 
+- `web/js/hover_preview.js` — @ 下拉条目悬停大图预览（文档级 mouseover 委托，条目挂 `data-hover-preview` 即生效；video_workflow.html 全局共享，关闭下拉时主动 `WFHoverPreview.hide()`）
 - `web/js/shot_frame_node.js` — 模式切换、尾帧端口、上传、`@首帧图` / `@尾帧图` 标签与算力
 - `web/js/nodes.js` — 视频提示词放大窗口的首尾帧下拉
+- `web/js/image_to_video_node.js` — 图生视频节点内联提示词框的 @ 媒体引用下拉（首尾帧/参考图/音频/视频，图片条目支持悬停预览）
 - `web/js/shot_frame_generator.js` — collectShotFrameRefImages(): 参考图收集
 - `web/js/shot_frame_video_generator.js` — generateShotFrameVideo() 与 placeShotFrameMentionImages(): 首帧模式把尾帧拼进 image_urls；参考模式按 @ 标记重排参考图
 - `web/js/workflow.js` — createShotFrameNodeWithData(): 模式与尾帧状态恢复
 - `web/js/events.js` — 图片节点拖到首帧或尾帧端口
 - `web/tests/shot_frame_ref_mentions.test.js` — 参考图两端排序
+- `web/tests/hover_preview.test.js` — @ 下拉悬停预览的行为与接线测试
 
 ---
 

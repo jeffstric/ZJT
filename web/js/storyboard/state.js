@@ -17,6 +17,12 @@ const state = {
     episodeFoldersLoaded: false,
     episodeFoldersLoading: false,
     showEpisodePicker: false,
+    /** 管理员集列表范围：mine | all | user */
+    episodeOwnerScope: 'mine',
+    episodeOwnerQuery: '',
+    episodeOwnerHint: '',
+    isStoryboardAdmin: false,
+    storyboardAdminKnown: false,
     scriptId: null,
     workflowId: null,
     userId: null,
@@ -652,12 +658,15 @@ export function setAssets({ characters = [], locations = [], props = [] }) {
 }
 
 // 跨故事板 task_id 记忆兜底：读取 localStorage 中上一次的选择，校验仍存在于当前可用模型列表后才采用；
-// 否则优先采用指定模型，再回退到列表第一个，并把回退值同步写回 localStorage 以固化默认。
+// 无记忆（新用户/新浏览器）时优先取目录「性价比」档（track='value'，由后端 annotate_task_models 按
+// config/model_catalog.py 标注），其次指定 short_key，再回退列表第一项，并把回退值写回 localStorage 固化。
+// 只影响无记忆用户：已有 localStorage 记忆的用户沿用原选择，不做重置。
 function pickRememberedTaskId(models, storageKey, preferredModelKey = null) {
-    const preferredModel = preferredModelKey
-        ? models.find(m => m.short_key === preferredModelKey)
-            || models.find(m => m.key === preferredModelKey)
-        : null;
+    const preferredModel = models.find(m => m.track === 'value')
+        || (preferredModelKey
+            ? models.find(m => m.short_key === preferredModelKey)
+                || models.find(m => m.key === preferredModelKey)
+            : null);
     const fallback = preferredModel?.task_id ?? models[0].task_id;
     let remembered = null;
     try {
@@ -962,6 +971,18 @@ export function composeSceneImagePrompt(scene = null) {
         .map((part) => String(part || '').trim())
         .filter(Boolean)
         .join('，');
+}
+
+/**
+ * 左下角直填框仍等于修改前的提示词时，返回应写入的新文本。
+ * 用户已经改过文本框时返回 null。
+ */
+export function nextDirectInputIfUnedited(current, previous, next) {
+    const before = previous == null ? '' : String(previous);
+    const after = next == null ? '' : String(next);
+    const text = current == null ? '' : String(current);
+    if (text !== before || text === after) return null;
+    return after;
 }
 
 export function getSelectedVideoTaskId({ hasInputs = true, imageMode = state.videoImageMode } = {}) {

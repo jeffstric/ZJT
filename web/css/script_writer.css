@@ -1826,6 +1826,7 @@ body {
 
 .world-edit-btn,
 .world-hide-btn,
+.world-delete-btn,
 .world-restore-btn {
     display: flex;
     align-items: center;
@@ -1847,9 +1848,30 @@ body {
 }
 
 .world-hide-btn:hover {
-    background: #ef4444;
+    background: #475569;
     color: white;
     transform: scale(1.1);
+}
+
+/* 管理员硬删除自己或他人的世界：深红区分于「隐藏」伪删除 */
+.world-delete-btn {
+    color: #dc2626;
+}
+
+.world-delete-btn:hover {
+    background: #991b1b;
+    color: white;
+    transform: scale(1.1);
+}
+
+/* 管理员视角下的世界归属标记 */
+.world-owner-tag {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary, rgba(148, 163, 184, 0.15));
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+    width: fit-content;
 }
 
 .world-restore-btn:hover {
@@ -2441,6 +2463,70 @@ body {
 
 .modal-dialog.large {
     max-width: 900px;
+}
+
+/* 公共音色库选择弹窗列表（角色参考音频） */
+.voice-lib-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 8px;
+}
+
+.voice-lib-item:hover {
+    background: var(--bg-light);
+}
+
+.voice-lib-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.voice-lib-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.voice-lib-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.voice-lib-style {
+    font-size: 11px;
+    color: var(--text-secondary);
+    background: var(--bg-light);
+    border-radius: var(--radius-sm);
+    padding: 1px 6px;
+    white-space: nowrap;
+}
+
+.voice-lib-desc {
+    font-size: 12px;
+    color: var(--text-muted, #6b7280);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.voice-lib-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.voice-lib-empty {
+    padding: 32px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted, #6b7280);
 }
 
 
@@ -3910,15 +3996,6 @@ body {
     transform: scale(1.1);
 }
 
-.image-preview-btn.no-image {
-    color: #ef4444;
-    opacity: 0.6;
-}
-
-.image-preview-btn.no-image:hover {
-    opacity: 1;
-}
-
 /* 音色播放按钮 */
 .voice-play-btn {
     color: #666;
@@ -3934,10 +4011,22 @@ body {
     transform: scale(1.1);
 }
 
+/* 降级（缺失）态：灰色图标 + 虚线框 = 「空槽位，待设置」；
+   悬停点亮为品牌紫并放大，明确表示可点击（点击打开对应设置弹窗） */
+.image-preview-btn.no-image,
 .voice-play-btn.no-voice {
     color: #9ca3af;
-    opacity: 0.4;
-    cursor: not-allowed;
+    border: 1.5px dashed #d1d5db;
+    opacity: 1;
+    cursor: pointer;
+}
+
+.image-preview-btn.no-image:hover,
+.voice-play-btn.no-voice:hover {
+    color: #8b5cf6;
+    border-color: rgba(139, 92, 246, 0.55);
+    background: rgba(139, 92, 246, 0.08);
+    transform: scale(1.08);
 }
 
 .voice-play-btn[disabled] {

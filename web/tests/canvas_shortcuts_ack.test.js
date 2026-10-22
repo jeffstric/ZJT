@@ -1,8 +1,8 @@
 /**
  * 快捷键弹窗自动弹出策略：
- * - 用户尚未确认过滚轮操作（未点过「滚轮上下平移 / 滚轮缩放画布」）→ 进入画布自动弹。
+ * - 用户尚未确认过（未点过「滚轮上下平移 / 滚轮缩放画布」，也从未关闭过弹窗）→ 进入画布自动弹。
  * - 点选过任一模式按钮 → localStorage 记 canvasWheelModeAcked=1，后续进入不再自动弹。
- * - 关闭弹窗（× / Esc / 遮罩）不算确认，下次进入仍自动弹。
+ * - 任何形式的关闭（× / Esc / 遮罩）也视为已确认 → 记 canvasWheelModeAcked=1，下次进入不再自动弹。
  * - 工具栏「快捷键」按钮始终可手动打开。
  */
 import fs from 'node:fs';
@@ -77,18 +77,43 @@ describe('快捷键弹窗：未确认过自动弹，确认过不再弹', () => {
     expect(modalShown(document.getElementById('shortcutHelpModal'))).toBe(false);
   });
 
-  it('仅关闭弹窗（Esc / 遮罩 / ×）不算确认，下次进入仍自动弹', () => {
+  it('关闭弹窗（Esc / 遮罩 / ×）也算确认，下次进入不再自动弹', () => {
     const modal = document.getElementById('shortcutHelpModal');
     loadShortcuts();
     expect(modalShown(modal)).toBe(true);
     // Esc 关闭
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(modalShown(modal)).toBe(false);
-    expect(localStorage.getItem('canvasWheelModeAcked')).toBe(null);
-    // 再次进入
+    expect(localStorage.getItem('canvasWheelModeAcked')).toBe('1');
+    // 再次进入不再自动弹
     buildDom();
     loadShortcuts();
-    expect(modalShown(document.getElementById('shortcutHelpModal'))).toBe(true);
+    expect(modalShown(document.getElementById('shortcutHelpModal'))).toBe(false);
+  });
+
+  it('点 × 关闭也算确认，下次进入不再自动弹', () => {
+    const modal = document.getElementById('shortcutHelpModal');
+    loadShortcuts();
+    expect(modalShown(modal)).toBe(true);
+    document.getElementById('shortcutHelpModalClose').click();
+    expect(modalShown(modal)).toBe(false);
+    expect(localStorage.getItem('canvasWheelModeAcked')).toBe('1');
+    buildDom();
+    loadShortcuts();
+    expect(modalShown(document.getElementById('shortcutHelpModal'))).toBe(false);
+  });
+
+  it('点遮罩空白处关闭也算确认，下次进入不再自动弹', () => {
+    const modal = document.getElementById('shortcutHelpModal');
+    loadShortcuts();
+    expect(modalShown(modal)).toBe(true);
+    // 模拟点击遮罩本身（target === modal）
+    modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(modalShown(modal)).toBe(false);
+    expect(localStorage.getItem('canvasWheelModeAcked')).toBe('1');
+    buildDom();
+    loadShortcuts();
+    expect(modalShown(document.getElementById('shortcutHelpModal'))).toBe(false);
   });
 
   it('确认过后：工具栏「快捷键」按钮仍可手动打开', () => {

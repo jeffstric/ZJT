@@ -17,6 +17,7 @@ import {
     updateCurrentSceneDetail,
     updateDigitalHumanAudioHint,
     updateDialogueRow,
+    updateDialogueAudioSourcePanel,
     updateTimelineProgress,
     refresh,
     Region,
@@ -158,6 +159,11 @@ function applyTaskStatus(scene, data, requestSelection) {
             dialogue.audioError = d.error || '';
         }
     });
+    // 音源口径同步：首条配音落地时后端会把 audio_embedded 锁定为 1（视频原声，不自动切 TTS）。
+    // 播放引擎与「音频来源」面板据此保持一致（无配音时前端禁选 TTS）。
+    if (data.audio_embedded != null) {
+        scene.audioEmbedded = Boolean(data.audio_embedded);
+    }
     scene.taskStatus = {
         first_frame: firstFrameCurrent && data.first_frame ? data.first_frame.status : scene.taskStatus?.first_frame ?? null,
         last_frame: data.last_frame ? data.last_frame.status : null,
@@ -237,7 +243,10 @@ function applySceneUpdate(scene, changedDialogueIds) {
     updateDigitalHumanAudioHint(scene);
     // 4. audio 发生变化的单条对话行（按行粒度，避免触碰正在编辑的其他行）
     (changedDialogueIds || []).forEach(did => updateDialogueRow(scene, did));
-    // 5. 若本分镜 duration 被音频同步刷新过，进度行总时长需单独更新（其余局部更新不触碰该 span）
+    // 5. 「音频来源」面板：配音落地（TTS 按钮 禁用→可选）、后端音源锁定翻转、
+    //    音色替换收尾都会改变其状态；签名防抖，输入未变时不重建
+    updateDialogueAudioSourcePanel(scene);
+    // 6. 若本分镜 duration 被音频同步刷新过，进度行总时长需单独更新（其余局部更新不触碰该 span）
     if (scene._durationChanged) {
         updateTimelineProgress();
         scene._durationChanged = false;

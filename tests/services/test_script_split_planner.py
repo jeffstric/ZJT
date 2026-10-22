@@ -274,13 +274,26 @@ def test_plan_excluded_conflicts_with_segment():
 
 
 def test_plan_excluded_all_blocks_leaves_no_segments():
-    """全部 block 被排除 → segments 为空，现有 plan_no_segments 拦截。"""
+    """全部 block 被排除 → segments 为空，报 plan_all_blocks_excluded（专门错误码）。"""
     anchors = _make_anchors(2)
     plan = {
         "excluded_block_ids": ["block_0001", "block_0002"],
         "segments": [],
     }
     ok, errors = validate_segment_plan(plan, anchors)
+    assert not ok
+    assert any(e["code"] == "plan_all_blocks_excluded" for e in errors)
+    assert all("剧本" in e["message"] for e in errors if e["code"] == "plan_all_blocks_excluded")
+
+
+def test_plan_no_segments_without_full_exclusion_keeps_generic_code():
+    """segments 缺失/为空且未全排除 → 保持通用 plan_no_segments。"""
+    anchors = _make_anchors(2)
+    ok, errors = validate_segment_plan({}, anchors)
+    assert not ok
+    assert any(e["code"] == "plan_no_segments" for e in errors)
+
+    ok, errors = validate_segment_plan({"segments": [], "excluded_block_ids": ["block_0001"]}, anchors)
     assert not ok
     assert any(e["code"] == "plan_no_segments" for e in errors)
 

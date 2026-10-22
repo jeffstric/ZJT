@@ -133,6 +133,73 @@ h1 {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.owner-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 0 0 18px;
+}
+
+.owner-scope[hidden],
+.owner-scope-form[hidden],
+.owner-scope-hint[hidden] {
+  display: none !important;
+}
+
+.owner-scope-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.owner-scope-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.owner-scope-btn.is-active {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.owner-scope-form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: min(100%, 320px);
+}
+
+.owner-scope-form .search-input {
+  flex: 1;
+  width: auto;
+}
+
+.owner-scope-submit {
+  flex: 0 0 auto;
+}
+
+.owner-scope-hint {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.folder-owner {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .folder-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

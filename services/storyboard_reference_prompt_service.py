@@ -10,7 +10,11 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from config.constant import MAX_VOICE_REFERENCE_AUDIOS
+from config.constant import (
+    H3_VOICE_CASTING_NOTE_MARKER,
+    H3_VOICE_CASTING_NOTE_MAX_CHARS,
+    MAX_VOICE_REFERENCE_AUDIOS,
+)
 
 
 ROLE_TAG_RE = re.compile(r"【【([^】]+)】】")
@@ -456,6 +460,27 @@ def _normalize_audio_urls(existing: Any) -> List[str]:
     return _dedupe_keep_order(str(url).strip() for url in raw if str(url or "").strip())
 
 
+def extract_speaking_character_ids(dialogues: Any) -> set:
+    """从分镜对话数据提取开口说话的角色 id 集合（text 非空才算台词）。
+
+    H3 音色注入按台词说话人过滤的原料：scene_context['dialogues'] 来自
+    storyboard_dialogue 表（character_id + text），前端结构化编辑保证台词
+    与对话记录一致。text 为空的记录（占位/已清空）不算说话。
+    """
+    ids = set()
+    for d in dialogues or []:
+        if not isinstance(d, dict):
+            continue
+        if not str(d.get("text") or "").strip():
+            continue
+        try:
+            cid = int(d.get("character_id"))
+        except (TypeError, ValueError):
+            continue
+        ids.add(cid)
+    return ids
+
+
 def collect_character_voice_references(
     *,
     supports_voice_input: bool,
@@ -463,13 +488,18 @@ def collect_character_voice_references(
     image_mode: str = "",
     existing_audio_urls: Any = None,
     max_audios: int = MAX_VOICE_REFERENCE_AUDIOS,
+    speaking_character_ids: Optional[set] = None,
 ) -> Tuple[List[Dict[str, str]], str]:
     """收集参考生视频要注入的角色音色参考（default_voice 克隆源音频）。
 
     门控：multi_reference 模式 + 模型能力位 supports_voice_input，否则返回空。
     - 无 default_voice 的角色跳过；
     - 与已有参考音频（用户手动上传）按 URL 去重，音色排在其后；
-    - 截断到 max_audios（MiniMax H3 LoadAudio 硬上限为 2）。
+    - 截断到 max_audios（MiniMax H3 LoadAudio 硬上限为 2）；
+    - speaking_character_ids 非 None 时只收集开口说话的角色（H3 单人/少人说话
+      镜头按台词过滤：不说话角色的音色上传后无声明目标，H3 会把它错误配对给
+      画面中的可见人物或混入成片人声——线上 server8 分镜 2 事故）。None 表示
+      不过滤（seedance 等链路维持现状）。
 
     Returns:
         (voice_items, prompt_note)：voice_items 为 [{"name", "url"}]，
@@ -490,6 +520,13 @@ def collect_character_voice_references(
         name = _clean_name(character.get("name")) if isinstance(character, dict) else ""
         if not url or url in seen_urls or not name:
             continue
+        if speaking_character_ids is not None:
+            try:
+                character_id = int(character.get("id"))
+            except (TypeError, ValueError):
+                character_id = None
+            if character_id not in speaking_character_ids:
+                continue
         seen_urls.add(url)
         voice_items.append({"name": name, "url": url})
         if len(voice_items) >= max_audios:
@@ -521,6 +558,47 @@ def build_voice_reference_note(voice_items: List[Dict[str, str]], start_index: i
 def append_voice_reference_note(prompt: str, voice_items: List[Dict[str, str]], start_index: int = 1) -> str:
     """把音色说明追加到提示词尾部；已包含同一说明时幂等跳过。"""
     note = build_voice_reference_note(voice_items, start_index=start_index)
+    if not note or note in str(prompt or ""):
+        return str(prompt or "")
+    return f"{str(prompt or '').rstrip()}\n\n{note}"
+
+
+def build_voice_casting_note(characters: Optional[List[Dict[str, Any]]]) -> str:
+    """把角色声学音色指纹（character.voice_desc）拼成「角色音色说明」提示词段。
+
+    仅 MiniMax H3（KFRef / Ref2VA）调用——指纹是纯文本不占音频槽，随原文进入
+    提示词优化，由优化 LLM 渲染为说话角色的声音描述；其他模型零变化。
+    voice_desc 为空的角色跳过（存量角色未生成指纹时自然降级为无指纹注入）。
+    不在此处过滤说话人：是否开口由优化 LLM 语义判断（has_dialogue / 说话人绑定），
+    指令与模板明确「不说话的角色忽略其音色说明」。
+    """
+    parts: List[str] = []
+    for character in characters or []:
+        if not isinstance(character, dict):
+            continue
+        name = _clean_name(character.get("name"))
+        desc = str(character.get("voice_desc") or "").strip()
+        if not name or not desc:
+            continue
+        parts.append(f"{name}的音色特征：{desc}")
+    if not parts:
+        return ""
+    # 指纹文本可能自带句号，拼接处避免出现「命令。。描述」双句号
+    joined = "；".join(
+        part if part.rstrip().endswith(("。", ".", "！", "？")) else part + "。"
+        for part in parts
+    )
+    note = (
+        H3_VOICE_CASTING_NOTE_MARKER
+        + joined
+        + "描述这些角色说话的声音时必须遵循对应音色特征。"
+    )
+    return note[:H3_VOICE_CASTING_NOTE_MAX_CHARS]
+
+
+def append_voice_casting_note(prompt: str, note: str) -> str:
+    """把「角色音色说明」追加到提示词尾部；空说明或已包含时幂等跳过。"""
+    note = str(note or "").strip()
     if not note or note in str(prompt or ""):
         return str(prompt or "")
     return f"{str(prompt or '').rstrip()}\n\n{note}"

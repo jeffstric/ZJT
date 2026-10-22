@@ -47,12 +47,17 @@ from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
     build_storyboard_reference_items,
+    build_voice_casting_note,
     collect_character_voice_references,
+    extract_speaking_character_ids,
     extract_storyboard_reference_names,
     reference_urls,
 )
+from task.pipeline_drivers import PipelineDriverFactory
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
@@ -1191,22 +1196,46 @@ class StoryboardAgentCliService:
         # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入，
         # 同单发生成路径口径：音色参考必须绑台词，无台词上传会被上游拒绝
         # （「无法识别的说话内容」）或被当成成片声音。
+        # 有台词镜头按说话人过滤：只注入开口说话角色的音色，不说话角色的音色
+        # 上传后无声明目标，会被 H3 错配给画面人物或混入成片人声（同单发口径）。
         if mode == "image_to_video" and not (
             task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
             and not has_quoted_dialogue(prompt_text)
         ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
+            _speaking_voice_ids = None
+            if int(task_type) in (
+                int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO),
+                int(h3_keyframe_ref_task_id()),
+            ):
+                _speaking = extract_speaking_character_ids(context.get('dialogues'))
+                if _speaking:
+                    _speaking_voice_ids = _speaking
             _voice_items, _ = collect_character_voice_references(
                 supports_voice_input=bool(getattr(_config, 'supports_voice_input', False)),
                 characters=context.get('characters'),
                 image_mode=image_mode,
                 existing_audio_urls=audio_urls,
+                speaking_character_ids=_speaking_voice_ids,
             )
             if _voice_items:
                 merged = [url for url in str(audio_urls or '').split(',') if url.strip()]
                 merged.extend(item['url'] for item in _voice_items)
                 audio_urls = ','.join(merged)
                 prompt_text = append_voice_reference_note(prompt_text, _voice_items)
+
+        # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
+        # （character.voice_desc），批量补视频与单发链路同口径：H3 参考音频只是
+        # 弱微调，音色一致性靠文字指纹渲染进提示词。纯文本不占音频槽，
+        # 非 H3 模型零变化；KFRef 无对白镜头与音色注入同口径跳过（防诱导配音）。
+        if PipelineDriverFactory.is_h3_prompt_optimize_type(int(task_type)) and not (
+            task_type == h3_keyframe_ref_task_id()
+            and not has_quoted_dialogue(prompt_text)
+        ):
+            prompt_text = append_voice_casting_note(
+                prompt_text,
+                build_voice_casting_note(context.get('characters')),
+            )
 
         from script_writer_core.mcp_tool import scoped_video_preferences
         with scoped_video_preferences(generation_snapshot):
@@ -2439,7 +2468,8 @@ class StoryboardAgentCliService:
         item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_COMPLETED
         item["result_url"] = result_url
 
-    def _reconcile_running_image_batch_items(self, job_id: int, items: List[Dict[str, Any]]) -> None:
+    def _reconcile_running_image_batch_items(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
+        job_id = int(job["id"])
         timeout_seconds = int(StoryboardAutoGenerateConstants.BATCH_RUNNING_ITEM_TIMEOUT_SECONDS)
         now = datetime.now()
         grid_failed_statuses = {
@@ -2466,6 +2496,10 @@ class StoryboardAgentCliService:
 
             extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
             grid_task_id = extra.get("grid_task_id")
+            if extra.get("degraded_from_grid_to_single"):
+                # 已降级为单图直出的 RUNNING item：extra 里可能残留旧 grid_task_id，
+                # 不得再按宫格任务状态判死，交由上方通用 asset 对账与下方超时兜底收口。
+                grid_task_id = None
             if grid_task_id:
                 try:
                     grid_task = GridImageTasksModel.get_by_id(int(grid_task_id))
@@ -2478,10 +2512,18 @@ class StoryboardAgentCliService:
                 if grid_task:
                     grid_status = int(_get_field(grid_task, "status", 0) or 0)
                     if grid_status in grid_failed_statuses:
+                        grid_error = _get_field(grid_task, "error_message", None) or "grid image task failed"
+                        if self._prepare_grid_fallback_for_item(
+                            job, item,
+                            error_message=grid_error,
+                            failure_source="grid_task",
+                            grid_task_status=grid_status,
+                        ):
+                            continue
                         self._fail_image_batch_item(
                             item,
                             error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
-                            error_message=_get_field(grid_task, "error_message", None) or "grid image task failed",
+                            error_message=grid_error,
                             extra_json={
                                 "grid_task_status": grid_status,
                                 "failure_source": "grid_task",
@@ -2489,10 +2531,18 @@ class StoryboardAgentCliService:
                         )
                         continue
                     if grid_status == GridImageTaskStatus.COMPLETED and int(_get_field(grid_task, "update_success", 0) or 0) != 1:
+                        grid_error = _get_field(grid_task, "error_message", None) or "grid split/writeback failed"
+                        if self._prepare_grid_fallback_for_item(
+                            job, item,
+                            error_message=grid_error,
+                            failure_source="grid_task_writeback",
+                            grid_task_status=grid_status,
+                        ):
+                            continue
                         self._fail_image_batch_item(
                             item,
                             error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
-                            error_message=_get_field(grid_task, "error_message", None) or "grid split/writeback failed",
+                            error_message=grid_error,
                             extra_json={
                                 "grid_task_status": grid_status,
                                 "failure_source": "grid_task_writeback",
@@ -2509,13 +2559,203 @@ class StoryboardAgentCliService:
                     extra_json={"failure_source": "batch_running_timeout"},
                 )
 
+    # ------------------------------------------------------------------
+    # quality 宫格首帧失败 → 逐场景单图直出降级
+    # ------------------------------------------------------------------
+
+    def _grid_single_fallback_enabled_for_job(self, job: Dict[str, Any]) -> bool:
+        """降级仅对 quality 首帧批任务生效（宫格失败码只可能来自这条链）。"""
+        if not StoryboardFeatureFlags.GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED:
+            return False
+        if (job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE) != "first_frame":
+            return False
+        return self._normalize_sequence_mode(job.get("sequence_mode")) == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
+
+    def _prepare_grid_fallback_for_item(
+        self,
+        job: Dict[str, Any],
+        item: Dict[str, Any],
+        *,
+        error_message: str,
+        failure_source: str,
+        grid_task_status: Optional[int] = None,
+    ) -> bool:
+        """把单个宫格失败 item 复活为待降级提交的 PENDING（写一次性降级标记）。
+
+        返回 False 表示不满足降级条件（开关关闭 / 已降级过 / 批任务类型不符），
+        调用方应回落到旧的直接失败语义。标记 degraded_from_grid_to_single 同时
+        兼作"每 item 仅降级一次"的防循环闸：降级后的失败码不再等于宫格失败码。
+        """
+        extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+        if extra.get("degraded_from_grid_to_single"):
+            return False
+        if not self._grid_single_fallback_enabled_for_job(job):
+            return False
+        next_extra = {
+            key: value
+            for key, value in extra.items()
+            if key not in {"waiting", "grid_task_id"}
+        }
+        next_extra.update({
+            "degraded_from_grid_to_single": True,
+            "grid_fallback_reason": str(error_message or "grid task failed")[:512],
+            "grid_fallback_error_code": StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED,
+            "grid_fallback_failure_source": failure_source,
+        })
+        if grid_task_status is not None:
+            next_extra["grid_task_status"] = grid_task_status
+        # JSON_MERGE_PATCH 中 null 值会删除成员：显式传 null 清掉陈旧 grid_task_id，
+        # 防止降级提交后的 RUNNING item 再被宫格对账误杀。
+        next_extra["grid_task_id"] = None
+        StoryboardImageBatchItemModel.update(
+            int(item["id"]),
+            status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING,
+            error_code=None,
+            error_message=None,
+            extra_json=next_extra,
+        )
+        item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+        item["error_code"] = None
+        item["error_message"] = None
+        item["extra_json"] = next_extra
+        logger.warning(
+            "[grid-fallback] job=%s item=#%s scene=%s 宫格失败(%s)，降级为单图直出: %s",
+            job.get("id"), item.get("id"), item.get("scene_id"), failure_source,
+            str(error_message or "")[:200],
+        )
+        return True
+
+    def _prepare_grid_fallback_items(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
+        """扫描已被 grid worker / 拆图 driver 判死的 FAILED item，批量转入降级。"""
+        if not self._grid_single_fallback_enabled_for_job(job):
+            return
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED:
+                continue
+            if item.get("error_code") != StoryboardAutoGenerateConstants.ERROR_GRID_FIRST_FRAME_FAILED:
+                continue
+            extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            if extra.get("degraded_from_grid_to_single"):
+                continue
+            self._prepare_grid_fallback_for_item(
+                job, item,
+                error_message=item.get("error_message") or "grid first-frame generation failed",
+                failure_source=str(extra.get("failure_source") or "grid_task"),
+                grid_task_status=extra.get("grid_task_status"),
+            )
+
+    def _submit_grid_fallback_items(self, job: Dict[str, Any], items: List[Dict[str, Any]]) -> int:
+        """对带降级标记的 PENDING item 提交单图直出（模型沿用批任务锁定快照）。
+
+        提交成功 → item 置 RUNNING（后续由 asset 轮询对账自然完成）；
+        提交失败 → item FAILED(grid_fallback_submit_failed)，不再二次降级。
+        返回本轮提交数。
+        """
+        job_extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
+        job_snapshots = job_extra.get("generation_snapshots") or {}
+        submitted_count = 0
+        for item in items:
+            if int(item.get("status") or 0) != StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING:
+                continue
+            extra = item.get("extra_json") if isinstance(item.get("extra_json"), dict) else {}
+            if not extra.get("degraded_from_grid_to_single"):
+                continue
+            item_snapshots = extra.get("generation_snapshots") if isinstance(extra.get("generation_snapshots"), dict) else {}
+            snapshots = item_snapshots or job_snapshots
+            source_image = extra.get("previous_group_reference_url") or None
+            cell_context = extra.get("grid_prompt_cell_context") if isinstance(extra.get("grid_prompt_cell_context"), dict) else {}
+            prompt = str(cell_context.get("prompt_text") or "").strip() or None
+            submit_mode = "image_edit" if source_image else (job.get("mode") or "auto")
+            try:
+                result = self.generate_image(
+                    scene_id=int(item["scene_id"]),
+                    user_id=int(job["user_id"]),
+                    auth_token=job.get("auth_token") or "",
+                    mode=submit_mode,
+                    asset_type=job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE,
+                    prompt=prompt,
+                    source_image=source_image,
+                    ratio=job.get("ratio"),
+                    image_size=job.get("image_size"),
+                    count=int(job.get("count") or 1),
+                    sequence_mode=job.get("sequence_mode"),
+                    # 降级已是兜底路径：不再被 location 参考图 readiness 检查卡住
+                    force_bypass=True,
+                    # 模型锁定语义与宫格/单图主路径一致：优先 item 快照，回退 job 快照，
+                    # 禁止回退实时偏好
+                    generation_snapshots=snapshots,
+                )
+            except StoryboardCliError as exc:
+                self._fail_image_batch_item(
+                    item,
+                    error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FALLBACK_SUBMIT_FAILED,
+                    error_message=f"grid fallback submit failed: {exc.message}",
+                    extra_json={
+                        "failure_source": "grid_fallback_submit",
+                        "grid_fallback_payload": exc.payload,
+                    },
+                )
+                if int(job.get("stop_on_error") or 0):
+                    break
+                continue
+            except Exception as exc:
+                logger.error(
+                    "[grid-fallback] job=%s item=#%s scene=%s 单图直出提交异常: %s",
+                    job.get("id"), item.get("id"), item.get("scene_id"), exc, exc_info=True,
+                )
+                self._fail_image_batch_item(
+                    item,
+                    error_code=StoryboardAutoGenerateConstants.ERROR_GRID_FALLBACK_SUBMIT_FAILED,
+                    error_message=f"grid fallback submit error: {exc}",
+                    extra_json={"failure_source": "grid_fallback_submit"},
+                )
+                if int(job.get("stop_on_error") or 0):
+                    break
+                continue
+            project_ids = result.get("project_ids") or []
+            asset_ids = result.get("asset_ids") or []
+            selected_asset_id = result.get("selected_asset_id") or (asset_ids[0] if asset_ids else None)
+            self._audit_image_batch_model_consistency(job, submit_mode, item, result)
+            StoryboardImageBatchItemModel.update(
+                int(item["id"]),
+                status=StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING,
+                ai_tool_id=project_ids[0] if project_ids else None,
+                asset_id=selected_asset_id,
+                project_ids=project_ids,
+                reference_url=source_image,
+                result_url=None,
+                extra_json={
+                    **extra,
+                    "waiting": "",
+                    "grid_fallback_submitted": True,
+                    "grid_fallback_mode": submit_mode,
+                },
+            )
+            item["status"] = StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+            item["project_ids"] = project_ids
+            item["asset_id"] = selected_asset_id
+            item["reference_url"] = source_image
+            item["extra_json"] = {
+                **extra,
+                "waiting": "",
+                "grid_fallback_submitted": True,
+                "grid_fallback_mode": submit_mode,
+            }
+            submitted_count += 1
+            logger.info(
+                "[grid-fallback] job=%s item=#%s scene=%s 单图直出已提交(mode=%s, prompt=%s)",
+                job.get("id"), item.get("id"), item.get("scene_id"), submit_mode,
+                "refined" if prompt else "scene-default",
+            )
+        return submitted_count
+
     def _process_one_image_batch_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
         job_id = int(job["id"])
         job_extra = job.get("extra_json") if isinstance(job.get("extra_json"), dict) else {}
         generation_snapshots = job_extra.get('generation_snapshots') or {}
         StoryboardImageBatchJobModel.update(job_id, status=StoryboardAutoGenerateConstants.BATCH_JOB_STATUS_RUNNING)
         items = StoryboardImageBatchItemModel.list_by_job(job_id)
-        self._reconcile_running_image_batch_items(job_id, items)
+        self._reconcile_running_image_batch_items(job, items)
         asset_type = (job.get("asset_type") or StoryboardAutoGenerateConstants.DEFAULT_ASSET_TYPE)
         if asset_type == "video":
             return self._process_one_video_batch_job(job, items)
@@ -2524,6 +2764,13 @@ class StoryboardAgentCliService:
             and asset_type == "first_frame"
             and self._normalize_sequence_mode(job.get("sequence_mode")) == StoryboardAutoGenerateConstants.SEQUENCE_MODE_QUALITY
         ):
+            # 宫格失败降级：FAILED(宫格码) → PENDING(标记) → 单图直出 RUNNING。
+            # 必须在 quality 分支决策前完成状态翻转，否则 fail_downstream 会级联判死。
+            if self._grid_single_fallback_enabled_for_job(job):
+                self._prepare_grid_fallback_items(job, items)
+                if self._submit_grid_fallback_items(job, items):
+                    # 已有 item 提交单图，重拉最新状态供 quality 分支决策
+                    items = StoryboardImageBatchItemModel.list_by_job(job_id)
             return StoryboardFirstFrameGridService(
                 counts_updater=self._update_image_batch_job_counts
             ).process_job(job)
@@ -3206,6 +3453,7 @@ class StoryboardAgentCliService:
             "result_url": item.get("result_url"),
             "error_code": item.get("error_code"),
             "error_message": item.get("error_message"),
+            "degraded_from_grid_to_single": bool(extra.get("degraded_from_grid_to_single")),
         }
 
     def split_from_script(
@@ -3321,18 +3569,23 @@ class StoryboardAgentCliService:
         # service 已在路由层 asyncio.to_thread 的子线程中执行，无活动事件循环，
         # asyncio.run 安全（与 _parse_script_to_shots_sync 的既有模式一致）。
         import asyncio as _asyncio
-        from api.script_split import create_split_task
-        task_id, is_new = _asyncio.run(
-            create_split_task(
-                user_id=int(user_id),
-                source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
-                source_id=int(storyboard_id),
-                source_node_key=None,
-                script_content=str(content),
-                request_config=request_config,
-                auth_token=auth_token or None,
+        from api.script_split import ScriptSplitPreconditionError, create_split_task
+        try:
+            task_id, is_new = _asyncio.run(
+                create_split_task(
+                    user_id=int(user_id),
+                    source_type=ScriptSplitConstants.SOURCE_TYPE_STORYBOARD,
+                    source_id=int(storyboard_id),
+                    source_node_key=None,
+                    script_content=str(content),
+                    request_config=request_config,
+                    auth_token=auth_token or None,
+                )
             )
-        )
+        except ScriptSplitPreconditionError as exc:
+            # 剧本内容信息不足等前置校验失败：转 CLI 错误码，路由层返回 400 详情，
+            # 不让 Agent 链路吃裸 ValueError（与 web 入口 400 通路对齐）。
+            raise StoryboardCliError(exc.code, exc.message)
 
         return {
             "success": True,
@@ -4643,8 +4896,9 @@ class StoryboardAgentCliService:
                         f"叙事目的：{shot.get('narrative_purpose')}" if shot.get("narrative_purpose") else None,
                     ]),
                     "video_type": resolved_video_type,
-                    # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
-                    "audio_embedded": resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
+                    # 音源口径：新分镜默认视频原声，配音落地后保持、不自动切 TTS
+                    # （与 api/storyboard.py 拆分建分镜一致，见 docs/storyboard/storyboard_timeline_playback.md）
+                    "audio_embedded": True,
                     "video_config": {
                         "shot_type": shot_type,
                         "camera_angle": camera_angle,

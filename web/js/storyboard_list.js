@@ -54,17 +54,49 @@ function statusLabel(status) {
 }
 
 let foldersCache = [];
+let ownerScope = 'mine';
+let ownerQuery = '';
+let isAdminUser = false;
+
+async function loadIsAdmin() {
+  try {
+    const response = await fetch('/api/user/role', { headers: authHeaders() });
+    const data = await response.json().catch(() => null);
+    isAdminUser = !!(data && data.code === 0 && data.data && data.data.role === 'admin');
+  } catch {
+    isAdminUser = false;
+  }
+}
+
+function syncOwnerScopeUi() {
+  const bar = document.getElementById('storyboardOwnerScope');
+  const form = document.getElementById('storyboardOwnerForm');
+  if (bar) bar.hidden = !isAdminUser;
+  if (form) form.hidden = !(isAdminUser && ownerScope === 'user');
+  document.querySelectorAll('.owner-scope-btn').forEach((button) => {
+    button.classList.toggle('is-active', button.dataset.scope === ownerScope);
+  });
+}
 
 async function fetchFolders() {
   const params = new URLSearchParams(window.location.search);
   const worldId = params.get('world_id');
-  const url = worldId
-    ? `/api/storyboard/folders?world_id=${encodeURIComponent(worldId)}`
-    : '/api/storyboard/folders';
+  const query = new URLSearchParams();
+  if (worldId) query.set('world_id', worldId);
+  if (isAdminUser && ownerScope) query.set('scope', ownerScope);
+  if (isAdminUser && ownerScope === 'user' && ownerQuery) query.set('owner', ownerQuery);
+  const qs = query.toString();
+  const url = qs ? `/api/storyboard/folders?${qs}` : '/api/storyboard/folders';
   const response = await fetch(url, { headers: authHeaders() });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.success === false || data.code === -1) {
     throw new Error(data.error || data.message || '加载故事板列表失败');
+  }
+  const hint = document.getElementById('storyboardOwnerHint');
+  if (hint) {
+    const message = typeof data.message === 'string' ? data.message : '';
+    hint.textContent = message;
+    hint.hidden = !message;
   }
   return normalizeFoldersResponse(data);
 }
@@ -96,8 +128,13 @@ function renderFolders() {
     const scriptUrl = folder.world_id
       ? `/script-writer?world_id=${encodeURIComponent(folder.world_id)}&user_id=${encodeURIComponent(getUserId())}`
       : `/script-writer?user_id=${encodeURIComponent(getUserId())}`;
-    const deleteButton = folder.storyboard_id
+    const isOwn = folder.owner_user_id == null || String(folder.owner_user_id) === String(getUserId());
+    const deleteButton = folder.storyboard_id && isOwn
       ? `<button class="btn btn-danger" data-action="delete" data-id="${folder.storyboard_id}">删除</button>`
+      : '';
+    const ownerName = String(folder.owner_nickname || '').trim();
+    const ownerHtml = ownerName
+      ? `<div class="folder-owner">${escapeHtml(ownerName)}</div>`
       : '';
 
     return `
@@ -108,6 +145,7 @@ function renderFolders() {
             <h2 class="folder-title">${escapeHtml(title)}</h2>
             <span class="status-pill ${escapeHtml(folder.status)}">${statusLabel(folder.status)}</span>
           </div>
+          ${ownerHtml}
           <div class="folder-meta">
             <div class="meta-item">
               <span class="meta-label">世界</span>
@@ -176,6 +214,50 @@ async function init() {
 
   document.getElementById('storyboardSearchInput')?.addEventListener('input', renderFolders);
   document.getElementById('storyboardStatusFilter')?.addEventListener('change', renderFolders);
+  document.getElementById('storyboardOwnerScope')?.addEventListener('click', async (event) => {
+    const button = event.target.closest('.owner-scope-btn');
+    if (!button || !isAdminUser) return;
+    ownerScope = button.dataset.scope || 'mine';
+    syncOwnerScopeUi();
+    if (ownerScope === 'user' && !ownerQuery) {
+      foldersCache = [];
+      const hint = document.getElementById('storyboardOwnerHint');
+      if (hint) {
+        hint.textContent = '请输入昵称或账号';
+        hint.hidden = false;
+      }
+      renderFolders();
+      return;
+    }
+    try {
+      foldersCache = await fetchFolders();
+      renderFolders();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
+  document.getElementById('storyboardOwnerForm')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    ownerScope = 'user';
+    ownerQuery = (document.getElementById('storyboardOwnerInput')?.value || '').trim();
+    syncOwnerScopeUi();
+    if (!ownerQuery) {
+      foldersCache = [];
+      const hint = document.getElementById('storyboardOwnerHint');
+      if (hint) {
+        hint.textContent = '请输入昵称或账号';
+        hint.hidden = false;
+      }
+      renderFolders();
+      return;
+    }
+    try {
+      foldersCache = await fetchFolders();
+      renderFolders();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  });
   container?.addEventListener('click', async (event) => {
     const target = event.target.closest('[data-action="delete"]');
     if (!target) return;
@@ -188,6 +270,8 @@ async function init() {
   });
 
   try {
+    await loadIsAdmin();
+    syncOwnerScopeUi();
     foldersCache = await fetchFolders();
     renderFolders();
   } catch (error) {

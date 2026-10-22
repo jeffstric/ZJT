@@ -87,3 +87,46 @@ function notifyVoiceReferences(count){
     showToast('已附带 ' + count + ' 个角色音色参考', 'info');
   }
 }
+
+// ==================== 角色声学音色指纹（voice_desc，仅 MiniMax H3） ====================
+// H3 的参考音频只是弱微调，音色一致性主要由文字指纹承担（2026-10-14 消融实验结论）。
+// 指纹随「角色音色说明」块注入提示词原文，由后端提示词优化 LLM 渲染为说话角色的
+// 英文声音描述；情境语气（对下属严厉/对领导谄媚）由优化 LLM 按剧本现场叠加，不进指纹。
+
+// MiniMax H3 提示词优化模型 key 清单（与后端 PipelineDriverFactory._H3_PROMPT_OPTIMIZE_KEYS
+// 对齐，同时收录 UnifiedTaskConfig 的长 key 与 short_key——画布节点 modelKey 用的是
+// short_key 如 minimax_h3_r2v）。注意不含数字人 digital_human_minimax_h3 与 t2v，
+// 它们不走 H3 提示词优化
+const H3_PROMPT_OPTIMIZE_MODEL_KEYS = [
+  'minimax_h3_image_to_video', 'minimax_h3',      // I2VA 首帧生视频
+  'minimax_h3_reference_to_video', 'minimax_h3_r2v', // Ref2VA 参考生视频
+  'minimax_h3_keyframe_ref_to_video', 'minimax_h3_kfr', // KFRef 首帧参考混合
+];
+
+function modelIsH3OptimizeType(modelKey){
+  return H3_PROMPT_OPTIMIZE_MODEL_KEYS.indexOf(String(modelKey || '')) !== -1;
+}
+
+// 「角色音色说明」块（与后端 storyboard_reference_prompt_service.build_voice_casting_note 同构）：
+// 指纹句尾自带句号则不重复补，避免「命令。。描述」双句号
+function buildVoiceCastingNote(characterEntries){
+  const parts = [];
+  (characterEntries || []).forEach(function(character){
+    if(!character || !character.name) return;
+    const desc = String(character.voice_desc || '').trim();
+    if(!desc) return;
+    parts.push(character.name + '的音色特征：' + desc + (/[。.!！?？]$/.test(desc) ? '' : '。'));
+  });
+  if(!parts.length) return '';
+  return '角色音色说明：' + parts.join('；') + '描述这些角色说话的声音时必须遵循对应音色特征。';
+}
+
+// H3 系列任务（I2VA/Ref2VA/KFRef）：把角色音色指纹追加进提示词，幂等。
+// 仅 H3 门控、不要求 multi_reference（首帧生视频同样靠指纹做音色一致性）；
+// 不说话角色的指纹由后端优化 LLM 按模板规则忽略。其他模型零变化。
+function appendVoiceCastingIfH3(modelKey, prompt, characterEntries){
+  if(!modelIsH3OptimizeType(modelKey)) return prompt;
+  const note = buildVoiceCastingNote(characterEntries);
+  if(!note || String(prompt || '').indexOf(note) !== -1) return prompt;
+  return (String(prompt || '').trim() + '\n\n' + note).trim();
+}

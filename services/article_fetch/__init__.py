@@ -3,8 +3,8 @@
 
 支持来源与状态：
 - 微信公众号（mp.weixin.qq.com）：已实现，免登录纯 HTTP（2026-09 实测可行）
-- 小红书（xiaohongshu.com / xhslink.com）：仅抽象接口，XHS_DATA_PROVIDER
-  配置具体供应商后启用（本期不实现）
+- 小红书（xiaohongshu.com / xhslink.com）：TikHub 供应商（article_fetch.xhs_provider 启用）
+- 抖音（douyin.com / v.douyin.com / iesdouyin.com）：TikHub 供应商（需 TikHub key）
 """
 
 import logging
@@ -21,7 +21,7 @@ from services.article_fetch.models import (
     ArticleFetchNotAllowed,
     ArticleFetchRateLimited,
 )
-from services.article_fetch import wechat_fetcher, xhs_fetcher
+from services.article_fetch import wechat_fetcher, xhs_fetcher, douyin_fetcher
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,8 @@ async def fetch_article(url: str, user_id=None, include_comments: bool = False) 
         article = await wechat_fetcher.fetch_wechat_article(url, user_id=user_id, include_comments=include_comments)
     elif hostname.endswith("xiaohongshu.com") or hostname.endswith("xhslink.com"):
         article = await xhs_fetcher.fetch_xhs_note(url, user_id=user_id)
+    elif hostname.endswith("douyin.com") or hostname.endswith("iesdouyin.com"):
+        article = await douyin_fetcher.fetch_douyin_note(url, user_id=user_id)
     else:
         raise ArticleFetchNotAllowed("暂不支持该链接域名。")
 

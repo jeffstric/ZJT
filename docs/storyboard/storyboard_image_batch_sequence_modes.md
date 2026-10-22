@@ -6,7 +6,7 @@
 
 - `speed`: submit all missing images up to `limit` without previous-frame references.
 - `balanced`: default. **组间并发、组内串行依赖**：每个解析组内第一个就绪场景立即提交，同组后续场景必须等前一个场景出图后，把该结果作为 `source_image` 走 `image_edit` 提交；不同组之间互不等待、并发提交。注意这不是"全部并行提交"——同组内存在前后依赖链。
-- `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group (`storyboard_image_batch_item.group_key` / `prompt_json.source.group_id`) are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene; `act_name` is display/fallback metadata and must not merge multiple parsed groups into one grid. The old global previous-frame chain is only the fallback path when this feature flag is disabled.
+- `quality`: enterprise-only for first-frame generation. When `StoryboardFeatureFlags.QUALITY_GRID_FIRST_FRAME_ENABLED` is enabled, ready scenes in the same parsed group (`storyboard_image_batch_item.group_key` / `prompt_json.source.group_id`) are submitted as 2x2 or 3x3 storyboard first-frame grids and then split back to each scene; `act_name` is display/fallback metadata and must not merge multiple parsed groups into one grid. The old global previous-frame chain is only the fallback path when this feature flag is disabled. 宫格终态失败（几何校验失败/超时/FAILED 等，`error_code=grid_first_frame_failed`）时，若 `StoryboardFeatureFlags.GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED` 开启（默认），失败 item 会降级为**逐场景单图直出**（复用批任务锁定的模型快照与前一幕参考图，`extra_json.degraded_from_grid_to_single=True`），后续组照常推进；降级提交也失败才以 `grid_fallback_submit_failed` 收口并触发下游级联。详见 `docs/storyboard/storyboard_auto_missing_images.md` 的"宫格失败降级单图直出"一节。
 
 ## Frontend Dialog Copy
 

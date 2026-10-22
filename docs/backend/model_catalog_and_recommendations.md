@@ -29,6 +29,12 @@
 
 2026-08 起，`GPT_IMAGE_2_EDIT`（task_id=26）的 `sort_order` 调为 5，成为 IMAGE_EDIT / TEXT_TO_IMAGE 类目列表首项（`config/unified_config.py`），各端"取列表第一项"的默认图片编辑/文生图模型随之变为 GPT Image 2；故事板页图片编辑槽位的 localStorage 记忆键同步升级为 `storyboard_lastSelectedImageEditTaskId_v2`，旧记忆一次性作废。
 
+故事板页（storyboard.html）五类生成槽位（文生图/图片编辑/文生视频/图生视频/参考生视频）2026-10 起无 localStorage 记忆（新用户）时的默认统一取该场景性价比档：`web/js/storyboard/state.js` 的 `pickRememberedTaskId` 优先选列表中 `track === 'value'` 的模型（`GET /api/storyboard/models` 每项的 `track` 由 `annotate_task_models` 标注，联动 `get_scene_recos_merged()` 热更新），再回退槽位显式 preferred（均为 value 档），最后列表第一项。此前图生视频槽位无记忆默认取列表第一项，因 LTX2.3 `sort_order=30` 分类内最小而落选 LTX2.3（文生视频落到 Grok）。已有记忆用户沿用原选择，不重置。
+
+工作流页（video_workflow.html）各视频节点（图生视频/分镜组/分镜帧/剧本节点）的默认视频模型 2026-10 起同样显式取性价比档：`findTaskByTrack(options, scene, TaskConfig.getCatalog(), 'value')` 优先（scene 按生成模式映射，多参考模式为 `video.reference_to_video`），回退 `getModelOptionsForCategory` 排序后的列表第一项。`web/js/task_config.js` 新增 `getCatalog()` 导出后端真实目录（含管理员热更新），上述调用点不再回退前端 FALLBACK 副本。营销智能体页（marketing_agent.html）图片/视频/LLM 默认此前已通过 `modelForMediaSlot`（`findTaskByTrack value`）与 `collapseLlmModels + findCollapsedByTrack('value')` 走性价比档，无需改动。
+
+服务端侧同口径修复（2026-10-12）：`MediaGenerationPreferenceService.default_model` 无偏好默认解析改为**目录性价比档优先**（按槽位映射场景取 value 档，联动 `get_scene_recos_merged()` 热更新），回退 sort_order 第一；`GET /api/storyboard/media-preferences` 的 Storyboard UI 读取改为**不落库**（`get_profile(initialize=False)`），偏好表只存用户显式选择，空槽位由前端性价比档兜底、提交路径按运行时默认冻结进任务快照。事故链：图生视频 sort_order 最小是 LTX2.3(30)，服务端首次初始化偏好按旧口径落库 LTX2.3，从此隐身模式/新浏览器都命中该固化记录，前端 `track === 'value'` 兜底（上文 59009cf3）被短路。详见 `docs/backend/media_generation_preference_scopes.md`。
+
 ## 默认解析
 
 ```text
@@ -50,4 +56,5 @@ LLM 同一规范模型的供应商顺序：目录 `preferred_vendors` → 已配
 ## 前端
 
 `web/js/model_catalog.js` + `web/css/model_catalog.css`：折叠供应商、性价比/效果开关、系列分组。
+`web/js/task_config.js` 的 `getModelOptionsForCategory` 为每个模型项计算 `track` 并按 value→quality→其它排序，另提供 `getCatalog()` 返回 `/api/system/task-configs` 的真实目录（含管理员热更新），供各页默认选择显式命中 value 档。
 工作流节点从 `config_json` 恢复已选模型，不被推荐覆盖。

@@ -21,6 +21,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
+    strip_leading_json_object,
     parse_storyboard_dialogue_model,
     resolve_h3_prompt_variant,
     validate_h3_optimized_prompt,
@@ -190,6 +191,69 @@ def test_user_message_no_dialogue_note_for_timbre_only_prompt():
     assert "不得出现 <d> 标签" in message
     # 反幻觉提示位于指令区，原文仍完整附在消息末尾
     assert message.rstrip().endswith("角色说话时请保持相同音色。")
+
+
+def test_user_message_adds_voice_casting_instruction_with_fingerprint():
+    """原文携带「角色音色说明」（voice_desc 声学指纹）时追加配音规格指令"""
+    original = (
+        "赵志高瞪着李保国说：“你看看你扫得什么地！”\n\n"
+        "角色音色说明：赵志高的音色特征：45岁左右的男性，声音低沉沙哑，音量洪亮，语速缓慢。"
+    )
+    for variant in (
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    ):
+        message = build_h3_optimize_user_message(
+            original, variant, 5, template="GUIDE",
+            keyframe_slots=None, ref_counts={"images": 2, "videos": 0, "audios": 0},
+        )
+        assert "角色配音规格" in message, variant
+        assert "禁止增删或改写" in message, variant
+        assert "不要抄进最终提示词" in message, variant
+        # 原文（含指纹说明块）完整附在消息末尾
+        assert message.rstrip().endswith("语速缓慢。")
+
+
+def test_user_message_skips_voice_casting_instruction_without_fingerprint():
+    """原文没有指纹说明块时不追加配音指令（旧任务/非 H3 注入链路零变化）"""
+    message = build_h3_optimize_user_message(
+        "女主说：“原来是这样！”",
+        H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
+        5,
+        template="GUIDE",
+    )
+    assert "角色配音规格" not in message
+
+
+def test_h3_templates_carry_voice_casting_rules():
+    """三个模板都有 Voice casting 段：指纹特征转写进说话句、说明块不抄进结果"""
+    for variant in (
+        H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+    ):
+        guide = load_h3_prompt_template(variant)
+        assert "Voice casting" in guide, variant
+        assert "never drop, soften, or invent traits" in guide, variant
+        assert "casting input only" in guide, variant
+
+
+def test_strip_leading_json_object_variants():
+    """非 KFRef 变体的防御剥离：模型偶发自发的判断性 JSON 前缀被剥掉，其余原样"""
+    # 首行 JSON 对象被剥，正文保留
+    assert strip_leading_json_object('{"has_dialogue": false}\n六段正文') == '六段正文'
+    # 无 JSON 前缀原样
+    assert strip_leading_json_object('六段正文') == '六段正文'
+    # 首行非法 JSON（非闭合）原样保留
+    assert strip_leading_json_object('{abc\n正文') == '{abc\n正文'
+    # 首行 JSON 数组（非对象）原样保留
+    assert strip_leading_json_object('[1, 2]\n正文') == '[1, 2]\n正文'
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
+    # 整体就是一个 JSON 对象（无正文）→ 剥后为空
+    assert strip_leading_json_object('{"has_dialogue": true}') == ''
 
 
 def test_fidelity_note_language_tag_japanese_and_korean():
@@ -516,7 +580,7 @@ def test_kfref_instruction_uses_real_slots_and_capital_picture():
         "图1是首帧，图3是尾帧。",
     )
     message = build_h3_optimize_user_message(
-        "从首帧走到尾帧",
+        "从首帧走到尾帧，林月说「快到了」",
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         6,
         template="GUIDE",
@@ -546,22 +610,25 @@ def test_kfref_instruction_names_second_audio_when_two_are_present():
         "图1是首帧，图3是尾帧。",
     )
     message = build_h3_optimize_user_message(
-        "两段音色",
+        "两段音色，赵志高呵斥「李保国！」",
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         10,
         template="GUIDE",
         ref_counts={"images": 3, "videos": 0, "audios": 3},
         keyframe_slots=slots,
     )
-    # 3 路截断到 2：指令给「可用 2 路」事实与绑定句骨架，写不写由 LLM 判台词后自选
-    assert "有 2 个可用参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>" in message
+    # 3 路截断到 2：指令给「可用 2 路」事实与绑定句骨架，只给说话人写声明
+    assert "有 2 个可用参考音频。第一段是 <Audio 1>，第二段是 <Audio 2>" in message
     assert "voice-timbre reference for <该说话人在画面中的具体描述> (S1)" in message
+    assert "只给实际开口说话的角色写绑定句" in message
     assert "原文没有台词：不写任何 <Audio N>" in message
     assert "不要写 <Audio 3>" in message
+    # 模板同步：未声明的音频不上传
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "only for each character who actually speaks" in guide
+    assert "without a binding sentence are not uploaded" in guide
     # 输出协议段：首行 JSON 头由代码强校验
     assert '{"has_dialogue": true} 或 {"has_dialogue": false}' in message
-    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
-    assert "has_dialogue" in guide
     assert "Speaker binding rules" in guide
     assert "Never use a bare position word alone" in guide
     assert "mean nothing to the video model" in guide
@@ -595,7 +662,10 @@ def test_kfref_audio_sentence_depends_on_spoken_lines():
     assert "先判断原文有没有角色说出或唱出的台词" in two_audio
     assert "店名/标语" in two_audio
     assert "原文没有台词：不写任何 <Audio N>" in two_audio
-    assert "每一段绑定到各自的说话人" in two_audio
+    # 只给开口说话的角色写绑定句：未声明的音频不上传（单人镜头不挂第二路）
+    assert "只给实际开口说话的角色写绑定句" in two_audio
+    assert "编号取音色说明「音频N是角色：X」中该角色对应的音频号" in two_audio
+    assert "不说话的角色不写绑定句；未写绑定句的音频不会上传" in two_audio
 
     # Ref2VA 不出现 KFRef 的条件式音频指令，但 2026-10 起同走 JSON 头协议（语义判台词）
     ref2va = build_h3_optimize_user_message(
@@ -634,6 +704,16 @@ def test_kfref_instruction_carries_image_prompt_note():
     )
     assert "绑定原料" not in without_note
     assert "说话人绑定规则" in without_note
+
+
+def test_has_quoted_dialogue_shared_gate():
+    """音色注入、KFRef 驱动与优化共用的无对白判断口径。"""
+    assert has_quoted_dialogue("林月说「今天到此为止」。")
+    assert has_quoted_dialogue('他说："走吧"')
+    assert not has_quoted_dialogue("无对白，只有扫帚和脚步声。")
+    assert not has_quoted_dialogue("参考音频说明：音频1是角色：李卫国的音色样本，角色说话时请保持相同音色。")
+    assert not has_quoted_dialogue("")
+    assert not has_quoted_dialogue(None)  # type: ignore[arg-type]
 
 
 def test_kfref_instruction_omits_the_unused_keyframe_sentence():
@@ -705,6 +785,50 @@ def test_kfref_validator_requires_exact_keyframe_sentences():
         H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
         keyframe_slots=slots,
         duration=5,
+    )
+
+
+def test_kfref_validator_forbids_audio_refs_for_silent_shots():
+    """无对白镜头（KFRef）优化结果不得出现任何音频引用；有台词镜头不受影响。"""
+    slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"],
+        "图1是首帧，图3是尾帧。",
+    )
+    silent_with_audio = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Picture 2> is a character reference.\n\n"
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "It is the target last frame.\n\n"
+        "<Audio 1> is a reference audio for voice timbre.\n\n"
+        "[Shot 1] Broom sweeps the ground."
+    )
+    silent_clean = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Picture 2> is a character reference.\n\n"
+        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "It is the target last frame.\n\n"
+        "[Shot 1] Broom sweeps the ground. Ambient sound of footsteps only."
+    )
+    assert not validate_h3_optimized_prompt(
+        silent_with_audio,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+        forbid_audio_refs=True,
+    )
+    assert validate_h3_optimized_prompt(
+        silent_clean,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
+        forbid_audio_refs=True,
+    )
+    # 有台词镜头（forbid_audio_refs=False）写 <Audio 1> 是合法的
+    assert validate_h3_optimized_prompt(
+        silent_with_audio,
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        keyframe_slots=slots,
+        duration=10,
     )
 
 

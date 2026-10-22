@@ -41,6 +41,7 @@ import state, {
     getSelectedVideoModel,
     getSelectedImageTaskId,
     composeSceneImagePrompt,
+    nextDirectInputIfUnedited,
     onPowerEstimateUpdated,
     getSelectedImageToVideoModel,
     modelNeedsFaceMask,
@@ -58,6 +59,7 @@ import {
     shouldUseH3KeyframeRef,
     stripMentionTrigger,
 } from './frame_mention.js';
+import { syncChatMentionChips, setupHoverPreview, shortImageId } from './chat_mention_chips.js';
 import { downloadAsAttachment } from './download.js';
 import { loadSceneCandidates } from './scene_candidates.js';
 import {
@@ -69,6 +71,7 @@ import {
     syncSequenceModeIntroCards,
     patchHeaderPower,
     isDigitalHumanScene,
+    frameMentionRowLabels,
 } from './render.js';
 import {
     REGIONS_ON_SCENE_CHANGE,
@@ -941,12 +944,21 @@ function consumeChatMentionTrigger(textarea) {
     return true;
 }
 
-function focusChatMentionCaret() {
+/**
+ * 提及插入后同步输入框并恢复光标。
+ * 直接写 DOM，不走 AGENT_PANEL 重绘：整段重建会把 textarea 换成无焦点的
+ * 新元素，:focus-within 的高度（168px→72px）先瞬塌再过渡回弹，视觉抖动。
+ */
+function syncChatMentionInsert(inserted) {
+    state.inputMessage = inserted.value;
+    chatMentionCaret = inserted.caret;
     const ta = document.getElementById('chat-textarea');
-    if (!ta || typeof chatMentionCaret !== 'number') return;
+    if (!ta) return;
+    ta.value = inserted.value;
     ta.focus();
     const pos = Math.min(Math.max(chatMentionCaret, 0), ta.value.length);
     ta.setSelectionRange(pos, pos);
+    syncChatMentionChips();
 }
 
 /** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。 */
@@ -2058,12 +2070,52 @@ async function handleAction(action, target) {
             notify(t('msg_invalid_episode', '请输入有效的集数（正整数）'));
             return;
         }
-        // 自定义集：若列表中已有则带上 script/storyboard，否则纯新建
-        const folder = (state.episodeFolders || []).find(f => Number(f.episode_number) === ep);
+        // 自定义集：同一集有多位创建者时优先进入自己的故事板
+        const matches = (state.episodeFolders || []).filter(f => Number(f.episode_number) === ep);
+        const folder = matches.find(f => String(f.owner_user_id) === String(state.userId)) || matches[0];
         navigateToEpisode(ep, {
             scriptId: folder?.script_id ? Number(folder.script_id) : null,
             storyboardId: folder?.storyboard_id ? Number(folder.storyboard_id) : null,
         });
+        return;
+    }
+
+    if (action === 'set-episode-owner-scope') {
+        const nextScope = target?.dataset?.scope || 'mine';
+        if (!state.isStoryboardAdmin) return;
+        if (nextScope !== 'mine' && nextScope !== 'all' && nextScope !== 'user') return;
+        state.episodeOwnerScope = nextScope;
+        state.episodeOwnerHint = '';
+        if (nextScope === 'user' && !String(state.episodeOwnerQuery || '').trim()) {
+            state.episodeFolders = [];
+            state.episodeFoldersLoaded = true;
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            rerender([Region.HEADER]);
+            return;
+        }
+        state.episodeFoldersLoaded = false;
+        state.episodeFoldersLoading = false;
+        rerender([Region.HEADER]);
+        ensureEpisodeFoldersLoaded(true).catch((e) => notify(e.message || t('msg_load_episodes_failed', '加载集列表失败')));
+        return;
+    }
+
+    if (action === 'search-episode-owner') {
+        if (!state.isStoryboardAdmin) return;
+        const input = document.querySelector('[data-episode-owner-input]');
+        state.episodeOwnerQuery = input ? input.value : state.episodeOwnerQuery;
+        state.episodeOwnerScope = 'user';
+        state.episodeOwnerHint = '';
+        if (!String(state.episodeOwnerQuery || '').trim()) {
+            state.episodeFolders = [];
+            state.episodeFoldersLoaded = true;
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            rerender([Region.HEADER]);
+            return;
+        }
+        state.episodeFoldersLoaded = false;
+        state.episodeFoldersLoading = false;
+        ensureEpisodeFoldersLoaded(true).catch((e) => notify(e.message || t('msg_load_episodes_failed', '加载集列表失败')));
         return;
     }
 
@@ -2869,21 +2921,43 @@ async function handleAction(action, target) {
 /**
  * 加载当前世界下的集列表（剧本 + 故事板 folders）
  */
+async function ensureStoryboardAdminKnown() {
+    if (state.storyboardAdminKnown) return;
+    state.storyboardAdminKnown = true;
+    try {
+        const role = await api.fetchCurrentUserRole();
+        state.isStoryboardAdmin = role === 'admin';
+    } catch {
+        state.isStoryboardAdmin = false;
+    }
+}
+
 async function ensureEpisodeFoldersLoaded(force = false) {
     if (!state.worldId) return;
     if (!force && state.episodeFoldersLoaded) return;
     if (state.episodeFoldersLoading) return;
     state.episodeFoldersLoading = true;
     try {
-        const folders = await api.listStoryboardFolders(state.worldId);
+        await ensureStoryboardAdminKnown();
+        const scope = state.isStoryboardAdmin ? (state.episodeOwnerScope || 'mine') : '';
+        const owner = scope === 'user' ? String(state.episodeOwnerQuery || '').trim() : '';
+        if (scope === 'user' && !owner) {
+            state.episodeFolders = [];
+            state.episodeOwnerHint = t('msg_owner_query_required', '请输入昵称或账号');
+            state.episodeFoldersLoaded = true;
+            return;
+        }
+        const result = await api.listStoryboardFolders(state.worldId, { scope, owner });
+        const folders = result?.folders || [];
         // 只保留当前世界
-        state.episodeFolders = (folders || []).filter(
+        state.episodeFolders = folders.filter(
             f => !state.worldId || Number(f.world_id) === Number(state.worldId)
         );
+        state.episodeOwnerHint = result?.message || '';
         state.episodeFoldersLoaded = true;
-        if (state.showEpisodePicker) rerender([Region.HEADER]);
     } finally {
         state.episodeFoldersLoading = false;
+        if (state.showEpisodePicker) rerender([Region.HEADER]);
     }
 }
 
@@ -2939,15 +3013,37 @@ function handleRoute(route) {
         return;
     }
     if (route === 'canvas') {
-        if (state.workflowId) {
+        const openWorkflowCanvas = (workflowId) => {
             window.location.href = buildQuery('/video-workflow', {
-                id: state.workflowId,
+                id: workflowId,
                 from_world_id: state.worldId,
                 auto_load_script: 'true',
             });
-        } else {
-            window.location.href = '/video-workflow-list';
+        };
+        // 统一走转换接口（幂等）：已关联画布仍存在 → 返回既有画布直接打开；
+        // 关联画布已被删除 → 后端自动重建并回写 workflow_id，再打开新画布。
+        // 不能只看 state.workflowId 直接跳转——画布被删后会落在「工作流不存在」页。
+        if (state.storyboardId) {
+            // 防重复点击：创建路径进行中再点会产生第二个画布（首个成为孤儿）
+            if (handleRoute._convertingCanvas) return;
+            handleRoute._convertingCanvas = true;
+            api.convertStoryboardToWorkflow(state.storyboardId)
+                .then((res) => {
+                    state.workflowId = res.workflow_id;
+                    openWorkflowCanvas(res.workflow_id);
+                })
+                .catch((err) => {
+                    handleRoute._convertingCanvas = false;
+                    showToast(err.message || t('msg_convert_to_workflow_failed', '转换工作流画布失败'), 'error');
+                });
+            return;
         }
+        if (state.workflowId) {
+            // 无故事板 id（异常态）但有关联画布：退回直接跳转
+            openWorkflowCanvas(state.workflowId);
+            return;
+        }
+        window.location.href = '/video-workflow-list';
     }
 }
 
@@ -2958,6 +3054,9 @@ const RATIO_GATE_ALLOWED_ACTIONS = new Set([
 ]);
 
 export function bindEvents() {
+    // 悬停大图预览（@ 提及弹窗条目 + 输入框内标记胶囊共用）
+    setupHoverPreview();
+
     // 视频预估（后端估价接口异步返回）回填后重渲助手面板的预估行
     onPowerEstimateUpdated(() => rerenderAgentPanel());
 
@@ -2972,6 +3071,12 @@ export function bindEvents() {
         if (!state.agentChatLogPinned) return;
         state.agentChatLogPinned = false;
         section.classList.remove('is-chat-log-pinned');
+    });
+
+    document.addEventListener('input', (event) => {
+        const input = event.target?.closest?.('[data-episode-owner-input]');
+        if (!input) return;
+        state.episodeOwnerQuery = input.value;
     });
 
     document.addEventListener('click', async (event) => {
@@ -3254,8 +3359,12 @@ export function bindEvents() {
     document.addEventListener('input', (event) => {
         const target = event.target;
         if (target.id === 'chat-textarea') {
-            if (!event.isComposing && consumeChatMentionTrigger(target)) return;
+            if (!event.isComposing && consumeChatMentionTrigger(target)) {
+                syncChatMentionChips();
+                return;
+            }
             state.inputMessage = target.value;
+            syncChatMentionChips();
         } else if (target.matches && target.matches('[data-subtitle-margin]')) {
             // 字幕左右边距滑杆：实时应用预览（数值与持久化由 change/其它逻辑处理）
             const pct = Number(target.value) || 0;
@@ -3316,6 +3425,16 @@ export function bindEvents() {
         if (!consumeChatMentionTrigger(target)) {
             state.inputMessage = target.value;
         }
+        syncChatMentionChips();
+    });
+
+    // 提及弹窗按钮按下时不转移焦点（仅按钮，弹窗列表滚动条不受影响）：
+    // textarea 全程保持 ：focus-within 展开态，高度不塌陷、光标选区不丢
+    document.addEventListener('mousedown', (event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest('.mention-popup button')) {
+            event.preventDefault();
+        }
     });
 
     document.addEventListener('mouseenter', (event) => {
@@ -3359,6 +3478,12 @@ export function bindEvents() {
         if (event.key === 'Enter' && target && target.matches && target.matches('[data-episode-custom-input]')) {
             event.preventDefault();
             const btn = document.querySelector('[data-action="switch-episode-custom"]');
+            if (btn) btn.click();
+            return;
+        }
+        if (event.key === 'Enter' && target && target.matches && target.matches('[data-episode-owner-input]')) {
+            event.preventDefault();
+            const btn = document.querySelector('[data-action="search-episode-owner"]');
             if (btn) btn.click();
             return;
         }
@@ -3769,11 +3894,9 @@ export function bindEvents() {
                 chatMentionCaret,
                 mentionItem.dataset.mentionItem,
             );
-            state.inputMessage = inserted.value;
-            chatMentionCaret = inserted.caret;
             state.showMentionPopup = false;
-            rerender([Region.MODAL, Region.AGENT_PANEL]);
-            focusChatMentionCaret();
+            rerenderModals();
+            syncChatMentionInsert(inserted);
             return;
         }
 
@@ -3874,9 +3997,19 @@ async function persistSceneLocationProps(sc) {
     rerender([Region.LEFT_TAB_BODY]);
 }
 
+function applyUneditedDirectInput(previous, next) {
+    const ta = document.getElementById('chat-textarea');
+    const current = ta ? ta.value : state.inputMessage;
+    const updated = nextDirectInputIfUnedited(current, previous, next);
+    if (updated == null) return;
+    state.inputMessage = updated;
+    rerenderAgentPanel();
+}
+
 async function persistPromptValue(scene, type, value) {
     try {
         if (type === 'scene') {
+            const previousImagePrompt = composeSceneImagePrompt(scene);
             if (!scene.promptJson) scene.promptJson = {};
             scene.promptJson.scene_desc = value;
             const payload = sceneToPromptPayload(scene);
@@ -3884,17 +4017,17 @@ async function persistPromptValue(scene, type, value) {
             scene.promptJson = payload;
             scene._fullPrompt = payload;
             if (scene.raw) scene.raw.prompt_json = payload;
+            // 直填生图：底部文本框还停在旧画面提示词时，跟着改成新的组合结果。
+            if (state.chatMode === 'image') {
+                applyUneditedDirectInput(previousImagePrompt, composeSceneImagePrompt(scene));
+            }
         } else if (type === 'video') {
             const previous = scene.videoPrompt || '';
             scene.videoPrompt = value;
             await api.updateScene(scene.id, sceneToUpdatePayload(scene));
-            // 底部发送框仍是旧视频提示词时跟着更新，否则左侧写的 @首帧图 到不了本次提交。
-            if (
-                (state.chatMode === 'video' || state.chatMode === 'aivideo')
-                && (state.inputMessage == null || state.inputMessage === '' || state.inputMessage === previous)
-            ) {
-                state.inputMessage = value;
-                rerenderAgentPanel();
+            // 视频生成：底部文本框还停在旧视频提示词时跟着更新。用户改过则不动。
+            if (state.chatMode === 'video' && !isDigitalHumanScene(scene)) {
+                applyUneditedDirectInput(previous, scene.videoPrompt || '');
             }
         }
     } catch (e) {
@@ -4092,12 +4225,14 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
         const items = currentTab === 'character' ? (state.characters || []) : (state.props || []);
         if (promptType === 'video' && state.videoImageMode === 'multi_reference') {
             const frames = mentionableVideoFrameUrls();
+            const labels = frameMentionRowLabels();
             const frameRows = [];
-            if (frames.frame_first_url) frameRows.push({ token: '首帧图', url: frames.frame_first_url, label: t('label_mention_first_frame', '首帧图') });
-            if (frames.frame_last_url) frameRows.push({ token: '尾帧图', url: frames.frame_last_url, label: t('label_mention_last_frame', '尾帧图') });
+            if (frames.frame_first_url) frameRows.push({ token: `首帧图:${shortImageId(frames.frame_first_url)}`, url: frames.frame_first_url, label: labels.first });
+            if (frames.frame_last_url) frameRows.push({ token: `尾帧图:${shortImageId(frames.frame_last_url)}`, url: frames.frame_last_url, label: labels.last });
             frameRows.forEach((frame) => {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';
+                row.dataset.hoverPreview = frame.url;
                 const img = document.createElement('img');
                 img.src = getThumbnailUrl(frame.url, 20);
                 img.alt = '';
@@ -4128,6 +4263,7 @@ function showMentionDropdownForPrompt(textarea, container, promptType, scene) {
                 const row = document.createElement('div');
                 row.className = 'asset-dropdown-item';
                 const aurl = item.avatar || item.reference_image;
+                if (aurl) row.dataset.hoverPreview = aurl;
                 const img = aurl ? `<img src="${escapeHtml(getThumbnailUrl(aurl, 20))}" style="width:20px;height:20px;border-radius:3px;margin-right:6px;object-fit:cover;">` : '';
                 row.innerHTML = `${img}<span>${escapeHtml(item.name)}</span>`;
                 row.onmousedown = (e) => {

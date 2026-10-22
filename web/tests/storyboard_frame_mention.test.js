@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
     findFrameMentionError,
     insertChatMention,
+    scanFrameMentionTokenRanges,
     isH3ReferenceVideoModel,
     promptHasFrameMention,
     resolveSubmitFrameUrls,
@@ -18,6 +19,15 @@ describe('storyboard frame mention tokens', () => {
     it('does not treat a longer Chinese word as the frame token', () => {
         expect(promptHasFrameMention('看 @首帧图片')).toBe(false);
         expect(promptHasFrameMention('从 @首帧图 到 @尾帧图')).toBe(true);
+    });
+
+    it('recognizes tokens carrying a unique id suffix', () => {
+        expect(promptHasFrameMention('看 @首帧图:1c88f7a9 就行')).toBe(true);
+        expect(promptHasFrameMention('看 @首帧图:1c88f7')).toBe(false);
+        expect(promptHasFrameMention('看 @首帧图1c88')).toBe(false);
+        expect(scanFrameMentionTokenRanges('前面 @首帧图:1c88f7a9 后面')).toEqual([
+            { key: 'first', token: '@首帧图:1c88f7a9', start: 3, end: 16 },
+        ]);
     });
 
     it('routes only H3 reference mode with a token to the mixed model', () => {

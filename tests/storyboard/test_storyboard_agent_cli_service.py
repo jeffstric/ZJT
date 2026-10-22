@@ -1661,6 +1661,320 @@ def test_quality_first_frame_batch_uses_grid_service(patched_storyboard_cli, mon
     assert calls == [job]
 
 
+def _make_grid_fallback_job_items():
+    """构造 quality 批任务 + 一个宫格失败的 FAILED item + 一个下游 PENDING item。"""
+    job = {
+        "id": 88,
+        "storyboard_id": 22,
+        "user_id": 7,
+        "auth_token": "token",
+        "asset_type": "first_frame",
+        "sequence_mode": "quality",
+        "mode": "auto",
+        "count": 1,
+        "stop_on_error": 0,
+        "status": 1,
+        "extra_json": {
+            "generation_snapshots": {
+                "image.image_edit": {"schema_version": 1, "task_id": 26, "model_key": "gpt-image-2-edit"},
+            },
+        },
+    }
+    item_snapshots = {
+        "image.image_edit": {"schema_version": 1, "task_id": 26, "model_key": "gpt-image-2-edit"},
+    }
+    items = {
+        180: {
+            "id": 180,
+            "job_id": 88,
+            "scene_id": 360,
+            "status": -1,
+            "order_index": 1,
+            "error_code": "grid_first_frame_failed",
+            "error_message": "宫格图片几何校验失败: separator x@512 coverage 0.56 below 0.75",
+            "extra_json": {
+                "grid_task_id": 454,
+                "generation_snapshots": item_snapshots,
+                "previous_group_reference_url": "https://cdn.test/prev-frame.png",
+                "grid_prompt_cell_context": {"prompt_text": "精修后的分镜一格提示词"},
+            },
+        },
+        181: {
+            "id": 181,
+            "job_id": 88,
+            "scene_id": 361,
+            "status": 0,
+            "dependency_item_id": 180,
+            "order_index": 2,
+            "error_code": None,
+            "error_message": None,
+            "extra_json": {},
+        },
+    }
+    return job, items
+
+
+def _patch_grid_fallback_models(monkeypatch, module, job, items):
+    updates = []
+
+    class FakeJobModel:
+        @staticmethod
+        def update(job_id, **kwargs):
+            job.update(kwargs)
+            return 1
+
+    class FakeItemModel:
+        @staticmethod
+        def list_by_job(job_id):
+            return [items[180], items[181]]
+
+        @staticmethod
+        def update(record_id, **kwargs):
+            updates.append((record_id, kwargs))
+            items[record_id].update(kwargs)
+            return 1
+
+    class FakeGridModel:
+        @staticmethod
+        def get_by_id(record_id):
+            return SimpleNamespace(status=-1, error_message="grid validation failed")
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "StoryboardImageBatchItemModel", FakeItemModel)
+    monkeypatch.setattr(module, "GridImageTasksModel", FakeGridModel)
+    return updates
+
+
+def test_grid_fallback_converts_failed_item_and_submits_single_image(patched_storyboard_cli, monkeypatch):
+    """宫格失败(quality) → 复活 PENDING → 单图直出 RUNNING，模型/参考图/精修 prompt 透传。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    updates = _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    grid_service_calls = []
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            grid_service_calls.append(dict(job_arg))
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append(kwargs)
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    result = service._process_one_image_batch_job(job)
+
+    assert result["submitted_count"] == 0  # quality 分支返回的是 grid service 的返回值
+    assert len(generate_calls) == 1
+    kwargs = generate_calls[0]
+    assert kwargs["mode"] == "image_edit"
+    assert kwargs["source_image"] == "https://cdn.test/prev-frame.png"
+    assert kwargs["prompt"] == "精修后的分镜一格提示词"
+    assert kwargs["generation_snapshots"]["image.image_edit"]["task_id"] == 26
+    assert kwargs["force_bypass"] is True
+    assert kwargs["sequence_mode"] == "quality"
+
+    item = items[180]
+    assert item["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    assert item["ai_tool_id"] == 777
+    assert item["asset_id"] == 888
+    assert item["reference_url"] == "https://cdn.test/prev-frame.png"
+    # 降级提交后陈旧 grid_task_id 必须被清掉，防止宫格对账误杀单图任务
+    extra_after = [u for u in updates if u[0] == 180 and "extra_json" in u[1]][0][1]["extra_json"]
+    assert extra_after.get("degraded_from_grid_to_single") is True
+    assert extra_after.get("grid_task_id", "missing") in (None, "missing")
+    # quality 决策分支仍被调用（降级后组内 RUNNING → wait，不再 fail_downstream）
+    assert len(grid_service_calls) == 1
+
+
+def test_grid_fallback_reconcile_converts_running_item_with_failed_grid(patched_storyboard_cli, monkeypatch):
+    """对账发现宫格终态失败的 RUNNING item：quality 批直接转入降级而不是判死。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    running = items[180]
+    running["status"] = 1
+    running["error_code"] = None
+    running["error_message"] = None
+    _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append(kwargs)
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    service._process_one_image_batch_job(job)
+
+    assert len(generate_calls) == 1
+    assert running["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    assert running["extra_json"].get("degraded_from_grid_to_single") is True
+
+
+def test_grid_fallback_skips_item_with_stale_grid_task_after_submission(patched_storyboard_cli, monkeypatch):
+    """降级提交后的 RUNNING item 不再受陈旧 grid_task_id 的宫格状态影响。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    running = items[180]
+    running["status"] = 1
+    running["error_code"] = None
+    running["error_message"] = None
+    running["asset_id"] = None
+    running["extra_json"] = {
+        "degraded_from_grid_to_single": True,
+        "grid_task_id": 454,  # 模拟 JSON_MERGE_PATCH 未生效/旧快照残留
+    }
+    updates = _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service._reconcile_running_image_batch_items(job, [running])
+
+    assert running["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    failed_updates = [
+        u for u in updates
+        if u[1].get("status") == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    ]
+    assert failed_updates == []
+
+
+def test_grid_fallback_disabled_when_flag_off(patched_storyboard_cli, monkeypatch):
+    """开关关闭时回到旧行为：宫格失败 item 保持 FAILED，不降级。"""
+    module = patched_storyboard_cli.module
+    monkeypatch.setattr(module.StoryboardFeatureFlags, "GRID_FIRST_FRAME_SINGLE_FALLBACK_ENABLED", False)
+    job, items = _make_grid_fallback_job_items()
+    _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append(kwargs)
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    service._process_one_image_batch_job(job)
+
+    assert generate_calls == []
+    assert items[180]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+
+
+def test_grid_fallback_not_triggered_for_balanced_jobs(patched_storyboard_cli, monkeypatch):
+    """balanced/speed 批任务的宫格失败码 item 不降级（历史数据兜底语义不变）。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    job["sequence_mode"] = "balanced"
+    _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append((scene_id, kwargs))
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    service._process_one_image_batch_job(job)
+
+    # 180 不被降级（保持 FAILED）；181 是 PENDING，balanced 循环按自身语义正常提交
+    fallback_scenes = [scene for scene, _ in generate_calls if scene == 360]
+    assert fallback_scenes == []
+    assert items[180]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+
+
+def test_grid_fallback_submit_failure_marks_item_failed(patched_storyboard_cli, monkeypatch):
+    """降级单图提交失败：错误码为 grid_fallback_submit_failed，不再二次降级。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+
+    def failing_generate(scene_id, user_id, **kwargs):
+        raise module.StoryboardCliError("MODEL_MODE_UNSUPPORTED", "批次快照未锁定图片模式 image_edit")
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = failing_generate
+
+    service._process_one_image_batch_job(job)
+
+    item = items[180]
+    assert item["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    assert item["error_code"] == module.StoryboardAutoGenerateConstants.ERROR_GRID_FALLBACK_SUBMIT_FAILED
+    assert "批次快照未锁定" in item["error_message"]
+
+
+def test_grid_fallback_prepares_only_once(patched_storyboard_cli, monkeypatch):
+    """已带降级标记的 FAILED item 不会被再次转回 PENDING（每 item 仅降级一次）。"""
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    items[180]["extra_json"]["degraded_from_grid_to_single"] = True
+    updates = _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append(kwargs)
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    service._process_one_image_batch_job(job)
+
+    assert generate_calls == []
+    assert items[180]["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_FAILED
+    pending_updates = [
+        u for u in updates
+        if u[1].get("status") == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_PENDING
+    ]
+    assert pending_updates == []
+
+
 def test_image_batch_logs_error_when_model_mismatch(patched_storyboard_cli, monkeypatch, caplog):
     """对账防线：非 quality 批任务提交模型与创建时快照不一致时必须打 error。
 

@@ -75,6 +75,14 @@ http://zjtcdn.perseids.cn/upload/cache/2026-06-30/xxx.png?e=<过期时间戳>&to
 
 涉及驱动：`ltx2_3` / `ltx2` / `wan22` / `qwen_multi_angle` / `digital_human_ltx2_3_voice`。参照 `digital_human_runninghub_v1_driver`（原本已正确 `raise`）。
 
+## 参考图源文件 404（已清理的 upload/cache 文件，2026-09-29 新增）
+
+`ensure_fresh_image_url` 主动探测对 404 归类为 `'other'` 降级返回原 URL（交下游尝试），因此**源文件已被清理**的参考图会走到下载环节才暴露：GPT Image 驱动 `_prepare_image_file` / `_download_image_as_base64` 下载返回 404/410 时，原走 `Unexpected exception` 分支——误触 Sentry `UNEXPECTED_EXCEPTION` 系统告警、用户看到笼统的「服务异常，请联系技术支持」，且重试必然失败（源文件已不存在）。
+
+现改为：下载遇 **404/410 → 抛 `ImageExpiredError`**，由 `submit_task` 既有 `except ImageExpiredError` 分支转为 `error_type=USER`：「参考图片已失效（原文件可能已被清理），请重新上传或更换参考图后重试」，不触发系统告警。5xx 等其他状态码维持原 HTTPError 语义（真正的系统故障仍走系统告警）。
+
+涉及 `gpt_image_common_v1_driver.py`（`GptImageCommonV1Driver` 全家族 Site0-5 / GPT Image 2.5 变体）。生产案例：任务 50937/50938 引用 `upload/cache/2026-08-10/` 已清理文件连续失败并触发算力退款，详见 `docs/backend/incidents/2026-09-29-app-log-high-priority-fixes.md`。
+
 ## 新增常量（`config/constant.py`）
 
 ```python

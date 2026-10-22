@@ -36,6 +36,36 @@ def test_api_admin_model_analysis(api_client):
     assert data.get("code") == 0, f"响应异常: {data}"
 
 
+@pytest.mark.admin
+def test_api_admin_daily_power_stats(api_client):
+    """admin_api_004 - GET /api/admin/dashboard/daily-power-stats 每日用户算力消耗统计"""
+    resp = api_client.get("/api/admin/dashboard/daily-power-stats", params={"days": 7})
+    assert resp.status_code == 200, f"获取每日统计失败: {resp.status_code} {resp.text}"
+    data = resp.json()
+    assert data.get("code") == 0, f"响应异常: {data}"
+    payload = data.get("data", {})
+    assert "daily" in payload, "应包含 daily"
+    assert payload.get("start_date"), "应包含 start_date"
+    assert payload.get("end_date"), "应包含 end_date"
+
+
+@pytest.mark.admin
+def test_api_admin_daily_power_stats_date_range(api_client):
+    """admin_api_005 - GET /api/admin/dashboard/daily-power-stats 指定日期范围"""
+    resp = api_client.get(
+        "/api/admin/dashboard/daily-power-stats",
+        params={"start_date": "2026-10-01", "end_date": "2026-10-07"},
+    )
+    assert resp.status_code == 200, f"获取每日统计失败: {resp.status_code} {resp.text}"
+    data = resp.json()
+    assert data.get("code") == 0, f"响应异常: {data}"
+    for day in data.get("data", {}).get("daily", []):
+        assert "date" in day and "total_power" in day and "users" in day, f"日明细字段缺失: {day}"
+        for user in day.get("users", []):
+            assert "user_id" in user and "nickname" in user and "power" in user, f"用户明细字段缺失: {user}"
+            assert "display_name" in user, f"用户明细缺少 display_name: {user}"
+
+
 # ═══════════════════════════════════════════════════════════════
 # 用户管理 API
 # ═══════════════════════════════════════════════════════════════
@@ -248,3 +278,106 @@ def test_api_admin_model_recos_reset_roundtrip(api_client):
         "/api/admin/model-recos", json={"scene": "not_a_scene", "reset": True}
     )
     assert resp.status_code == 400, f"未知场景应 400，实际 {resp.status_code}"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 用户管理：渠道推广等级 / 管理员备注（2026-09 新增，渠道佣金功能）
+# ═══════════════════════════════════════════════════════════════
+
+
+@pytest.mark.admin
+def test_api_admin_channel_level_roundtrip(api_client, secondary_user_id):
+    """admin_api_021 - 渠道推广等级 0/1/2 设置回读；level=2 才开启现金佣金；结束恢复原值"""
+    uid = int(secondary_user_id)
+    data = api_client.get(f"/api/admin/users/{uid}/channel-level").json()
+    assert data.get("code") == 0, f"查询渠道等级失败: {data}"
+    original = data["data"]["channel_level"]
+    try:
+        for level, enabled in ((0, False), (2, True), (1, False)):
+            resp = api_client.put(
+                f"/api/admin/users/{uid}/channel-level", json={"level": level}
+            )
+            assert resp.status_code == 200 and resp.json().get("code") == 0, \
+                f"设置 level={level} 失败: {resp.status_code} {resp.text}"
+            expected = {"target_user_id": uid, "channel_level": level, "commission_enabled": enabled}
+            assert resp.json()["data"] == expected, f"响应不符: {resp.json()['data']} != {expected}"
+            got = api_client.get(f"/api/admin/users/{uid}/channel-level").json()["data"]
+            assert got["channel_level"] == level and got["commission_enabled"] is enabled, \
+                f"回读不符: {got}"
+    finally:
+        api_client.put(f"/api/admin/users/{uid}/channel-level", json={"level": original})
+
+
+@pytest.mark.admin
+def test_api_admin_channel_level_invalid(api_client, secondary_user_id):
+    """admin_api_022 - 非法等级（3/-1/缺 body）400"""
+    for payload in ({"level": 3}, {"level": -1}, None):
+        resp = api_client.put(
+            f"/api/admin/users/{secondary_user_id}/channel-level",
+            json=payload,
+        )
+        assert resp.status_code == 400, f"payload={payload} 应 400，实际 {resp.status_code}"
+
+
+@pytest.mark.admin
+def test_api_admin_channel_level_missing_user(api_client):
+    """admin_api_023 - 目标用户不存在 404"""
+    assert api_client.put(
+        "/api/admin/users/999999999/channel-level", json={"level": 1}
+    ).status_code == 404
+    assert api_client.get("/api/admin/users/999999999/channel-level").status_code == 404
+
+
+@pytest.mark.admin
+def test_api_admin_channel_level_non_admin(api_client, secondary_auth_token):
+    """admin_api_024 - 非管理员访问渠道等级接口 403"""
+    headers = {"Authorization": f"Bearer {secondary_auth_token}"}
+    assert api_client.get("/api/admin/users/1/channel-level", headers=headers).status_code == 403
+    assert api_client.put(
+        "/api/admin/users/1/channel-level", json={"level": 2}, headers=headers
+    ).status_code == 403
+
+
+@pytest.mark.admin
+def test_api_admin_remark_roundtrip(api_client, secondary_user_id):
+    """admin_api_025 - 用户备注设置/回读/空串清除/超长 400/仅管理侧可见；结束恢复原值"""
+    uid = secondary_user_id
+    original = api_client.get(f"/api/admin/users/{uid}").json()["data"].get("remark")
+    try:
+        remark = "E2E备注_1010"
+        resp = api_client.put(f"/api/admin/users/{uid}/remark", json={"remark": remark})
+        assert resp.status_code == 200 and resp.json().get("code") == 0, f"设置备注失败: {resp.text}"
+        assert resp.json()["data"]["remark"] == remark
+        assert api_client.get(f"/api/admin/users/{uid}").json()["data"]["remark"] == remark, "管理详情应回读到备注"
+
+        # 用户侧接口不得返回管理员备注（防泄漏）
+        role_data = api_client.get("/api/user/role").json()["data"]
+        assert "remark" not in role_data, f"用户侧 /api/user/role 不应返回 remark: {role_data}"
+
+        # 空串（含空白）清除备注
+        resp = api_client.put(f"/api/admin/users/{uid}/remark", json={"remark": "   "})
+        assert resp.status_code == 200 and resp.json()["data"]["remark"] == ""
+        cleared = api_client.get(f"/api/admin/users/{uid}").json()["data"]["remark"]
+        assert cleared in (None, ""), f"清除后备注应为空: {cleared}"
+
+        # 超过 500 字符 400
+        resp = api_client.put(f"/api/admin/users/{uid}/remark", json={"remark": "a" * 501})
+        assert resp.status_code == 400, f"超长备注应 400: {resp.status_code}"
+    finally:
+        api_client.put(f"/api/admin/users/{uid}/remark", json={"remark": original or ""})
+
+
+@pytest.mark.admin
+def test_api_admin_remark_missing_user(api_client):
+    """admin_api_026 - 备注目标用户不存在 404"""
+    assert api_client.put(
+        "/api/admin/users/999999999/remark", json={"remark": "x"}
+    ).status_code == 404
+
+
+@pytest.mark.admin
+def test_api_admin_remark_non_admin(api_client, secondary_auth_token):
+    """admin_api_027 - 非管理员设置用户备注 403"""
+    headers = {"Authorization": f"Bearer {secondary_auth_token}"}
+    resp = api_client.put("/api/admin/users/1/remark", json={"remark": "x"}, headers=headers)
+    assert resp.status_code == 403

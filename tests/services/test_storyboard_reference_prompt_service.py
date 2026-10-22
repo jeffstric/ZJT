@@ -1,10 +1,13 @@
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
     build_reference_legend,
     build_storyboard_reference_items,
+    build_voice_casting_note,
     collect_character_voice_references,
+    extract_speaking_character_ids,
     remove_storyboard_visual_suffix,
 )
 
@@ -330,6 +333,64 @@ VOICE_CHARACTERS = [
 ]
 
 
+def test_extract_speaking_character_ids():
+    """说话角色 = 对话记录里 text 非空的角色；text 空或无 character_id 不算。"""
+    dialogues = [
+        {"character_id": 42, "text": "李保国！你看看你扫的什么地！"},
+        {"character_id": 43, "text": ""},          # 占位/已清空，不开口
+        {"character_id": None, "text": "旁白"},     # 未绑定角色
+        {"character_id": "44", "text": "知道了"},   # 字符串 id 也接受
+        "not-a-dict",
+    ]
+    assert extract_speaking_character_ids(dialogues) == {42, 44}
+    assert extract_speaking_character_ids(None) == set()
+    assert extract_speaking_character_ids([]) == set()
+
+
+def test_voice_references_filtered_by_speaking_characters():
+    """H3 单人/少人说话镜头只注入开口说话角色的音色；None 不过滤（seedance 现状）。"""
+    characters = [
+        {"id": 1, "name": "赵志高", "default_voice": "/upload/character/voice/zhao.wav"},
+        {"id": 2, "name": "李卫国", "default_voice": "/upload/character/voice/li.wav"},
+    ]
+    # 只有赵志高说话：只注入他的音色（分镜 2 事故修复：第二路不挂槽）
+    items, note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids={1},
+    )
+    assert [item["name"] for item in items] == ["赵志高"]
+    assert note == "参考音频说明：音频1是角色：赵志高的音色样本，角色说话时请保持相同音色。"
+
+    # 两人都说话：都注入
+    both, _ = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids={1, 2},
+    )
+    assert [item["name"] for item in both] == ["赵志高", "李卫国"]
+
+    # None = 不过滤（现行为，seedance 等链路）
+    unfiltered, _ = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids=None,
+    )
+    assert [item["name"] for item in unfiltered] == ["赵志高", "李卫国"]
+
+    # 空集合：一个都不注入（有对话记录但角色不在库等边界）
+    empty, empty_note = collect_character_voice_references(
+        supports_voice_input=True,
+        characters=characters,
+        image_mode="multi_reference",
+        speaking_character_ids=set(),
+    )
+    assert empty == [] and empty_note == ""
+
+
 def test_voice_references_collected_when_model_supports():
     items, note = collect_character_voice_references(
         supports_voice_input=True,
@@ -391,11 +452,40 @@ def test_append_voice_reference_note_is_idempotent():
     assert append_voice_reference_note(prompt, [{"name": "林悦", "url": "u"}]) == prompt
 
 
+VOICE_DESC_CHARACTERS = [
+    {"name": "林悦", "voice_desc": "25岁左右的年轻女性，声音清脆圆润，音量轻柔，语速轻快"},
+    {"name": "张三"},
+    {"name": "王五", "voice_desc": "  "},
+]
+
+
+def test_voice_casting_note_lists_only_characters_with_fingerprint():
+    note = build_voice_casting_note(VOICE_DESC_CHARACTERS)
+    assert note.startswith("角色音色说明：")
+    assert "林悦的音色特征：25岁左右的年轻女性" in note
+    assert "张三" not in note and "王五" not in note
+    assert note.endswith("。描述这些角色说话的声音时必须遵循对应音色特征。")
+
+
+def test_voice_casting_note_empty_without_fingerprints():
+    assert build_voice_casting_note(VOICE_CHARACTERS) == ""
+    assert build_voice_casting_note(None) == ""
+
+
+def test_append_voice_casting_note_is_idempotent_and_skips_empty():
+    note = build_voice_casting_note(VOICE_DESC_CHARACTERS)
+    prompt = append_voice_casting_note("镜头内容", note)
+    assert prompt.endswith(note)
+    assert append_voice_casting_note(prompt, note) == prompt
+    assert append_voice_casting_note("镜头内容", "") == "镜头内容"
+
+
 def test_voice_reference_capability_flag_wired_on_expected_models_only():
     from config.unified_config import UnifiedConfigRegistry
 
     expected = {
         "minimax_h3_r2v",
+        "minimax_h3_kfr",
         "seedance_2_0_fast",
         "seedance_2_0",
         "seedance_2_0_mini",

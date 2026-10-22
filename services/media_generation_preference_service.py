@@ -12,6 +12,7 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
 )
+from config.model_catalog import ModelScene, get_scene_reco, match_canonical
 from config.unified_config import ImageMode, TaskCategory, UnifiedConfigRegistry
 from model.user_preferences import (
     PREF_TYPE_IMAGE_TO_VIDEO_MODEL,
@@ -344,8 +345,32 @@ class MediaGenerationPreferenceService:
             {"task_id": config.id},
         )
 
+    # 媒体槽位 → 模型目录场景（config/model_catalog.py 性价比/效果双档）
+    SLOT_SCENES = {
+        (MediaGenerationType.IMAGE, MediaGenerationMode.TEXT_TO_IMAGE): ModelScene.IMAGE_TEXT_TO_IMAGE,
+        (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_EDIT): ModelScene.IMAGE_IMAGE_EDIT,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.TEXT_TO_VIDEO): ModelScene.VIDEO_TEXT_TO_VIDEO,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.IMAGE_TO_VIDEO): ModelScene.VIDEO_IMAGE_TO_VIDEO,
+        (MediaGenerationType.VIDEO, MediaGenerationMode.REFERENCE_TO_VIDEO): ModelScene.VIDEO_REFERENCE_TO_VIDEO,
+    }
+
+    @staticmethod
+    def _canonical_of(config: Any) -> str:
+        return str(
+            getattr(config, 'short_key', None)
+            or getattr(config, 'key', None)
+            or ''
+        ).strip()
+
     @classmethod
     def default_model(cls, media_type: str, mode: str):
+        """无持久化偏好时的默认模型：目录性价比档优先，回退 sort_order 第一。
+
+        口径与前端 pickRememberedTaskId（web/js/storyboard/state.js，track='value'
+        优先）对齐。若仍按 sort_order 第一取默认，会在偏好首次初始化时把
+        LTX2.3（图生视频 sort 最小项）固化为持久偏好，短路前端性价比档兜底
+        （59009cf3）。目录场景无配置/无命中时保持历史排序行为。
+        """
         category = {
             MediaGenerationMode.TEXT_TO_IMAGE: TaskCategory.TEXT_TO_IMAGE,
             MediaGenerationMode.IMAGE_EDIT: TaskCategory.IMAGE_EDIT,
@@ -370,9 +395,10 @@ class MediaGenerationPreferenceService:
                 availability = VideoDriverFactory.get_driver_availability()
         except Exception:
             availability = None
-        for config in candidates:
+
+        def _usable(config) -> bool:
             if not config.enabled or config.hidden:
-                continue
+                return False
             try:
                 cls.validate_model(
                     config.id,
@@ -385,12 +411,33 @@ class MediaGenerationPreferenceService:
                     ),
                 )
             except MediaGenerationPreferenceError:
-                continue
+                return False
             if availability is not None and not VideoDriverFactory.is_task_available(
                 config.id, availability
             ):
+                return False
+            return True
+
+        value_config = cls._value_track_model(media_type, mode, candidates, _usable)
+        if value_config is not None:
+            return value_config
+        for config in candidates:
+            if _usable(config):
+                return config
+        return None
+
+    @classmethod
+    def _value_track_model(cls, media_type: str, mode: str, candidates, usable):
+        """按目录性价比档（value）解析模型；场景无配置或无命中返回 None。"""
+        scene = cls.SLOT_SCENES.get((media_type, mode))
+        reco = get_scene_reco(scene) if scene else None
+        if reco is None:
+            return None
+        for config in candidates:
+            if not usable(config):
                 continue
-            return config
+            if match_canonical(cls._canonical_of(config), reco.value.canonical):
+                return config
         return None
 
     @classmethod

@@ -29,7 +29,10 @@ SUPPORTED_MAX_EDGES = {720, 1280, 1920}
 DEFAULT_MAX_EDGE = 1280
 DEFAULT_DURATION = 10
 DEFAULT_START_SECOND = 0
-SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10}
+# 显存充裕后恢复 4-15（官方规格）；营销分段段长 = DIGITAL_HUMAN_SEGMENT_LENGTH_SECONDS(15)。
+# 分段编排不在本驱动内：每段是一条标准单段任务，由 compose_job 编排器聚合拼接
+# （见 task/compose_task.py 与 docs/digital_human_compose_job_plan.md）。
+SUPPORTED_DURATIONS = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
 
 class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
@@ -46,7 +49,11 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
 
         self._api_key = get_dynamic_config_value("runninghub", "api_key", default="")
         self._host = get_dynamic_config_value("runninghub", "host", default="")
-        self._webapp_id = "2087200340012785665"  # MiniMax H3 数字人 webapp ID
+        # 2026-10-16 更换为锁镜头版工作流（fixed camera，见
+        # docs/marketing_agent_digital_human_duration_routing_plan.md）：
+        # 214 提示词须为英文 integrated_multimodal_description 格式
+        # （由 prepare 侧 VL 生成，经 confirm 透传）
+        self._webapp_id = "2111473047642398722"  # MiniMax H3 数字人 webapp ID（锁镜头版）
         self._timeout = get_dynamic_config_value("timeout", "request_timeout", default=30)
 
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)
@@ -248,6 +255,7 @@ class DigitalHumanMinimaxH3RunninghubV1Driver(BaseVideoDriver):
     async def submit_task(self, ai_tool) -> Dict[str, Any]:
         try:
             prompt_preview = (ai_tool.prompt or "")[:50]
+
             self.logger.info(
                 f"Submitting MiniMax H3 digital human task: text='{prompt_preview}...', "
                 f"duration={ai_tool.duration}"

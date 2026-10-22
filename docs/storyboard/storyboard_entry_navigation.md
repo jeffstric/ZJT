@@ -23,7 +23,16 @@
 
 ## 聚合接口
 
-`GET /api/storyboard/folders?world_id={optional}`
+`GET /api/storyboard/folders?world_id={optional}&scope={optional}&owner={optional}`
+
+`scope` 不传时沿用原列表。管理员在列表页和编辑器集数面板里会显式传 `scope`。
+
+| scope | 谁能用 | 结果 |
+| --- | --- | --- |
+| 不传 | 所有人 | 原列表。独立空间的故事板只含当前用户；剧本仍按世界聚合，不按 `script.user_id` 过滤。带 `world_id` 时校验世界查看权限。 |
+| `mine` | 所有人 | 只看自己的已入库剧本和故事板。共享空间也同样只留当前用户。 |
+| `all` | 仅管理员 | 全部用户。同一世界同一集按创建者拆开。非管理员回退为不传 scope。 |
+| `user` | 仅管理员 | `owner` 为昵称、手机号或邮箱。手机号和邮箱精确匹配；昵称先精确，没有再按包含匹配。空输入返回「请输入昵称或账号」，没有匹配用户返回「未找到该用户」。 |
 
 返回字段核心结构：
 
@@ -31,6 +40,7 @@
 {
   "success": true,
   "total": 1,
+  "scope": "mine",
   "folders": [
     {
       "folder_key": "7:1",
@@ -43,29 +53,40 @@
       "storyboard_title": "第一集故事板",
       "scene_count": 6,
       "status": "created",
+      "owner_user_id": 14,
+      "owner_nickname": "远方",
       "update_at": "2026-06-24T10:00:00"
     }
   ]
 }
 ```
 
-状态规则（只看 `script` 表里的已入库行，按 `world_id + episode_number` 对齐；不看 `script.user_id`，不读剧本智能体暂存文件）：
+`owner_nickname` 取用户昵称，去空白后为空则显示「用户{id}」。前端用 `escapeHtml` 写入页面。
 
-- `created`：该世界该集有已入库剧本，且已有故事板。
-- `not_created`：该世界该集有已入库剧本，故事板尚未创建。
-- `orphan`：故事板存在，但该世界该集没有已入库剧本（只在暂存区，或剧本已删除）。
+文件夹键：
 
-同一世界同一集有多行入库剧本时，文件夹保留 `id` 最小的那一行。
+- 不传 scope 或只看当前用户的故事板时，键是 `world_id:episode_number`。
+- `scope=all` 或 `scope=user` 时，键是 `world_id:episode_number:owner_user_id`，避免不同用户的同一集并成一条。
+
+状态规则（只看 `script` 表里的已入库行，不读剧本智能体暂存文件）：
+
+- `created`：该文件夹键有已入库剧本，且已有故事板。
+- `not_created`：该文件夹键有已入库剧本，故事板尚未创建。
+- `orphan`：故事板存在，但没有对应的已入库剧本（只在暂存区，或剧本已删除）。
+
+同一文件夹键有多行入库剧本时，保留 `id` 最小的那一行。
 
 查询范围：
 
-- 请求带 `world_id`：只取该世界的已入库剧本。入口已做世界访问校验。
-- 请求不带 `world_id`（列表页跨世界展示）：世界范围与世界列表一致。独立空间是当前用户的世界，含伪删除；共享空间是当前可见的全部世界。再取这些世界里的全部已入库剧本。故事板仍按原规则过滤（独立空间只看当前用户的故事板）。
+- 请求带 `world_id`：只取该世界。不传 scope 时入口校验世界查看权限。`scope=all` / `scope=user` / `scope=mine` 按创建者过滤，不再用世界查看权限挡住管理员。
+- 请求不带 `world_id`（列表页跨世界展示）：不传 scope 时，世界范围与世界列表一致。独立空间是当前用户的世界，含伪删除；共享空间是当前可见的全部世界。再取这些世界里的全部已入库剧本。故事板仍按原规则过滤（独立空间只看当前用户的故事板）。
+
+列表页 `web/storyboard_list.html` 在卡片标题下展示 `owner_nickname`。管理员在文件夹上方看到三个范围：只看自己、查看全部、查看指定用户。指定用户可输入昵称、手机号或邮箱。普通用户不显示这组范围，请求也不带 `scope`。他人的故事板不显示删除按钮。管理员可以打开他人故事板查看；编辑和删除仍只允许创建者。
 
 后端实现约束：
 
-- 不新增数据库表，文件夹由 `world_id + episode_number` 临时聚合。
-- 文件夹查询使用 `ScriptModel.list_for_folders`，只取 `id / world_id / title / episode_number / update_time / create_time`，不读正文，不按 100 条截断。
+- 不新增数据库表，文件夹由 `world_id + episode_number` 临时聚合；按创建者拆开时再加 `owner_user_id`。
+- 文件夹查询使用 `ScriptModel.list_for_folders`，只取 `id / world_id / user_id / title / episode_number / update_time / create_time`，不读正文，不按 100 条截断。指定用户时改走 `ScriptModel.list_for_owner_folders`。
 - Web 接口内的同步 DB 查询必须使用 `asyncio.to_thread()` 包装，避免阻塞事件循环。
 - 不通过 URL 传递 `auth_token`，前端从 `localStorage` 读取并通过 Header 发送。
 - `storyboard.composition_preference` 是主表字段，首次创建时从 `world.composition_preference` 继承，用于后续生成图片提示词。
@@ -77,13 +98,14 @@
 
 故事板编辑器 header 副标题中的「第 N 集」可点击，展开集数选择器：
 
-1. 列表数据来自 `GET /api/storyboard/folders?world_id={当前世界}`（与列表页同源）。
-2. 点某一集：跳转  
+1. 列表数据来自 `GET /api/storyboard/folders?world_id={当前世界}`（与列表页同源）。每条集数下面显示创建者昵称。
+2. 管理员在面板顶部有同样的三个范围：只看自己、查看全部、查看指定用户。普通用户不显示范围按钮。
+3. 点某一集：跳转  
    `/storyboard?world_id=…&episode_number=…&script_id?=…&id?=…&user_id=…&workflow_id?=…`  
-   - 已有 `storyboard_id` 时带 `id` 直接打开。  
+   - 已有 `storyboard_id` 时带 `id` 直接打开。URL 里的 `user_id` 是当前登录用户，不是故事板创建者。  
    - **无故事板**时不传 `id`，由 `bootstrap` → `POST /api/storyboard/create` **幂等 get-or-create** 新建后进入。  
-3. 「其他集数」可输入任意正整数进入（列表中不存在也可），同样走 create 新建。  
-4. 前端：`render.js` 集数按钮/面板，`events.js` `navigateToEpisode` / `ensureEpisodeFoldersLoaded`，`api.listStoryboardFolders`。
+4. 「其他集数」可输入任意正整数进入（列表中不存在也可），同样走 create 新建。同一集有多位创建者时，优先进入自己的故事板。  
+5. 前端：`render.js` 集数按钮/面板，`events.js` `navigateToEpisode` / `ensureEpisodeFoldersLoaded`，`api.listStoryboardFolders`。
 
 ## 媒体导出
 
@@ -106,7 +128,7 @@ get-or-create 命中已有故事板时**不改** title。历史空 title 不自�
 
 ### 首页
 
-`handleStoryboardListClick()`：
+`web/js/pages/list_page.js` 的 `handleStoryboardListClick()`：
 
 1. 检查 `localStorage.auth_token` 和 `localStorage.user_id`。
 2. 未登录提示登录。
@@ -129,6 +151,8 @@ get-or-create 命中已有故事板时**不改** title。历史空 title 不自�
 ### 故事板编辑器
 
 `web/storyboard.html` 左上角 `.header-logo` 使用 `data-route="storyboard-list"` 接入现有路由事件代理，点击后跳转 `/storyboard-list`，返回故事板列表页。
+
+头部「画布」按钮（`data-route="canvas"`）：已关联画布（`state.workflowId`）直接跳 `/video-workflow?id=...`；未关联时调用 `POST /api/storyboard/{id}/to-workflow` 把当前故事板内容转换为工作流画布后跳转（仅首次创建，见 `docs/storyboard/storyboard_workflow_conversion.md`）。工作流画布顶栏另有「转故事板」按钮，走 `POST /api/storyboard/from-workflow` 反向增量同步。
 
 ### 空故事板生成分镜
 

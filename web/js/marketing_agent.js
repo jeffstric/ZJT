@@ -99,6 +99,9 @@
             const sessionActiveTaskId = {};  // { [sessionId]: taskId } — 追踪每个 session 的活跃 Agent 任务
             let msgUidCounter = 0;
             let currentEventSource = null;
+            // 同一任务同时只允许一条 SSE 流：恢复/重试路径重复挂流时先关闭旧流，
+            // 避免一条任务挂多条并发流各自计时、误报多份"请求超时"
+            const activeTaskStreams = {};  // { [taskId]: eventSource }
             const processedSseMessageIds = new Set();
             let loadingSessionId = null;  // 追踪哪个 session 触发了 loading，防止跨 session 竞态清除
             const activeIntervals = new Set();  // 追踪所有活跃的 setInterval ID
@@ -1607,13 +1610,25 @@
                 window.location.href = `/index.html?login=1&redirect_url=${redirectUrl}`;
             }
 
-            // 检查 API 响应是否为认证失败（401），如果是则跳转到登录页面
+            // 检查 API 响应是否为认证失败（401），先走自愈，cookie 也失效才跳登录页
             function checkAuthResponse(response) {
                 if (response.status === 401) {
-                    redirectToLogin();
+                    handleAuth401();
                     return false;
                 }
                 return true;
+            }
+
+            // 401 统一自愈入口：先清 localStorage 残留 token 并探测 HttpOnly cookie
+            // 会话，cookie 仍有效则 reload 无感恢复（生成中/轮询中不再被直接踢到
+            // 登录页打断进度）；cookie 也失效才引导重新登录。
+            // 详见 web/js/auth_self_heal.js 头注释（2026-10-20 图文转视频 401 事故）。
+            function handleAuth401() {
+                if (window.authSelfHeal && typeof window.authSelfHeal.handle401 === 'function') {
+                    window.authSelfHeal.handle401({ onLoginExpired: redirectToLogin });
+                } else {
+                    redirectToLogin();
+                }
             }
 
             // 格式化时间
@@ -1687,9 +1702,109 @@
                 return rawUrl;
             }
 
+            // ===== 生成中占位卡片（图片/视频生成进度可视化）=====
+            // 图片/视频生成轮询、提交初始气泡、历史恢复占位都只往 msg.content 写纯文本
+            // 进度文案（image_generating_progress 等 i18n 键）。渲染层在此统一识别这些
+            // 已知文案，替换为带图标与动画的「生成中」卡片；未命中时原样走 Markdown 管线。
+            let generatingPendingMatchers = null;
+
+            function escapeRegExpString(text) {
+                return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+
+            // 匹配器由当前语言的 i18n 模板动态构造（window.t 不传参数时 {done}/{total}
+            // 保留原样，可拿到模板原文），语言切换后按 locale 缓存键自动重建
+            function getGeneratingPendingMatchers() {
+                const locale = (window.ZJTi18n && window.ZJTi18n.getLocale) ? window.ZJTi18n.getLocale() : '';
+                if (generatingPendingMatchers && generatingPendingMatchers.locale === locale) {
+                    return generatingPendingMatchers.matchers;
+                }
+                const progressPattern = (key) => '^' + escapeRegExpString(window.t(key))
+                    .replace('\\{done\\}', '(\\d+|\\?)')
+                    .replace('\\{total\\}', '(\\d+)') + '$';
+                const exactPattern = (key) => '^' + escapeRegExpString(window.t(key)) + '$';
+                const suffixPattern = (key) => escapeRegExpString(window.t(key)) + '$';
+                generatingPendingMatchers = {
+                    locale,
+                    matchers: {
+                        imageProgress: new RegExp(progressPattern('image_generating_progress')),
+                        videoProgress: new RegExp(progressPattern('video_generating_progress')),
+                        imageWaiting: new RegExp(exactPattern('generating_image')),
+                        videoWaiting: new RegExp(exactPattern('generating_video')),
+                        placeholder: new RegExp(exactPattern('generating_placeholder')),
+                        imageSuffix: new RegExp(suffixPattern('image_task_suffix')),
+                        videoSuffix: new RegExp(suffixPattern('video_task_suffix'))
+                    }
+                };
+                return generatingPendingMatchers.matchers;
+            }
+
+            const GEN_PENDING_ICONS = {
+                image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.8" cy="10" r="1.7"/><path d="M4.5 17.5l4.7-4.7 3.4 3.4 3-3 3.9 3.9"/></svg>',
+                video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10.2 9.3l5.2 2.7-5.2 2.7z" fill="currentColor" stroke="none"/></svg>',
+                generic: '<svg class="gen-pending-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"/></svg>'
+            };
+
+            // 识别进度文案并返回卡片 HTML；非进度文案返回 null（继续走 Markdown 管线）。
+            // 卡片为硬编码模板 + i18n 文案（escapeHtml）+ 纯数字捕获组，内容全部可信
+            function buildGeneratingPendingCard(text) {
+                if (!text || typeof text !== 'string' || text.length > 300) return null;
+                const matchers = getGeneratingPendingMatchers();
+                let type = null;
+                let done = null;
+                let total = null;
+
+                let match = text.match(matchers.imageProgress);
+                if (match) {
+                    type = 'image'; done = match[1]; total = match[2];
+                }
+                if (!type) {
+                    match = text.match(matchers.videoProgress);
+                    if (match) {
+                        type = 'video'; done = match[1]; total = match[2];
+                    }
+                }
+                if (!type && matchers.imageWaiting.test(text)) type = 'image';
+                if (!type && matchers.videoWaiting.test(text)) type = 'video';
+                if (!type && matchers.placeholder.test(text)) type = 'generic';
+                // 提交初始气泡：后端 message + 「，图片/视频生成中...」后缀
+                if (!type && matchers.imageSuffix.test(text)) type = 'image';
+                if (!type && matchers.videoSuffix.test(text)) type = 'video';
+                if (!type) return null;
+
+                const labelKey = type === 'image' ? 'image_generating_label'
+                    : (type === 'video' ? 'video_generating_label' : 'generating_placeholder');
+                const label = escapeHtml(window.t(labelKey));
+
+                // done/total 均为数字时展示确定进度；'?'（轮询错误退避）或无计数
+                // （提交初始气泡/占位文案）走不定进度动画
+                const hasNumericProgress = /^\d+$/.test(done) && /^\d+$/.test(total);
+                let countHtml = '';
+                let fillHtml = '<span class="gen-pending-fill gen-pending-fill--indeterminate"></span>';
+                if (hasNumericProgress) {
+                    const totalNum = parseInt(total, 10);
+                    const pct = totalNum > 0 ? Math.min(100, Math.round((parseInt(done, 10) / totalNum) * 100)) : 0;
+                    countHtml = `<span class="gen-pending-count">${escapeHtml(done)}/${escapeHtml(total)}</span>`;
+                    fillHtml = `<span class="gen-pending-fill" style="width:${pct}%"></span>`;
+                } else if (done && total) {
+                    countHtml = `<span class="gen-pending-count">${escapeHtml(done)}/${escapeHtml(total)}</span>`;
+                }
+
+                return `<div class="gen-pending-card" data-gen-type="${type}">` +
+                    `<div class="gen-pending-thumb">${GEN_PENDING_ICONS[type]}</div>` +
+                    '<div class="gen-pending-body">' +
+                    `<div class="gen-pending-title"><span class="gen-pending-label">${label}</span>${countHtml}</div>` +
+                    `<div class="gen-pending-track">${fillHtml}</div>` +
+                    '</div></div>';
+            }
+
             // 渲染 Markdown
             function renderMarkdown(text) {
                 if (!text) return '';
+
+                // 「生成中」进度文案（图片/视频生成轮询写入）替换为可视化卡片
+                const pendingCard = buildGeneratingPendingCard(text);
+                if (pendingCard !== null) return pendingCard;
 
                 // 图文转视频：脚本 JSON 渲染为结构化确认卡（article-to-video）
                 if (window.MarketingArticleCard) {
@@ -1711,23 +1826,36 @@
                     return `__LINK_PH_${linkPlaceholders.length - 1}__`;
                 });
 
-                // 步骤3：将裸视频 URL 转换为 <video> 标签（路径含视频扩展名，可带查询参数）
-                const videoUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp4|webm|mov|avi|mkv))(\?[^\s<>"'\]]*)?(?=[\s\n\]|,)]|$)/gi;
+                // 步骤3：处理普通 URL 边界 —— URL 后紧跟中文等非空白字符时插入空格
+                // 防止 marked.js 将中文字符错误包含进 URL。提前到媒体 URL 转换之前
+                // 执行（0aa4dc0a）：粘连形态（"…mp33. 口播"）先被拆出空格，后面的
+                // 音视频 URL 正则才能命中扩展名边界
+                text = text.replace(/(https?:\/\/[^\s<>"'\]]+)([^\x00-\x7F\s])/g, '$1 $2');
+
+                // 步骤4：将裸视频 URL 转换为 <video> 标签（路径含视频扩展名，可带查询参数）
+                // 扩展名后必须是「URL 不可能继续」的字符（空白/全半角标点/结尾/纯数字）；
+                // 紧跟字母或路径符号（. / ? = & % # + ~ -）视为 URL 仍在继续，保守不转换
+                // ——旧前瞻（空白/]/,/)/结尾）过窄，全角标点（mp3。/mp3））、粘连数字
+                // （mp33.，扩展名后数字不可能是文件 URL 的一部分）与句点会让转换静默
+                // 失败，裸 URL 降级成普通链接（0aa4dc0a 事故）
+                const videoUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp4|webm|mov|avi|mkv))(\?[^\s<>"'\]]*)?(?=$|[^\w?=&%#+~./-]|\d)/gi;
                 text = text.replace(videoUrlPattern, (match, base, query) => {
                     const fullUrl = query ? base + query : base;
                     return `\n<video src="${escapeHtml(fullUrl)}" style="max-height:160px;border-radius:8px;" controls preload="metadata"></video>\n`;
                 });
 
-                // 步骤4：将裸图片 URL 转换为 Markdown 图片格式
-                // 图片扩展名结尾，后面不允许紧跟非空白字符（防止吞入中文）
-                const imageUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?=[\s\n\]|,)]|$)/gi;
+                // 步骤4.5：将裸音频 URL 转换为 <audio controls> 播放器（TTS 试听等）
+                const audioUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:mp3|wav|m4a|ogg|aac|flac))(\?[^\s<>"'\]]*)?(?=$|[^\w?=&%#+~./-]|\d)/gi;
+                text = text.replace(audioUrlPattern, (match, base, query) => {
+                    const fullUrl = query ? base + query : base;
+                    return `\n<audio src="${escapeHtml(fullUrl)}" controls preload="none" style="width:100%;max-width:340px;height:40px;border-radius:8px;display:block;margin:6px 0;"></audio>\n`;
+                });
+
+                // 步骤5：将裸图片 URL 转换为 Markdown 图片格式（扩展名边界规则同步步骤4）
+                const imageUrlPattern = /(https?:\/\/[^\s<>"'\]]+?\.(?:png|jpg|jpeg|gif|webp|svg|bmp|ico))(?=$|[^\w?=&%#+~./-]|\d)/gi;
                 text = text.replace(imageUrlPattern, (url) => {
                     return `\n![${window.t('image_alt')}](${url})\n`;
                 });
-
-                // 步骤5：处理普通 URL 边界 —— URL 后紧跟中文等非空白字符时插入空格
-                // 防止 marked.js 将中文字符错误包含进 URL
-                text = text.replace(/(https?:\/\/[^\s<>"'\]]+)([^\x00-\x7F\s])/g, '$1 $2');
 
                 // 步骤6：恢复链接占位符
                 text = text.replace(/__LINK_PH_(\d+)__/g, (match, idx) => {
@@ -1783,6 +1911,15 @@
                 html = html.replace(/(<img\b(?=[^>]*\bgenerated-image\b)(?=[^>]*\ssrc="))([^>]*?)\ssrc="([^"]*)"/gi, (_m, prefix, attrs, src) =>
                     `${prefix}${attrs} src="${proxyImageUrl(src)}"`
                 );
+
+                // 音频链接 → 内联播放器：LLM 可能把试听音频包装成 markdown 链接
+                // （[试听](xxx.mp3)），点击新窗口体验差，统一替换为 <audio controls>。
+                html = html.replace(/<a\b[^>]*href="(https?:\/\/[^"]*?\.(?:mp3|wav|m4a|ogg|aac|flac)(?:\?[^"]*)?)"[^>]*>([\s\S]*?)<\/a>/gi,
+                    (match, href, linkText) => {
+                        const label = /试听|preview|listen/i.test(linkText) ? '' :
+                            `<span style="font-size:12px;color:var(--muted);margin-right:6px;">${escapeHtml(linkText.slice(0, 30))}</span>`;
+                        return `<span style="display:inline-flex;align-items:center;margin:4px 0;">${label}<audio src="${proxyDownloadUrl(href)}" controls preload="none" style="height:36px;max-width:320px;border-radius:8px;vertical-align:middle;"></audio></span>`;
+                    });
 
                 // 兜底重新签名：<video>/<audio>/<source> 的原始 src。
                 // 同因：commit 0bf53fe 之前生成的视频/音频以已渲染 HTML 入库，src 写死的是
@@ -2464,9 +2601,10 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询不带任何显式凭证：同源请求由服务端 cookie 翻译中间件
+                    // 鉴权（token 拼 URL 会经 Referer/历史/访问日志泄漏，X3 红线）
                     const projectIdsStr = task.projectIds.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     // await 后再次校验会话：任务进行中切换对话时，旧轮询回调不可再写入当前（已切换的）messages/全局结果状态
@@ -2539,9 +2677,9 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                     const projectIdsStr = imageProjectIds.value.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     if (res.data.tasks) {
@@ -2656,9 +2794,9 @@
                     }
 
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
+                        // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                         const projectIdsStr = projectIds.join(',');
-                        const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                        const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                         resetTaskErrorCount(errorKey);
 
                         if (currentSessionId.value !== pollSessionId) {
@@ -2725,7 +2863,7 @@
                                 errorKey,
                                 interval,
                                 msgUid,
-                                window.t('video_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
+                                window.t('image_generating_progress', { done: '?', total: projectIds.length }) || '生成中…'
                             );
                             if (interval) {
                                 trackedClearInterval(interval);
@@ -2787,9 +2925,9 @@
                     }
 
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
+                        // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                         const projectIdsStr = projectIds.join(',');
-                        const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                        const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                         resetTaskErrorCount(errorKey);
                         if (currentSessionId.value !== pollSessionId) {
                             shouldContinuePolling = false;
@@ -3044,9 +3182,9 @@
                 }
 
                 try {
-                    const params = authToken.value ? { auth_token: authToken.value } : {};
+                    // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
                     const projectIdsStr = videoProjectIds.value.join(',');
-                    const res = await axios.get(`/api/get-status/${projectIdsStr}`, { params });
+                    const res = await axios.get(`/api/get-status/${projectIdsStr}`);
                     resetTaskErrorCount(errorKey);
 
                     if (res.data.tasks) {
@@ -3389,6 +3527,7 @@
                             clearTimeout(streamTimeoutId);
                             streamTimeoutId = null;
                         }
+                        if (activeTaskStreams[taskId] === eventSource) delete activeTaskStreams[taskId];
                     }
 
                     // 确保 msgUid 对应的占位消息存在
@@ -3408,6 +3547,46 @@
                     // 通过 _uid 查找消息索引
                     function findMsgByIdx(uid) {
                         return messages.value.findIndex(m => m._uid === uid);
+                    }
+
+                    // 流异常结束（网络错误/重连耗尽/未收到 done 即关闭）的统一收尾：
+                    // 已收到过内容按静默完成处理（生成任务已由轮询接管）；
+                    // 从未收到数据才计为失败（气泡 + 连续错误计数）
+                    function handleStreamEnd(error) {
+                        if (streamSettled) return;
+                        console.log('[Loading] handleStream 流结束/失败:', error && error.message, 'hasReceivedData=', hasReceivedData);
+                        settleStream();
+                        eventSource.close();
+                        if (currentEventSource === eventSource) currentEventSource = null;
+                        clearPendingVerificationState();
+                        if (!hasReceivedData) {
+                            const failures = recordTaskError(streamErrorKey);
+                            messages.value.push({
+                                _uid: generateMsgUid(),
+                                role: 'ai',
+                                content: window.t('connection_error'),
+                                timestamp: new Date().toISOString()
+                            });
+                            if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
+                                delete sessionActiveTaskId[streamSessionId];
+                                clearAllTaskIntervals();
+                                showContinue.value = false;
+                                resetTaskErrorCount(streamErrorKey);
+                            }
+                            reject(error);
+                        } else {
+                            showContinue.value = true;
+                            resetTaskErrorCount(streamErrorKey);
+                            resolve();
+                        }
+                    }
+
+                    // 同一任务防重复挂流：旧流（重试/恢复路径遗留）先关闭再挂新流
+                    if (activeTaskStreams[taskId]) {
+                        console.warn('[SSE] 任务已有活跃流，关闭旧流后再挂新流:', taskId);
+                        if (currentEventSource === activeTaskStreams[taskId]) currentEventSource = null;
+                        activeTaskStreams[taskId].close();
+                        delete activeTaskStreams[taskId];
                     }
 
                     const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
@@ -3512,37 +3691,24 @@
                                 resolve();
                             }
                     },
-                    onError: (e) => {
+                    onError: (e) => handleStreamEnd(e || new Error('EventSource error')),
+                    // 流在 done/error 之前就被关闭（服务端看门狗断开/代理收尾等）：按异常结束统一收尾
+                    onClose: (data) => {
                         if (streamSettled) return;
-                        console.log('[Loading] handleStream onerror, hasReceivedData=', hasReceivedData);
-                        settleStream();
-                        eventSource.close();
-                        if (currentEventSource === eventSource) currentEventSource = null;
-                        clearPendingVerificationState();
-                        if (!hasReceivedData) {
-                            const failures = recordTaskError(streamErrorKey);
-                            messages.value.push({
-                                _uid: generateMsgUid(),
-                                role: 'ai',
-                                content: window.t('connection_error'),
-                                timestamp: new Date().toISOString()
-                            });
-                            if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                                delete sessionActiveTaskId[streamSessionId];
-                                clearAllTaskIntervals();
-                                showContinue.value = false;
-                                resetTaskErrorCount(streamErrorKey);
-                            }
-                            eventSource.close();
-                            if (currentEventSource === eventSource) currentEventSource = null;
-                            reject(new Error('EventSource error'));
-                        } else {
-                            showContinue.value = true;
-                            resetTaskErrorCount(streamErrorKey);
-                            resolve();
-                        }
+                        console.warn('[Loading] handleStream onClose: 未收到 done/error 流即结束, type=', data && data.type);
+                        handleStreamEnd(new Error('Stream closed without done'));
+                    },
+                    onReconnect: (attempt, reason) => {
+                        console.warn('[SSE] 任务流断流自动重连:', taskId, '第', attempt, '次, 原因:', reason);
                     }
+                    }, {
+                        // 服务端心跳约 1~3s 一条；15s 收不到任何字节（含心跳）即判定链路静默假死，
+                        // 自动断点续传重连，替代干等 900s 后误报"请求超时"
+                        idleTimeoutMs: 15000,
+                        maxReconnects: 6,
+                        reconnectDelayMs: 2000
                     });
+                    activeTaskStreams[taskId] = eventSource;
 
                     // 超时处理：仅当从未收到任何数据时才报"请求超时"。
                     // 长流程（图文转视频：抓取→识图→要点提炼→ask_user 挂起→逐 clip 提交）
@@ -4190,8 +4356,8 @@
                     activeGenerationPollKeys.add(pollKey);
                     let handedToPoller = false;
                     try {
-                        const params = authToken.value ? { auth_token: authToken.value } : {};
-                        const res = await axios.get(`/api/get-status/${msg._projectIds.join(',')}`, { params });
+                        // 历史页恢复轮询：凭证走 cookie 翻译，token 不拼 URL（X3 红线）
+                        const res = await axios.get(`/api/get-status/${msg._projectIds.join(',')}`);
 
                         if (res.data.tasks && res.data.tasks.every(isGenerationTerminal)) {
                             // 任务已完成：替换为结果
@@ -4503,13 +4669,35 @@
                 userPhone.value = localStorage.getItem('phone') || '';
                 userEmail.value = localStorage.getItem('email') || '';
 
-                // 兼容期双写：登录态以 localStorage.auth_token 为准
+                // 兼容期双写：登录态以 localStorage.auth_token 为准；token 缺失时
+                // 探测 HttpOnly cookie 会话兜底（401 自愈 reload 后 localStorage 已
+                // 清空，cookie 有效则继续使用页面，同源请求由服务端 cookie 翻译
+                // 中间件鉴权），两者皆无才视为未登录。
                 const hasLocalSession = !!authToken.value;
-                if (!userId.value || !hasLocalSession) {
+                if (!hasLocalSession && userId.value && window.authSelfHeal?.probeSession) {
+                    const cookieAlive = await window.authSelfHeal.probeSession();
+                    if (!cookieAlive) {
+                        isInitializing.value = false;
+                        redirectToLogin();
+                        return;
+                    }
+                } else if (!userId.value || !hasLocalSession) {
                     isInitializing.value = false;
                     redirectToLogin();
                     return;
                 }
+
+                // axios 全局 401 拦截：任何请求认证失败都先走自愈（清残留 token +
+                // 探测 cookie → reload），而不是把生成中/轮询中的页面直接踢到登录页
+                axios.interceptors.response.use(
+                    (res) => res,
+                    (err) => {
+                        if (err && err.response && err.response.status === 401) {
+                            handleAuth401();
+                        }
+                        return Promise.reject(err);
+                    }
+                );
 
                 // 营销智能体使用固定 world_id，无需多世界概念
                 worldId.value = '1';
