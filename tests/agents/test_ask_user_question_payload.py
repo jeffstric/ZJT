@@ -160,3 +160,46 @@ def test_json_fence_with_leading_space_and_case_is_tolerated():
 def test_unlabeled_fence_is_not_validated_as_json():
     """无语言标签的围栏（可能是普通引用/伪代码）不按 JSON 校验。"""
     assert _validate_question_payload("步骤：\n```\n1. 确认脚本\n2. 生成\n```") is None
+
+
+def test_normalize_list_layout_glued_items_get_newline():
+    """粘连编号列表强制换行（0aa4dc0a 事故：「…如下：1. xx2. yy」挤一行，
+    试听 URL 与下一项粘连导致前端不渲染播放器）。"""
+    from script_writer_core.agents.ask_user_mixin import _normalize_question_list_layout
+
+    question = ("已为您生成草案，相关信息如下：1. 匹配音色：儒雅青年2.0"
+                "（适配图中青年医生气质）2. TTS驱动音频试听链接：http://x/tts_1.mp3"
+                "3. 口播文案：失眠科普文案4. 视频参数：9:16")
+    normalized = _normalize_question_list_layout(question)
+    assert "如下：\n1. 匹配音色" in normalized
+    assert "气质）\n2. TTS驱动音频" in normalized
+    # mp3 与「3.」数字粘连：后端不误拆（歧义形态），由前端扩展名后数字终止兜底
+    assert "tts_1.mp33. 口播文案" in normalized
+    assert "文案\n4. 视频参数" in normalized
+    # 版本号/小数不拆："2.0" 保持原样
+    assert "儒雅青年2.0" in normalized
+
+
+def test_normalize_list_layout_digit_glued_to_url_kept_for_frontend():
+    """「mp33. 口播」数字紧跟数字的歧义形态后端不强拆（避免误伤文件名），
+    由前端扩展名后允许数字终止的正则兜底转换播放器。"""
+    from script_writer_core.agents.ask_user_mixin import _normalize_question_list_layout
+
+    question = "试听链接：http://x/tts_519d1154.mp33. 口播文案"
+    assert _normalize_question_list_layout(question) == question
+
+
+def test_normalize_list_layout_already_newlined_untouched():
+    """已换行的列表项不重复插入换行。"""
+    from script_writer_core.agents.ask_user_mixin import _normalize_question_list_layout
+
+    question = "信息如下：\n1. 音色\n2. 试听：http://x/a.mp3\n3. 参数"
+    assert _normalize_question_list_layout(question) == question
+
+
+def test_normalize_list_layout_decimal_and_version_untouched():
+    """小数（33.46）与版本号（2.0）后无空格，不会被误插换行。"""
+    from script_writer_core.agents.ask_user_mixin import _normalize_question_list_layout
+
+    question = "音频时长33.46秒，音色儒雅青年2.0，720P分辨率。"
+    assert _normalize_question_list_layout(question) == question

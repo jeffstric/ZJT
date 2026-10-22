@@ -674,7 +674,7 @@
         lastFrameConnections: (state.lastFrameConnections || []).map(c => ({ id: c.id, from: c.from, to: c.to })),
         videoConnections: state.videoConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
-        audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
+        audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType, voiceLineIndex: c.voiceLineIndex })),
         timeline: {
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
@@ -945,7 +945,8 @@
       }
 
       saveBtn.disabled = true;
-      saveBtnText.textContent = '保存中...';
+      // 保存状态反馈以按钮 ring 动画为主；文字 span 已随图标化移除，存在时才更新
+      if(saveBtnText) saveBtnText.textContent = '保存中...';
 
       // 手动保存是当前最新的用户意图：取消尚未触发的防抖保存。
       // 已经发出的自动保存不中止；若它还在飞，本次只排队，等它结束后再提交最新正文。
@@ -1058,7 +1059,7 @@
         saveBtnSavingEnd();
         saveBtn.disabled = false;
         // 冲突态保持黄色提示与文案，由用户点击按钮刷新页面后解除
-        if(!saveBtn.classList.contains('save-conflict')){
+        if(!saveBtn.classList.contains('save-conflict') && saveBtnText){
           saveBtnText.textContent = '保存';
         }
       }
@@ -2097,6 +2098,11 @@
               return { id: conn.id, from: conn.to, to: conn.from };
             }
             return conn;
+          });
+          state.nodes.forEach(function(n) {
+            if (n && n.type === 'text_to_speech' && typeof n.syncConnectedVoice === 'function') {
+              n.syncConnectedVoice();
+            }
           });
         }
         
@@ -3159,6 +3165,10 @@
         if(nodeData.data.dialogueIndex !== undefined){
           node.data.dialogueIndex = nodeData.data.dialogueIndex;
         }
+        // 恢复文字转语音溯源字段（生成该音频的 text_to_speech 节点）
+        if(nodeData.data.ttsNodeId !== undefined){
+          node.data.ttsNodeId = nodeData.data.ttsNodeId;
+        }
         // 如果有URL，显示预览
         if(node.data.url){
           const el = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
@@ -3178,8 +3188,8 @@
               previewField.style.display = 'block';
               if(previewActionsField) previewActionsField.style.display = 'block';
             }
-            // 显示"添加到时间轴"按钮（当音频来自对话组时）
-            if(addTimelineBtn && node.data.sourceNodeId !== undefined){
+            // 显示"添加到时间轴"按钮（有音频即可加入时间轴）
+            if(addTimelineBtn){
               addTimelineBtn.style.display = 'inline-block';
             }
           }
@@ -3374,7 +3384,7 @@
             const restoreTargetEl = () => (node.data.splitTaskMode === 'split_and_generate_grid' ? gridStatusEl2 : statusEl2);
 
             // 刷新恢复路径的「放弃并重新拆分」：取消旧任务 → 等终态（active_key 释放）→ 重新提交并恢复轮询。
-            // 注意：此路径下宫格 onComplete 走降级逻辑（applyParsedData 不自动生成帧），与原恢复行为一致。
+            // 重提后的任务同样走上方 onComplete：宫格模式经 node.runGridFlow 完整重放（含分镜生成）。
             async function resplitFromPausedRestore() {
               const oldTaskId = node.data.splitTaskId;
               if (!oldTaskId) return;
@@ -3431,9 +3441,22 @@
                 if (node.data.splitTaskMode === 'split_and_generate_grid') {
                   if (node.data.splitTaskPostActionStarted) { if (splitGridBtn2) splitGridBtn2.disabled = false; if (splitBtn2) splitBtn2.disabled = false; return; }
                   node.data.splitTaskPostActionStarted = true;
-                  // 宫格模式：交给节点的 runGridFlow（通过模拟无法直接调用，降级为先应用结果）
-                  if (node.applyParsedData) { await node.applyParsedData(parsedData, { autoGenerateFrames: false }); }
-                  node.data.splitTaskResultApplied = true;
+                  // 宫格模式：优先完整重放宫格流程（创建幕→生成分镜→收集参考图→宫格确认），
+                  // 与活动会话行为一致；旧节点未暴露 runGridFlow 时才降级为仅物化幕。
+                  if (typeof node.runGridFlow === 'function') {
+                    try {
+                      await node.runGridFlow(parsedData);
+                      node.data.splitTaskResultApplied = true;
+                    } catch (error) {
+                      // 失败不标记已应用并回滚守卫：下次刷新可重试完整宫格流程
+                      node.data.splitTaskPostActionStarted = false;
+                      if (gridStatusEl2) { gridStatusEl2.style.display = 'block'; gridStatusEl2.style.color = '#dc2626'; gridStatusEl2.textContent = '宫格流程失败: ' + (error.message || ''); }
+                      showToast('宫格生图失败: ' + (error.message || '未知错误'), 'error');
+                    }
+                  } else {
+                    if (node.applyParsedData) { await node.applyParsedData(parsedData, { autoGenerateFrames: false }); }
+                    node.data.splitTaskResultApplied = true;
+                  }
                   if (window.safeAutoSave) window.safeAutoSave();
                 } else {
                   if (node.applyParsedData) { await node.applyParsedData(parsedData); }
@@ -3480,14 +3503,18 @@
     function createShotGroupNodeWithData(nodeData){
       const savedNextNodeId = state.nextNodeId;
       state.nextNodeId = nodeData.id;
-      
-      createShotGroupNode({ 
-        x: nodeData.x, 
+
+      createShotGroupNode({
+        x: nodeData.x,
         y: nodeData.y,
         shotGroupData: nodeData.data || {},
-        scriptData: nodeData.data.scriptData || {}
+        scriptData: nodeData.data.scriptData || {},
+        // createShotGroupNode 的 opts.scriptNodeId/scriptContent 不传会落成空串，
+        // 刷新保存后幕与剧本节点失联，hasExistingShotGroup 幂等判断随之失效（重复拆分会复制整套幕）
+        scriptNodeId: nodeData.data.scriptNodeId || '',
+        scriptContent: nodeData.data.scriptContent || ''
       });
-      
+
       state.nextNodeId = Math.max(savedNextNodeId, nodeData.id + 1);
     }
 

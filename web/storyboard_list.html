@@ -41,6 +41,19 @@
       </div>
     </section>
 
+    <section id="storyboardOwnerScope" class="owner-scope" hidden>
+      <div class="owner-scope-tabs" role="tablist" aria-label="故事板范围">
+        <button type="button" class="owner-scope-btn is-active" data-scope="mine">只看自己</button>
+        <button type="button" class="owner-scope-btn" data-scope="all">查看全部</button>
+        <button type="button" class="owner-scope-btn" data-scope="user">查看指定用户</button>
+      </div>
+      <form id="storyboardOwnerForm" class="owner-scope-form" hidden>
+        <input id="storyboardOwnerInput" class="search-input" type="search" placeholder="输入昵称或账号（手机号 / 邮箱）" autocomplete="off" />
+        <button class="btn btn-primary owner-scope-submit" type="submit">查看</button>
+      </form>
+      <p id="storyboardOwnerHint" class="owner-scope-hint" hidden></p>
+    </section>
+
     <section id="storyboardFolderContainer" class="folder-grid" aria-live="polite">
       <div class="loading">
         <span class="loading-ring"></span>

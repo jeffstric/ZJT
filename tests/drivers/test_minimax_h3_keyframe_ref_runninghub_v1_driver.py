@@ -120,12 +120,27 @@ def test_only_first_puts_second_reference_on_picture_3():
 
 
 def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
+    """双说话人双声明：两路上传 fileName；声明 2 路上限外（第 3 路）由驱动截断。"""
     driver = make_driver()
+    optimized = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Audio 1> is the voice-timbre reference for the woman in <Picture 2> (S1): timbre.\n"
+        "<Audio 2> is the voice-timbre reference for the man in <Picture 3> (S2): timbre."
+    )
+    extra = {
+        "image_mode": "multi_reference",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "图1是首帧，图2是林月，图3是陈默。林月说「今天到此为止」，陈默答「好」。",
+            "optimized_prompt": optimized,
+            "has_dialogue": True,
+        },
+    }
     request = asyncio.run(driver.build_create_request(make_ai_tool(
         audio_path="voice1.wav,voice2.wav",
         video_path="clip.mp4",
-        # 有引号台词的镜头维持上传音色 + lip-sync pacing 现状
-        prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
+        prompt=optimized,
+        extra_config=json.dumps(extra, ensure_ascii=False),
     )))
     nodes = node_map(request)
     assert nodes[("157", "audio")]["fieldValue"] == "openapi/voice1.wav"
@@ -135,16 +150,63 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     assert "clip.mp4" not in driver._storage.calls
     driver.logger.warning.assert_called()
 
-    extra = make_driver()
-    extra_request = asyncio.run(extra.build_create_request(make_ai_tool(
+    third = make_driver()
+    third_request = asyncio.run(third.build_create_request(make_ai_tool(
         audio_path="a.wav,b.wav,c.wav",
+        prompt=optimized,
+        extra_config=json.dumps(extra, ensure_ascii=False),
+    )))
+    third_nodes = node_map(third_request)
+    assert third_nodes[("157", "audio")]["fieldValue"] == "openapi/a.wav"
+    assert third_nodes[("188", "audio")]["fieldValue"] == "openapi/b.wav"
+    assert "c.wav" not in third._storage.calls
+    third.logger.warning.assert_called()
+
+
+def test_single_speaker_uploads_only_declared_audio():
+    """单人说话镜头：优化只声明 <Audio 1>，第 2 路音色不上传、Audio 2 槽 None。
+
+    分镜 2 事故形态：单人近景 + 两路音色全传，第 2 路被 H3 错配给画面人物串音色。
+    """
+    driver = make_driver()
+    optimized = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Audio 1> is the voice-timbre reference for the angry man in the center of "
+        "<Picture 1> (S1): it provides voice timbre and lip-sync pacing."
+    )
+    extra = {
+        "image_mode": "multi_reference",
+        "h3_prompt_optimize": {
+            "variant": "KFRef",
+            "original_prompt": "近景：【【赵志高】】大声呵斥：「李保国！你看看你扫的什么地！」",
+            "optimized_prompt": optimized,
+            "has_dialogue": True,
+        },
+    }
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="zhao.mp3,li.mp3",
+        prompt=optimized,
+        extra_config=json.dumps(extra, ensure_ascii=False),
+    )))
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "openapi/zhao.mp3"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "zhao.mp3" in driver._storage.calls
+    assert "li.mp3" not in driver._storage.calls
+
+
+def test_fallback_prompt_without_declaration_uploads_no_audio():
+    """回退原文/无优化记录：原文无 <Audio N> 声明 → 不上传，干净降级为模型配音。"""
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        audio_path="voice1.wav,voice2.wav",
         prompt="图1是首帧，图2是林月，图3是尾帧。林月说「今天到此为止」。",
     )))
-    extra_nodes = node_map(extra_request)
-    assert extra_nodes[("157", "audio")]["fieldValue"] == "openapi/a.wav"
-    assert extra_nodes[("188", "audio")]["fieldValue"] == "openapi/b.wav"
-    assert "c.wav" not in extra._storage.calls
-    extra.logger.warning.assert_called()
+    nodes = node_map(request)
+    assert nodes[("157", "audio")]["fieldValue"] == "None"
+    assert nodes[("188", "audio")]["fieldValue"] == "None"
+    assert "voice1.wav" not in driver._storage.calls
+    driver.logger.info.assert_called()
 
 
 def test_no_dialogue_skips_audio_upload_and_fills_none():
@@ -208,20 +270,25 @@ def test_llm_dialogue_flag_overrides_regex_fallback():
     assert nodes[("188", "audio")]["fieldValue"] == "None"
     assert "voice1.wav" not in driver._storage.calls
 
-    # 标记 true + 原文无引号（LLM 识别出无引号台词）→ 照常上传
+    # 标记 true + 原文无引号（LLM 识别出无引号台词）+ 双人双声明 → 照常上传两路
     spoken = make_driver()
+    spoken_optimized = (
+        "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
+        "<Audio 1> is the voice-timbre reference for the man on the left of <Picture 1> (S1).\n"
+        "<Audio 2> is the voice-timbre reference for the man on the right of <Picture 1> (S2)."
+    )
     spoken_extra = {
         "image_mode": "multi_reference",
         "h3_prompt_optimize": {
             "variant": "KFRef",
-            "original_prompt": "图1是首帧。李卫国对赵志高说：今天到此为止。",
-            "optimized_prompt": "[keyframe completion + audio reference] ...",
+            "original_prompt": "图1是首帧。李卫国对赵志高说：今天到此为止。赵志高答：知道了。",
+            "optimized_prompt": spoken_optimized,
             "has_dialogue": True,
         },
     }
     spoken_request = asyncio.run(spoken.build_create_request(make_ai_tool(
         audio_path="voice1.wav,voice2.wav",
-        prompt="[keyframe completion + audio reference] ...",
+        prompt=spoken_optimized,
         extra_config=json.dumps(spoken_extra, ensure_ascii=False),
     )))
     spoken_nodes = node_map(spoken_request)

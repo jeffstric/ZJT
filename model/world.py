@@ -137,6 +137,7 @@ class WorldModel:
         order_direction: str = 'DESC',
         keyword: Optional[str] = None,
         visibility: str = 'active',
+        include_all_users: bool = False,
     ) -> Dict[str, Any]:
         """
         Get world records list by user ID with pagination
@@ -149,6 +150,7 @@ class WorldModel:
             order_direction: Order direction (ASC, DESC)
             keyword: Search keyword for name
             visibility: 'active' (default, is_deleted=0) | 'deleted' (is_deleted=1) | 'all'
+            include_all_users: True 时不过滤 user_id（仅管理员场景，调用方需先鉴权）
         
         Returns:
             Dictionary with 'total', 'page', 'page_size', 'data' keys
@@ -168,8 +170,8 @@ class WorldModel:
         where_conditions = []
         params = []
         
-        # 独立空间模式才按 user_id 过滤
-        if Edition.is_space_isolated():
+        # 独立空间模式才按 user_id 过滤；include_all_users（管理员场景）跳过过滤
+        if Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("user_id = %s")
             params.append(user_id)
 
@@ -213,14 +215,15 @@ class WorldModel:
             raise
 
     @staticmethod
-    def list_names_for_storyboard_folders(user_id: int) -> List[Dict[str, Any]]:
+    def list_names_for_storyboard_folders(user_id: int, include_all_users: bool = False) -> List[Dict[str, Any]]:
         """故事板文件夹用的世界 id 与名称。含伪删除世界，不分页。
 
         独立空间只返回该用户的世界；共享空间返回全部世界。
+        include_all_users 为真时（管理员查看全部）不按 user_id 过滤。
         """
         where_conditions = []
         params: list = []
-        if Edition.is_space_isolated():
+        if Edition.is_space_isolated() and not include_all_users:
             where_conditions.append("user_id = %s")
             params.append(user_id)
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"

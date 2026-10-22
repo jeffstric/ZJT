@@ -32,6 +32,8 @@ class AIAudio:
         self.status = kwargs.get('status')
         self.message = kwargs.get('message')
         self.speed = kwargs.get('speed')
+        self.engine = kwargs.get('engine')
+        self.voice_id = kwargs.get('voice_id')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -52,7 +54,9 @@ class AIAudio:
             'status': self.status,
             'message': self.message,
             # DECIMAL → float，避免 Decimal 无法 JSON 序列化
-            'speed': float(self.speed) if self.speed is not None else None
+            'speed': float(self.speed) if self.speed is not None else None,
+            'engine': self.engine,
+            'voice_id': self.voice_id
         }
 
 
@@ -73,7 +77,9 @@ class AIAudioModel:
         emo_control_method: Optional[int] = None,
         status: Optional[int] = AI_AUDIO_STATUS_PENDING,
         message: Optional[str] = None,
-        speed: Optional[float] = DialogueTtsSpeedConstants.DEFAULT
+        speed: Optional[float] = DialogueTtsSpeedConstants.DEFAULT,
+        engine: Optional[str] = None,
+        voice_id: Optional[int] = None
     ) -> int:
         """
         Create a new AI audio record
@@ -92,6 +98,8 @@ class AIAudioModel:
             status: Status (AI_AUDIO_STATUS_PENDING-未处理, AI_AUDIO_STATUS_PROCESSING-处理中, AI_AUDIO_STATUS_FAILED-处理失败, AI_AUDIO_STATUS_COMPLETED-处理完成, default: AI_AUDIO_STATUS_PENDING)
             message: Error message (optional)
             speed: 语速（1.0 正常，>1 更快，<1 更慢，范围 0.5~2.0）
+            engine: 合成引擎（volcengine=火山快速合成；NULL=IndexTTS 克隆，历史默认）
+            voice_id: voice 表关联 ID（engine=volcengine 时记录所用音色）
 
         Returns:
             Inserted record ID
@@ -99,12 +107,13 @@ class AIAudioModel:
         sql = """
             INSERT INTO ai_audio
             (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
-             emo_text, emo_weight, emo_vec, emo_control_method, status, message, speed)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             emo_text, emo_weight, emo_vec, emo_control_method, status, message, speed,
+             engine, voice_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         params = (text, user_id, ref_path, emo_ref_path, transaction_id, result_url,
                   emo_text, emo_weight, emo_vec, emo_control_method, status, message,
-                  speed)
+                  speed, engine, voice_id)
         
         try:
             record_id = execute_insert(sql, params)
@@ -349,6 +358,8 @@ CREATE TABLE IF NOT EXISTS `ai_audio` (
   `status` tinyint DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
   `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '错误信息',
   `speed` decimal(4,2) NOT NULL DEFAULT '1.00' COMMENT '语速: 1.00正常, >1更快, <1更慢, 范围0.50~2.00（IndexTTS duration_factor=1/speed）',
+  `engine` varchar(16) DEFAULT NULL COMMENT '合成引擎: volcengine=火山快速合成; NULL=IndexTTS 克隆',
+  `voice_id` int DEFAULT NULL COMMENT 'voice 表关联ID（engine=volcengine 时记录）',
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 """

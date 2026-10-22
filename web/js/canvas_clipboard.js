@@ -79,7 +79,7 @@
       for(var j = 0; j < conns.length; j++){
         var c = conns[j];
         if(idSet[c.from] && idSet[c.to]){
-          connCopies.push({ array: arr, from: c.from, to: c.to, portType: c.portType });
+          connCopies.push({ array: arr, from: c.from, to: c.to, portType: c.portType, voiceLineIndex: c.voiceLineIndex });
         }
       }
     }
@@ -153,12 +153,20 @@
       var toId = idMap[cc.to];
       if(!fromId || !toId) continue;
       var connArray = state[cc.array] || (state[cc.array] = []);
-      connArray.push({
+      var pastedConn = {
         id: state[CONN_ID_KEYS[cc.array]]++,
         from: fromId,
         to: toId,
         portType: cc.portType
-      });
+      };
+      if (cc.voiceLineIndex != null) pastedConn.voiceLineIndex = cc.voiceLineIndex;
+      connArray.push(pastedConn);
+    }
+    for (var si = 0; si < newIds.length; si++) {
+      var pastedNode = state.nodes.find(function(n) { return n.id === newIds[si]; });
+      if (pastedNode && pastedNode.type === 'text_to_speech' && typeof pastedNode.syncConnectedVoice === 'function') {
+        pastedNode.syncConnectedVoice();
+      }
     }
 
     clip.pasteCount = (clip.pasteCount || 0) + 1;

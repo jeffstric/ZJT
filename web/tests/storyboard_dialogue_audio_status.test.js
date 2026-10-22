@@ -9,6 +9,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isAudioRunningStatus, isAudioFailedStatus } from '../js/storyboard/utils.js';
 
+const root = path.resolve(import.meta.dirname, '../..');
+const readSource = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
+
 describe('isAudioRunningStatus', () => {
     it('识别后端 AIAudioStatus 数值状态（0=PENDING 1=PROCESSING）', () => {
         expect(isAudioRunningStatus(0)).toBe(true);
@@ -57,5 +60,13 @@ describe('对话行配音区块渲染', () => {
         expect(renderSource).toContain('is-stale');
         expect(renderSource).toContain('dialogue-audio-note stale');
         expect(renderSource).toContain('dialogue-audio-note failed');
+    });
+});
+
+describe('dialogue panel empty state', () => {
+    it('无对话内容时不渲染音频来源卡片', () => {
+        const renderSource = readSource('web/js/storyboard/render.js');
+        // 没有对话时 TTS 选择/替换音色等整个音频来源卡片无意义，不应显示
+        expect(renderSource).toContain("(scene.dialogues || []).length ? renderDialogueAudioSource(scene) : ''");
     });
 });

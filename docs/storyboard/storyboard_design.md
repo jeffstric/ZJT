@@ -49,7 +49,7 @@ web/js/storyboard/
 | `prompt_json.character_desc` | `scene.promptJson.character_desc` | 角色描述 |
 | `video_prompt` | `scene.videoPrompt` | 视频提示词（生视频/数字人动作描述） |
 | `video_type` | `scene.videoType` | 分镜类型 image/video/digital_human |
-| `audio_embedded` | `scene.audioEmbedded` | 音频来源**偏好**：1=强制视频原声并跳过 TTS，0=优先对话配音；无可用对话配音时预览/导出自动兜底视频原声，配音就绪后自动回 TTS；digital_human 默认 1 |
+| `audio_embedded` | `scene.audioEmbedded` | 音频来源**偏好**：1=视频原声（**默认**，配音落地后保持、不自动切 TTS），0=对话配音（仅在「有配音且用户显式选择」时成立，无配音时前端禁选 TTS；见 `storyboard_timeline_playback.md` 音源口径） |
 | `video_config_json` | `scene.videoConfigJson` | 视频生成参数偏好 |
 | `difficulty` | `scene.difficulty` | 分镜难易程度 易/中/难（见 2.3.1.1），卡片 badge 展示 |
 | `act_name` | `scene.actName` | 所属幕/分镜组名称（见 2.3.1.2），卡片标签展示 |
@@ -1449,7 +1449,7 @@ function resumePollingTasks() {
 15. **序列化/恢复**：定义 `serializeStoryboard()` / `restoreStoryboard()`，支持页面刷新恢复
 16. **权限控制（二期/暂缓）**：`@require_permission("storyboard:xxx")` 装饰器本期暂不启用（当前为空实现），保留接口签名以便二期接入
 17. **错误处理**：全局错误捕获 + 用户友好的错误提示
-18. **身份校验**：所有接口必须通过 `X-User-Id` Header 获取并校验用户身份，敏感操作需 `Authorization` Header
+18. **身份校验**：所有接口通过 `X-User-Id` Header 获取用户身份；2026-10-20 起由全站 `x_user_id_consistency_middleware` 强制 `X-User-Id` 与 `Authorization` token 属主一致（缺失/失效/不一致 401），token 解析结果才是唯一可信身份来源（见 docs/backend/auth_unification.md 五）
 19. **空间隔离**：Model 层 list 查询统一使用 `Edition.is_space_isolated()` 条件过滤；API 层使用 `_ensure_resource_access` 校验资源归属。商业版用户数据相互隔离，开源版共享（删除除外）
 20. **防越权**：分镜操作必须先查所属 storyboard 再校验归属，不能直接按 scene_id 操作而跳过归属校验
 21. **INT UNSIGNED 兼容**：新表外键字段统一使用 `INT UNSIGNED`，与老表保持一致（`world.id`、`script.id`、`video_workflow.id`、`character.id` 等主键均为 `int unsigned`），避免 MySQL 外键类型不一致报错

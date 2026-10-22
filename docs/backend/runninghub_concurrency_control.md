@@ -242,7 +242,9 @@ if error_code or error_message:
         # => {"success": False, "retry": True, "retry_reason": "UPSTREAM_CONGESTED", ...}
 ```
 
-所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / qwen_multi_angle）和异步驱动均接入该识别。
+所有 RunningHub 视频驱动（ltx2.3 / ltx2 / wan22 / digital_human / digital_human_ltx2_3_voice / digital_human_minimax_h3 / minimax_h3 系列 / qwen_multi_angle）和异步驱动均接入该识别。
+
+> **注意（2026-10 起）**：digital_human_minimax_h3 的驱动内分段链路（sync_mode 全流水线、`_SegmentedCongestedError`/`_SegmentedPipelineError`）已随 compose_job 改造整体删除（见 `docs/digital_human_compose_job_plan.md`）。>15s 口播改为「每段一条标准 ai_tools + compose_jobs 纯编排」，每段走标准单段提交路径——段提交命中 421 时与单段一致，直接返回 `_build_upstream_congested_result()` 可重试结果交回调度层，不再有分段专属异常类。
 
 ##### 2. 视频任务（tasks 表）—— 不消耗重试次数的延迟重试
 
@@ -342,6 +344,28 @@ cleaned = RunningHubSlotsModel.cleanup_stale_slots(timeout_minutes=60)
 ```
 
 ## 监控和维护
+
+### 槽位对账回收守护（兜底）
+
+`task/runninghub_slot_reclaimer.py` 周期性（默认 1 小时，可配
+`runninghub.slot_reclaim_interval_seconds`，下限 60s）核对活跃槽位（status=1,
+source='task'）与关联任务的真实状态，回收「任务已终态但槽位未释放」的残留，
+防止并发容量被永久蚕食。
+
+设计要点：
+
+- **不感知具体业务动作**：回收判定只看 `ai_tools.status` 是否在活跃集合
+  （0/1/3/4/5/6）内，活跃集合之外的一切状态（含未来新增的任何终态）都会被
+  兜底回收——各业务路径自身的即时释放（成功/失败/过期/超限/拥堵已有的
+  release 调用）之外的安全网。
+- **防误回收**：终态刚落库（`completed_time` 距今不足宽限期，默认 600s，可配
+  `runninghub.slot_reclaim_grace_seconds`）的跳过——调度器可能仍持有该槽在
+  向上游提交（秒级在途窗口）；终态但 `completed_time` 为 NULL 的脏数据保守
+  跳过并告警；ai_tools 记录已不存在的极端不一致直接回收并告警。
+- 范围：仅 source='task'（视频任务链路）；source='async' 的 task_id 语义
+  不同（指向 async_tasks.id），不在此处理。
+- 单测：`tests/task/test_runninghub_slot_reclaimer.py`（含"模块不引用任何
+  取消符号"的硬约束断言）。
 
 ### 查看当前槽位使用情况
 

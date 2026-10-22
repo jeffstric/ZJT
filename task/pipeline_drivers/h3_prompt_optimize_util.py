@@ -11,6 +11,7 @@ from config.constant import (
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
     H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+    H3_VOICE_CASTING_NOTE_MARKER,
     MAX_VOICE_REFERENCE_AUDIOS,
 )
 from config.unified_config import DriverKey
@@ -301,17 +302,14 @@ _KFREF_AUDIO_BINDING_TEMPLATE = (
     "<Audio 1> is the voice-timbre reference for <该说话人在画面中的具体描述> (S1): "
     "it provides voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing."
 )
-_KFREF_AUDIO_TIMBRE_ONLY = (
-    "<Audio 1> is a voice-timbre reference only. Do not copy its words, rhythm, or pacing "
-    "into the video. Do not lip-sync to it. No character speaks."
-)
 
 
 def _kfref_audio_line(audios: int) -> str:
     """音频段条件式指令：代码只给「可用参考音频路数」事实，有无台词由 LLM 判断。
 
     指令拼在 LLM 调用之前，预知不了语义判断结果，因此三种情形都写给 LLM 自选：
-    有台词 + N 路 → 每路写一个绑定句（绑定到说话人，多人对话各绑各的）；
+    有台词 → 只给开口说话的角色写绑定句（未声明的音频不会上传，驱动按声明数截断，
+    不说话角色的音色挂槽会被 H3 错配给画面人物或混入成片人声）；
     有台词 + 0 路 → 不写任何 <Audio N>，台词照进 <d>（模型自动配音）；
     无台词 → 不写任何 <Audio N>，只写环境音（无对白时连上的语音会被当成成片声音）。
     """
@@ -322,19 +320,22 @@ def _kfref_audio_line(audios: int) -> str:
         )
     if audios >= 2:
         count = (
-            "有 2 个可用参考音频。第一段写成 <Audio 1>，第二段写成 <Audio 2>，"
-            "每一段绑定到各自的说话人。不要写 <Audio 3>，也不要写 <audio_N>。"
+            "有 2 个可用参考音频。第一段是 <Audio 1>，第二段是 <Audio 2>。"
+            "不要写 <Audio 3>，也不要写 <audio_N>。"
         )
     else:
         count = (
-            "只有 1 个可用参考音频，写成 <Audio 1>，绑定到说话人。"
+            "只有 1 个可用参考音频，即 <Audio 1>。"
             "不要写 <Audio 2>，也不要写 <audio_2>。"
         )
     return (
         "先判断原文有没有角色说出或唱出的台词（引号内容是台词还是店名/标语等"
         "描述性用法，由你判断），再按下面规则写音频段：\n"
-        f"- 原文有台词：{count}每个音频写一句绑定句，句式如下（编号与占位按实际改写）：\n"
+        f"- 原文有台词：{count}"
+        "只给实际开口说话的角色写绑定句——每个说话人一句，编号取音色说明"
+        "「音频N是角色：X」中该角色对应的音频号，句式如下（编号与占位按实际改写）：\n"
         f"{_KFREF_AUDIO_BINDING_TEMPLATE}\n"
+        "不说话的角色不写绑定句；未写绑定句的音频不会上传，不要为其编造声明。\n"
         "- 原文没有台词：不写任何 <Audio N>，只描述环境音。\n"
     )
 
@@ -537,6 +538,24 @@ def _build_no_dialogue_note() -> str:
     )
 
 
+def _build_voice_casting_instruction(original_prompt: str) -> str:
+    """原文携带「角色音色说明」块时追加的配音规格指令。
+
+    注入侧（分镜直连/批量补视频，仅 H3 系列）把角色声学音色指纹
+    （character.voice_desc）追加到原文尾部；H3 的参考音频只是弱微调，
+    音色一致性靠该指纹渲染成英文声音描述。指纹特征必须语义逐字转写，
+    禁止润色增删（文本恒定是跨镜头音色一致性的根基）。
+    """
+    if H3_VOICE_CASTING_NOTE_MARKER not in str(original_prompt or ""):
+        return ""
+    return (
+        "原文末尾的「角色音色说明」块是角色配音规格："
+        "有台词的角色，说话句中必须融入其对应音色特征的英文转写"
+        "（全部声学特征语义保留，禁止增删或改写，不说话的角色忽略其特征）；"
+        "该说明块本身不要抄进最终提示词，只作为配音依据。"
+    )
+
+
 def build_h3_optimize_user_message(
     original_prompt: str,
     variant: str,
@@ -565,8 +584,32 @@ def build_h3_optimize_user_message(
         instruction = f"{instruction}\n{_build_dialogue_fidelity_note(quoted_spans)}"
     else:
         instruction = f"{instruction}\n{_build_no_dialogue_note()}"
+    voice_casting_line = _build_voice_casting_instruction(original_prompt)
+    if voice_casting_line:
+        instruction = f"{instruction}\n{voice_casting_line}"
     body = (original_prompt or "").strip() or "(empty original prompt)"
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
+
+
+def strip_leading_json_object(text: str) -> str:
+    """剥掉模型自作主张输出的首行 JSON 对象（如 {"has_dialogue": false}）。
+
+    JSON 头是 KFRef 变体专属协议，但非 KFRef 变体的请求偶尔也会诱导模型输出
+    判断性 JSON 前缀（线上案例：Ref2VA 短提示词任务输出以 {"has_dialogue": false}
+    开头，六段校验被它带挂导致 fallback）。首行是合法 JSON 对象时删除该行；
+    其余内容原样保留。
+    """
+    cleaned = (text or "").strip()
+    if not cleaned.startswith("{"):
+        return cleaned
+    first_line, _, rest = cleaned.partition("\n")
+    try:
+        parsed = json.loads(first_line.strip())
+    except (json.JSONDecodeError, ValueError):
+        return cleaned
+    if not isinstance(parsed, dict):
+        return cleaned
+    return rest.strip()
 
 
 def strip_prompt_fences(text: str) -> str:

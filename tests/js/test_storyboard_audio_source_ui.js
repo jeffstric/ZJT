@@ -25,6 +25,23 @@ assert.match(renderSource, /resolveSceneAudioMode/);
 assert.match(renderSource, /autoVideoFallback/);
 assert.match(renderSource, /dialogue-audio-source-auto-badge/);
 assert.match(renderSource, /已自动使用视频原声/);
+// 音源口径：无配音时禁选 TTS（audio_embedded=0 仅在「有配音且用户显式选 TTS」时成立）
+assert.match(
+    renderSource,
+    /\$\{hasTts \? '' : 'disabled'\}/,
+    '无配音时「对话配音（TTS）」按钮应禁用'
+);
+assert.match(renderSource, /title_tts_source_disabled/);
+assert.match(
+    renderSource,
+    /export function updateDialogueAudioSourcePanel\(scene\)/,
+    '轮询局部刷新应覆盖音频来源面板'
+);
+assert.match(
+    renderSource,
+    /当前没有对话配音，暂用视频原声。/,
+    'hint 不应再承诺「生成配音后自动改回对话配音」'
+);
 assert.match(eventsSource, /action === 'set-scene-audio-source'/);
 assert.match(eventsSource, /audio_embedded:\s*scene\.audioEmbedded \? 1 : 0/);
 assert.match(renderSource, /data-action="replace-scene-voice"/);

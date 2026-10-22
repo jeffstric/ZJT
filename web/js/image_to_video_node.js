@@ -8,11 +8,16 @@
         return translated && translated !== key ? translated : fallback;
       };
 
-      // 从后端配置获取第一个视频模型作为默认值
+      // 从后端配置获取默认视频模型：优先目录「性价比」档（与剧本/分镜组节点一致），回退列表第一项
       let defaultVideoModel = 'wan22';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
         const options = window.TaskConfig.getModelOptionsForCategory('image_to_video');
         if(options.length > 0) defaultVideoModel = options[0].value;
+        if(window.ModelCatalog && options.length > 0) {
+          const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
+          const valueHit = window.ModelCatalog.findTaskByTrack(options, 'video.image_to_video', catalog, 'value');
+          if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
+        }
       }
       
       const node = {
@@ -1276,6 +1281,11 @@
               submitPrompt = appendVoiceReferencePrompt(submitPrompt, voiceRefs.promptNote);
               notifyVoiceReferences(voiceRefs.voiceUrls.length);
             }
+            // H3 系列：追加角色音色指纹（voice_desc）——须在 voiceCharacters 作用域内；
+            // 首帧模式无角色连线数据，暂不覆盖
+            if(typeof appendVoiceCastingIfH3 === 'function'){
+              submitPrompt = appendVoiceCastingIfH3(videoModel, submitPrompt, voiceCharacters);
+            }
           }
 
           // 人脸遮盖白名单：勾选「是否处理人脸」时只对角色参考图做遮盖。
@@ -1635,7 +1645,8 @@
         mentionDropdownEl.innerHTML = filtered.map((item, i) => {
           const isImage = item.type === 'image';
           const thumbHtml = isImage && item.url ? `<img src="${escapeHtml(item.url)}" class="mention-thumb" style="width:32px;height:32px;object-fit:cover;border-radius:4px;margin-right:8px;flex-shrink:0;" />` : '';
-          return `<div class="mention-dropdown-item${i === mentionState.selectedIndex ? ' selected' : ''}" data-index="${i}" style="display:flex;align-items:center;padding:6px 10px;cursor:pointer;">` +
+          const hoverPreviewAttr = isImage && item.url ? ` data-hover-preview="${escapeHtml(item.url)}"` : '';
+          return `<div class="mention-dropdown-item${i === mentionState.selectedIndex ? ' selected' : ''}" data-index="${i}"${hoverPreviewAttr} style="display:flex;align-items:center;padding:6px 10px;cursor:pointer;">` +
             thumbHtml +
             `<span class="mention-icon" style="margin-right:6px;">${typeIcons[item.type] || '📄'}</span>` +
             `<span class="mention-name" style="flex:1;">${escapeHtml(item.displayName || '')}</span>` +
@@ -1655,6 +1666,7 @@
 
       function hideMentionDropdown(){
         mentionState.visible = false;
+        if(window.WFHoverPreview) window.WFHoverPreview.hide();
         if(mentionDropdownEl) mentionDropdownEl.style.display = 'none';
       }
 

@@ -359,10 +359,11 @@ function createNodeBase(config, opts) {
   var titleIcon = config.titleIcon || '';
   var deleteTitle = window.t ? window.t('node_delete_btn') : '删除';
 
+  var safeTitle = (typeof window.escapeHtml === 'function') ? window.escapeHtml(title || '') : String(title || '');
   el.innerHTML =
     portsHtml +
     '<div class="node-header">' +
-      '<div class="node-title">' + titleIcon + title + '</div>' +
+      '<div class="node-title">' + titleIcon + safeTitle + '</div>' +
       '<button class="icon-btn" title="' + deleteTitle + '">\u00d7</button>' +
     '</div>' +
     '<div class="node-body">' +

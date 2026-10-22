@@ -77,6 +77,7 @@ def test_build_storyboard_folders_keeps_orphan_storyboard():
             "storyboard_title": "Lost Board",
             "scene_count": 2,
             "status": "orphan",
+            "owner_user_id": None,
             "update_at": "2026-06-23T10:00:00",
         }
     ]
@@ -120,7 +121,7 @@ def test_collect_storyboard_folder_data_uses_world_scripts(monkeypatch):
     monkeypatch.setattr(
         storyboard_api.StoryboardModel,
         "list_folders_by_user",
-        lambda user_id, world_id=None: [
+        lambda user_id, world_id=None, **_kwargs: [
             {
                 "id": 31,
                 "world_id": 7,
@@ -159,7 +160,7 @@ def test_collect_storyboard_folder_data_without_world_id_uses_accessible_worlds(
     monkeypatch.setattr(
         storyboard_api.WorldModel,
         "list_names_for_storyboard_folders",
-        lambda user_id: [{"id": 7, "name": "Moon"}, {"id": 8, "name": "Hidden"}],
+        lambda user_id, include_all_users=False: [{"id": 7, "name": "Moon"}, {"id": 8, "name": "Hidden"}],
     )
 
     def fake_scripts(world_ids):
@@ -178,7 +179,7 @@ def test_collect_storyboard_folder_data_without_world_id_uses_accessible_worlds(
     monkeypatch.setattr(
         storyboard_api.StoryboardModel,
         "list_folders_by_user",
-        lambda user_id, world_id=None: [],
+        lambda user_id, world_id=None, **_kwargs: [],
     )
 
     folders = storyboard_api.collect_storyboard_folder_data(5, None)
@@ -196,9 +197,46 @@ def test_collect_storyboard_folder_data_without_world_id_uses_accessible_worlds(
             "storyboard_title": None,
             "scene_count": 0,
             "status": "not_created",
+            "owner_user_id": None,
             "update_at": "2026-06-20T10:00:00",
         }
     ]
+
+
+def test_build_storyboard_folders_separates_owners():
+    folders = storyboard_api.build_storyboard_folders(
+        scripts=[
+            {"id": 1, "world_id": 7, "user_id": 14, "title": "A", "episode_number": 1},
+            {"id": 2, "world_id": 7, "user_id": 33, "title": "B", "episode_number": 1},
+        ],
+        storyboards=[
+            {
+                "id": 9,
+                "world_id": 7,
+                "user_id": 33,
+                "title": "B board",
+                "episode_number": 1,
+                "scene_count": 3,
+            }
+        ],
+        world_names={7: "Moon"},
+        separate_owners=True,
+    )
+    by_owner = {folder["owner_user_id"]: folder for folder in folders}
+    assert set(by_owner) == {14, 33}
+    assert by_owner[14]["status"] == "not_created"
+    assert by_owner[14]["storyboard_id"] is None
+    assert by_owner[33]["status"] == "created"
+    assert by_owner[33]["storyboard_id"] == 9
+    assert by_owner[33]["script_id"] == 2
+
+
+def test_apply_folder_owner_nicknames_falls_back():
+    folders = [{"owner_user_id": 14}, {"owner_user_id": 33}, {"owner_user_id": None}]
+    storyboard_api.apply_folder_owner_nicknames(folders, {14: "远方"})
+    assert folders[0]["owner_nickname"] == "远方"
+    assert folders[1]["owner_nickname"] == "用户33"
+    assert folders[2]["owner_nickname"] == ""
 
 
 def test_list_for_folders_queries_by_world_without_content_or_user(monkeypatch):
@@ -227,7 +265,9 @@ def test_list_for_folders_queries_by_world_without_content_or_user(monkeypatch):
     sql = " ".join(captured["sql"].split()).lower()
     assert "from script" in sql
     assert "world_id in" in sql
-    assert "user_id" not in sql
+    assert "select id, world_id, user_id, title" in sql
+    assert "user_id =" not in sql
+    assert "user_id in" not in sql
     assert "content" not in sql
     assert "limit" not in sql
 

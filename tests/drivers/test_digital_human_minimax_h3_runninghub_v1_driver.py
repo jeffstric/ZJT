@@ -94,3 +94,4 @@ def test_build_create_request_resolution_maps_to_max_edge():
     )))
     nodes = node_map(request)
     assert nodes[("213", "value")] == "720"
+

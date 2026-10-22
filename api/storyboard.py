@@ -83,20 +83,27 @@ from model.video_voice_replace import VideoVoiceReplaceJobModel
 from services.voice_replace.enqueue import enqueue_scene_job
 from services.storyboard_reference_prompt_service import (
     append_storyboard_visual_suffix,
+    append_voice_casting_note,
     append_voice_reference_note,
+    build_voice_casting_note,
     collect_character_voice_references,
+    extract_speaking_character_ids,
 )
 from utils.resource_access import (
     get_user_id_from_header,
     ensure_resource_access,
+    ensure_owner_or_admin_view,
     ensure_world_access,
+    is_admin_user,
 )
+from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
     h3_keyframe_ref_task_id,
     prompt_has_frame_mention,
     read_explicit_frame_url,
 )
+from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
 from services.storyboard_batch_operation_service import (
     StoryboardBatchOperationError,
@@ -115,11 +122,11 @@ from services.storyboard_voiceover_bootstrap_service import (
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
 from services.storyboard_spatial import build_spatial_prompt_context
 from services.media_generation_preference_service import (
+    MediaGenerationErrorCode,
     MediaGenerationPreferenceError,
     MediaGenerationPreferenceService,
 )
 from task.audio_task import recalc_scene_duration_if_all_completed
-from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +143,31 @@ ALLOWED_DIALOGUE_UPDATE_FIELDS = {
 VALID_ASSET_TYPES = ('first_frame', 'last_frame', 'video')
 
 
-def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
+def _runtime_default_profile_sync(media_type: str, mode: str) -> Dict[str, Any]:
+    """无持久化偏好时的运行时默认槽位（不落库）。
+
+    与 default_model 同口径（目录性价比档优先，回退 sort_order 第一），
+    仅用于冻结本次任务快照，不写 user_preferences。
+    """
+    config = MediaGenerationPreferenceService.default_model(media_type, mode)
+    if config is None:
+        raise MediaGenerationPreferenceError(
+            MediaGenerationErrorCode.MODEL_REQUIRED,
+            f"没有可用于 {mode} 的媒体模型",
+        )
+    return {
+        'schema_version': 1,
+        'task_id': int(config.id),
+        'model_key': config.key,
+        'model_name': config.name,
+    }
+
+
+def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Optional[Dict[str, Any]]]:
     config_json = storyboard.to_dict().get('config_json') or {}
     if not isinstance(config_json, dict):
         config_json = {}
-    result: Dict[str, Dict[str, Any]] = {}
+    result: Dict[str, Optional[Dict[str, Any]]] = {}
     config_updates: Dict[str, int] = {}
     for media_type, modes in (
         (MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_MODES),
@@ -158,14 +185,22 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                 )
                 raw_task_id = config_json.get(legacy_field)
 
-            # 先读 media_pref（含 enable_face_mask 等扩展字段），再按 config_json 的 task_id 覆盖模型
-            pref_profile = MediaGenerationPreferenceService.get_profile(
-                storyboard.user_id,
-                storyboard.world_id,
-                MediaGenerationSurface.STORYBOARD_UI,
-                media_type,
-                mode,
-            )
+            # 读取不落库（initialize=False）：偏好表只存用户显式选择。
+            # 事故：默认 initialize=True 会在首次 GET 时把 default_model 解析结果
+            # 固化进 user_preferences（旧口径 sort_order 第一 = LTX2.3），从此
+            # 隐身模式/新浏览器都命中该记录，前端性价比档兜底（59009cf3）被短路。
+            try:
+                pref_profile = MediaGenerationPreferenceService.get_profile(
+                    storyboard.user_id,
+                    storyboard.world_id,
+                    MediaGenerationSurface.STORYBOARD_UI,
+                    media_type,
+                    mode,
+                    initialize=False,
+                )
+            except MediaGenerationPreferenceError:
+                # 有记录但模型已下线/失效：按无记录处理，不在此处重建落库
+                pref_profile = None
             profile = dict(pref_profile) if isinstance(pref_profile, dict) else None
             if raw_task_id not in (None, ""):
                 try:
@@ -197,14 +232,6 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
                 except MediaGenerationPreferenceError:
                     # config_json 中的 task_id 失效时回退 pref
                     pass
-            if profile is None:
-                profile = MediaGenerationPreferenceService.get_profile(
-                    storyboard.user_id,
-                    storyboard.world_id,
-                    MediaGenerationSurface.STORYBOARD_UI,
-                    media_type,
-                    mode,
-                )
             # config_json 级 enableFaceMask 兜底（偏好槽未写过时）
             if (
                 media_type == MediaGenerationType.VIDEO
@@ -215,7 +242,10 @@ def _storyboard_media_preferences_sync(storyboard) -> Dict[str, Dict[str, Any]]:
             ):
                 profile['enable_face_mask'] = bool(config_json.get('enableFaceMask'))
             result[MediaGenerationPreferenceService.slot_key(media_type, mode)] = profile
-            config_updates[field] = int(profile['task_id'])
+            # 无偏好且 config_json 也无值的槽位保持 None：不 patch、不落库，
+            # 由前端 localStorage/目录性价比档兜底，提交路径按运行时默认解析
+            if isinstance(profile, dict) and profile.get('task_id') is not None:
+                config_updates[field] = int(profile['task_id'])
     if config_updates:
         StoryboardModel.patch_config_json(int(storyboard.id), config_updates)
     return result
@@ -232,6 +262,9 @@ def _storyboard_generation_snapshots_sync(storyboard) -> Dict[str, Dict[str, Any
     snapshots: Dict[str, Dict[str, Any]] = {}
     for slot, profile in profiles.items():
         media_type, mode = slot.split('.', 1)
+        if not isinstance(profile, dict) or profile.get('task_id') in (None, ''):
+            # 无持久化偏好：按运行时默认（目录性价比档）冻结本次任务，不落库
+            profile = _runtime_default_profile_sync(media_type, mode)
         snapshot = MediaGenerationPreferenceService.build_snapshot(
             profile,
             MediaGenerationSurface.STORYBOARD_UI,
@@ -275,9 +308,11 @@ def _resolve_storyboard_generation_snapshot_sync(
         StoryboardModel.patch_config_json(int(storyboard.id), {field: profile['task_id']})
     else:
         profiles = _storyboard_media_preferences_sync(storyboard)
-        profile = dict(
-            profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)] or {}
-        )
+        slot_profile = profiles[MediaGenerationPreferenceService.slot_key(media_type, mode)]
+        if not isinstance(slot_profile, dict) or slot_profile.get('task_id') in (None, ''):
+            # 无持久化偏好：按运行时默认（目录性价比档）解析，不落库
+            slot_profile = _runtime_default_profile_sync(media_type, mode)
+        profile = dict(slot_profile)
         # 合并本轮 profile_values（如 workflow_ratio），不覆盖已解析的 task_id
         for key, value in dict(profile_values or {}).items():
             if value in (None, ''):
@@ -1006,8 +1041,10 @@ def build_storyboard_scenes_from_parsed_script(
                 'prompt': prompt_payload,
                 'video_prompt': video_prompt,
                 'video_type': resolved_video_type,
-                # 声音同出：数字人分镜 MiniMax 产物已内嵌口型音轨，导出时保留原音轨、跳过 TTS 混音
-                'audio_embedded': resolved_video_type == SceneVideoType.DIGITAL_HUMAN,
+                # 音源口径：新分镜默认视频原声，配音落地后保持、不自动切 TTS；
+                # 数字人分镜同此（口型音轨内嵌，声音同出）。
+                # 见 docs/storyboard/storyboard_timeline_playback.md
+                'audio_embedded': True,
                 # 发布幂等：用稳定 shot_id 做去重 key（见设计文档 §15）
                 'source_shot_key': shot.get('shot_id') or f'scene_{scene_index}',
                 'video_config': {
@@ -1022,21 +1059,42 @@ def build_storyboard_scenes_from_parsed_script(
     return scenes
 
 
-def _storyboard_folder_key(item: dict) -> str:
-    return f"{item.get('world_id')}:{item.get('episode_number') or 1}"
+def _folder_owner_id(item: dict):
+    raw = item.get('user_id')
+    if raw is None:
+        raw = item.get('owner_user_id')
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _storyboard_folder_key(item: dict, separate_owners: bool = False) -> str:
+    episode_number = item.get('episode_number') or 1
+    base = f"{item.get('world_id')}:{episode_number}"
+    if not separate_owners:
+        return base
+    owner_id = _folder_owner_id(item)
+    return f"{base}:{owner_id or 0}"
 
 
 def _to_iso(value):
     return value.isoformat() if hasattr(value, 'isoformat') else value
 
 
-def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict) -> list:
+def build_storyboard_folders(
+    scripts: list,
+    storyboards: list,
+    world_names: dict,
+    separate_owners: bool = False,
+) -> list:
     folders = {}
 
     for script in scripts:
         episode_number = script.get('episode_number') or 1
+        owner_user_id = _folder_owner_id(script)
         item = {
-            'folder_key': f"{script.get('world_id')}:{episode_number}",
+            'folder_key': _storyboard_folder_key(script, separate_owners),
             'world_id': script.get('world_id'),
             'world_name': world_names.get(script.get('world_id'), ''),
             'episode_number': episode_number,
@@ -1046,13 +1104,15 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
             'storyboard_title': None,
             'scene_count': 0,
             'status': 'not_created',
+            'owner_user_id': owner_user_id,
             'update_at': _to_iso(script.get('update_time') or script.get('create_time')),
         }
         folders[item['folder_key']] = item
 
     for storyboard in storyboards:
-        key = _storyboard_folder_key(storyboard)
+        key = _storyboard_folder_key(storyboard, separate_owners)
         episode_number = storyboard.get('episode_number') or 1
+        owner_user_id = _folder_owner_id(storyboard)
         if key not in folders:
             title = storyboard.get('title') or f"Episode {episode_number}"
             folders[key] = {
@@ -1066,6 +1126,7 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
                 'storyboard_title': title,
                 'scene_count': int(storyboard.get('scene_count') or 0),
                 'status': 'orphan',
+                'owner_user_id': owner_user_id,
                 'update_at': _to_iso(storyboard.get('update_at') or storyboard.get('create_at')),
             }
             continue
@@ -1076,6 +1137,8 @@ def build_storyboard_folders(scripts: list, storyboards: list, world_names: dict
         folder['scene_count'] = int(storyboard.get('scene_count') or 0)
         folder['status'] = 'created'
         folder['update_at'] = _to_iso(storyboard.get('update_at') or folder.get('update_at'))
+        if owner_user_id is not None:
+            folder['owner_user_id'] = owner_user_id
         if not folder.get('script_id') and storyboard.get('script_id'):
             folder['script_id'] = storyboard.get('script_id')
 
@@ -1094,11 +1157,14 @@ def _folder_script_key(script: dict) -> str:
     return f"{script.get('world_id')}:{episode_number}"
 
 
-def dedupe_folder_scripts(scripts: list) -> list:
-    """同一 world_id + 集数只保留 id 最小的入库剧本。"""
+def dedupe_folder_scripts(scripts: list, separate_owners: bool = False) -> list:
+    """同一文件夹键只保留 id 最小的入库剧本。
+
+    默认键是 world_id + 集数。separate_owners 时再按创建者拆开。
+    """
     chosen = {}
     for script in scripts:
-        key = _folder_script_key(script)
+        key = _storyboard_folder_key(script, separate_owners) if separate_owners else _folder_script_key(script)
         current = chosen.get(key)
         script_id = int(script.get('id') or 0)
         if current is None or script_id < int(current.get('id') or 0):
@@ -1106,20 +1172,96 @@ def dedupe_folder_scripts(scripts: list) -> list:
     return list(chosen.values())
 
 
-def collect_storyboard_folder_data(user_id: int, world_id: Optional[int]) -> list:
-    """按已入库剧本聚合文件夹。不看 script.user_id，也不读暂存文件。"""
+def apply_folder_owner_nicknames(folders: list, names: dict) -> list:
+    """给文件夹补上创建者昵称。无昵称时回退「用户{id}」。"""
+    for folder in folders or []:
+        raw = folder.get('owner_user_id')
+        try:
+            owner_id = int(raw)
+        except (TypeError, ValueError):
+            folder['owner_nickname'] = ''
+            continue
+        folder['owner_nickname'] = names.get(owner_id) or f"用户{owner_id}"
+    return folders
+
+
+def _world_names_for_ids(user_id: int, world_ids: list, known: dict) -> dict:
+    missing = []
+    for raw in world_ids:
+        try:
+            world_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if world_id not in known and world_id not in missing:
+            missing.append(world_id)
+    if not missing:
+        return known
+    rows = WorldModel.list_names_for_storyboard_folders(user_id, include_all_users=True)
+    by_id = {row.get('id'): row.get('name') or '' for row in rows}
+    for world_id in missing:
+        known[world_id] = by_id.get(world_id, '')
+    return known
+
+
+def collect_storyboard_folder_data(
+    user_id: int,
+    world_id: Optional[int],
+    include_all_users: bool = False,
+    owner_user_ids: Optional[list] = None,
+) -> list:
+    """按已入库剧本聚合文件夹。默认不按 script.user_id 过滤，也不读暂存文件。
+
+    include_all_users：管理员查看全部用户。同一世界同一集按创建者拆开。
+    owner_user_ids：管理员查看指定用户。空列表返回空。
+    """
+    separate_owners = bool(include_all_users or owner_user_ids is not None)
+    if owner_user_ids is not None:
+        scripts = dedupe_folder_scripts(
+            ScriptModel.list_for_owner_folders(owner_user_ids, world_id),
+            separate_owners=True,
+        )
+        storyboards = StoryboardModel.list_folders_by_user(
+            user_id,
+            world_id,
+            owner_user_ids=owner_user_ids,
+        )
+        if world_id is not None:
+            world = WorldModel.get_by_id(world_id)
+            world_names = {world_id: world.name if world else ''}
+        else:
+            world_names = {}
+        involved = [item.get('world_id') for item in scripts]
+        involved.extend(item.get('world_id') for item in storyboards)
+        world_names = _world_names_for_ids(user_id, involved, world_names)
+        return build_storyboard_folders(scripts, storyboards, world_names, separate_owners=True)
+
     if world_id is not None:
         world = WorldModel.get_by_id(world_id)
         world_names = {world_id: world.name if world else ''}
         world_ids = [world_id]
     else:
         # 含伪删除世界，避免已有故事板丢失世界名
-        worlds = WorldModel.list_names_for_storyboard_folders(user_id)
+        worlds = WorldModel.list_names_for_storyboard_folders(
+            user_id,
+            include_all_users=include_all_users,
+        )
         world_names = {row.get('id'): row.get('name') or '' for row in worlds}
         world_ids = list(world_names.keys())
-    scripts = dedupe_folder_scripts(ScriptModel.list_for_folders(world_ids))
-    storyboards = StoryboardModel.list_folders_by_user(user_id=user_id, world_id=world_id)
-    return build_storyboard_folders(scripts, storyboards, world_names)
+    scripts = dedupe_folder_scripts(
+        ScriptModel.list_for_folders(world_ids),
+        separate_owners=separate_owners,
+    )
+    storyboards = StoryboardModel.list_folders_by_user(
+        user_id=user_id,
+        world_id=world_id,
+        include_all_users=include_all_users,
+    )
+    return build_storyboard_folders(
+        scripts,
+        storyboards,
+        world_names,
+        separate_owners=separate_owners,
+    )
 
 
 async def _ensure_scene_access(scene_id: int, user_id: int, action: str):
@@ -2590,12 +2732,71 @@ async def list_storyboard_folders(
     request: Request,
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
     world_id: Optional[int] = None,
+    scope: Optional[str] = None,
+    owner: Optional[str] = None,
 ):
+    """故事板文件夹。
+
+    不传 scope：沿用原列表。独立空间的故事板只含当前用户，剧本仍按世界聚合。
+    scope=mine 只看自己的剧本和故事板（共享空间也同样只看自己）。
+    scope=all 查看全部，仅管理员。
+    scope=user 查看指定用户，owner 为昵称或账号（手机号/邮箱），仅管理员。
+    """
     user_id = get_user_id_from_header(user_id)
-    if world_id is not None:
+    requested = (scope or '').strip().lower()
+    if requested not in ('mine', 'all', 'user'):
+        requested = ''
+    if requested in ('all', 'user'):
+        admin = await asyncio.to_thread(is_admin_user, user_id)
+        if not admin:
+            requested = ''
+
+    owner_ids = None
+    include_all = False
+    if requested == 'user':
+        query = (owner or '').strip()
+        if not query:
+            return JSONResponse({
+                'success': True,
+                'total': 0,
+                'folders': [],
+                'scope': 'user',
+                'message': '请输入昵称或账号',
+            })
+        owner_ids = await asyncio.to_thread(UsersModel.find_ids_by_nickname_or_account, query)
+        if not owner_ids:
+            return JSONResponse({
+                'success': True,
+                'total': 0,
+                'folders': [],
+                'scope': 'user',
+                'message': '未找到该用户',
+            })
+    elif requested == 'all':
+        include_all = True
+    elif requested == 'mine':
+        owner_ids = [user_id]
+    elif world_id is not None:
         await asyncio.to_thread(ensure_world_access, world_id, user_id, Action.VIEW)
-    folders = await asyncio.to_thread(collect_storyboard_folder_data, user_id, world_id)
-    return JSONResponse({'success': True, 'total': len(folders), 'folders': folders})
+
+    folders = await asyncio.to_thread(
+        collect_storyboard_folder_data,
+        user_id,
+        world_id,
+        include_all,
+        owner_ids,
+    )
+    names = await asyncio.to_thread(
+        UsersModel.get_display_names,
+        [item.get('owner_user_id') for item in folders],
+    )
+    apply_folder_owner_nicknames(folders, names)
+    return JSONResponse({
+        'success': True,
+        'total': len(folders),
+        'folders': folders,
+        'scope': requested or 'mine',
+    })
 
 
 def _computing_power_range(cp):
@@ -3278,7 +3479,7 @@ async def get_storyboard(
     if not sb:
         return JSONResponse(status_code=404, content={'error': '故事板不存在'})
 
-    ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
+    await asyncio.to_thread(ensure_owner_or_admin_view, sb, user_id, "故事板")
 
     scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
     await _attach_dialogues(scenes)
@@ -4406,6 +4607,15 @@ async def generate_scene_video(
         task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
         and not has_quoted_dialogue(prompt)
     )
+    # H3（参考生/首帧参考混合）有台词镜头按说话人过滤：只注入开口说话角色的音色。
+    # 不说话角色的音色上传后在提示词里没有声明目标，H3 会把它错误配对给画面
+    # 可见人物或混入成片人声（单人近景镜头串音色，线上分镜 2 事故）。
+    speaking_voice_ids = None
+    if task_type in (int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO), int(h3_keyframe_ref_task_id())):
+        _speaking = extract_speaking_character_ids((scene_characters_ctx or {}).get('dialogues'))
+        if _speaking:
+            speaking_voice_ids = _speaking
+        # 对话记录为空时不过滤：无对白镜头已由 h3_no_dialogue_skip_voice 拦截
     if (
         scene_characters_ctx is not None
         and collected_urls
@@ -4416,10 +4626,32 @@ async def generate_scene_video(
             characters=scene_characters_ctx.get('characters'),
             image_mode=image_mode,
             existing_audio_urls=audio_path,
+            speaking_character_ids=speaking_voice_ids,
         )
         if voice_items:
             audio_path = ','.join([item['url'] for item in voice_items])
             prompt = append_voice_reference_note(prompt, voice_items)
+
+    # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
+    # （character.voice_desc）：H3 的参考音频只是弱微调，音色一致性主要靠文字指纹
+    # 由提示词优化渲染成说话角色的声音描述（见 docs/storyboard/storyboard_reference_to_video.md）。
+    # 纯文本注入不占音频槽，仅 H3 任务生效，其他模型零变化。首帧链路
+    # （first_last_frame 模式）不加载 scene_characters_ctx，为指纹按需补加载一次。
+    # KFRef 无对白镜头与音色注入同口径跳过：音色说明会诱导模型给无对白镜头配音。
+    from task.pipeline_processor import PipelineProcessor
+    if PipelineProcessor.needs_h3_atomic_param_prepare(task_type):
+        if scene_characters_ctx is None:
+            try:
+                scene_characters_ctx = await asyncio.to_thread(
+                    cli.scene_context, scene_id, user_id
+                )
+            except StoryboardCliError:
+                scene_characters_ctx = None
+        if scene_characters_ctx is not None and not h3_no_dialogue_skip_voice:
+            prompt = append_voice_casting_note(
+                prompt,
+                build_voice_casting_note(scene_characters_ctx.get('characters')),
+            )
 
     duration_mode = data.get('duration_mode', data.get('duration', 'auto'))
     video_duration = _resolve_storyboard_video_duration_seconds(
@@ -5498,6 +5730,8 @@ async def get_scene_task_status(
         # 分镜当前时长（音频全部完成时由后端自动同步为选中配音求和，浮点秒）。
         # 前端轮询据此即时刷新时间线/MM:SS 标签与进度行总时长。
         'scene_duration': float(scene.duration) if scene and scene.duration is not None else None,
+        # 音频来源偏好（首条配音落地时后端会锁定为 True，前端轮询据此同步播放口径）
+        'audio_embedded': bool(scene.audio_embedded) if scene else None,
     })
 
 
@@ -5669,6 +5903,15 @@ async def delete_dialogue(
         return err
 
     affected = await asyncio.to_thread(StoryboardDialogueModel.delete, dialogue_id)
+
+    # 音源口径归位（R2）：audio_embedded=0 仅在「有配音且用户显式选 TTS」时成立；
+    # 对话删完分镜已无落地配音时，音频来源归位视频原声（与前端「无配音禁选 TTS」一致）。
+    if scene and not bool(getattr(scene, 'audio_embedded', False)):
+        landed = await asyncio.to_thread(
+            StoryboardDialogueAudioModel.count_landed_selected_by_scene, scene.id
+        )
+        if landed == 0:
+            await asyncio.to_thread(StoryboardSceneModel.update, scene.id, audio_embedded=True)
     return JSONResponse({'success': True, 'affected': affected})
 
 

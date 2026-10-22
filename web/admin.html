@@ -570,6 +570,110 @@
                         {{ t('model_select_hint') }}
                     </div>
                 </div>
+
+                <!-- 每日统计（各用户每日算力消耗） -->
+                <div class="model-analysis-section daily-power-section">
+                    <div class="model-analysis-header">
+                        <h3>{{ t('daily_power_title') }}</h3>
+                        <div class="time-range-tabs">
+                            <button :class="{ active: dashboard.dailyPowerStats.days === 1 }"
+                                    @click="setDailyPowerDays(1)">{{ t('time_today') }}</button>
+                            <button :class="{ active: dashboard.dailyPowerStats.days === 3 }"
+                                    @click="setDailyPowerDays(3)">{{ t('time_3days') }}</button>
+                            <button :class="{ active: dashboard.dailyPowerStats.days === 7 }"
+                                    @click="setDailyPowerDays(7)">{{ t('time_7days') }}</button>
+                        </div>
+                    </div>
+
+                    <div class="model-analysis-filters">
+                        <div class="model-filter-group">
+                            <span class="model-filter-label">{{ t('model_date_range') }}</span>
+                            <div class="model-date-inputs">
+                                <input type="date"
+                                       class="model-date-input"
+                                       v-model="dashboard.dailyPowerStats.startDate"
+                                       :aria-label="t('model_start_date')"
+                                       @change="handleDailyPowerDateChange">
+                                <span class="model-date-separator">-</span>
+                                <input type="date"
+                                       class="model-date-input"
+                                       v-model="dashboard.dailyPowerStats.endDate"
+                                       :aria-label="t('model_end_date')"
+                                       @change="handleDailyPowerDateChange">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div v-if="dashboard.dailyPowerStats.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+
+                    <template v-else>
+                        <div class="model-analysis-stats">
+                            <div class="model-stat-card total">
+                                <div class="model-stat-label">{{ t('daily_power_total') }}</div>
+                                <div class="model-stat-value">{{ getDailyPowerSummary().totalPower }}</div>
+                            </div>
+                            <div class="model-stat-card success">
+                                <div class="model-stat-label">{{ t('daily_power_users') }}</div>
+                                <div class="model-stat-value">{{ getDailyPowerSummary().totalUsers }}</div>
+                            </div>
+                            <div class="model-stat-card rate">
+                                <div class="model-stat-label">{{ t('daily_power_avg_per_day') }}</div>
+                                <div class="model-stat-value">{{ getDailyPowerSummary().avgPerDay }}</div>
+                            </div>
+                        </div>
+
+                        <div v-if="getDailyPowerUserSummary().length" class="model-analysis-content">
+                            <div class="model-chart-card full">
+                                <div class="model-chart-title">{{ t('daily_power_chart_title') }}</div>
+                                <div ref="dailyPowerChart" class="model-echart"></div>
+                            </div>
+
+                            <div class="table-container" style="padding: 0;">
+                                <table class="admin-table model-analysis-table">
+                                <thead>
+                                    <tr>
+                                        <th>{{ t('daily_power_col_rank') }}</th>
+                                        <th>{{ t('daily_power_col_user') }}</th>
+                                        <th>{{ t('daily_power_col_total') }}</th>
+                                        <th>{{ t('daily_power_col_count') }}</th>
+                                        <th>{{ t('daily_power_col_active_days') }}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template v-for="(user, index) in getDailyPowerUserSummary()" :key="'dp-' + user.user_id">
+                                        <tr class="model-row" @click="toggleDailyPowerUserExpand(user.user_id)">
+                                            <td>{{ index + 1 }}</td>
+                                            <td>
+                                                <span class="expand-icon">{{ dashboard.dailyPowerStats.expandedUsers[user.user_id] ? '&#9660;' : '&#9654;' }}</span>
+                                                {{ user.nickname }}
+                                                <span class="provider-impl-id">(ID:{{ user.user_id }})</span>
+                                            </td>
+                                            <td class="text-success">{{ user.total_power }}</td>
+                                            <td>{{ user.record_count }}</td>
+                                            <td>{{ user.active_days }}</td>
+                                        </tr>
+                                        <tr v-if="dashboard.dailyPowerStats.expandedUsers[user.user_id]" class="provider-row">
+                                            <td colspan="5">
+                                                <div class="daily-power-detail">
+                                                    <span v-for="day in dashboard.dailyPowerStats.daily" :key="'dpd-' + user.user_id + '-' + day.date" class="daily-power-detail-item">
+                                                        {{ day.date }}: {{ user.daily[day.date] || 0 }}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div v-else class="empty-state" style="padding: 30px; text-align: center; color: #94a3b8;">
+                            {{ t('daily_power_empty') }}
+                        </div>
+                    </template>
+                </div>
             </section>
             <section v-if="currentPage === 'marketingPublications'">
                 <div class="table-container">
@@ -939,6 +1043,20 @@
                                 <button class="action-btn primary" @click="addStreakBonus" style="margin-top: 8px;">{{ t('btn_add_reward_tier') }}</button>
                             </div>
                             <p class="form-hint">{{ t('checkin_streak_hint') }}</p>
+                            <div class="form-group" v-if="checkinPreviewSegments.length" style="margin-top: 12px;">
+                                <label class="form-label">{{ t('checkin_preview_title') }}</label>
+                                <div class="streak-preview-table">
+                                    <div class="streak-preview-row header">
+                                        <span>{{ t('checkin_preview_col_days') }}</span>
+                                        <span>{{ t('checkin_preview_col_reward') }}</span>
+                                    </div>
+                                    <div v-for="(seg, idx) in checkinPreviewSegments" :key="idx" class="streak-preview-row">
+                                        <span>{{ seg.to ? t('checkin_preview_day_range', { from: seg.from, to: seg.to }) : t('checkin_preview_day_from', { n: seg.from }) }}</span>
+                                        <span>{{ seg.reward }}{{ seg.bonus > 0 ? t('checkin_preview_bonus_suffix', { base: seg.base, bonus: seg.bonus }) : '' }}</span>
+                                    </div>
+                                </div>
+                                <p class="form-hint">{{ t('checkin_preview_hint') }}</p>
+                            </div>
                         </div>
                     </div>
                 </div>

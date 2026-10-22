@@ -76,3 +76,30 @@ context length is 1048576 tokens. However, you requested 1128825 tokens
 - 前端（marketing_agent / script_writer）均未对图片做喂模型前的 canvas 压缩；
   压缩统一发生在工具侧 `utils/image_compressor.py:compress_local_image_to_base64`
   （≤250K 像素、JPEG q85、≤2MB）。
+
+## 2026-09-27 复核：图片 token 计量归因修正
+
+用官方 API 实测（deepseek-flash，即 vision-exp 下线后的映射目标）重验图片
+token 计量，结果推翻本文"该 VL 模型对图片基本按 base64 文本体量计费"的归因：
+
+| 请求 | prompt_tokens |
+| --- | --- |
+| 纯文本 | 33 |
+| 1 张 1280×720 图（base64 约 16 万字符） | 1031 |
+| 2 张图 | 2026 |
+
+即每图约 1000 tokens，与官方文档一致（"每张图片存在 1024 token 上限"，
+大图缩放至约 1300×1300 后计量），与 base64 字符量无关。
+
+事故中 74 万 tokens 的真实来源是叠加的第二个 bug：`fetch_image_as_base64`
+的 result 经 `json.dumps` 把 base64 当**纯文本**写入 tool 消息历史（17 条
+tool 结果 ≈ 100 万字符，英文按 0.3 token/字符 ≈ 30 万 tokens/轮），随轮次
+累积；再叠加当时 vision-exp 实验模型的旧计量口径，共同造成 4~5 万/图的
+假象。tool 消息泄漏已随本事故修复（`pop("base64_data_url")`）。
+
+受影响代码修正（develop_f928）：
+
+- `_estimate_input_tokens`（expert）/ `_estimate_current_tokens`（pm）：
+  图片不再按 base64 字符量估算（虚高约 40 倍，导致 max_tokens 过度收缩），
+  改为固定 `AGENT_LLM_IMAGE_TOKEN_ESTIMATE = 2048`/张，真实输入仍由
+  `last_api_input_tokens` 兜底。
