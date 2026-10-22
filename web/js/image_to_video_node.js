@@ -1645,7 +1645,8 @@
         mentionDropdownEl.innerHTML = filtered.map((item, i) => {
           const isImage = item.type === 'image';
           const thumbHtml = isImage && item.url ? `<img src="${escapeHtml(item.url)}" class="mention-thumb" style="width:32px;height:32px;object-fit:cover;border-radius:4px;margin-right:8px;flex-shrink:0;" />` : '';
-          return `<div class="mention-dropdown-item${i === mentionState.selectedIndex ? ' selected' : ''}" data-index="${i}" style="display:flex;align-items:center;padding:6px 10px;cursor:pointer;">` +
+          const hoverPreviewAttr = isImage && item.url ? ` data-hover-preview="${escapeHtml(item.url)}"` : '';
+          return `<div class="mention-dropdown-item${i === mentionState.selectedIndex ? ' selected' : ''}" data-index="${i}"${hoverPreviewAttr} style="display:flex;align-items:center;padding:6px 10px;cursor:pointer;">` +
             thumbHtml +
             `<span class="mention-icon" style="margin-right:6px;">${typeIcons[item.type] || '📄'}</span>` +
             `<span class="mention-name" style="flex:1;">${escapeHtml(item.displayName || '')}</span>` +
@@ -1665,6 +1666,7 @@
 
       function hideMentionDropdown(){
         mentionState.visible = false;
+        if(window.WFHoverPreview) window.WFHoverPreview.hide();
         if(mentionDropdownEl) mentionDropdownEl.style.display = 'none';
       }
 
