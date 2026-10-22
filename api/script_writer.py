@@ -44,6 +44,7 @@ from config.constant import (
     MATERIAL_LANGUAGE_LOCALE_FALLBACK,
     MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH,
     OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE,
+    SSE_STREAM_SEND_TIMEOUT_SECONDS,
 )
 from api.auth_identity import resolve_authorization_user_id
 from model.user_tokens import UserTokensModel
@@ -4648,6 +4649,36 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
             'error': str(e)
         }, status_code=500)
 
+async def _sse_stall_guard_iter(source, task_id: str):
+    """SSE 事件转发看门狗：逐条转发 source 的事件。
+
+    客户端链路静默假死时（TCP 不报错、零窗口背压）服务端生成器会永久冻结在
+    yield 上，协程与连接双双泄漏且无任何日志。健康连接有秒级心跳，单条事件的
+    生产/发送远小于 SSE_STREAM_SEND_TIMEOUT_SECONDS；超过该时长仍取不到下一条
+    即判定连接已死，主动关闭生成器终止响应，把假死变成可观测的一次性告警。
+    """
+    iterator = source.__aiter__()
+    while True:
+        try:
+            item = await asyncio.wait_for(
+                iterator.__anext__(), timeout=SSE_STREAM_SEND_TIMEOUT_SECONDS
+            )
+        except StopAsyncIteration:
+            return
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[SSE-STREAM] 事件发送被背压卡住超过 {SSE_STREAM_SEND_TIMEOUT_SECONDS}s，"
+                f"判定连接假死，关闭流并回收协程（task={task_id}）"
+            )
+            try:
+                await iterator.aclose()
+            finally:
+                return
+        yield item
+
+
 @router.get('/task/{task_id}/stream')
 @require_permission("agent_task:stream")
 async def stream_task_messages(request: Request, task_id: str):
@@ -4736,7 +4767,7 @@ async def stream_task_messages(request: Request, task_id: str):
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
-        event_generator(),
+        _sse_stall_guard_iter(event_generator(), task_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

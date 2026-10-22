@@ -639,6 +639,11 @@ ASSET_MUTATION_DB_TIMEOUT = 30
 # 删除已入库资产时顺带删除暂存 JSON
 ASSET_STAGING_IO_TIMEOUT = 15
 
+# SSE 任务流（/task/{id}/stream）单条事件发送超时（秒）。
+# 客户端链路静默假死时（TCP 不报错、发送背压冻结生成器协程），超过该时长判定连接已死，
+# 关闭生成器回收协程；健康连接有服务端心跳（秒级），单条事件发送远低于该值。
+SSE_STREAM_SEND_TIMEOUT_SECONDS = 90
+
 # 音频时长探测（ffprobe）单次执行超时（秒）。用于分镜配音完成后探测时长并回写。
 FFPROBE_AUDIO_DURATION_TIMEOUT = 30
 

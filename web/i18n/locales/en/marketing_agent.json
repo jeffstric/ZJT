@@ -151,7 +151,7 @@
   "verification_timeout": "Response timeout. Please resend your message.",
   "stream_error": "Processing error, please retry",
   "connection_error": "Connection error, please retry",
-  "request_timeout": "Request timeout, please try again later",
+  "request_timeout": "Request timed out. The task may still be generating in the background — refresh to check or resend",
   "generating_placeholder": "Generating...",
   "task_restore_failed": "Task status restore failed. Please regenerate.",
   "ai_question": "AI asked you",

@@ -99,6 +99,9 @@
             const sessionActiveTaskId = {};  // { [sessionId]: taskId } — 追踪每个 session 的活跃 Agent 任务
             let msgUidCounter = 0;
             let currentEventSource = null;
+            // 同一任务同时只允许一条 SSE 流：恢复/重试路径重复挂流时先关闭旧流，
+            // 避免一条任务挂多条并发流各自计时、误报多份"请求超时"
+            const activeTaskStreams = {};  // { [taskId]: eventSource }
             const processedSseMessageIds = new Set();
             let loadingSessionId = null;  // 追踪哪个 session 触发了 loading，防止跨 session 竞态清除
             const activeIntervals = new Set();  // 追踪所有活跃的 setInterval ID
@@ -3524,6 +3527,7 @@
                             clearTimeout(streamTimeoutId);
                             streamTimeoutId = null;
                         }
+                        if (activeTaskStreams[taskId] === eventSource) delete activeTaskStreams[taskId];
                     }
 
                     // 确保 msgUid 对应的占位消息存在
@@ -3543,6 +3547,46 @@
                     // 通过 _uid 查找消息索引
                     function findMsgByIdx(uid) {
                         return messages.value.findIndex(m => m._uid === uid);
+                    }
+
+                    // 流异常结束（网络错误/重连耗尽/未收到 done 即关闭）的统一收尾：
+                    // 已收到过内容按静默完成处理（生成任务已由轮询接管）；
+                    // 从未收到数据才计为失败（气泡 + 连续错误计数）
+                    function handleStreamEnd(error) {
+                        if (streamSettled) return;
+                        console.log('[Loading] handleStream 流结束/失败:', error && error.message, 'hasReceivedData=', hasReceivedData);
+                        settleStream();
+                        eventSource.close();
+                        if (currentEventSource === eventSource) currentEventSource = null;
+                        clearPendingVerificationState();
+                        if (!hasReceivedData) {
+                            const failures = recordTaskError(streamErrorKey);
+                            messages.value.push({
+                                _uid: generateMsgUid(),
+                                role: 'ai',
+                                content: window.t('connection_error'),
+                                timestamp: new Date().toISOString()
+                            });
+                            if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
+                                delete sessionActiveTaskId[streamSessionId];
+                                clearAllTaskIntervals();
+                                showContinue.value = false;
+                                resetTaskErrorCount(streamErrorKey);
+                            }
+                            reject(error);
+                        } else {
+                            showContinue.value = true;
+                            resetTaskErrorCount(streamErrorKey);
+                            resolve();
+                        }
+                    }
+
+                    // 同一任务防重复挂流：旧流（重试/恢复路径遗留）先关闭再挂新流
+                    if (activeTaskStreams[taskId]) {
+                        console.warn('[SSE] 任务已有活跃流，关闭旧流后再挂新流:', taskId);
+                        if (currentEventSource === activeTaskStreams[taskId]) currentEventSource = null;
+                        activeTaskStreams[taskId].close();
+                        delete activeTaskStreams[taskId];
                     }
 
                     const eventSource = SSEClient.createEventStream(`/api/task/${taskId}/stream`, {
@@ -3647,37 +3691,24 @@
                                 resolve();
                             }
                     },
-                    onError: (e) => {
+                    onError: (e) => handleStreamEnd(e || new Error('EventSource error')),
+                    // 流在 done/error 之前就被关闭（服务端看门狗断开/代理收尾等）：按异常结束统一收尾
+                    onClose: (data) => {
                         if (streamSettled) return;
-                        console.log('[Loading] handleStream onerror, hasReceivedData=', hasReceivedData);
-                        settleStream();
-                        eventSource.close();
-                        if (currentEventSource === eventSource) currentEventSource = null;
-                        clearPendingVerificationState();
-                        if (!hasReceivedData) {
-                            const failures = recordTaskError(streamErrorKey);
-                            messages.value.push({
-                                _uid: generateMsgUid(),
-                                role: 'ai',
-                                content: window.t('connection_error'),
-                                timestamp: new Date().toISOString()
-                            });
-                            if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                                delete sessionActiveTaskId[streamSessionId];
-                                clearAllTaskIntervals();
-                                showContinue.value = false;
-                                resetTaskErrorCount(streamErrorKey);
-                            }
-                            eventSource.close();
-                            if (currentEventSource === eventSource) currentEventSource = null;
-                            reject(new Error('EventSource error'));
-                        } else {
-                            showContinue.value = true;
-                            resetTaskErrorCount(streamErrorKey);
-                            resolve();
-                        }
+                        console.warn('[Loading] handleStream onClose: 未收到 done/error 流即结束, type=', data && data.type);
+                        handleStreamEnd(new Error('Stream closed without done'));
+                    },
+                    onReconnect: (attempt, reason) => {
+                        console.warn('[SSE] 任务流断流自动重连:', taskId, '第', attempt, '次, 原因:', reason);
                     }
+                    }, {
+                        // 服务端心跳约 1~3s 一条；15s 收不到任何字节（含心跳）即判定链路静默假死，
+                        // 自动断点续传重连，替代干等 900s 后误报"请求超时"
+                        idleTimeoutMs: 15000,
+                        maxReconnects: 6,
+                        reconnectDelayMs: 2000
                     });
+                    activeTaskStreams[taskId] = eventSource;
 
                     // 超时处理：仅当从未收到任何数据时才报"请求超时"。
                     // 长流程（图文转视频：抓取→识图→要点提炼→ask_user 挂起→逐 clip 提交）
