@@ -206,19 +206,13 @@
               form.append('emo_weight', node.data.emoWeight);
             }
 
-            var authToken = getAuthToken();
-            if (authToken) {
-              form.append('auth_token', authToken);
-            }
-
-            var res = await fetch('/api/audio-generate', {
-              method: 'POST',
-              body: form
-            });
+            // 认证走 Authorization 头（服务端 require_permission 只读头/query，
+            // 不读 form 字段；不带头的请求会落到 cookie 翻译，cookie 失效即 401）
+            var res = await authPostForm('/api/audio-generate', form);
 
             if (!res.ok) {
-              var errorText = await res.text();
-              throw new Error('服务器错误 (' + res.status + '): ' + (errorText || '请求失败'));
+              var errData = await res.json().catch(function() { return {}; });
+              throw new Error(extractApiErrorMessage(errData, res));
             }
 
             var result = await res.json();

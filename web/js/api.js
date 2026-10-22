@@ -150,10 +150,7 @@
         form.append('auth_token', authToken);
       }
 
-      const res = await fetch('/api/ai-app-run-image', {
-        method: 'POST',
-        body: form
-      });
+      const res = await authPostForm('/api/ai-app-run-image', form);
 
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -198,10 +195,7 @@
       if(userId) form.append('user_id', userId);
       if(authToken) form.append('auth_token', authToken);
 
-      const res = await fetch('/api/ai-app-run', {
-        method: 'POST',
-        body: form
-      });
+      const res = await authPostForm('/api/ai-app-run', form);
 
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -380,6 +374,30 @@
     }
 
     /**
+     * 带 Authorization 头提交 FormData（POST）。
+     * require_permission 鉴权只认 Authorization 头 / cookie，读不到 form body 里的
+     * auth_token；cookie 会话失效时裸 fetch 会 401，因此统一从 localStorage 补发
+     * Bearer 头（token 不拼 URL，防 Referer/日志/历史泄漏）。
+     */
+    async function authPostForm(url, form) {
+      var authToken = getAuthToken();
+      var headers = authToken ? { 'Authorization': 'Bearer ' + authToken } : {};
+      return fetch(url, { method: 'POST', headers: headers, body: form });
+    }
+
+    /**
+     * 从非 2xx 响应体提取用户可读错误信息。
+     * 401 时给出"重新登录"引导，避免显示含糊的"提交任务失败"
+     * （认证失败响应体无 detail/message 字段时的兜底）。
+     */
+    function extractApiErrorMessage(data, res) {
+      if (data && typeof data.detail === 'string') return data.detail;
+      if (data && typeof data.message === 'string') return data.message;
+      if (res && res.status === 401) return '登录已过期，请保存当前内容后重新登录';
+      return (data && (data.detail || data.message)) || '提交任务失败';
+    }
+
+    /**
      * 获取包含认证信息的请求头
      * @returns {{Authorization: string, 'X-User-Id': string}}
      */
@@ -392,6 +410,6 @@
 
     // ES Module exports（供 Vitest 测试使用，不影响浏览器全局变量）
     if (typeof module !== 'undefined') {
-      module.exports = { getAuthHeaders, appendAuthToForm };
+      module.exports = { getAuthHeaders, appendAuthToForm, authPostForm, extractApiErrorMessage };
     }
 

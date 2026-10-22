@@ -904,6 +904,8 @@
   "error_connection_failed": "Connection failed, please retry",
   "error_orchestrator_timeout": "Request timeout. The orchestrator needs more time, please retry later",
   "error_send_message_failed": "Failed to send message",
+  "status_session_recreating": "Session unavailable, creating a new one...",
+  "error_session_recreate_failed": "Failed to recreate the session. Your message was restored to the input box, please try again later",
   "error_connection_lost": "Connection lost after 5 retries, please refresh",
   "error_verification_submit_failed": "Verification submission failed",
   "error_please_reinput": "Please re-enter",

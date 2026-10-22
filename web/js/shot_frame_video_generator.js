@@ -446,7 +446,7 @@ async function generateShotFrameVideo(nodeId, node){
         } else {
           showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
         }
-        res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
+        res = await authPostForm('/api/ai-app-run-image', form);
       } else {
         // 无参考图 → 回退 text_to_video
         const t2vTaskId = TaskConfig.getTaskIdByKey(videoModel, 'text_to_video');
@@ -460,7 +460,7 @@ async function generateShotFrameVideo(nodeId, node){
 
         form.append('task_id', t2vTaskId);
         showToast('无参考图，回退为文生视频模式...', 'info');
-        res = await fetch('/api/ai-app-run', { method: 'POST', body: form });
+        res = await authPostForm('/api/ai-app-run', form);
       }
     } else {
       // === 首帧模式（原有逻辑） ===
@@ -482,13 +482,13 @@ async function generateShotFrameVideo(nodeId, node){
         form.append('video_files', node.data.refVideoFile);
       }
 
-      res = await fetch('/api/ai-app-run-image', { method: 'POST', body: form });
+      res = await authPostForm('/api/ai-app-run-image', form);
     }
 
     const data = await res.json();
-    
+
     if(!data.project_ids || data.project_ids.length === 0){
-      throw new Error(data.detail || data.message || '提交任务失败');
+      throw new Error(extractApiErrorMessage(data, res));
     }
 
     const projectIds = data.project_ids;

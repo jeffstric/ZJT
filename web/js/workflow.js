@@ -2502,16 +2502,11 @@
         form.append('auth_token', authToken);
       }
 
-      const res = await fetch('/api/image-edit', {
-        method: 'POST',
-        body: form
-      });
+      const res = await authPostForm('/api/image-edit', form);
       const data = await res.json();
-      
+
       if(!res.ok) {
-        const errorMsg = typeof data.detail === 'string' ? data.detail : 
-                         typeof data.message === 'string' ? data.message :
-                         JSON.stringify(data.detail || data.message || '提交任务失败');
+        const errorMsg = extractApiErrorMessage(data, res);
         throw new Error(errorMsg);
       }
       

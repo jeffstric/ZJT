@@ -55,6 +55,32 @@ source_id 记录 ai_audio 的 task_id。
 > `TTS 音频本地不可读...跳过 CDN 注册` 提示检查共享卷配置；播放仍走本地直出回退，
 > 不影响配音任务。
 
+### 5. `server.py` `/api/download` 本站 `/upload/` URL 改写为 CDN（2026-10）
+
+**事故背景**：火山 TTS（`build_public_audio_url`）返回
+`http://{server.host}/upload/tts/volcengine/xxx.mp3` 完整 URL。前端
+`downloadWithAuth` 调 `/api/download` 时，该 URL 三个分支全不命中：
+本地分支只认 `/upload/cache/` 相对路径、CDN 分支只认七牛域名，落入代理
+下载分支后 httpx 默认不跟随 `cdn_redirect_middleware` 的 302，
+`raise_for_status()` 直接抛 `Redirect response '302 Found'`——下载必败；
+即使跟随，也是"服务器从七牛拉回全量字节再吐给浏览器"，违背本方案初衷。
+
+**改动**：新增 `_rewrite_site_upload_url_to_cdn()`（server.py），在
+`download_image` 入口处调用：
+
+- 判定与中间件同款：path 以 `/upload/` 开头 + host 属于本站
+  （`server.host` 或请求 Host 头，协议无关）+ mapping 存在且 `cloud_path`
+  非空（DB 查询经 `asyncio.to_thread`，不阻塞事件循环）
+- 命中则改写为 `https://{qiniu_long_term.cdn_domain}/{cloud_path}`，交给
+  既有"CDN 重签名（attname 参与签名）→ 302 / format=json"分支，
+  浏览器直连七牛下载（带 `Content-Disposition: attachment`），媒体流量不过本服务
+- 未命中（未注册/上传未完成/非本站域名）原样返回，走原有本地/代理兜底；
+  代理分支的 httpx 补 `follow_redirects=True`（`/api/download` 与
+  `/api/proxy-image`），兜底路径遇 302 不再报错
+
+测试：`tests/api/test_download_site_upload_url.py`（5 用例：改写后签名返回 /
+cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路径回归）。
+
 ## 生效链路
 
 ```
@@ -63,6 +89,9 @@ source_id 记录 ai_audio 的 task_id。
   → 线程池异步上传七牛(qiniu_long_term 桶) → update_cloud_path 回写
   → 用户访问 /upload/... → cdn_redirect_middleware 按 path hash 查到 mapping
     且 cloud_path 非空 → 302 到七牛签名 URL（不占 frp 带宽）
+  → 前端点下载 /api/download?url=http://{server.host}/upload/...
+    → _rewrite_site_upload_url_to_cdn 改写为七牛域名
+    → 重签名(attname) → 302 / format=json redirect_url（不占 frp 带宽）
 ```
 
 上传完成前的 PENDING 窗口内访问仍本地直出（与 `/upload/cache/` 既有行为一致）。

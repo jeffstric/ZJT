@@ -84,6 +84,19 @@
   - `workflow.js`：`GET /api/computing-power-config`（驱动状态，TaskConfig 主路径与回退路径共 2 处）裸 `fetch` 无头，401 导致驱动状态/模型选项加载失败（e2e `test_node_operations.py` 模型/时长选项为空）。已补 `Authorization: Bearer`（`getAuthToken()`）。
   - `events.js`：`GET /api/config/upload`（上传大小配置）裸 `fetch` 无头。已补 `Authorization: Bearer`（`getAuthToken()`）。
 
+### 视频工作流生图/生视频提交端补齐（2026-10-11，宫格生图 401 事故）
+
+用户宫格生图一直提示"提交任务失败"的根因：`nodes.js` / `script_node.js` 等的提交请求是裸 `fetch`（`appendAuthToForm` 只把 `auth_token` 放 FormData，装饰器不读 body），完全依赖 cookie 翻译；cookie 会话失效（localStorage token 仍有效、页面看似登录态）即 401，而 401 响应体无 `detail`/`message` 字段，前端兜底文案退化为"提交任务失败"。
+
+- `api.js` 新增统一封装并导出：
+  - `authPostForm(url, form)`：带 `Authorization: Bearer <localStorage token>` 头 POST FormData（token 不拼 URL，遵守 XSS/凭据红线）；
+  - `extractApiErrorMessage(data, res)`：优先 `detail`/`message`，401 时返回"登录已过期，请保存当前内容后重新登录"。
+- 9 个文件 18 处"提交任务"裸 `fetch` 全部改走 `authPostForm`（宫格生图、分镜图、全景图、运镜控制、图片节点、镜头组视频、分镜视频、数字人）：
+  - `/api/image-edit`、`/api/text-to-image`：`nodes.js`（宫格 + 镜头组视频）、`script_node.js`（3 处宫格流程）、`shot_frame_generator.js`（2 处）、`camera_control_node.js`、`panorama_node.js`、`workflow.js`（图片节点）；
+  - `/api/ai-app-run-image`、`/api/ai-app-run`：`api.js`（2 处）、`shot_frame_video_generator.js`（3 处）、`nodes.js`（3 处镜头组视频）、`digital_human_node.js`。
+- 后端 `perseids_server/utils/auth_identity.py`：401（missing/invalid token）与 403（user_mismatch）响应体补 `detail` 字段（"登录已过期/失效，请保存当前内容后重新登录"），前端按 `data.detail` 展示，旧前端新后端组合下也不再显示含糊的"提交任务失败"。
+- 用户侧恢复方式：重新登录一次重置 cookie 即可。
+
 ### 服务端内部回环调用适配（script_writer Agent 工具）
 
 `script_writer_core/mcp_tool.py` 的 Agent 工具用 httpx 回环调用本服务受保护端点，原实现只把 `auth_token` 放 form 字段，而 `require_permission` 只认 header/query，导致鉴权真实现上线后稳定 401（典型表现：角色形象设计反复报 "401 Unauthorized" 并向用户提问）。已在 4 处 `httpx.post` 补 `Authorization: Bearer <token>` 头（token 为空则不加头，保持原行为；红线禁止 token 拼 URL，不走 query 兜底）：
@@ -98,6 +111,8 @@
 场景多角度同根因（2026-10-08）：`task/location_multi_angle_task.py` 调度器回环 `POST /api/image-edit` 只把任务快照 `auth_token` 放 form 字段，`require_permission` 返回 `Authorization is required`。每个角度重试 3 次后被跳过，终态变成「所有角度生成失败，共完成 0/N 个」。已补 `Authorization: Bearer` 头（快照为空不加头，不走 query）。
 
 故事板导出下载（2026-10-08）：`<a href="/api/download">` 带不上 `Authorization`，中间件用 HttpOnly cookie 填头。管理端切换用户只改 `localStorage`，cookie 里的旧 token 失效后下载返回 `invalid_auth_token`，其余接口仍 200。故事板改为 `fetch /api/download?format=json`（Bearer 头，URL 不带登录 token），CDN 重签名地址放在 JSON 的 `redirect_url`，再由浏览器跳到该 CDN 地址下载。未带 `format=json` 的 302 / 本地文件 / 外部代理保持原样。工作流视频/语音/图片下载、营销页放大图，以及首页独立工具页（文生图、图片编辑、图生视频、视频生成、剧本生视频、数字人、语音、视频增强）的下载按钮，都走同一约定（`web/js/download_attachment.js`）。`<video>` / `<audio>` 播放仍用 `proxyDownloadUrl` 的 302，媒体标签带不上自定义头。
+
+画布音频生成同根因（2026-10-16）：`dialogue_group_node.js`（对话组节点"生成对话音频"）与 `text_to_speech_node.js`（TTS 节点）的 `POST /api/audio-generate` 只把 `auth_token` 放 FormData（服务端 `require_permission` 不读 form 字段，签名里的 `auth_token: Form(None)` 是从未被使用的死参数），裸 `fetch` 无 Authorization 头时中间件回退用 cookie 填头；cookie 残留失效 token（多实例/多标签页共享 localhost cookie 但各持不同 token 时尤其常见）即报 `invalid_auth_token`，而画布其余带头的请求全部正常——用户困惑点正是"能进画布为什么这个按钮 401"。已改走 `web/js/api.js` 的 `authPostForm`（`Authorization: Bearer`，与 `panorama_node.js` 等节点一致），form 里的 `auth_token` 字段删除；非 2xx 错误文案统一走 `extractApiErrorMessage`，401 时给"重新登录"引导。
 `format=json` 的外链降级（2026-10-09）：`format=json` 只对 CDN URL 返回 `redirect_url`；非 CDN 外链（小红书图床、任务缓存失败回退的厂商原始 URL 等）无法签名时不再 400，直接落到代理流式下载（200 + 文件流），前端 `downloadWithAuth` 对非 JSON 响应按 blob 保存——外链下载不因统一改造从"能下"变"必败"（回归见 `tests/api/test_download_format_json.py::test_format_json_non_cdn_falls_back_to_proxy_stream`）。
 
 > 注（2026-09-16 落地确认）：上文对 video_tools 的修补实际从未提交进 enterprise 仓库（当时仅改了 `script_writer_core/mcp_tool.py` 4 处），storyboard 智能体批量/单场视频生成因此持续 401（`require_permission` 只认 Authorization 头 / query，form 字段不过鉴权）。本次已真正补上两处 `httpx.post` 的 `Authorization: Bearer` 头（token 为空不加头），并同步加 `trust_env=False` 防代理环境变量劫持内部回环；回归见 `tests/agents/test_video_tools_resolution.py::test_*_sends_bearer_header`。
@@ -107,7 +122,8 @@
 1. **前后端需一起发布**：后端先上会以 401 打断旧前端（EventSource 裸连、无 header 请求）。
 2. 外部 storyboard-agent CLI/skill 不受影响：其 `/api/agent-auth/exchange` 换取的 auth_token 同存于 `user_tokens` 表，可被装饰器解析；其调用的端点不在本次改动范围。
 3. **遗留清单**（审计同族但未点名，装饰器未覆盖，仍为零鉴权或弱鉴权，后续迭代处理）：
-   - `PUT /session/{id}/title`、`GET /api/sessions`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
+   - 注：`GET /api/sessions` 已挂 `require_permission("script_session:view")` 并加 `check_claimed_user_id`（2026-10-12，含无 user_id 调试路径仅限管理员；`SessionCreateRequest.user_id` 同步改为可省略，省略时以登录身份为准，见 `docs/backend/incidents/2026-10-12-script-writer-cross-user-session-404.md`）；
+   - `PUT /session/{id}/title`、`DELETE /api/session/{id}` 等 session 同族端点未挂装饰器（`latest-task`、`POST /session/{id}/model` 已挂 `require_permission`）；
    - `export-world`、`world-upload-token`、`import-world-from-cloud`、`recharge/*` 等端点未挂装饰器（部分靠 body/query 自报 user_id）；
    - 注：`upload-agent-image` / `upload-agent-audio` / `upload-agent-video` 已挂 `require_permission`（2026-09-15 确认）；前端 6 处裸 `fetch`（`marketing_agent.js` 5 处 + `marketing_inspiration.js` 1 处，原先仅把 `auth_token` 放 FormData）已补 `Authorization: Bearer` 头，否则上传 401 → `checkAuthResponse` 整页跳登录（e2e `test_marketing_agent_image_upload` 失败根因）；
    - 注：`world-files` / `characters-files` / `scripts-files` / `locations-files` / `props-files` 文件系列已在 58e459fb 挂 `require_permission`（含 GET/POST/PATCH），前端缺头问题已按上文补齐；
@@ -115,7 +131,9 @@
 
 ## 相关测试
 
-- `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助。
+- `tests/api/test_require_permission_auth.py`：装饰器真实现（401/注入/query 兜底/裸 token 兼容）+ 属主断言辅助 + 401 响应体 `detail` 字段断言（2026-10-11）。
+- `web/tests/api.test.js`：`authPostForm`（Bearer 头/空 token 无头）与 `extractApiErrorMessage`（detail 优先/401 重新登录引导）单测（2026-10-11）。
 - `tests/api/test_script_writer_auth.py`：verify_auth_token 新语义（空 token 拒绝、属主不符拒绝、DB 故障 502）。
+- `tests/api/test_sessions_endpoint_auth.py`：`GET /api/sessions` 鉴权收紧（未登录 401、user_id 不一致 403、本人 200、调试路径仅管理员、SessionCreateRequest.user_id 可省略）。
 - e2e（`auto_test/e2e/conftest.py`）自带标准 `Authorization: Bearer`，兼容。
 - e2e `test_auth.py::test_logout_success`（2026-09-15 修正）：单会话策略下 `test_login_success` 的次账号登录会顶掉 session 级 `secondary_auth_token`，故登出用例改为用例内新登录拿 fresh token 再登出。
