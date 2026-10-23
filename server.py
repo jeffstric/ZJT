@@ -10416,10 +10416,13 @@ async def add_character_reference_images(
     为角色添加多张参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         character = CharacterModel.get_by_id(character_id)
         if not character:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        # 属主校验：参考图是资产核心数据，仅创建者可增删（防止登录用户篡改他人角色）
+        if character.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该角色的参考图', 'data': None})
 
         labels = []
         try:
@@ -10479,6 +10482,8 @@ async def add_character_reference_images(
             'message': '添加成功',
             'data': updated_character.to_dict() if updated_character else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add character reference images: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10495,10 +10500,13 @@ async def delete_character_reference_image(
     删除角色的指定参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         character = CharacterModel.get_by_id(character_id)
         if not character:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        # 属主校验：仅创建者可删参考图（防止登录用户篡改他人角色）
+        if character.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该角色的参考图', 'data': None})
 
         existing_images = []
         if character.reference_images:
@@ -10541,6 +10549,8 @@ async def delete_character_reference_image(
             'message': '删除成功',
             'data': updated_character.to_dict() if updated_character else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete character reference image: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10561,10 +10571,13 @@ async def add_location_reference_images(
     为场景添加多张参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         location = LocationModel.get_by_id(location_id)
         if not location:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+        # 属主校验：参考图是资产核心数据，仅创建者可增删（防止登录用户篡改他人场景）
+        if location.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该场景的参考图', 'data': None})
 
         labels = []
         angles = []
@@ -10633,6 +10646,8 @@ async def add_location_reference_images(
             'message': '添加成功',
             'data': updated_location.to_dict() if updated_location else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add location reference images: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10649,10 +10664,13 @@ async def delete_location_reference_image(
     删除场景的指定参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         location = LocationModel.get_by_id(location_id)
         if not location:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+        # 属主校验：仅创建者可删参考图（防止登录用户篡改他人场景）
+        if location.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该场景的参考图', 'data': None})
 
         existing_images = []
         if location.reference_images:
@@ -10695,6 +10713,8 @@ async def delete_location_reference_image(
             'message': '删除成功',
             'data': updated_location.to_dict() if updated_location else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete location reference image: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
