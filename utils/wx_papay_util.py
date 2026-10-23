@@ -102,12 +102,14 @@ class WxPapayUtil:
         """
         验证 V2 回调签名
 
-        ⚠️ api_v2_key 未配置时跳过验签（返回 True 并告警），仅限开发联调；
-           生产环境必须配置 V2 密钥，否则攻击者可伪造回调。
+        api_v2_key 未配置时拒绝回调（fail-closed）：无法验签即无法确认通知
+        来源，接受回调等于接受任意伪造的支付/签约通知（审计
+        BUG-R2-S2-A1-H1：曾可伪造 SUCCESS 回调免费入账算力、伪造 ADD 回调
+        复活已解约合约，FAILURE→SUCCESS 循环可无限重复入账）。
         """
         if not self.api_v2_key:
-            logger.warning("api_v2_key 未配置，跳过 V2 回调验签（仅限开发环境！）")
-            return True
+            logger.error("api_v2_key 未配置，拒绝 V2 回调（fail-closed）")
+            return False
         received = params.get("sign")
         if not received:
             return False
