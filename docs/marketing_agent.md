@@ -404,6 +404,8 @@ Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文�
 | 视频 | 3 个 | 100MB（可配置） | 15 秒（可配置） | 前端按 480px 目标短边和 409600 最低总像素转码后上传到 `/api/upload-agent-video` |
 | 音频 | 5 个 | 20MB | 15 秒（可配置） | 上传到 `/api/upload-agent-audio` |
 
+除文件选择和拖拽外，支持直接粘贴剪贴板图片（截图后 Ctrl+V）。实现要点：`marketing_agent.js` 在 `document` 上全局监听 `paste` 事件（`handleDocumentPaste`），由 `extractClipboardImageFiles` 从 `clipboardData.items` 提取 `kind === 'file'` 且 MIME 为 `image/*` 的文件；截图来源的 File 常缺少文件名扩展名，会按 MIME 映射（png/jpg/gif/webp）重建带扩展名的 File（`clipboard_<时间戳>_<序号>.<ext>`）。提取到图片时拦截默认粘贴行为并走统一上传链路 `processSelectedFiles`（与文件选择/拖拽共用的校验与上传逻辑，数量、格式、大小限制一致）；剪贴板无图片文件时不干预，纯文本/富文本粘贴行为不变。页面卸载时随 `onUnmounted` 移除监听。
+
 #### Agent 视频模式
 
 支持上传参考图（首尾帧/全能参考）、参考视频和参考音频。图片上传到 `/api/upload-agent-image`，通过 `image_urls` 字段传给后端。

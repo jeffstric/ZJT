@@ -1116,6 +1116,7 @@
                 stopComputingPowerRefresh();
                 document.removeEventListener('click', onDocumentClick);
                 document.removeEventListener('click', _closeMenuHandler);
+                document.removeEventListener('paste', handleDocumentPaste);
                 cleanup();
             });
 
@@ -4640,6 +4641,9 @@
                 // 点击空白处关闭菜单
                 document.addEventListener('click', _closeMenuHandler);
 
+                // 剪贴板粘贴图片：全局监听（含输入框聚焦时），纯文本粘贴不受影响
+                document.addEventListener('paste', handleDocumentPaste);
+
                 // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
                 bindGeneratedMediaDelegation();
 
@@ -5298,8 +5302,14 @@
                 }
             }
 
+            // 文件选择入口：统一委托 processSelectedFiles（粘贴/选择共用同一校验链路）
             function handleFileChange(e) {
-                const files = e.target.files;
+                processSelectedFiles(e.target.files);
+                if (fileInputRef.value) fileInputRef.value.value = '';
+            }
+
+            // 统一处理用户选择的媒体文件（图片/视频/音频）：文件选择、拖拽、剪贴板粘贴共用
+            function processSelectedFiles(files) {
                 if (!files || files.length === 0) return;
                 // Agent 对话模式：支持多图 + 多视频上传
                 const isAgentChatMode = selectedType.value === 'agent' && mediaType.value !== 'video';
@@ -5437,7 +5447,6 @@
                         }
                     }
 
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 其他模式只取第一个文件
@@ -5446,14 +5455,12 @@
                 // 校验：接受图片、视频和音频
                 if (!file.type.startsWith('image/') && !file.type.startsWith('video/') && !file.type.startsWith('audio/')) {
                     showError(window.t('please_upload_image'));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 图片生成模式：只允许上传图片
                 if (selectedType.value === 'image') {
                     if (!file.type.startsWith('image/')) {
                         showError(window.t('image_mode_only_images'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                 }
@@ -5461,7 +5468,6 @@
                 if (file.type.startsWith('video/')) {
                     if (file.size > maxVideoSizeMB.value * 1024 * 1024) {
                         showError(window.t('video_size_limit', {size: maxVideoSizeMB.value}));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     (async () => {
@@ -5482,7 +5488,6 @@
                         }
                         processVideoFile(file, fileDuration);
                     })();
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 音频文件：走 processAudioFile 流程
@@ -5490,12 +5495,10 @@
                     // 图片生成模式不允许音频
                     if (selectedType.value === 'image') {
                         showError(window.t('image_mode_only_images'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     if (file.size > 20 * 1024 * 1024) {
                         showError(window.t('audio_size_limit'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     (async () => {
@@ -5515,7 +5518,6 @@
                         }
                         processAudioFile(file, fileDuration);
                     })();
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 以下为图片处理逻辑
@@ -5524,13 +5526,11 @@
                 const imgExt = '.' + (file.name.split('.').pop() || '').toLowerCase();
                 if (!ALLOWED_IMAGE_EXTENSIONS_SINGLE.includes(imgExt)) {
                     showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 前端预检查文件大小
                 if (file.size > maxImageSizeMB.value * 1024 * 1024) {
                     showError(window.t('image_size_limit', { size: maxImageSizeMB.value }));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 const isVideoModeVal = selectedType.value === 'video' ||
@@ -5540,7 +5540,6 @@
                     const imageCount = mediaItems.value.filter(m => m.type === 'image').length;
                     if (imageCount >= 1) {
                         showError(window.t('single_image_no_tail'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                 }
@@ -5548,7 +5547,6 @@
                 if (isVideoModeVal && videoImageMode.value === 'first_last_frame' && hasUploadedImage.value) {
                     if (referenceImageFiles.value.length >= 1) {
                         showError(window.t('first_last_max_2'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
@@ -5561,7 +5559,6 @@
                         agentImageItem: imgItem
                     });
                     if (!imgItem) addMediaItem(file, 'image', refUrl);
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
@@ -6680,6 +6677,39 @@
                     showError(window.t('upload_error_retry'));
                 });
             }
+
+            // 剪贴板图片扩展名白名单（与上传校验的 ALLOWED_IMAGE_EXTENSIONS 一致）
+            const PASTE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+            const PASTE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+
+            // 从剪贴板提取图片文件。截图等来源的 File 常缺少文件名/扩展名，
+            // 而上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
+            function extractClipboardImageFiles(clipboardData) {
+                if (!clipboardData || !clipboardData.items) return [];
+                const files = [];
+                for (const item of clipboardData.items) {
+                    if (item.kind !== 'file') continue;
+                    const file = item.getAsFile();
+                    if (!file || !file.type.startsWith('image/')) continue;
+                    const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+                    if (PASTE_MIME_EXT[file.type] && !PASTE_IMAGE_EXTENSIONS.includes(ext)) {
+                        const newName = 'clipboard_' + Date.now() + '_' + (files.length + 1) + '.' + PASTE_MIME_EXT[file.type];
+                        files.push(new File([file], newName, { type: file.type }));
+                    } else {
+                        files.push(file);
+                    }
+                }
+                return files;
+            }
+
+            // 剪贴板粘贴：含图片文件时拦截默认行为并走统一上传链路；纯文本/富文本粘贴不干预
+            function handleDocumentPaste(e) {
+                const files = extractClipboardImageFiles(e.clipboardData);
+                if (files.length === 0) return;
+                e.preventDefault();
+                processSelectedFiles(files);
+            }
+
             function selectType(type) {
                 const prevType = selectedType.value;
                 selectedType.value = type.key;
