@@ -2934,7 +2934,7 @@
                             <button v-for="(label, cat) in categoryLabels"
                                     :key="cat"
                                     :class="['qc-tab', { active: quickConfigModal.activeCategory === cat }]"
-                                    @click="quickConfigModal.activeCategory = cat">
+                                    @click="switchQuickConfigCategory(cat)">
                                 {{ label }}
                                 <span v-if="categoryStatus[cat]" class="qc-tab-check">&#10003;</span>
                             </button>
@@ -2957,10 +2957,7 @@
                                             <span v-if="provider.isOfficialAPI" class="qc-badge qc-badge-official">{{ t('badge_official_api') }}</span>
                                             <span v-if="isCommunityEdition && provider.commercialOnly" class="qc-badge qc-badge-commercial">{{ t('badge_commercial_only') }}</span>
                                         </div>
-                                        <div class="qc-card-desc">{{ provider.description }}</div>
-                                        <div v-if="provider.exampleUrl" class="qc-card-example">
-                                            {{ t('provider_example_label') }}: <a :href="provider.exampleUrl" target="_blank" rel="noopener noreferrer" class="qc-example-link" @click.stop>{{ provider.exampleName || provider.exampleUrl }}</a>
-                                        </div>
+                                        <div class="qc-card-desc" v-html="provider.descriptionHtml || provider.description"></div>
                                         <div v-if="provider.impacts && provider.impacts.length" class="qc-card-impacts">
                                             <span v-for="(impact, idx) in provider.impacts" :key="idx" class="qc-badge qc-badge-impact">
                                                 {{ impact }}
@@ -2996,10 +2993,7 @@
                                 <div class="qc-config-header">
                                     <div>
                                         <h4>{{ provider.icon }} {{ provider.name }}</h4>
-                                        <p>{{ provider.description }}</p>
-                                        <div v-if="provider.exampleUrl" class="qc-card-example">
-                                            {{ t('provider_example_label') }}: <a :href="provider.exampleUrl" target="_blank" rel="noopener noreferrer" class="qc-example-link">{{ provider.exampleName || provider.exampleUrl }}</a>
-                                        </div>
+                                        <p v-html="provider.descriptionHtml || provider.description"></p>
                                         <a v-if="provider.docUrl" :href="provider.docUrl" target="_blank" class="qc-register-link">
                                             &#128279; {{ provider.docUrlLabel || t('btn_register_guide') }}
                                         </a>
