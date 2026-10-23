@@ -50,7 +50,7 @@ $env:E2E_BROWSER_EXECUTABLE = "C:\Program Files (x86)\Microsoft\Edge\Application
 
 ## GitLab CI 分支触发
 
-仓库的 `e2e_smoke` job 会在分支 push 或 Merge Request Pipeline 中自动运行。已有 Merge Request 的源分支只创建 MR Pipeline，避免同一次 push 重复执行 branch 与 MR 两条流水线。
+仓库的 `e2e_smoke` job 会在分支 push 或 Merge Request Pipeline 中自动运行。已有 Merge Request 的源分支只创建 MR Pipeline，避免同一次 push 重复执行 branch 与 MR 两条流水线。同一条 MR Pipeline 还会并行跑 `ai_code_review`（调用内网 vLLM 写审查评论，`allow_failure: true`），说明见 [ci/ai_code_review.md](ci/ai_code_review.md)。
 
 每个 job 以 `e2e-${CI_PIPELINE_ID}-${CI_JOB_ID}` 作为 Docker Compose project 名，启动一套临时环境：
 

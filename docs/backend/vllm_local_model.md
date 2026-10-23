@@ -201,3 +201,8 @@ llm:
 | `config/default_vendor_model_billing.py` | vLLM 默认计费阈值 |
 | `alembic/versions/20260825_add_vllm_qwen38_27b.py` | vLLM 供应商与计费迁移 |
 | `docs/backend/ollama_local_model.md` | Ollama 本地模型文档（对照参考） |
+| `docs/ci/ai_code_review.md` | MR 流水线代码审查（走 jeffS7:4000 路由器，不读 `llm.vllm.base_url`） |
+
+## CI 代码审查用的生产集群
+
+MR Pipeline 的 `ai_code_review` 不读 `llm.vllm.base_url`。它调用 jeffS7 会话路由器 `http://192.168.10.112:4000`，由路由器分流到 jeffS7 `192.168.10.112:8000` 与 jeffS10 `192.168.10.243:8000`，模型名 `qwen3.8:27b`。失败不阻塞合并。细节见 [ci/ai_code_review.md](../ci/ai_code_review.md)。
