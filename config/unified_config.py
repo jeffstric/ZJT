@@ -1361,6 +1361,9 @@ class DriverImplementation:
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
 
+    # RunningHub AI App 图片（图片编辑 + 文生图）
+    RUNNINGHUB_AI_APP_IMAGE_V1 = 'runninghub_ai_app_image_v1'
+
     # Grok
     GROK_DUOMI_V1 = 'grok_duomi_v1'
     GROK_COMMON_SITE0_V1 = 'grok_common_site0_v1'
@@ -1718,6 +1721,9 @@ class DriverKey:
     # Qwen Image Edit
     QWEN_IMAGE_EDIT = 'qwen_image_edit'
 
+    # RunningHub AI App 图片（同一工作流支持图片编辑与文生图）
+    RUNNINGHUB_AI_APP_IMAGE = 'runninghub_ai_app_image'
+
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
     GPT_IMAGE_2 = 'gpt_image_2'
@@ -1875,6 +1881,7 @@ class TaskTypeId:
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
+        'RUNNINGHUB_AI_APP_IMAGE': 'RunningHub AI App 图片',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
@@ -1927,6 +1934,7 @@ class TaskTypeId:
     SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
     QWEN_IMAGE_EDIT = 38
+    RUNNINGHUB_AI_APP_IMAGE = 52
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
@@ -2198,6 +2206,29 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='1K',
         sort_order=15,
         hidden=True,  # 隐藏，前端不显示
+    ),
+    UnifiedTaskConfig(
+        # RunningHub AI App（ai-app 2113539132868874242）：同一工作流同时支持
+        # 图片编辑（nodeId 17-22 传 1-6 张图）与文生图（图片全填 None）。
+        # 编辑模式自动开启「原图无偏移/使用图片尺寸」，文生图模式改为显式比例+像素。
+        id=TaskTypeId.RUNNINGHUB_AI_APP_IMAGE,
+        key='runninghub-ai-app-image',
+        short_key='runninghub-ai-app',
+        name='RunningHub AI App 图片',
+        model_name='RunningHub AI App',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.RUNNINGHUB_AI_APP_IMAGE,
+        implementation=DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,
+        computing_power=2,
+        supported_ratios=['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'],
+        supported_sizes=['1K', '2K', '4K'],  # 映射为工作流 megapixels 1/2/4（百万像素）
+        default_ratio='1:1',
+        default_size='2K',
+        sort_order=18,
+        supports_grid_image=False,
+        max_multi_ref_images=6,  # 工作流图片节点 17-22 共 6 个
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.QWEN_IMAGE_EDIT,

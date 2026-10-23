@@ -153,6 +153,7 @@ MODEL_FAMILIES: Dict[str, str] = {
     "seedream-4.5": "Seedream",
     "seedream-5.0-pro": "Seedream",
     "gpt-image-2": "GPT Image",
+    "runninghub-ai-app": "RunningHub",
     "seedance_2_0": "Seedance",
     "seedance_2_0_fast": "Seedance",
     "seedance_2_0_mini": "Seedance",
