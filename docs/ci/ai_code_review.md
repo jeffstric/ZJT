@@ -1,6 +1,6 @@
 # MR 大模型代码审查
 
-Merge Request Pipeline 会跑 `ai_code_review`：拉取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。
+Merge Request Pipeline 会跑 `ai_code_review`：用本地 git 取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。审查成功但评论发不出去时（例如未配置 `AI_REVIEW_GITLAB_TOKEN`，`CI_JOB_TOKEN` 被拒）脚本只告警并正常退出，审查正文保留在 job 日志里，job 不失败。
 
 ## 模型路由
 
@@ -21,7 +21,7 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 
 - 只在 `CI_PIPELINE_SOURCE == merge_request_event` 时运行。
 - `stage: review`，并设置 `needs: []`，因此和 lint 同时开始，不等待、也不拦住 `test` / `e2e`。
-- `timeout: 20m`。脚本里 vLLM 单次 HTTP 超时默认 600 秒，5xx 或连接失败再试一次。
+- `timeout: 20m`。vLLM 用流式补全，单次读超时默认 120 秒。路由器一直不回包时，改直连 jeffS7:8000，再不行直连 jeffS10:8000。
 - 同一 commit 已有带标记的审查评论时跳过，避免重跑流水线刷屏。
 - 锁文件、二进制、`bin/`、`node_modules` 不送进模型。文本 diff 默认最多 40 个文件、共 8 万字符。
 
@@ -29,12 +29,14 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 
 ## 发表评论的令牌
 
-脚本按这个顺序取令牌：
+diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 MR 本体和评论，访问 `/merge_requests/:iid/diffs` 会返回 `404 Project Not Found`。作业检出仓库后用 `git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA $CI_COMMIT_SHA`。`python:3.10-slim` 没有 git，`before_script` 会安装。
+
+发表评论仍要令牌，按这个顺序取：
 
 1. CI/CD Variable `AI_REVIEW_GITLAB_TOKEN`（`PRIVATE-TOKEN`）
-2. 流水线自带的 `CI_JOB_TOKEN`（先 `JOB-TOKEN`，401/403 时再试 `PRIVATE-TOKEN`）
+2. 流水线自带的 `CI_JOB_TOKEN`（先 `JOB-TOKEN`，401/403/404 时再试 `PRIVATE-TOKEN`）
 
-`CI_JOB_TOKEN` 在很多 GitLab 版本上可以读 diff，但不能创建 MR note。读得到 diff、评论接口返回 403 时，在项目 **Settings → CI/CD → Variables** 增加：
+`CI_JOB_TOKEN` 不能创建 MR note，接口同样返回 `404 Project Not Found`。此时脚本不会失败：审查正文已打印在 job 日志里，stderr 会给出配置提示。但日志里的评论无法去重（拉取已有评论也被拒），每次重跑流水线都会重新调用一次模型。要在 MR 里看到评论并启用「同一 commit 跳过重审」，在项目 **Settings → CI/CD → Variables** 增加：
 
 | 变量 | 值 |
 |------|----|
@@ -49,7 +51,8 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 | `VLLM_BASE_URL` | `http://192.168.10.112:4000` | 路由器地址 |
 | `VLLM_MODEL` | `qwen3.8:27b` | `--served-model-name` |
 | `AI_REVIEW_PROBE_TIMEOUT` | `15` | 调用前探测 `/v1/models` 的超时（秒），连不上就失败，不再空等补全超时 |
-| `AI_REVIEW_VLLM_TIMEOUT` | `600` | 单次补全超时（秒） |
+| `AI_REVIEW_VLLM_TIMEOUT` | `120` | 流式补全时，两次读之间的超时（秒）。整段生成可以更长 |
+| `AI_REVIEW_LLM_ATTEMPTS` | `3` | 依次尝试的地址数：路由器、jeffS7:8000、jeffS10:8000 |
 | `AI_REVIEW_MAX_TOKENS` | `4096` | 审查输出上限 |
 | `AI_REVIEW_MAX_DIFF_CHARS` | `80000` | 送进模型的 diff 总字符 |
 | `AI_REVIEW_MAX_FILES` | `40` | 送进模型的文件数 |
