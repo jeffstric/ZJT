@@ -148,6 +148,7 @@ MODEL_FAMILIES: Dict[str, str] = {
     "gemini-2.5-flash": "nano-banana",
     "gemini-3-pro": "nano-banana",
     "gemini-3.1-flash": "nano-banana",
+    "nano-banana-2.1": "nano-banana",
     "seedream-5.0": "Seedream",
     "seedream-4.5": "Seedream",
     "seedream-5.0-pro": "Seedream",

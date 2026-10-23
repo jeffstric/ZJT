@@ -5220,6 +5220,7 @@ const AdminApp = {
                 'gemini_image_edit': 'Gemini 图片编辑 (标准版)',
                 'gemini_image_edit_pro': 'Gemini 图片编辑 (Pro版)',
                 'gemini_3_1_flash_image_edit': 'Gemini 3.1 Flash 图片编辑',
+                'nano_banana_2_1_image_edit': 'Nano Banana 2.1 图片编辑',
                 'veo3_image_to_video': 'VEO3 图生视频',
                 'ltx2_image_to_video': 'LTX2 图生视频',
                 'ltx2_3_image_to_video': 'LTX2.3 图生视频',

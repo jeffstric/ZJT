@@ -1679,6 +1679,7 @@ class DriverKey:
     GEMINI_IMAGE_EDIT = 'gemini_image_edit'
     GEMINI_IMAGE_EDIT_PRO = 'gemini_image_edit_pro'
     GEMINI_3_1_FLASH_IMAGE_EDIT = 'gemini_3_1_flash_image_edit'
+    NANO_BANANA_2_1_IMAGE_EDIT = 'nano_banana_2_1_image_edit'
 
     # VEO3 相关
     VEO3_IMAGE_TO_VIDEO = 'veo3_image_to_video'
@@ -1868,6 +1869,7 @@ class TaskTypeId:
         'GEMINI_2_5_FLASH_IMAGE': 'Gemini 2.5 Flash 图片编辑',
         'GEMINI_3_PRO_IMAGE': 'Gemini 3 Pro 图片编辑',
         'GEMINI_3_1_FLASH_IMAGE': 'Gemini 3.1 Flash 图片编辑',
+        'NANO_BANANA_2_1_IMAGE': 'Nano Banana 2.1 图片编辑',
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
@@ -1919,6 +1921,7 @@ class TaskTypeId:
     GEMINI_2_5_FLASH_IMAGE = 1
     GEMINI_3_PRO_IMAGE = 7
     GEMINI_3_1_FLASH_IMAGE = 17
+    NANO_BANANA_2_1_IMAGE = 51
     SEEDREAM_TEXT_TO_IMAGE = 16
     SEEDREAM_4_5_IMAGE = 18
     SEEDREAM_5_0_PRO = 33
@@ -2071,6 +2074,42 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='1K',
         sort_order=12,
         supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.NANO_BANANA_2_1_IMAGE,
+        key='gemini-nano-banana-2.1',
+        short_key='nano-banana-2.1',
+        name='nano-banana-2.1',
+        model_name='nano-banana 2.1',
+        legacy_names=['nano-banana-2.1'],
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.NANO_BANANA_2_1_IMAGE_EDIT,
+        implementation=DriverImplementation.GEMINI_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+        ],
+        computing_power=2,
+        supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', '1:4', '4:1', '1:8', '8:1'],
+        supported_sizes=['1K', '2K', '4K'],
+        default_ratio='9:16',
+        default_size='1K',
+        sort_order=13,
+        supports_grid_image=True,  # 支持宫格生图
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={'1K': 1.0, '2K': 2.0, '4K': 2.5},
+                default=1.0,
+            ),
+        ],
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,

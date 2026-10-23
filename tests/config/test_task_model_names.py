@@ -18,6 +18,7 @@ def test_image_binding_model_names_are_pure_and_consistent():
         TaskTypeId.GEMINI_2_5_FLASH_IMAGE: "nano-banana",
         TaskTypeId.GEMINI_3_PRO_IMAGE: "nano-banana Pro",
         TaskTypeId.GEMINI_3_1_FLASH_IMAGE: "nano-banana 2",
+        TaskTypeId.NANO_BANANA_2_1_IMAGE: "nano-banana 2.1",
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "Seedream 5.0",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "Seedream 4.5",
         TaskTypeId.SEEDREAM_5_0_PRO: "Seedream 5.0 Pro",
