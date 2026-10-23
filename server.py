@@ -6309,7 +6309,14 @@ async def wechat_payment_callback(request: Request):
 
             if not success:
                 logger.error(f"Failed to get auth token for user {user_id}: {message}")
-                return False
+                # 200/204 会被微信视为通知成功并停止全部重试；未入账必须应答
+                # 4xx/5xx，让微信按 15s..6h 的重试计划继续投递（如等用户重新
+                # 登录后再取到 token 自动补账）。裸 return False 会被 FastAPI
+                # 序列化为 200 body `false`，曾把已付款订单变成永不入账的吞单。
+                return JSONResponse(
+                    {"code": "FAIL", "message": "暂时无法处理订单，等待重试"},
+                    status_code=500,
+                )
                 
             auth_token = response_data['token']
             computing_power = order.computing_power
@@ -6327,9 +6334,6 @@ async def wechat_payment_callback(request: Request):
                 else:
                     # 更新用户首充状态
                     await _update_first_recharge_status(auth_token=auth_token)
-            
-            # 更新订单状态为已支付
-            PaymentOrdersModel.update_paid(order_id, transaction_id)
 
             # 邀请抽佣结算（商业版；返回被邀请人到账算力，已按佣金比例打折）。
             # 首充/社区版/无邀请人/未开启抽佣等情况下 service 内部返回全额 computing_power；
@@ -6365,7 +6369,22 @@ async def wechat_payment_callback(request: Request):
                     "transaction_id": transaction_id
                 }
             )
-            
+
+            # 校验入账结果：除幂等重放（"该交易已处理"=算力已发放过）外，
+            # 任何入账失败都必须应答 5xx 让微信重试，禁止静默应答 SUCCESS
+            #（否则已收款订单永远停留在 status=0 且不再有投递，只能手工修库）。
+            if not success and message != '该交易已处理':
+                logger.error(f"Crediting failed for order {order_id}: {message}")
+                return JSONResponse(
+                    {"code": "FAIL", "message": "算力入账失败，等待重试"},
+                    status_code=500,
+                )
+
+            # 入账成功（或幂等重放）后才标记订单已支付：避免 status=1 早退分支
+            # 把"已收款未入账"的订单变成吞掉微信重试修复机制的墓碑
+            #（订单账本与算力账本是两个存储，无法跨库事务，只能以入账为准收尾）。
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+
             logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={computing_power}")
         
         # 返回成功响应（V3 API使用JSON格式）
