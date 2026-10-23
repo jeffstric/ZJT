@@ -137,6 +137,7 @@ from utils.resource_access import (
 )
 from utils.media_upload import (
     UploadValidationError,
+    check_media_magic,
     convert_tiff_file_to_png,
     resolve_media_extension,
     save_upload_chunked,
@@ -361,32 +362,44 @@ def _generation_snapshot_extra_config(
 
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
     """
-    验证上传图片文件大小
-    
+    验证上传图片文件大小与格式
+
+    角色/场景/道具等资产参考图的 12 处落盘点均以本函数为唯一校验入口，
+    在此统一收口：大小上限 + 扩展名白名单 + 魔数校验。
+
     Args:
         file: 上传的文件对象
         max_size_bytes: 最大文件大小（字节），默认使用全局配置
-        
+
     Returns:
         (是否有效, 错误消息)
     """
     if not file or not file.filename:
         return True, ""
-    
+
     if max_size_bytes is None:
         max_size_bytes = MAX_IMAGE_SIZE_BYTES
-    
+
     # 读取文件内容获取大小
     content = await file.read()
     file_size = len(content)
-    
+
     # 重置文件指针以便后续读取
     await file.seek(0)
-    
+
     if file_size > max_size_bytes:
         max_size_mb = max_size_bytes / (1024 * 1024)
         return False, f"图片文件大小不能超过{max_size_mb:.0f}MB"
-    
+
+    # 扩展名白名单 + 魔数校验（docs/security/upload_security.md：/upload/ 由
+    # StaticFiles 直接对外提供，.html/.svg 落盘即同域存储型 XSS）。
+    # tif/tiff 放行后仍由各调用点走落盘后 PNG 归一化。
+    try:
+        ext = resolve_media_extension(file.filename)
+    except UploadValidationError as e:
+        return False, str(e)
+    if not check_media_magic(ext, content[:MediaUploadSafetyConstants.MAGIC_SCAN_BYTES]):
+        return False, f"文件内容与 {ext} 格式不符（魔数校验失败），请勿伪造文件扩展名"
     return True, ""
 
 
