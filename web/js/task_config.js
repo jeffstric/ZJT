@@ -93,6 +93,13 @@
    * @param {string} modelKey 模型标识符（如 'sora2', 'kling'）
    * @returns {Object|null} 任务配置
    */
+  function taskMatchesModelKey(task, modelKey) {
+    if (!task || !modelKey) return false;
+    if (task.key === modelKey || task.short_key === modelKey) return true;
+    const legacy = task.legacy_keys || [];
+    return legacy.indexOf(modelKey) !== -1;
+  }
+
   function getTaskByKey(modelKey) {
     const tasks = getAllTasks();
     // 先精确匹配 key
@@ -101,6 +108,9 @@
     // 再精确匹配 short_key
     const byShortKey = tasks.find(t => t.short_key === modelKey);
     if (byShortKey) return byShortKey;
+    // 旧 key / short_key（如 runninghub-ai-app）重载到当前任务
+    const byLegacy = tasks.find(t => taskMatchesModelKey(t, modelKey));
+    if (byLegacy) return byLegacy;
     // 前缀匹配时，找最精确的（key最长的），避免 'seedance_2_0' 错误匹配到 'seedance_2_0_fast_image_to_video'
     const prefixMatches = tasks.filter(t => t.key.startsWith(modelKey + '_'));
     if (prefixMatches.length === 0) return null;
@@ -112,6 +122,18 @@
     }
     // 回退：返回第一个匹配
     return prefixMatches[0] || null;
+  }
+
+  /**
+   * 把已保存的模型标识改写成当前 short_key。
+   * 旧工作流里的 runninghub-ai-app 会落到 qwenimage2.1，下拉才能选中。
+   * @param {string} modelKey 已保存的 key、short_key 或 legacy key
+   * @returns {string}
+   */
+  function canonicalModelKey(modelKey) {
+    const task = getTaskByKey(modelKey);
+    if (!task) return modelKey;
+    return task.short_key || task.key || modelKey;
   }
 
   /**
@@ -135,6 +157,9 @@
     const byShortKey = tasks.find(t => t.short_key === modelKey &&
       (t.category === category || (t.categories && t.categories.includes(category))));
     if (byShortKey) return byShortKey.id;
+    const byLegacy = tasks.find(t => taskMatchesModelKey(t, modelKey) &&
+      (t.category === category || (t.categories && t.categories.includes(category))));
+    if (byLegacy) return byLegacy.id;
     // 前缀匹配：找所有以 modelKey_ 开头的任务中分类匹配的
     const prefixMatches = tasks.filter(t => t.key.startsWith(modelKey + '_') &&
       (t.category === category || (t.categories && t.categories.includes(category))));
@@ -584,6 +609,7 @@
     getTaskById,
     getTaskByKey,
     getTaskIdByKey,
+    canonicalModelKey,
     getTasksByCategory,
 
     // 获取选项

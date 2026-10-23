@@ -33,7 +33,10 @@ _VERIFY_CODE_PATTERN = re.compile(
 _SENSITIVE_KEY_VALUE_PATTERN = re.compile(
     r"(?P<prefix>[\"']?(?:password|passwd|pwd|api[_-]?token|"
     r"access[_-]?token|refresh[_-]?token|api[_-]?key|secret|"
-    r"authorization)[\"']?\s*[:=]\s*)"
+    # auth_token：前端轮询曾把会话 token 拼进 URL query（?auth_token=...），
+    # access log 按原样记录请求行——该 key 必须脱敏（红线14，审计
+    # BUG-R2-S2-A8-H4；token 为裸 64 位 hex，Bearer/JWT 模式均不匹配）
+    r"auth[_-]?token|authorization)[\"']?\s*[:=]\s*)"
     r"(?P<quote>[\"']?)(?P<value>[^,\s}\"']+)(?P=quote)",
     re.IGNORECASE,
 )

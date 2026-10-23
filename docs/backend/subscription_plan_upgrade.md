@@ -73,6 +73,12 @@
 
 ## 支付密钥安全闸（生产强制）
 
+- **属主绑定（2026-10-23，审计 BUG-R2-S2-A1-H3 修复）**：客户端接口
+  （`/wechat-sign-pay`、`/status`、`/order-status`、`/cancel`）的 user_id
+  一律与 `request.state.user_id`（require_permission 由 token 注入的登录
+  身份）比对，不一致 403——此前任何登录用户可查询他人订阅元数据、
+  静默终止他人微信自动续费合约（IDOR，顺序 user_id 枚举 + 响应形态
+  构成订阅者枚举 oracle）。
 - `POST /api/recharge/wechat-pay`：统一下单前检查 `secret/wechat/apiclient_key.pem`，
   缺失直接 503「微信支付商户密钥未配置，无法发起支付」——不允许展示二维码
   （缺失时签名降级为 `mock_signature`，微信必拒；同时杜绝验签旁路被伪造回调利用）。

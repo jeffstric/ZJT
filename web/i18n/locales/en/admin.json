@@ -507,7 +507,7 @@
   "provider_duomi_desc": "Duomi AI platform, high quality image & video generation",
   "provider_duomi_impacts": "Nano Banana Image Edit, GPT Image, Sora2/Kling/Veo3/Grok Video Gen",
   "provider_site_name": "Aggregator {{n}}",
-  "provider_site_desc": "API aggregator site {{n}}, supports image & video models",
+  "provider_site_desc": "e.g. openlux and other API relay sites",
   "provider_site_impacts": "Image Model, Video Model",
   "provider_runninghub_name": "RunningHub",
   "provider_runninghub_desc": "RunningHub AI Video Gen service",
