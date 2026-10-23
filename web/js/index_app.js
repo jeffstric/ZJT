@@ -2789,9 +2789,7 @@
         this.rechargePackagesLoading = true;
         try {
           const response = await axios.get('/api/recharge/packages', {
-            params: {
-              auth_token: this.authToken
-            }
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.rechargePackages = response.data.packages || [];
@@ -3137,7 +3135,7 @@
         this.subscriptionPlansLoading = true;
         try {
           const response = await axios.get('/api/subscription/plans', {
-            params: { auth_token: this.authToken }
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.subscriptionPlans = response.data.plans || [];
@@ -3164,7 +3162,8 @@
         this.subCancelling = true;
         try {
           const response = await axios.get('/api/subscription/status', {
-            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+            params: { user_id: parseInt(this.userId, 10) },
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.subscriptionStatus = response.data.subscription || null;
@@ -3204,7 +3203,8 @@
         this._subStatusPollingInFlight = true;
         try {
           const response = await axios.get('/api/subscription/status', {
-            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+            params: { user_id: parseInt(this.userId, 10) },
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (!response.data.success) return;
           const sub = response.data.subscription || null;
@@ -3381,7 +3381,8 @@
           }
           try {
             const resp = await axios.get('/api/subscription/order-status', {
-              params: { order_id: this.subOrderId, user_id: this.userId, auth_token: this.authToken }
+              params: { order_id: this.subOrderId, user_id: this.userId },
+              headers: { Authorization: 'Bearer ' + this.authToken }
             });
             if (resp.data && resp.data.success && resp.data.paid) {
               this.stopSubPayPolling();
