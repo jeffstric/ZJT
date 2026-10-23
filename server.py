@@ -2294,8 +2294,22 @@ async def runninghub_status(
                 status=AI_TOOL_STATUS_FAILED
             )
             if CHECK_AUTH_TOKEN and auth_token:
-                # 生成交易ID
-                transaction_id = str(uuid.uuid4())
+                # 幂等防重复退费：本端点可被任意次轮询（前端停止轮询不是服务端
+                # 控制），原实现每次轮询生成新 uuid，绕过 perseids 交易号去重，
+                # 可对同一失败任务重复退费（实测 N 次轮询 = N 倍退费）。对齐
+                # 后台退费路径（task/visual_task.py）的既有模式：已退费检查 +
+                # 由扣费流水号派生的退费流水号（refund-{原扣费流水号}）。
+                from utils.computing_power import (
+                    build_refund_transaction_id,
+                    is_already_refunded,
+                )
+                if is_already_refunded(task_record):
+                    logger.info(
+                        f"Task {project_id} already refunded (idempotent transaction), "
+                        f"skip repeated refund on status poll"
+                    )
+                    return JSONResponse({"status": status.value, "results": []})
+                transaction_id = build_refund_transaction_id(task_record) or str(uuid.uuid4())
                 headers = {'Authorization': f'Bearer {auth_token}'}
                 #发起请求，获取用户ID
                 success, message, response_data = await async_make_perseids_request(
