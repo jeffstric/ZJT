@@ -48,6 +48,48 @@ rebase 冲突恰好落在取消互斥的核心区域，以下回归点已代码�
 
 ## 2. 测试分层
 
+> **⚡ 执行状态（2026-10-23）**：L1/L2 已全部执行通过；L3 已自动化 9 项（E1/E2/E4/E4b/E5/
+> E6/E11/属主 403/无鉴权 401/get-status 契约），另发现 1 个真实缺陷（见 §2.5）。
+> 测试资产：`tests/integration/test_cancel_concurrency.py`（15 用例）、
+> `tests/integration/test_cancel_endpoint_e2e.py`（9 过 + 1 xfail）。
+
+### 2.5 执行发现（缺陷与实证）
+
+1. **【缺陷·S1】退款失败提示为死代码**：`_refund_computing_power`
+   （task/visual_task.py:250-274）所有失败路径静默 return、外层 except 吞异常，
+   永不向上抛 → 取消接口 `refund_done` 恒 True → 「退款处理中，如未到账请联系客服」
+   提示永远不出现。实测（E11，服务日志 "Failed to get auth token" 已证实退款真实
+   失败但响应仍是「任务已取消」）。**影响**：退款失败用户无感知，只能靠 §L4 对账
+   名单兜底。修复方向：让 `_refund_computing_power` 返回成败（或在 endpoint 侧
+   复查 `is_already_refunded`）。已用 xfail 用例锁定（修复后去掉装饰器即转绿）。
+2. **【实证】I1/I2 互斥成立**：真库 100 轮屏障竞态（取消 vs 0→1 上游提交闸门）
+   每轮恰好一方成功，双侧都赢过；HTTP×DB 20 轮竞态 XOR 干净；
+   「取消先行 → 闸门 0 行 + project_id 保持 NULL」确定性用例通过。
+3. **【实证】入池/预处理后取消合法且安全**：0→3/0→4 与取消目标状态重叠，
+   「闸门赢→取消再赢」是设计内时序（最终 CANCELLED），且后续 worker 闸门
+   3→1、完成推进 4→0 均 0 行——不复活、不调上游（R2/R3 各 100 轮）。
+4. **【实证】并发双取消恰好一个 affected=1**（100 轮）→ 只有一次退费路径。
+5. **【实证】退费幂等键生效**：预插 `refund-{txn}` 流水后 `is_already_refunded`
+   拦截二次退费（HTTP 层 E1 同时验证响应不再出现退款提示）。
+6. **【次要发现】server.py 迁移失败时 `sys.exit(1)` 抛 NameError**（sys 未导入，
+   server.py:12252）——失败退出路径自身崩溃，仅影响错误退出时的日志整洁。
+7. **【环境备忘】本机 MySQL 实际端口 13314**（config_prod.yml 写的 3406、旧记忆
+   3313 均已过期）；隔离测试库 `zjt_cancel_test`（schema 从 zjt 克隆 + alembic
+   版本戳对齐），测试 token `s0-test-token-424242`（user 424242）。
+
+### 2.6 隔离环境复现手册（HTTP E2E）
+
+```bash
+# 1) 生成隔离配置（已生成，gitignore 内不入库）：config_s0test.yml
+#    = config_prod.yml 但 database→13314/zjt_cancel_test、server.port→13117
+# 2) 造库：zjt_cancel_test 从 zjt 克隆 schema（CREATE TABLE LIKE）+ 对齐
+#    alembic_version + 造 users/user_tokens 测试行（424242 / s0-test-token-424242）
+# 3) 启动：comfyui_env=s0test python server.py   （端口 13117）
+# 4) 跑测：python -m pytest tests/integration/test_cancel_endpoint_e2e.py -q
+#    真库层：python -m pytest tests/integration/test_cancel_concurrency.py -q
+#    （MySQL 不可达/服务未启动时自动 skip，不阻塞 CI）
+```
+
 ### L1 单元/回归（已完成 ✅）
 
 - `tests/task/test_queued_task_cancel.py`：17 个用例全绿（含本次新增 5 个）
