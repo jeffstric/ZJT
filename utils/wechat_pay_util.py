@@ -609,8 +609,8 @@ class WechatPayUtil:
             if _dev_callback_sign_bypass_enabled():
                 logger.warning(
                     "DEV BYPASS: skipping WeChat Pay callback signature verification "
-                    "(test_mode.wechat_pay_skip_callback_sign enabled, key file missing) — "
-                    "NEVER enable in production"
+                    "(pay.wxpay.dev_skip_callback_sign confirmed, key file missing) — "
+                    "NEVER configure in production"
                 )
                 return True
             logger.error("Rejecting callback: signature verification key material missing (fail-closed)")

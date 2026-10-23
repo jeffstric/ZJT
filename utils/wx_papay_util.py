@@ -140,8 +140,8 @@ class WxPapayUtil:
             if _dev_callback_sign_bypass_enabled():
                 logger.warning(
                     "DEV BYPASS: skipping V2 callback signature verification "
-                    "(test_mode.wechat_pay_skip_callback_sign enabled, api_v2_key missing) — "
-                    "NEVER enable in production"
+                    "(pay.wxpay.dev_skip_callback_sign confirmed, api_v2_key missing) — "
+                    "NEVER configure in production"
                 )
                 return True
             logger.error("api_v2_key 未配置，拒绝 V2 回调（fail-closed）")
