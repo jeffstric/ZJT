@@ -48,7 +48,7 @@ class TestVisualAsyncSubmit:
 
         result = asyncio.run(vt._submit_new_task(ai_tool))
 
-        assert result is True
+        assert result == vt.PROCESS_RESULT_IN_FLIGHT
         # 写入了 mock project_id 与 PROCESSING 状态
         aitools.update.assert_called_once()
         _, kwargs = aitools.update.call_args
@@ -73,7 +73,7 @@ class TestVisualAsyncSubmit:
 
         result = asyncio.run(vt._submit_new_task(ai_tool))
 
-        assert result is True
+        assert result == vt.PROCESS_RESULT_IN_FLIGHT
         aitools.update.assert_called_once_with(1002, status=vt.AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
         tasks.update_by_task_id.assert_called_once_with(1002, status=vt.TASK_STATUS_WAITING_PARAM_PREPARE)
 
@@ -104,7 +104,7 @@ class TestVisualAsyncSubmit:
 
         result = asyncio.run(vt._submit_new_task(ai_tool))
 
-        assert result is True
+        assert result == vt.PROCESS_RESULT_IN_FLIGHT
         executor.submit.assert_called_once_with(1003, 5, "sync_impl")
         aitools.update.assert_any_call(1003, status=vt.AI_TOOL_STATUS_SYNC_QUEUED)
 

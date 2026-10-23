@@ -218,7 +218,7 @@ def test_visual_sync_mode_persists_postprocessed_result_before_completed(
 
     ai_tool = SimpleNamespace(id=801, type=21, user_id=51, implementation=None)
 
-    assert asyncio.run(visual_task._submit_new_task(ai_tool)) is True
+    assert asyncio.run(visual_task._submit_new_task(ai_tool)) == visual_task.PROCESS_RESULT_SUCCESS
     assert postprocess_calls == [(801, expected_input_url, media_type)]
     assert _result_url_from_update(updates) == postprocessed_url
 
