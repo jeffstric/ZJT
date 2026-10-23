@@ -1029,6 +1029,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
     ],
+    DriverKey.NANO_BANANA_2_1_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Nano Banana 2.1 版本
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,  # 智剧通API官方站点
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
 
     # VEO3 相关驱动
     DriverKey.VEO3_IMAGE_TO_VIDEO: [

@@ -448,6 +448,7 @@ regions = [
 |---|---|---|---|---|
 | nano-banana-Pro (Gemini 3 Pro) | 7 | 多米 | `GeminiDuomiV1Driver` | 异步（需轮询） |
 | nano-banana-2 (Gemini 3.1 Flash) | 17 | 多米 | `GeminiDuomiV1Driver` | 异步（需轮询） |
+| nano-banana-2.1 | 51 | 多米 | `GeminiDuomiV1Driver` | 异步（需轮询） |
 | Seedream 5.0 | 16 | 火山引擎 | `Seedream5VolcengineV1Driver` | 同步 |
 | Seedream 4.5 | 18 | 火山引擎 | `Seedream5VolcengineV1Driver` | 同步 |
 | GPT Image 2 | 25/26 | 多米/聚合 | `GptImageDuomiV1Driver` | 视站点而定 |
