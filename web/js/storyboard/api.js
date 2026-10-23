@@ -254,6 +254,10 @@ export async function switchSceneVideoType(sceneId, videoType, expectedVideoType
 export async function updateScenePrompt(sceneId, promptJson) {
     return request(`/scene/${sceneId}/prompt`, { method: 'PUT', body: JSON.stringify({ prompt_json: promptJson }) });
 }
+/** 对话改机位：单轮 LLM 参数提取（不落库，前端应用后写回 three_scene_code）。 */
+export async function cameraChat(sceneId, payload) {
+    return request(`/scene/${sceneId}/camera-chat`, { method: 'POST', body: JSON.stringify(payload) });
+}
 export async function deleteScene(sceneId) {
     return request(`/scene/${sceneId}`, { method: 'DELETE' });
 }

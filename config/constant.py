@@ -3453,6 +3453,22 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
 
+# ── 故事板 3D 预览「对话改机位」（单轮 LLM 参数提取，仿导演台 env_fit 轻量模式）──
+# 机位参数模型与 spatial_3d_preview.js setCamera(ex,ey,ez,tx,ty,tz,fov) 一致：Y-up 米制，地面 y=0
+SB_CAMERA_CHAT_LLM_TIMEOUT = 60             # LLM 请求超时（秒），wait_for 整体兜底 = LLM_TIMEOUT + 15
+SB_CAMERA_CHAT_MAX_MESSAGE_CHARS = 300      # 用户指令最大长度
+SB_CAMERA_CHAT_MAX_ENTITIES = 40            # 注入 prompt 的空间对象清单上限
+SB_CAMERA_CHAT_POS_ABS_MAX = 30.0           # eye/target 任意分量绝对值上限（米）
+SB_CAMERA_CHAT_EYE_Y_MIN = 0.05
+SB_CAMERA_CHAT_EYE_Y_MAX = 12.0
+SB_CAMERA_CHAT_TARGET_Y_MIN = -2.0
+SB_CAMERA_CHAT_TARGET_Y_MAX = 12.0
+SB_CAMERA_CHAT_FOV_DEFAULT = 50
+SB_CAMERA_CHAT_FOV_MIN = 15
+SB_CAMERA_CHAT_FOV_MAX = 120
+SB_CAMERA_CHAT_TEMPERATURE = 0.2
+SB_CAMERA_CHAT_MAX_TOKENS = 400
+
 # ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
 # 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险
 # 小红书：免登录纯 HTTP 不可行（WAF 按 TLS 指纹拦截 + PC web 强制登录态），本期仅保留 XhsProvider 抽象接口

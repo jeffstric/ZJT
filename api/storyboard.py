@@ -127,6 +127,7 @@ from services.storyboard_spatial import (
     normalize_three_scene_code,
 )
 from services.storyboard_spatial.exceptions import StoryboardEnterpriseFeatureRequired
+from services.storyboard_camera_chat import parse_camera_instruction
 from services.media_generation_preference_service import (
     MediaGenerationErrorCode,
     MediaGenerationPreferenceError,
@@ -4314,6 +4315,66 @@ async def update_scene_prompt(
         prompt_json=prompt_json, last_modified_user_id=user_id,
     )
     return JSONResponse({'success': True, 'affected': affected})
+
+
+@router.post('/scene/{scene_id}/camera-chat')
+@require_permission("storyboard:update")
+async def scene_camera_chat(
+    request: Request,
+    scene_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """对话改机位：单轮 LLM 参数提取（不落库，前端应用后写回 three_scene_code）。
+
+    输入当前机位（3D 预览重放得到的 cameraInfo）+ 空间对象坐标 + 自然语言指令，
+    返回新机位 {eye, target, fov}。three.js 代码是机位唯一真源，保存仍走
+    PUT /scene/{scene_id}/prompt，由前端统一 rewrite setCamera 后提交。
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    message = str(data.get('message') or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '指令不能为空'})
+
+    current_camera = data.get('current_camera') or {}
+    if not isinstance(current_camera.get('eye'), dict) or not isinstance(current_camera.get('target'), dict):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '缺少当前机位数据'})
+
+    entities = data.get('entities')
+    if not isinstance(entities, list):
+        entities = []
+
+    model = str(data.get('model') or '').strip()
+    model_id = data.get('model_id')
+    if not model or model_id in (None, ''):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        model_id,
+        data.get('vendor_id'),
+    )
+
+    result = await parse_camera_instruction(
+        message,
+        current_camera,
+        entities=entities,
+        model=model,
+        vendor_id=vendor_id,
+        model_id=numeric_model_id,
+        auth_token=auth_token,
+    )
+    status = 200 if result.get('success') else 502
+    return JSONResponse(result, status_code=status)
 
 
 @router.post('/scene/{scene_id}/generate-image')

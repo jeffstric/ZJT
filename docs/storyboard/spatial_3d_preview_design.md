@@ -1,7 +1,8 @@
 # 分镜 3D 空间：LLM 直出 three.js 代码方案（v2，现行）
 
-- 状态：已实施（第二期，替代第一期「结构化 JSON + 确定性转换」方案）
-- 日期：2026-10-15
+- 状态：已实施（第二期，替代第一期「结构化 JSON + 确定性转换」方案；
+  机位编辑见 §9）
+- 日期：2026-10-15（§9 机位编辑 2026-10-16）
 - 适用范围：效果模式（`sequence_mode=quality`）拆分链路；故事板编辑器
   （`web/storyboard.html`）分镜卡片「3D 空间」预览
 - 相关文档：
@@ -138,3 +139,49 @@ v3 物化器按整段代码链校验（`audit_three_scene_codes_for_shots`）：
   为只读场景，风险面收敛在渲染函数内部。
 - 快速模式（fast）不产出 three_scene_code，无 3D 入口（`hasSpatialLayout`
   同时认代码与存量 spatial_layout）。
+
+## 9. 机位编辑（第三期，2026-10-16）
+
+预览从只读升级为可编辑：**手动控制 + 对话调整**，二者共用同一条保存管线。
+`setCamera` 行是机位唯一真源——所有修改都是改写本镜 `three_scene_code`
+的最后一个 `setCamera(...)` 调用参数并保存（`PUT /scene/{id}/prompt`），
+增量链下游镜头不受影响（每镜必调 setCamera，改本镜只影响本镜取景）。
+
+### 9.1 手动控制（参考导演台 `director_stage_editor.js`）
+
+- **主视图拖拽**：机位 gizmo 的相机方块（`userData.dragKind='camera'`）
+  在 `y=eye.y` 水平面拖动改位置、黄色焦点球（`'focus'`，仿导演台）在
+  `y=target.y` 平面拖动改朝向；未命中 gizmo 仍是轨道观察，互不干扰。
+- **侧栏「机位控制」**：FOV / 机位高度 / 焦点高度 / 焦点前后 / 焦点左右
+  五滑杆 + 11 个预设机位（正面平视/近景/全景、3/4 侧、左右侧、背面、
+  仰拍、俯拍、顶摄；预设相对场景包围盒中心计算，移植导演台
+  `CAMERA_PRESETS` 并适配任意焦点）。
+- **保存**：滑杆 change / 拖拽松手 / 预设点击 → 600ms 防抖
+  `rewriteSetCamera` 改写 → 保存 → 失败回滚缓存；切镜与关闭前强制
+  flush（防串镜）。旧 JSON 方案分镜不开放机位编辑。
+
+### 9.2 对话改机位（入口：弹窗底部输入条）
+
+```
+输入指令 + 当前 cameraInfo + 重放对象清单（actors/props/stage 坐标与朝向）
+  → POST /api/storyboard/scene/{id}/camera-chat（storyboard:update）
+  → services/storyboard_camera_chat.py：单轮文本 LLM 参数提取
+    （SYSTEM_PROMPT 摄影指导契约，get_llm_client + asyncio.to_thread 非阻塞）
+  → 返回 {success, camera:{eye,target,fov}, reason}
+  → 前端 _applyShotCamera 应用（画中画/gizmo 即时更新）+ 同 §9.1 保存管线
+```
+
+- 服务模式仿 `director_stage_env_fit.py`（单轮提取 + JSON 解析 + clamp
+  + 失败降级文案）；超时/范围常量在 `config/constant.py`
+  `SB_CAMERA_CHAT_*`。
+- API 不落库：解析与保存解耦，机位写入仍走统一的 setCamera 改写管线，
+  保证「代码唯一真源」不被第二条写路破坏。
+- 模型取故事板顶栏当前选中的对话模型（`resolveSelectedLlmModel`）。
+
+### 9.3 测试
+
+- `web/tests/spatial_camera_edit.test.js`（vitest 14 例）：
+  `findLastSetCameraCall` 定位/跨行/fov 省略/防 resetCamera 误匹配、
+  `rewriteSetCamera` 替换与追加/幂等、clamp、预设计算。
+- `tests/services/test_storyboard_camera_chat.py`（8 例）：消息组装
+  （机位/实体清单/截断）、JSON 解析（围栏/超界 clamp/缺字段）、缺模型降级。

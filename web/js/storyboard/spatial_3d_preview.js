@@ -7,15 +7,29 @@
  *   每镜必须 setCamera(...) 确定镜头位置；
  * - 本模块把序列内 startScene 到当前镜的代码按顺序在沙箱内重放执行，
  *   得到该镜的完整空间状态后渲染，并提供「镜头视角」画中画取景器；
- * - 存量分镜只有结构化 spatial_layout（旧 JSON 方案）时回退确定性渲染。
+ * - 机位可编辑（手动：主视图拖拽机位方块/焦点球 + 侧栏滑杆/预设；
+ *   对话：弹窗底部输入条走 /scene/{id}/camera-chat 单轮 LLM 参数提取）。
+ *   所有修改统一经 rewriteSetCamera 写回本镜 three_scene_code 的 setCamera
+ *   行并保存（three.js 代码是机位唯一真源，纯函数见 spatial_camera_edit.js）；
+ * - 存量分镜只有结构化 spatial_layout（旧 JSON 方案）时回退确定性渲染，
+ *   不开放机位编辑。
  *
  * 代码在 Function 作用域沙箱内执行：只注入 THREE / scene / camera /
  * actors / props / stage 与构建 helper，不暴露 window/document。
  * three.min.js（r128 UMD）懒加载；弹窗 DOM 自管理，关闭时完整 dispose。
  */
-import state from './state.js';
-import { getSpatialPreviews } from './api.js';
+import state, { resolveSelectedLlmModel } from './state.js';
+import { getSpatialPreviews, updateScenePrompt, cameraChat } from './api.js';
 import { showToast } from './utils.js';
+import {
+    CAMERA_LIMITS,
+    CAMERA_PRESETS,
+    applyCameraPreset,
+    clampCamera,
+    findLastSetCameraCall,
+    normalizeCamera,
+    rewriteSetCamera,
+} from './spatial_camera_edit.js';
 
 // 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）
 const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
@@ -363,7 +377,8 @@ function replayToIndex(THREE, previews, index) {
     return { ctx, chainStart: start, chainLength };
 }
 
-/** 机位视锥 + 朝向箭头（代码方案：米制坐标，直接使用）。 */
+/** 机位视锥 + 朝向箭头（代码方案：米制坐标，直接使用）。
+ * 机位方块 userData.dragKind='camera'、焦点球 'focus'，主视图可直接拖拽编辑。 */
 function makeCameraGizmoFromInfo(THREE, cameraInfo) {
     const group = new THREE.Group();
     const { eye, target } = cameraInfo;
@@ -402,7 +417,17 @@ function makeCameraGizmoFromInfo(THREE, cameraInfo) {
     );
     camBody.position.copy(eyeVec);
     camBody.lookAt(target.x, target.y, target.z);
+    camBody.userData.dragKind = 'camera';
     group.add(camBody);
+
+    // 焦点球（对焦中心，黄色，可直接拖拽改变朝向；仿导演台）
+    const focusBall = new THREE.Mesh(
+        new THREE.SphereGeometry(0.11, 14, 12),
+        new THREE.MeshLambertMaterial({ color: 0xe8b34d }),
+    );
+    focusBall.position.set(target.x, target.y, target.z);
+    focusBall.userData.dragKind = 'focus';
+    group.add(focusBall);
 
     const label = makeLabel(THREE, '机位', { color: '#7a2e20' });
     label.position.set(eye.x, eye.y + 0.4, eye.z);
@@ -531,8 +556,16 @@ function previewShellHtml() {
                     <div class="spatial3d-pip-frame" data-spatial3d-pip hidden>
                         <span>镜头视角（本镜 setCamera）</span>
                     </div>
+                    <div class="spatial3d-chat-note" data-spatial3d-chat-note hidden></div>
+                    <div class="spatial3d-chatbar" data-spatial3d-chat hidden>
+                        <input type="text" data-spatial3d-chat-input
+                            placeholder="对话调整机位，如：把机位移到角色正面稍高处"
+                            maxlength="300">
+                        <button type="button" class="spatial3d-chat-send" data-spatial3d-chat-send>发送</button>
+                    </div>
                 </div>
                 <aside class="spatial3d-side">
+                    <section class="spatial3d-section" data-spatial3d-camctl hidden></section>
                     <section class="spatial3d-section" data-spatial3d-entities></section>
                     <section class="spatial3d-section" data-spatial3d-code hidden></section>
                     <section class="spatial3d-section" data-spatial3d-diagnostics></section>
@@ -541,6 +574,7 @@ function previewShellHtml() {
                         <span><i style="background:#34c38f"></i>道具</span>
                         <span><i style="background:#9aa7b8"></i>场景体块</span>
                         <span><i style="background:#f76f5e"></i>机位</span>
+                        <span><i style="background:#e8b34d"></i>焦点</span>
                     </section>
                 </aside>
             </div>
@@ -617,6 +651,40 @@ function diagnosticsHtml(preview, replayCtx) {
     return `${header}<ul class="spatial3d-diag-list">${items}</ul>`;
 }
 
+// ============ 机位编辑（手动：拖拽 / 滑杆 / 预设；对话：camera-chat） ============
+
+const CAM_SLIDERS = [
+    { key: 'fov', label: '视场角 FOV', min: 15, max: 120, step: 1 },
+    { key: 'eyeY', label: '机位高度', min: 0.2, max: 8, step: 0.05 },
+    { key: 'targetY', label: '焦点高度', min: 0, max: 4, step: 0.05 },
+    { key: 'targetZ', label: '焦点前后', min: -9.5, max: 9.5, step: 0.1 },
+    { key: 'targetX', label: '焦点左右', min: -9.5, max: 9.5, step: 0.1 },
+];
+
+function camControlHtml(info) {
+    const cam = normalizeCamera(info);
+    const sliders = CAM_SLIDERS.map((s) => {
+        const value = s.key === 'fov' ? Math.round(cam.fov)
+            : s.key === 'eyeY' ? cam.eye.y
+                : s.key === 'targetY' ? cam.target.y
+                    : s.key === 'targetZ' ? cam.target.z : cam.target.x;
+        return `<label class="spatial3d-slider-row">
+            <span>${escapeHtml(s.label)}</span>
+            <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${value}"
+                data-camslider="${s.key}">
+            <b data-camslider-val="${s.key}">${value}</b>
+        </label>`;
+    }).join('');
+    const presets = CAMERA_PRESETS.map((p) => `
+        <button type="button" class="spatial3d-preset-btn" data-campreset="${escapeHtml(p.id)}">${escapeHtml(p.label)}</button>
+    `).join('');
+    return `
+        <h4>机位控制</h4>
+        <div class="spatial3d-slider-group">${sliders}</div>
+        <div class="spatial3d-preset-grid">${presets}</div>
+        <p class="spatial3d-camhint">主视图中可直接拖拽红色机位方块（水平移动）与黄色焦点球（改变朝向）。</p>`;
+}
+
 class Spatial3dSession {
     constructor(THREE, previews, startIndex) {
         this.THREE = THREE;
@@ -626,7 +694,13 @@ class Spatial3dSession {
         this.orbit = { theta: 0.7, phi: 1.05, radius: 7.5, target: null };
         this.dragging = null;
         this.worldGroup = null;
-        this.shotCamera = null;   // 代码方案：本镜相机（画中画）
+        this.shotCamera = null;        // 代码方案：本镜相机（画中画）
+        this.shotCameraInfo = null;    // 本镜机位参数 {eye, target, fov}（编辑真源）
+        this.replayCtx = null;         // 本镜重放上下文（对象清单 / 对话上下文用）
+        this.gizmoGroup = null;        // 机位视锥（应用机位后整组重建）
+        this.camDirty = false;         // 机位已改、待保存
+        this.camBusy = false;          // 对话改机位请求进行中
+        this._saveTimer = 0;
 
         document.body.insertAdjacentHTML('beforeend', previewShellHtml());
         this.overlay = document.querySelector('[data-spatial3d-overlay]');
@@ -637,12 +711,17 @@ class Spatial3dSession {
             loading: this.overlay.querySelector('[data-spatial3d-loading]'),
             pip: this.overlay.querySelector('[data-spatial3d-pip]'),
             pos: this.overlay.querySelector('[data-spatial3d-pos]'),
+            camctl: this.overlay.querySelector('[data-spatial3d-camctl]'),
             entities: this.overlay.querySelector('[data-spatial3d-entities]'),
             code: this.overlay.querySelector('[data-spatial3d-code]'),
             diagnostics: this.overlay.querySelector('[data-spatial3d-diagnostics]'),
             prev: this.overlay.querySelector('[data-spatial3d-prev]'),
             next: this.overlay.querySelector('[data-spatial3d-next]'),
             close: this.overlay.querySelector('[data-spatial3d-close]'),
+            chat: this.overlay.querySelector('[data-spatial3d-chat]'),
+            chatInput: this.overlay.querySelector('[data-spatial3d-chat-input]'),
+            chatSend: this.overlay.querySelector('[data-spatial3d-chat-send]'),
+            chatNote: this.overlay.querySelector('[data-spatial3d-chat-note]'),
         };
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -669,6 +748,11 @@ class Spatial3dSession {
         };
         this.overlay.addEventListener('click', this._onOverlayClick);
         this._onKey = (event) => {
+            const tag = event.target && event.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') {
+                if (event.key === 'Escape') event.target.blur();
+                return; // 输入框内按键不切镜/不关闭
+            }
             if (event.key === 'Escape') this.destroy();
             if (event.key === 'ArrowLeft') this.show(this.index - 1);
             if (event.key === 'ArrowRight') this.show(this.index + 1);
@@ -679,6 +763,30 @@ class Spatial3dSession {
 
         const dom = this.renderer.domElement;
         this._onDown = (event) => {
+            // 左键优先拾取机位 gizmo（机位方块 / 焦点球），命中进入拖拽编辑
+            if (event.button === 0 && this.shotCameraInfo && this.gizmoGroup) {
+                const kind = this._pickGizmoKind(event);
+                if (kind) {
+                    const info = this.shotCameraInfo;
+                    const planeY = kind === 'camera' ? info.eye.y : info.target.y;
+                    const plane = new this.THREE.Plane(new this.THREE.Vector3(0, 1, 0), -planeY);
+                    const raycaster = new this.THREE.Raycaster();
+                    raycaster.setFromCamera(this._ndcFromEvent(event), this.camera);
+                    const hit = new this.THREE.Vector3();
+                    const current = kind === 'camera'
+                        ? new this.THREE.Vector3(info.eye.x, info.eye.y, info.eye.z)
+                        : new this.THREE.Vector3(info.target.x, info.target.y, info.target.z);
+                    if (raycaster.ray.intersectPlane(plane, hit)) {
+                        this.dragging = {
+                            mode: kind === 'camera' ? 'drag-camera' : 'drag-focus',
+                            plane,
+                            offset: new this.THREE.Vector3().subVectors(current, hit).setY(0),
+                        };
+                        event.preventDefault();
+                        return;
+                    }
+                }
+            }
             this.dragging = {
                 mode: event.button === 2 ? 'pan' : 'orbit',
                 x: event.clientX, y: event.clientY,
@@ -687,6 +795,22 @@ class Spatial3dSession {
         };
         this._onMove = (event) => {
             if (!this.dragging) return;
+            if (this.dragging.mode === 'drag-camera' || this.dragging.mode === 'drag-focus') {
+                const raycaster = new this.THREE.Raycaster();
+                raycaster.setFromCamera(this._ndcFromEvent(event), this.camera);
+                const hit = new this.THREE.Vector3();
+                if (raycaster.ray.intersectPlane(this.dragging.plane, hit)) {
+                    hit.add(this.dragging.offset);
+                    const cam = normalizeCamera(this.shotCameraInfo);
+                    if (this.dragging.mode === 'drag-camera') {
+                        cam.eye.x = hit.x; cam.eye.z = hit.z;
+                    } else {
+                        cam.target.x = hit.x; cam.target.z = hit.z;
+                    }
+                    this._applyShotCamera(cam);
+                }
+                return;
+            }
             const dx = event.clientX - this.dragging.x;
             const dy = event.clientY - this.dragging.y;
             this.dragging.x = event.clientX;
@@ -702,7 +826,12 @@ class Spatial3dSession {
                 this.orbit.target.addScaledVector(forward, dy * scale);
             }
         };
-        this._onUp = () => { this.dragging = null; };
+        this._onUp = () => {
+            if (this.dragging && (this.dragging.mode === 'drag-camera' || this.dragging.mode === 'drag-focus')) {
+                this._scheduleSaveCamera();
+            }
+            this.dragging = null;
+        };
         this._onWheel = (event) => {
             this.orbit.radius = Math.min(Math.max(this.orbit.radius * (1 + event.deltaY * 0.0012), 2), 40);
             event.preventDefault();
@@ -714,9 +843,242 @@ class Spatial3dSession {
         dom.addEventListener('wheel', this._onWheel, { passive: false });
         dom.addEventListener('contextmenu', this._onContext);
 
+        this._bindCamControl();
+        this._bindChatBar();
+
         this._onResize = () => this._resize();
         window.addEventListener('resize', this._onResize);
         this._resize();
+    }
+
+    // ---- 机位编辑：滑杆 / 预设（侧栏事件委托） ----
+
+    _bindCamControl() {
+        this.el.camctl.addEventListener('input', (event) => {
+            const slider = event.target.closest('input[data-camslider]');
+            if (!slider || !this.shotCameraInfo) return;
+            const value = parseFloat(slider.value);
+            const cam = normalizeCamera(this.shotCameraInfo);
+            const key = slider.dataset.camslider;
+            if (key === 'fov') cam.fov = value;
+            else if (key === 'eyeY') cam.eye.y = value;
+            else if (key === 'targetY') cam.target.y = value;
+            else if (key === 'targetZ') cam.target.z = value;
+            else if (key === 'targetX') cam.target.x = value;
+            this._applyShotCamera(cam);
+        });
+        this.el.camctl.addEventListener('change', (event) => {
+            if (event.target.closest('input[data-camslider]')) this._scheduleSaveCamera();
+        });
+        this.el.camctl.addEventListener('click', (event) => {
+            const btn = event.target.closest('[data-campreset]');
+            if (!btn || !this.shotCameraInfo) return;
+            const preset = CAMERA_PRESETS.find((p) => p.id === btn.dataset.campreset);
+            if (!preset) return;
+            const focal = this.orbit.target || new this.THREE.Vector3(0, 0.8, 0);
+            const cam = applyCameraPreset(preset, focal, this._contentRadius || 4.5);
+            if (cam) this._applyShotCamera(cam, { commit: true });
+        });
+    }
+
+    // ---- 机位编辑：对话输入条 ----
+
+    _bindChatBar() {
+        this.el.chatSend.addEventListener('click', () => this._sendCameraChat());
+        this.el.chatInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                this._sendCameraChat();
+            }
+        });
+    }
+
+    async _sendCameraChat() {
+        if (this.camBusy || !this.shotCameraInfo) return;
+        const message = (this.el.chatInput.value || '').trim();
+        if (!message) return;
+        const llm = resolveSelectedLlmModel();
+        const model = typeof llm === 'string' ? llm : ((llm && (llm.model || llm.name)) || '');
+        const modelId = typeof llm === 'object' ? (llm && (llm.model_id || llm.id)) : null;
+        const vendorId = typeof llm === 'object' ? (llm && llm.vendor_id) : null;
+        if (!model || modelId == null) {
+            showToast('请先在故事板顶部选择对话模型', 'error');
+            return;
+        }
+        const preview = this.previews[this.index];
+        this.camBusy = true;
+        this.el.chatSend.disabled = true;
+        this.el.chatInput.disabled = true;
+        this.el.chatSend.textContent = '思考中…';
+        this._showChatNote('正在根据指令计算新机位…', 'info');
+        try {
+            const result = await cameraChat(preview.scene_id, {
+                message,
+                current_camera: this.shotCameraInfo,
+                entities: this._collectEntities(),
+                model,
+                model_id: modelId,
+                vendor_id: vendorId,
+            });
+            if (result && result.success && result.camera) {
+                this._applyShotCamera(result.camera, { commit: true });
+                this._showChatNote(result.reason ? `✓ ${result.reason}` : '✓ 机位已更新', 'ok');
+                this.el.chatInput.value = '';
+            } else {
+                this._showChatNote((result && result.error) || '机位调整失败，请重试', 'error');
+            }
+        } catch (error) {
+            this._showChatNote(error.message || '机位调整失败，请重试', 'error');
+        } finally {
+            this.camBusy = false;
+            this.el.chatSend.disabled = false;
+            this.el.chatInput.disabled = false;
+            this.el.chatSend.textContent = '发送';
+        }
+    }
+
+    _collectEntities() {
+        const ctx = this.replayCtx;
+        if (!ctx) return [];
+        const entities = [];
+        const deg = (rad) => Math.round((rad * 180) / Math.PI);
+        for (const [name, group] of Object.entries(ctx.actors || {})) {
+            entities.push({ name, kind: 'actor', x: group.position.x, z: group.position.z, facing: deg(group.rotation.y) });
+        }
+        for (const [name, group] of Object.entries(ctx.props || {})) {
+            entities.push({ name, kind: 'prop', x: group.position.x, z: group.position.z });
+        }
+        for (const [name, mesh] of Object.entries(ctx.stage || {})) {
+            entities.push({ name, kind: 'stage', x: mesh.position.x, z: mesh.position.z });
+        }
+        return entities;
+    }
+
+    _showChatNote(text, kind) {
+        this.el.chatNote.hidden = false;
+        this.el.chatNote.textContent = text;
+        this.el.chatNote.className = `spatial3d-chat-note is-${kind}`;
+        clearTimeout(this._chatNoteTimer);
+        if (kind !== 'error') {
+            this._chatNoteTimer = setTimeout(() => { this.el.chatNote.hidden = true; }, 4000);
+        }
+    }
+
+    // ---- 机位编辑：应用 / gizmo / 保存 ----
+
+    /** 应用新机位到本镜相机 + gizmo + 侧栏显示；commit=true 时调度保存。 */
+    _applyShotCamera(rawCam, { commit = false } = {}) {
+        if (!this.shotCamera) return;
+        const cam = clampCamera(rawCam);
+        this.shotCameraInfo = cam;
+        this.shotCamera.fov = cam.fov;
+        this.shotCamera.position.set(cam.eye.x, cam.eye.y, cam.eye.z);
+        this.shotCamera.lookAt(cam.target.x, cam.target.y, cam.target.z);
+        this.shotCamera.updateProjectionMatrix();
+        this._rebuildGizmo();
+        this._syncCamSliders();
+        this._refreshCodeSection();
+        if (commit) this._scheduleSaveCamera();
+    }
+
+    _rebuildGizmo() {
+        if (!this.worldGroup || !this.shotCameraInfo) return;
+        if (this.gizmoGroup) {
+            this.worldGroup.remove(this.gizmoGroup);
+            this._disposeObject(this.gizmoGroup);
+        }
+        this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo);
+        this.worldGroup.add(this.gizmoGroup);
+    }
+
+    _syncCamSliders() {
+        if (this.el.camctl.hidden || !this.shotCameraInfo) return;
+        const cam = this.shotCameraInfo;
+        const values = {
+            fov: Math.round(cam.fov),
+            eyeY: cam.eye.y,
+            targetY: cam.target.y,
+            targetZ: cam.target.z,
+            targetX: cam.target.x,
+        };
+        for (const [key, value] of Object.entries(values)) {
+            const slider = this.el.camctl.querySelector(`input[data-camslider="${key}"]`);
+            if (slider) slider.value = value;
+            const label = this.el.camctl.querySelector(`[data-camslider-val="${key}"]`);
+            if (label) label.textContent = Math.round(value * 100) / 100;
+        }
+    }
+
+    _refreshCodeSection() {
+        if (this.el.code.hidden) return;
+        const preview = this.previews[this.index];
+        const { chainStart = this.index, chainLength = 1 } = this._chainInfo || {};
+        this.el.code.innerHTML = codeHtml(preview, chainStart, chainLength);
+    }
+
+    _scheduleSaveCamera() {
+        clearTimeout(this._saveTimer);
+        this._saveTimer = setTimeout(() => {
+            this._saveTimer = 0;
+            this._saveCameraNow();
+        }, 600);
+    }
+
+    /** 切镜 / 关闭前把挂起的机位修改立即保存（防串镜）。 */
+    _flushSaveCamera() {
+        if (!this._saveTimer) return;
+        clearTimeout(this._saveTimer);
+        this._saveTimer = 0;
+        this._saveCameraNow();
+    }
+
+    async _saveCameraNow() {
+        const preview = this.previews[this.index];
+        if (!preview || !isCodePreview(preview) || !this.shotCameraInfo) return;
+        const sceneId = preview.scene_id;
+        const oldCode = preview.three_scene.code || '';
+        const newCode = rewriteSetCamera(oldCode, this.shotCameraInfo);
+        if (newCode === oldCode) return;
+        const scene = state.scenes.find((item) => item.id === sceneId);
+        if (!scene || !scene._fullPrompt) {
+            showToast('机位保存失败：分镜数据缺失', 'error');
+            return;
+        }
+        const payload = { ...scene._fullPrompt, three_scene_code: newCode };
+        preview.three_scene.code = newCode;
+        try {
+            await updateScenePrompt(sceneId, payload);
+            scene._fullPrompt = payload;
+            this._refreshCodeSection(); // 代码区显示与落库后的 setCamera 行保持一致
+        } catch (error) {
+            // 回滚缓存，保持与库一致；用户可重试
+            preview.three_scene.code = oldCode;
+            this._refreshCodeSection();
+            showToast(error.message || '机位保存失败', 'error');
+        }
+    }
+
+    // ---- gizmo 拾取 ----
+
+    _ndcFromEvent(event) {
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        return new this.THREE.Vector2(
+            ((event.clientX - rect.left) / Math.max(rect.width, 1)) * 2 - 1,
+            -((event.clientY - rect.top) / Math.max(rect.height, 1)) * 2 + 1,
+        );
+    }
+
+    _pickGizmoKind(event) {
+        if (!this.gizmoGroup) return null;
+        const raycaster = new this.THREE.Raycaster();
+        raycaster.setFromCamera(this._ndcFromEvent(event), this.camera);
+        const hits = raycaster.intersectObject(this.gizmoGroup, true);
+        for (const hit of hits) {
+            if (hit.object && hit.object.userData && hit.object.userData.dragKind) {
+                return hit.object.userData.dragKind;
+            }
+        }
+        return null;
     }
 
     _resize() {
@@ -781,6 +1143,8 @@ class Spatial3dSession {
     show(index) {
         const total = this.previews.length;
         if (!total) return;
+        // 切镜前先保存上一镜挂起的机位修改（保存按 this.index 定位，必须先落盘）
+        this._flushSaveCamera();
         this.index = (index + total) % total;
         const preview = this.previews[this.index];
 
@@ -789,6 +1153,10 @@ class Spatial3dSession {
             this.scene.remove(this.worldGroup);
         }
         this.shotCamera = null;
+        this.shotCameraInfo = null;
+        this.replayCtx = null;
+        this.gizmoGroup = null;
+        this._chainInfo = null;
 
         let replayCtx = null;
         let chainStart = this.index;
@@ -800,8 +1168,12 @@ class Spatial3dSession {
             chainStart = replay.chainStart;
             chainLength = replay.chainLength;
             this.worldGroup = replayCtx.root;
-            this.worldGroup.add(makeCameraGizmoFromInfo(this.THREE, replayCtx.cameraInfo));
+            this.replayCtx = replayCtx;
+            this._chainInfo = { chainStart, chainLength };
             this.shotCamera = replayCtx.shotCamera;
+            this.shotCameraInfo = normalizeCamera(replayCtx.cameraInfo);
+            this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo);
+            this.worldGroup.add(this.gizmoGroup);
         } else {
             this.worldGroup = buildWorldGroup(this.THREE, preview.three_scene);
         }
@@ -813,6 +1185,7 @@ class Spatial3dSession {
         const size = box.isEmpty() ? 4 : box.getSize(new this.THREE.Vector3()).length();
         this.orbit.target = center;
         this.orbit.radius = Math.min(Math.max(size * 1.1, 3.5), 22);
+        this._contentRadius = Math.min(Math.max(size * 0.35, 2.2), 12);
 
         this.el.title.textContent = `${preview.title || '分镜'}`;
         const summary = preview.diagnostic_summary || { errors: 0, warnings: 0 };
@@ -835,6 +1208,16 @@ class Spatial3dSession {
             this.el.code.hidden = true;
         }
         this.el.diagnostics.innerHTML = diagnosticsHtml(preview, replayCtx);
+
+        // 机位编辑（手动 + 对话）仅代码方案分镜可用
+        const editable = isCodePreview(preview) && !!this.shotCameraInfo;
+        this.el.camctl.hidden = !editable;
+        this.el.chat.hidden = !editable;
+        if (editable) {
+            this.el.camctl.innerHTML = camControlHtml(this.shotCameraInfo);
+            this._syncCamSliders();
+        }
+        this.el.chatNote.hidden = true;
         this.el.pip.hidden = !this.shotCamera;
         if (this.el.loading) this.el.loading.hidden = true;
     }
@@ -842,6 +1225,9 @@ class Spatial3dSession {
     destroy() {
         if (activePreview !== this) return;
         activePreview = null;
+        // 关闭前落盘挂起的机位修改（fire-and-forget，请求自身处理失败提示）
+        this._flushSaveCamera();
+        clearTimeout(this._chatNoteTimer);
         cancelAnimationFrame(this.rafId);
         document.removeEventListener('keydown', this._onKey);
         window.removeEventListener('mousemove', this._onMove);
