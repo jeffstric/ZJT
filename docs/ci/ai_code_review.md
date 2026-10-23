@@ -1,6 +1,6 @@
 # MR 大模型代码审查
 
-Merge Request Pipeline 会跑 `ai_code_review`：拉取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。
+Merge Request Pipeline 会跑 `ai_code_review`：用本地 git 取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。
 
 ## 模型路由
 
@@ -29,12 +29,14 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 
 ## 发表评论的令牌
 
-脚本按这个顺序取令牌：
+diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 MR 本体和评论，访问 `/merge_requests/:iid/diffs` 会返回 `404 Project Not Found`。作业检出仓库后用 `git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA $CI_COMMIT_SHA`。`python:3.10-slim` 没有 git，`before_script` 会安装。
+
+发表评论仍要令牌，按这个顺序取：
 
 1. CI/CD Variable `AI_REVIEW_GITLAB_TOKEN`（`PRIVATE-TOKEN`）
-2. 流水线自带的 `CI_JOB_TOKEN`（先 `JOB-TOKEN`，401/403 时再试 `PRIVATE-TOKEN`）
+2. 流水线自带的 `CI_JOB_TOKEN`（先 `JOB-TOKEN`，401/403/404 时再试 `PRIVATE-TOKEN`）
 
-`CI_JOB_TOKEN` 在很多 GitLab 版本上可以读 diff，但不能创建 MR note。读得到 diff、评论接口返回 403 时，在项目 **Settings → CI/CD → Variables** 增加：
+`CI_JOB_TOKEN` 不能创建 MR note，接口同样返回 `404 Project Not Found`。要在 MR 里看到评论，在项目 **Settings → CI/CD → Variables** 增加：
 
 | 变量 | 值 |
 |------|----|

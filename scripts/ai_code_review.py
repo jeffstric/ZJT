@@ -2,7 +2,7 @@
 """Merge Request 大模型代码审查。
 
 在 GitLab MR Pipeline 中：
-1. 用 GitLab API 拉取本次 MR 的 diff
+1. 用本地 git diff 取本次 MR 的变更（CI_JOB_TOKEN 不能访问 diffs API）
 2. 经 jeffS7 会话路由器调用 qwen3.8:27b（默认 http://192.168.10.112:4000，
    按权重分流到 jeffS7:8000 与 jeffS10:8000）
 3. 把审查意见发到该 MR 的评论
@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -37,6 +38,7 @@ DEFAULT_VLLM_TIMEOUT = 600
 DEFAULT_VLLM_PROBE_TIMEOUT = 15
 DEFAULT_GITLAB_TIMEOUT = 60
 DEFAULT_LLM_ATTEMPTS = 2
+DEFAULT_GIT_TIMEOUT = 120
 
 COMMENT_MARKER = "<!-- ai-code-review commit:{sha} -->"
 
@@ -216,8 +218,9 @@ def gitlab_request(
         request = urllib.request.Request(url, data=data, headers=req_headers, method=method)
         result = open_http(request, timeout, opener=opener)
         last = result
-        # 401/403 时换一种令牌头再试一次。GET/POST 在拒绝时都不会产生评论。
-        if result.status not in (401, 403):
+        # 未授权端点在 GitLab 上经常是 404 Project Not Found，而不是 401/403。
+        # 换一种令牌头再试一次。拒绝时 GET/POST 都不会产生评论。
+        if result.status not in (401, 403, 404):
             return result
     assert last is not None
     return last
@@ -225,6 +228,221 @@ def gitlab_request(
 
 def project_api(api_base: str, project_id: str) -> str:
     return f"{api_base.rstrip('/')}/projects/{quote(str(project_id), safe='')}"
+
+
+GitRunner = Callable[[list[str], float], tuple[int, bytes, bytes]]
+
+
+def _git(args: list[str], timeout: float, runner: GitRunner | None = None) -> tuple[int, bytes, bytes]:
+    if runner is not None:
+        return runner(args, timeout)
+    try:
+        proc = subprocess.run(
+            args,
+            capture_output=True,
+            timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+    except FileNotFoundError as exc:
+        raise ReviewError("未找到 git，无法在本地生成 diff") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ReviewError(f"git 超时: {' '.join(args[:4])}") from exc
+    return proc.returncode, proc.stdout or b"", proc.stderr or b""
+
+
+def _git_ok(args: list[str], timeout: float, runner: GitRunner | None) -> bool:
+    code, _, _ = _git(args, timeout, runner)
+    return code == 0
+
+
+def parse_raw_z(blob: bytes) -> list[tuple[str, str, str]]:
+    """解析 `git diff --raw -z`。返回 (status, old_path, new_path)。"""
+    parts = blob.split(b"\0")
+    records: list[tuple[str, str, str]] = []
+    index = 0
+    while index < len(parts):
+        header = parts[index]
+        if not header:
+            index += 1
+            continue
+        if not header.startswith(b":"):
+            index += 1
+            continue
+        try:
+            status = header.split()[-1].decode("ascii")
+        except (IndexError, UnicodeDecodeError):
+            index += 1
+            continue
+        index += 1
+        if index >= len(parts) or not parts[index]:
+            break
+        first_path = parts[index].decode("utf-8", "replace")
+        index += 1
+        if status[:1] in {"R", "C"}:
+            if index >= len(parts):
+                break
+            second_path = parts[index].decode("utf-8", "replace")
+            index += 1
+            old_path, new_path = first_path, second_path
+        else:
+            old_path = new_path = first_path
+        records.append((status, old_path, new_path))
+    return records
+
+
+def split_git_diff(text: str) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("diff --git ") and current:
+            chunks.append("\n".join(current))
+            current = [line]
+        elif line.startswith("diff --git "):
+            current = [line]
+        elif current:
+            current.append(line)
+    if current:
+        chunks.append("\n".join(current))
+    return chunks
+
+
+def parse_diff_git_header(line: str) -> tuple[str, str]:
+    rest = line[len("diff --git "):]
+
+    def take(value: str) -> tuple[str, str]:
+        if value.startswith('"'):
+            chars: list[str] = []
+            index = 1
+            while index < len(value):
+                if value[index] == "\\" and index + 1 < len(value):
+                    chars.append(value[index + 1])
+                    index += 2
+                    continue
+                if value[index] == '"':
+                    return "".join(chars), value[index + 1:].lstrip()
+                chars.append(value[index])
+                index += 1
+            return "".join(chars), ""
+        token, _, tail = value.partition(" ")
+        return token, tail
+
+    old_raw, rest = take(rest)
+    new_raw, _ = take(rest)
+
+    def strip_ab(path: str, prefix: str) -> str:
+        return path[2:] if path.startswith(prefix) else path
+
+    return strip_ab(old_raw, "a/"), strip_ab(new_raw, "b/")
+
+
+def diffs_from_git_output(raw_z: bytes, unified: str) -> list[dict]:
+    records = parse_raw_z(raw_z)
+    chunks = split_git_diff(unified)
+    items: list[dict] = []
+    if records and len(records) == len(chunks):
+        pairs = list(zip(records, chunks))
+    else:
+        pairs = []
+    if pairs:
+        for (status, old_path, new_path), chunk in pairs:
+            items.append({
+                "old_path": old_path,
+                "new_path": new_path or old_path,
+                "new_file": status.startswith("A"),
+                "deleted_file": status.startswith("D"),
+                "renamed_file": status[:1] in {"R", "C"},
+                "diff": chunk,
+            })
+        return items
+    for chunk in chunks:
+        header = chunk.splitlines()[0]
+        old_path, new_path = parse_diff_git_header(header)
+        preamble = chunk.split("@@", 1)[0]
+        items.append({
+            "old_path": old_path,
+            "new_path": new_path or old_path,
+            "new_file": "new file mode " in preamble,
+            "deleted_file": "deleted file mode " in preamble,
+            "renamed_file": old_path != new_path and "new file mode " not in preamble,
+            "diff": chunk,
+        })
+    return items
+
+
+def resolve_diff_range(env: Mapping[str, str], runner: GitRunner | None, timeout: float) -> tuple[str, str]:
+    head = (env.get("CI_COMMIT_SHA") or "HEAD").strip() or "HEAD"
+    base = (env.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "").strip()
+    target = (env.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME") or "").strip()
+    if base and _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
+        return base, head
+    if base:
+        _git(["git", "fetch", "--depth=200", "origin", base], timeout, runner)
+        if _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
+            return base, head
+    if target:
+        _git(["git", "fetch", "--depth=200", "origin", target], timeout, runner)
+        ref = f"origin/{target}"
+        if _git_ok(["git", "cat-file", "-e", f"{ref}^{{commit}}"], timeout, runner):
+            code, out, _err = _git(["git", "merge-base", ref, head], timeout, runner)
+            merged = out.decode("utf-8", "replace").strip()
+            if code == 0 and merged:
+                return merged, head
+            return ref, head
+    if _git_ok(["git", "cat-file", "-e", "HEAD~1^{commit}"], timeout, runner):
+        print("未找到 MR diff base，退回与 HEAD~1 比较", file=sys.stderr)
+        return "HEAD~1", head
+    raise ReviewError("无法确定 MR diff 基线")
+
+
+def load_git_diffs(
+    env: Mapping[str, str],
+    runner: GitRunner | None = None,
+    timeout: float = DEFAULT_GIT_TIMEOUT,
+) -> list[dict]:
+    base, head = resolve_diff_range(env, runner, timeout)
+    code, raw, err = _git(
+        ["git", "diff", "--raw", "--find-renames", "-z", base, head],
+        timeout,
+        runner,
+    )
+    if code != 0:
+        raise ReviewError(f"git diff --raw 失败: {err.decode('utf-8', 'replace')[:300]}")
+    code, unified, err = _git(
+        ["git", "diff", "--find-renames", "--no-color", "--unified=3", base, head],
+        timeout,
+        runner,
+    )
+    if code != 0:
+        raise ReviewError(f"git diff 失败: {err.decode('utf-8', 'replace')[:300]}")
+    print(f"本地 git diff: {base[:12]}..{str(head)[:12]}")
+    return diffs_from_git_output(raw, unified.decode("utf-8", "replace"))
+
+
+def load_raw_diffs(
+    env: Mapping[str, str],
+    api_base: str,
+    project_id: str,
+    iid: str,
+    token: str,
+    token_kind: str,
+    *,
+    timeout: float,
+    opener: Opener | None = None,
+    runner: GitRunner | None = None,
+) -> list[dict]:
+    """MR Pipeline 优先用本地 git。CI_JOB_TOKEN 访问 /diffs 会得到 404 Project Not Found。"""
+    source = (env.get("AI_REVIEW_DIFF_SOURCE") or "").strip().lower()
+    base = (env.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "").strip()
+    if source != "api" and (source == "git" or base):
+        try:
+            return load_git_diffs(env, runner=runner, timeout=env_int(env, "AI_REVIEW_GIT_TIMEOUT", DEFAULT_GIT_TIMEOUT))
+        except ReviewError as exc:
+            print(f"本地 git diff 失败，改用 GitLab API: {exc}", file=sys.stderr)
+            if source == "git":
+                raise
+    return fetch_mr_diffs(
+        api_base, project_id, iid, token, token_kind, timeout=timeout, opener=opener
+    )
 
 
 def fetch_mr_diffs(
@@ -567,14 +785,23 @@ def post_note(
     )
     if result.status not in (200, 201):
         hint = ""
-        if result.status in (401, 403) and token_kind == "job":
-            hint = " 请在 GitLab CI/CD Variables 配置 AI_REVIEW_GITLAB_TOKEN（项目 Access Token，api 范围，Developer）。"
+        if result.status in (401, 403, 404) and token_kind == "job":
+            hint = (
+                " CI_JOB_TOKEN 不能创建 MR 评论（GitLab 对未开放端点返回 404 Project Not Found）。"
+                "请在 CI/CD Variables 配置 AI_REVIEW_GITLAB_TOKEN（项目 Access Token，api 范围，Developer）。"
+            )
         raise ReviewError(
             f"发表 MR 评论失败 HTTP {result.status}: {redact(result.body[:500], token)}.{hint}"
         )
 
 
-def run(env: Mapping[str, str] | None = None, *, opener: Opener | None = None, sleep: Callable[[float], None] = time.sleep) -> str:
+def run(
+    env: Mapping[str, str] | None = None,
+    *,
+    opener: Opener | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    command_runner: GitRunner | None = None,
+) -> str:
     env = os.environ if env is None else env
     api_base = (env.get("CI_API_V4_URL") or env.get("GITLAB_API_URL") or "").strip()
     project_id = (env.get("CI_PROJECT_ID") or env.get("GITLAB_PROJECT_ID") or "").strip()
@@ -594,8 +821,16 @@ def run(env: Mapping[str, str] | None = None, *, opener: Opener | None = None, s
         print(f"同一 commit {sha[:12]} 已有审查评论，跳过")
         return "skipped"
 
-    raw_diffs = fetch_mr_diffs(
-        api_base, project_id, iid, token, token_kind, timeout=gitlab_timeout, opener=opener
+    raw_diffs = load_raw_diffs(
+        env,
+        api_base,
+        project_id,
+        iid,
+        token,
+        token_kind,
+        timeout=gitlab_timeout,
+        opener=opener,
+        runner=command_runner,
     )
     files, omitted = select_diffs(
         raw_diffs,

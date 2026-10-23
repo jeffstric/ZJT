@@ -253,3 +253,88 @@ def test_job_token_header_falls_back_after_401():
     )
     assert result.status == 200
     assert any(item == "job" for item in seen)
+
+
+def test_parse_git_diff_pairs_raw_status_with_patch():
+    raw = (
+        b":100644 100644 aaa bbb M\0api/foo.py\0"
+        b":100644 100644 ccc ddd A\0scripts/ai_code_review.py\0"
+    )
+    unified = """diff --git a/api/foo.py b/api/foo.py
+index aaa..bbb 100644
+--- a/api/foo.py
++++ b/api/foo.py
+@@ -1 +1 @@
+-old
++new
+diff --git a/scripts/ai_code_review.py b/scripts/ai_code_review.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/ai_code_review.py
+@@ -0,0 +1 @@
++print('x')
+"""
+    items = review.diffs_from_git_output(raw, unified)
+    assert [item["new_path"] for item in items] == ["api/foo.py", "scripts/ai_code_review.py"]
+    assert items[0]["new_file"] is False
+    assert items[1]["new_file"] is True
+    assert "+new" in items[0]["diff"]
+
+
+def test_run_uses_local_git_diff_instead_of_diffs_api():
+    posted = []
+    base = "abc123def4567890"
+    raw = b":100644 100644 aaa bbb M\0api/foo.py\0"
+    unified = """diff --git a/api/foo.py b/api/foo.py
+--- a/api/foo.py
++++ b/api/foo.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+    def command_runner(args, timeout):
+        if args[1:3] == ["cat-file", "-e"] and base in args[3]:
+            return 0, b"", b""
+        if args[1:3] == ["diff", "--raw"]:
+            return 0, raw, b""
+        if args[1] == "diff":
+            return 0, unified.encode("utf-8"), b""
+        raise AssertionError(args)
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if "/diffs?" in url:
+            raise AssertionError("job token cannot call diffs API")
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            payload = json.loads(request.data.decode("utf-8"))
+            assert "api/foo.py" in payload["messages"][1]["content"]
+            return FakeResponse(
+                200,
+                json.dumps(
+                    {"choices": [{"message": {"content": "## 结论\n未发现必须修改的问题。"}}], "usage": {}},
+                    ensure_ascii=False,
+                ),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            posted.append(json.loads(request.data.decode("utf-8"))["body"])
+            return FakeResponse(201, "{}")
+        raise AssertionError(f"{method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "60",
+        "CI_MERGE_REQUEST_IID": "781",
+        "CI_COMMIT_SHA": "43c856b1abcd",
+        "CI_MERGE_REQUEST_DIFF_BASE_SHA": base,
+        "CI_JOB_TOKEN": "job-token",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _seconds: None, command_runner=command_runner) == "posted"
+    assert "未发现必须修改的问题" in posted[0]

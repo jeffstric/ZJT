@@ -434,6 +434,18 @@ ai_code_review:
   variables:
     VLLM_BASE_URL: "http://192.168.10.112:4000"
     VLLM_MODEL: "qwen3.8:27b"
+    # CI_JOB_TOKEN 不能访问 MR diffs API。加深检出，便于本地 git 找到 merge base。
+    GIT_DEPTH: "200"
+  before_script:
+    - |
+      if ! command -v git >/dev/null 2>&1; then
+        if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+          sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+        fi
+        apt-get update
+        apt-get install -y --no-install-recommends git ca-certificates
+        rm -rf /var/lib/apt/lists/*
+      fi
   script:
     - python scripts/ai_code_review.py
   rules:
