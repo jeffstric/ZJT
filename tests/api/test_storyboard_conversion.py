@@ -285,3 +285,37 @@ def test_build_workflow_data_carries_assets():
     # 计数器覆盖全部节点与连线
     assert wf['nextNodeId'] == max(nodes) + 1
     assert wf['nextConnId'] == len(wf['connections']) + 1
+
+
+def test_scene_to_shot_carries_three_scene_code():
+    """效果模式分镜的 3D 空间代码随 shotJson 透传（工作流「打开导演台」重放用）。"""
+    from api.storyboard_conversion import _scene_to_shot
+
+    build_code = (
+        "startScene('大厅');\n"
+        "makeActor('李卫国', 0.3, -0.3, {facing: 180});\n"
+        "setCamera(-0.6, 1.5, 1.8, 0.2, 0.8, -0.2, 50);"
+    )
+    incr_code = "moveActor('李卫国', 1, 1);\nsetCamera(0, 1.5, 2, 1, 1, 1, 45);"
+
+    # 首镜：markdown 围栏被剥壳，序列首镜标记 True
+    scene = {
+        'id': 21, 'title': '分镜1', 'duration': 4,
+        'prompt_json': {'three_scene_code': '```javascript\n' + build_code + '\n```'},
+        'dialogues': [],
+    }
+    shot, _, _ = _scene_to_shot(scene, 1, {})
+    assert shot['three_scene_code'] == build_code
+    assert shot['three_scene_seq_start'] is True
+
+    # 增量镜：无 startScene → 首镜标记 False
+    scene2 = {**scene, 'id': 22, 'prompt_json': {'three_scene_code': incr_code}}
+    shot2, _, _ = _scene_to_shot(scene2, 2, {})
+    assert shot2['three_scene_code'] == incr_code
+    assert shot2['three_scene_seq_start'] is False
+
+    # 无 3D 代码的分镜（快速模式/手工）：不带字段，按钮不显示
+    scene3 = {**scene, 'id': 23, 'prompt_json': {}}
+    shot3, _, _ = _scene_to_shot(scene3, 3, {})
+    assert 'three_scene_code' not in shot3
+    assert 'three_scene_seq_start' not in shot3
