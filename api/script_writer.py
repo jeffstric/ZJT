@@ -1879,6 +1879,18 @@ async def clean_pending_tasks(request: Request, session_id: str):
         except Exception:
             pass  # 无 body 时兼容旧调用
 
+        # 属主断言：非本人会话一律 404（防枚举），与 /session/{id}/history 同规则
+        from model.chat_sessions import ChatSessionsModel
+        owner_session = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not owner_session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(owner_session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         task_type = body.get('task_type')
         project_ids = body.get('project_ids')
 
@@ -1990,6 +2002,18 @@ async def replace_pending_task(request: Request, session_id: str):
                 'error': 'task_type, project_ids and content are required'
             }, status_code=400)
 
+        # 属主断言：非本人会话一律 404（防枚举），与 /session/{id}/history 同规则
+        from model.chat_sessions import ChatSessionsModel
+        owner_session = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not owner_session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(owner_session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         from model.chat_messages import ChatMessagesModel
         affected = await asyncio.to_thread(
             ChatMessagesModel.replace_pending_task,
@@ -2035,6 +2059,12 @@ async def get_latest_task_for_session(request: Request, session_id: str):
                 'success': False,
                 'error': '没有任务'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举）——与 /session/{id}/history、
+        # /task/{task_id}/status 同规则；agent_tasks 行自带 user_id，直接比对
+        owner_error = ensure_owner(task.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         return JSONResponse({
             'success': True,
