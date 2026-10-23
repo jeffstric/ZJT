@@ -204,6 +204,19 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
     {
+        'key': 'test_mode.wechat_pay_skip_callback_sign',
+        'value_type': 'bool',
+        'description': (
+            '【开发联调专用·默认关闭】微信支付回调跳过验签旁路：'
+            '须与 test_mode.enabled 同时开启才生效，仅在验签密钥缺失'
+            '（V3 缺平台公钥文件 / V2 缺 api_v2_key）时放行回调；密钥存在'
+            '但签名错误仍拒绝。生产环境严禁开启（可绕过回调来源认证，'
+            '伪造通知可免费入账算力）'
+        ),
+        'editable': True,
+        'is_sensitive': False
+    },
+    {
         'key': 'test_mode.mock_videos.image_to_video',
         'value_type': 'string',
         'description': '图生视频的测试视频URL',

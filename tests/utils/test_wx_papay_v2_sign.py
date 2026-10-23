@@ -46,3 +46,47 @@ def test_forged_sign_rejected():
     forged = dict(params)
     forged["sign"] = "DEADBEEF"  # 攻击者自造签名（无密钥）
     assert _util().verify_v2_sign(forged) is False
+
+
+# ==================== 开发联调旁路（双开关，默认关闭） ====================
+
+def _set_bypass(monkeypatch, test_mode=False, bypass=False, raise_error=False):
+    def fake_get(*keys, default=None):
+        if raise_error:
+            raise RuntimeError("db down")
+        if keys == ('test_mode', 'enabled'):
+            return test_mode
+        if keys == ('test_mode', 'wechat_pay_skip_callback_sign'):
+            return bypass
+        return default
+
+    monkeypatch.setattr("config.config_util.get_dynamic_config_value", fake_get)
+
+
+def test_dev_bypass_double_switch_allows_missing_key(monkeypatch):
+    """双开关齐开 + api_v2_key 未配置 → 放行（开发联调订阅回调可入账）"""
+    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is True
+
+
+def test_dev_bypass_requires_both_switches(monkeypatch):
+    """只开单个开关 → 仍拒绝"""
+    _set_bypass(monkeypatch, test_mode=False, bypass=True)
+    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False
+    _set_bypass(monkeypatch, test_mode=True, bypass=False)
+    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False
+
+
+def test_dev_bypass_config_error_fails_closed(monkeypatch):
+    """配置读取异常 → 按未开启处理（安全失败）"""
+    _set_bypass(monkeypatch, raise_error=True)
+    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False
+
+
+def test_dev_bypass_never_overrides_wrong_sign(monkeypatch):
+    """旁路只覆盖密钥缺失分支：api_v2_key 在但签名错误仍拒绝"""
+    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+    params = {"out_trade_no": "SUB_1", "result_code": "SUCCESS"}
+    forged = dict(params)
+    forged["sign"] = "DEADBEEF"
+    assert _util().verify_v2_sign(forged) is False

@@ -29,6 +29,28 @@ from config.constant import SubscriptionConstants
 
 logger = logging.getLogger(__name__)
 
+
+def _dev_callback_sign_bypass_enabled() -> bool:
+    """开发联调专用验签旁路（默认关闭，fail-closed 兜底）。
+
+    与 utils/wechat_pay_util.py 的 V3 旁路共用同一对开关：
+    test_mode.enabled 且 test_mode.wechat_pay_skip_callback_sign
+    （system_config，管理台可配，TTL 缓存热更新）。双开关设计防生产
+    环境误触单个开关绕过回调来源认证。仅覆盖"api_v2_key 未配置"分支。
+    读取异常按未开启处理（安全失败）。
+    """
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        test_mode = get_dynamic_config_value('test_mode', 'enabled', default=False)
+        bypass = get_dynamic_config_value(
+            'test_mode', 'wechat_pay_skip_callback_sign', default=False
+        )
+        return bool(test_mode) and bool(bypass)
+    except Exception as e:
+        logger.warning(f"Failed to read dev callback sign bypass config: {e}")
+        return False
+
 # 微信支付 V2 XML 网关
 WX_API_BASE = "https://api.mch.weixin.qq.com"
 
@@ -108,6 +130,17 @@ class WxPapayUtil:
         复活已解约合约，FAILURE→SUCCESS 循环可无限重复入账）。
         """
         if not self.api_v2_key:
+            # 开发联调旁路：开发环境通常未配置 V2 密钥，fail-closed 会卡死
+            # 订阅支付的回调入账。与 V3 验签共用双开关
+            # （test_mode.enabled + test_mode.wechat_pay_skip_callback_sign），
+            # 显式开启时放行，每次跳过打 WARNING 便于审计；默认关闭。
+            if _dev_callback_sign_bypass_enabled():
+                logger.warning(
+                    "DEV BYPASS: skipping V2 callback signature verification "
+                    "(test_mode.wechat_pay_skip_callback_sign enabled, api_v2_key missing) — "
+                    "NEVER enable in production"
+                )
+                return True
             logger.error("api_v2_key 未配置，拒绝 V2 回调（fail-closed）")
             return False
         received = params.get("sign")

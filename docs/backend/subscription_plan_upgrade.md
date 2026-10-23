@@ -86,6 +86,13 @@
   回归未配置状态——请通过管理台配置或持久化 secret 目录。
   （`tests/utils/test_wx_papay_v2_sign.py`、`test_wechat_pay_callback_verify.py`
   覆盖缺密钥拒绝/正确签名通过/伪造签名拒绝）
+- **开发环境联调旁路（V2/V3 共用，2026-10-23）**：开发环境通常没有微信
+  平台公钥文件/V2 密钥，fail-closed 会卡死真实支付的回调入账。专用配置
+  `test_mode.wechat_pay_skip_callback_sign`（管理台 system_config，默认
+  关闭）需与 `test_mode.enabled` **双开关同时开启**才生效——仅覆盖验签
+  密钥缺失分支（密钥存在但签名错误仍拒绝），每次跳过打 WARNING
+  `DEV BYPASS` 便于审计。双开关防生产误触；配置读取异常按未开启处理。
+  TTL 缓存热更新（30s），无需重启。
 
 ## 业务规则
 
