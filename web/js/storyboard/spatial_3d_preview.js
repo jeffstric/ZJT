@@ -25,6 +25,7 @@ import {
     CAMERA_LIMITS,
     CAMERA_PRESETS,
     applyCameraPreset,
+    cameraSeesActors,
     clampCamera,
     findLastSetCameraCall,
     normalizeCamera,
@@ -634,8 +635,12 @@ function codeHtml(preview, chainStart, chainLength, total) {
         <pre class="spatial3d-code">${escapeHtml(code)}</pre>`;
 }
 
-function diagnosticsHtml(preview, replayCtx) {
+function diagnosticsHtml(preview, replayCtx, cameraDiag) {
     const diags = [...(preview.three_scene && preview.three_scene.diagnostics) || []];
+    if (cameraDiag) {
+        // 空镜诊断（LLM 产出的机位与站位矛盾，前端重放后校验，见 §8 已知边界）
+        diags.unshift({ severity: 'warning', message: cameraDiag });
+    }
     for (const err of (replayCtx && replayCtx.replayErrors) || []) {
         diags.push({
             severity: 'error',
@@ -966,6 +971,34 @@ class Spatial3dSession {
 
     // ---- 机位编辑：应用 / gizmo / 保存 ----
 
+    /** 空镜诊断：机位视锥内没有任何角色时给出提示（LLM 产出机位与站位矛盾的常见症状）。 */
+    _computeCameraDiag() {
+        if (!this.replayCtx || !this.shotCameraInfo) return null;
+        const actorList = Object.values(this.replayCtx.actors).map((g) => ({ x: g.position.x, z: g.position.z }));
+        if (!actorList.length) return null;
+        const seen = cameraSeesActors(this.shotCameraInfo, actorList);
+        if (seen.visible) return null;
+        const t = this.shotCameraInfo.target;
+        return `机位视野内无角色（注视点约 (${t.x.toFixed(2)}, ${t.y.toFixed(2)}, ${t.z.toFixed(2)})，所有角色均在视锥外），镜头画面将为空景；可调整机位`;
+    }
+
+    _refreshDiagnostics() {
+        this._cameraDiag = this._computeCameraDiag();
+        this.el.diagnostics.innerHTML = diagnosticsHtml(this.previews[this.index], this.replayCtx, this._cameraDiag);
+        // 角标同步（含空镜诊断计数）
+        const preview = this.previews[this.index];
+        const summary = preview.diagnostic_summary || { errors: 0, warnings: 0 };
+        const totalWarnings = summary.warnings + (this._cameraDiag ? 1 : 0);
+        const badge = this.el.badge;
+        if (summary.errors || totalWarnings) {
+            badge.hidden = false;
+            badge.textContent = summary.errors ? `矛盾 ${summary.errors}` : `提示 ${totalWarnings}`;
+            badge.className = `spatial3d-diag-badge ${summary.errors ? 'has-error' : 'has-warning'}`;
+        } else {
+            badge.hidden = true;
+        }
+    }
+
     /** 应用新机位到本镜相机 + gizmo + 侧栏显示；commit=true 时调度保存。 */
     _applyShotCamera(rawCam, { commit = false } = {}) {
         if (!this.shotCamera) return;
@@ -978,6 +1011,7 @@ class Spatial3dSession {
         this._rebuildGizmo();
         this._syncCamSliders();
         this._refreshCodeSection();
+        this._refreshDiagnostics();
         if (commit) this._scheduleSaveCamera();
     }
 
@@ -1188,11 +1222,15 @@ class Spatial3dSession {
         this._contentRadius = Math.min(Math.max(size * 0.35, 2.2), 12);
 
         this.el.title.textContent = `${preview.title || '分镜'}`;
+        // 空镜诊断（_refreshDiagnostics 内计算并渲染，含角标）
+        this._cameraDiag = null;
+
         const summary = preview.diagnostic_summary || { errors: 0, warnings: 0 };
+        const totalWarnings = summary.warnings + (this._cameraDiag ? 1 : 0);
         const badge = this.el.badge;
-        if (summary.errors || summary.warnings) {
+        if (summary.errors || totalWarnings) {
             badge.hidden = false;
-            badge.textContent = summary.errors ? `矛盾 ${summary.errors}` : `提示 ${summary.warnings}`;
+            badge.textContent = summary.errors ? `矛盾 ${summary.errors}` : `提示 ${totalWarnings}`;
             badge.className = `spatial3d-diag-badge ${summary.errors ? 'has-error' : 'has-warning'}`;
         } else {
             badge.hidden = true;
@@ -1207,7 +1245,7 @@ class Spatial3dSession {
         } else {
             this.el.code.hidden = true;
         }
-        this.el.diagnostics.innerHTML = diagnosticsHtml(preview, replayCtx);
+        this.el.diagnostics.innerHTML = diagnosticsHtml(preview, replayCtx, this._computeCameraDiag());
 
         // 机位编辑（手动 + 对话）仅代码方案分镜可用
         const editable = isCodePreview(preview) && !!this.shotCameraInfo;

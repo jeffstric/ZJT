@@ -93,6 +93,27 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
 | `last_frame_url`（选中尾帧） | `shot_frame.data.lastFrameUrl`（无尾帧时为空，不拿首帧填充） |
 | `video_url`（选中视频） | 下挂 `video` 节点 `data.url`（普通连线 `shot_frame → video`） |
 | `source_shot_key` | `shot.shot_id`（转换沿用场景原 key；手工场景无 key 时为 `sb_{scene.id}`） |
+| `prompt_json.three_scene_code` | `shotJson.three_scene_code` + `shotJson.three_scene_seq_start`（3D 空间透传，见下节；反向经共享 builder 原样回写 `prompt_json.three_scene_code`，往返稳定） |
+
+## 3D 空间 → 导演台（分镜帧「打开导演台」按钮）
+
+效果模式分镜的 3D 空间（`three_scene_code`）在 S→W 转换时随 shotJson 透传到分镜帧
+节点。分镜帧在携带 3D 代码时显示「🎬 打开导演台（3D 空间）」按钮
+（`web/js/director_stage_from_storyboard.js`）：
+
+1. **轻量记录器重放**（不依赖 three.js）：helper 只记录参数，从该帧按
+   `shot_number` 往前找最近的 `three_scene_seq_start` 帧，顺序重放到本镜，
+   得到该镜最终角色站位与机位（增量链语义与故事板 3D 预览一致）。
+2. **映射 directorData**：`makeActor → 人偶 {name, x, z, rotY: facing}`
+   （两侧朝向约定一致：度数、0°=+Z、90°=+X）；`setCamera → 镜头1`；
+   `makeStage`/`makeProp` 导演台无对应概念，跳过并 toast 提示；环境为空
+   （可在导演台手动接全景节点）。**空镜检查**：迁移后计算机位视锥内是否
+   有角色（`cameraSeesActors`，与故事板 3D 预览同款逻辑），全部在视野外
+   时 toast 警告"机位视野内无角色"——LLM 偶发产出机位背对角色的空镜，
+   可在导演台拖拽机位/预设修正。
+3. **首次点击**自动在分镜帧右侧创建导演台节点 + 连线，写入 `directorData`
+   后打开编辑器；**再次点击**直接打开（帧记住节点 id，不重复创建）。导演台内
+   摆位/快照/录制经既有链路持久化，不受故事板后续修改影响。
 
 ## 已知边界
 

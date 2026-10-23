@@ -134,11 +134,16 @@ v3 物化器按整段代码链校验（`audit_three_scene_codes_for_shots`）：
 
 - 结构化 spatial_layout 与 three_scene_code 由同一 LLM 输出并行产生，二者
   语义一致性目前靠 prompt 约束 + 人工核对（画中画取景器即核对工具），未做
-  代码↔布局的自动交叉校验。
+  代码↔布局的自动交叉校验。**例外**：3D 预览与导演台转换均已内置「空镜
+  检查」（`cameraSeesActors` 视锥投影，重放后计算角色是否在机位视野内；
+  实测 LLM 会产出"机位背对所有角色"的空镜，如分镜机位先行等待角色走位
+  的规划），空镜时预览一致性诊断报 warning、导演台转换 toast 提示。
 - 代码沙箱可访问注入对象的原型链（three.js 对象方法），不做深度隔离；预览
   为只读场景，风险面收敛在渲染函数内部。
 - 快速模式（fast）不产出 three_scene_code，无 3D 入口（`hasSpatialLayout`
   同时认代码与存量 spatial_layout）。
+- LLM 偶发引用未创建实体（如 moveProp 引用没有 makeProp 过的道具），重放
+  按契约报错收集（预览诊断/导演台 console.warn），不中断后续镜头。
 
 ## 9. 机位编辑（第三期，2026-10-16）
 
@@ -185,3 +190,13 @@ v3 物化器按整段代码链校验（`audit_three_scene_codes_for_shots`）：
   `rewriteSetCamera` 替换与追加/幂等、clamp、预设计算。
 - `tests/services/test_storyboard_camera_chat.py`（8 例）：消息组装
   （机位/实体清单/截断）、JSON 解析（围栏/超界 clamp/缺字段）、缺模型降级。
+
+### 9.4 导出至导演台（工作流画布）
+
+故事板 → 工作流转换时 `three_scene_code` 随 shotJson 透传到分镜帧节点；
+分镜帧「🎬 打开导演台（3D 空间）」按钮经轻量记录器重放（不依赖
+three.js）把该镜空间映射为导演台人偶与机位，首次点击自动创建导演台
+节点并连线。详见
+`docs/storyboard/storyboard_workflow_conversion.md` §3D 空间 → 导演台；
+实现 `web/js/director_stage_from_storyboard.js`，测试
+`web/tests/director_stage_from_storyboard.test.js`（10 例）。

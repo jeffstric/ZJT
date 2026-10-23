@@ -153,3 +153,50 @@ export function applyCameraPreset(preset, focal, radius = 4.5) {
     const target = { x: center.x, y: preset.targetY, z: center.z };
     return clampCamera({ eye, target, fov: preset.fov });
 }
+
+/**
+ * 空镜检查：机位视锥内是否有角色。
+ *
+ * camera：{eye:[x,y,z], target:[x,y,z], fov}（度，Y-up 米制）；
+ * actors：[{x, z}]（取躯干代表点 y=1.1）；aspect：画中画宽高比
+ * （three.js fov 为垂直视场角，水平按 aspect 放大）。
+ * 返回 {visible, total}。与 director_stage_from_storyboard.js 内的
+ * cameraSeesActors 逻辑互为镜像，改动需两侧同步。
+ */
+export function cameraSeesActors(camera, actors, aspect = 16 / 9) {
+    const list = Array.isArray(actors) ? actors : [];
+    const total = list.length;
+    if (!camera || !Array.isArray(camera.eye) || !Array.isArray(camera.target)) {
+        return { visible: 0, total };
+    }
+    const [ex, ey, ez] = camera.eye.map(Number);
+    const [tx, ty, tz] = camera.target.map(Number);
+    // three.js lookAt 基：相机 -Z 朝 target，即 +Z 指向后方 = normalize(eye - target)
+    let zx = ex - tx, zy = ey - ty, zz = ez - tz;
+    const zl = Math.hypot(zx, zy, zz);
+    if (!zl) return { visible: 0, total };
+    zx /= zl; zy /= zl; zz /= zl;
+
+    // x = cross(up, z)，up=(0,1,0) → (zz, 0, -zx)；y = cross(z, x)
+    let xax = zz, xay = 0, xaz = -zx;
+    const xl = Math.hypot(xax, xay, xaz);
+    if (!xl) return { visible: 0, total }; // 望向正天顶/正地心，退化
+    xax /= xl; xaz /= xl;
+    const yax = zy * xaz, yay = zz * xax - zx * xaz, yaz = -zy * xax;
+
+    const tanV = Math.tan(((Number(camera.fov) || 50) * Math.PI) / 360);
+    const tanH = tanV * aspect;
+    let visible = 0;
+    for (const actor of list) {
+        if (!actor || !Number.isFinite(actor.x) || !Number.isFinite(actor.z)) continue;
+        const dx = actor.x - ex, dy = 1.1 - ey, dz = actor.z - ez; // 躯干代表点
+        const vx = dx * xax + dz * xaz;
+        const vy = dx * yax + dy * yay + dz * yaz;
+        const vz = dx * zx + dy * zy + dz * zz;
+        if (vz >= -1e-6) continue;              // 在相机后方
+        if (Math.abs(vy / -vz) > tanV) continue; // 垂直视野外
+        if (Math.abs(vx / -vz) > tanH) continue; // 水平视野外
+        visible++;
+    }
+    return { visible, total };
+}

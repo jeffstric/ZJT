@@ -137,3 +137,50 @@ describe('applyCameraPreset', () => {
     expect(applyCameraPreset(null, focal)).toBeNull();
   });
 });
+
+import { cameraSeesActors } from '../js/storyboard/spatial_camera_edit.js';
+
+describe('cameraSeesActors 空镜检查', () => {
+  // 语义约定：eye 在原点前方 4m 看 target（原点方向），两角色在 (±1.2, ±0.4)
+  const camera = { eye: [0, 1.5, 4], target: [0, 1.0, 0], fov: 50 };
+
+  it('角色在视锥内 → visible>0；背对机位 → visible=0', () => {
+    const front = cameraSeesActors(camera, [{ x: 0.5, z: -0.5 }, { x: -1, z: 0.5 }]);
+    expect(front.total).toBe(2);
+    expect(front.visible).toBe(2); // 站在机位正前方区域
+
+    // 同样两个角色，机位看向完全相反方向（+z 深处）
+    const behind = cameraSeesActors(
+      { eye: [0, 1.5, 4], target: [0, 1.0, 12], fov: 50 },
+      [{ x: 0.5, z: -0.5 }, { x: -1, z: 0.5 }],
+    );
+    expect(behind.visible).toBe(0);
+  });
+
+  it('分镜5 实测数据复现：机位朝右前空地、角色均在左后 → 空镜', () => {
+    const cam5 = { eye: [2, 1.65, 2.6], target: [3.9, 1.45, -1.1], fov: 50 };
+    const res = cameraSeesActors(cam5, [{ x: -1.8, z: 1.2 }, { x: -1.0, z: 1.0 }]);
+    expect(res.visible).toBe(0);
+  });
+
+  it('角色在相机正后方 → 不可见；fov 越大视野越宽', () => {
+    // 机位在原点看 +z，角色在 -z（身后）
+    const back = cameraSeesActors(
+      { eye: [0, 1.5, 0], target: [0, 1.0, 5], fov: 50 },
+      [{ x: 0, z: -3 }],
+    );
+    expect(back.visible).toBe(0);
+
+    // 同一站位：窄 fov 看不到，宽 fov 能容纳
+    const far = { x: 3.2, z: 4.5 };
+    const narrow = cameraSeesActors({ eye: [0, 1.5, 0], target: [0, 1.0, 5], fov: 30 }, [far]);
+    const wide = cameraSeesActors({ eye: [0, 1.5, 0], target: [0, 1.0, 5], fov: 100 }, [far]);
+    expect(wide.visible).toBeGreaterThanOrEqual(narrow.visible);
+  });
+
+  it('入参异常安全：空 actors / 缺字段返回 visible=0 不抛错', () => {
+    expect(cameraSeesActors(null, [{ x: 0, z: 0 }])).toEqual({ visible: 0, total: 1 });
+    expect(cameraSeesActors(camera, []).total).toBe(0);
+    expect(cameraSeesActors(camera, [{ x: NaN, z: 1 }]).visible).toBe(0);
+  });
+});
