@@ -77,8 +77,13 @@
   缺失直接 503「微信支付商户密钥未配置，无法发起支付」——不允许展示二维码
   （缺失时签名降级为 `mock_signature`，微信必拒；同时杜绝验签旁路被伪造回调利用）。
 - `POST /api/subscription/wechat-sign-pay`：检查 `pay.wxpay.api_v2_key` 非空，缺失同样 503。
-- 验签降级（`verify_callback_signature` 缺公钥 `return True`、`verify_v2_sign` 缺 V2 密钥
-  `return True`）仅限密钥齐备以外的开发联调场景；生产必须以密钥存在性检查兜底。
+- 验签 fail-closed（2026-10-23，审计 BUG-R2-S1-A3-H1/BUG-R2-S2-A1-H1 修复）：
+  `verify_callback_signature` 缺公钥文件、`verify_v2_sign` 缺 V2 密钥一律
+  `return False` 拒绝回调——密钥缺失即无法确认通知来源，接受回调等于接受
+  任意伪造的支付/签约通知（曾可伪造回调免费入账算力、解约他人合约）。
+  微信侧收到 4xx 后按 15s..6h 计划重试，补齐密钥后自动恢复，无需重启。
+  上线前请确认 `secret/wechat/` 下平台公钥（`pub_key.pem`，公钥模式）或
+  平台证书文件、以及 `pay.wxpay.api_v2_key` 均已配置，否则真实回调将被拒绝。
 
 ## 业务规则
 

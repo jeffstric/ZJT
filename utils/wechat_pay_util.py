@@ -575,11 +575,12 @@ class WechatPayUtil:
                 return False
                 
         except FileNotFoundError:
-            logger.error(f"Public key file not found: {public_key_path}")
-            logger.warning("Skipping signature verification for development")
-            # ⚠️ 安全隐患：开发环境跳过验签（return True），生产环境必须配置正确的公钥文件
-            # 攻击者可伪造微信支付回调请求，绕过验签直接触发业务逻辑
-            return True
+            logger.error(f"WeChat Pay platform public key file not found: {public_key_path}")
+            logger.error("Rejecting callback: signature verification key material missing (fail-closed)")
+            # 密钥文件缺失即无法确认通知来源，接受回调等于接受任意伪造的支付通知
+            # （审计 BUG-R2-S1-A3-H1：fail-open 曾允许伪造回调直接入账算力）。
+            # 微信侧收到 4xx 后会按 15s..6h 计划重试，补齐密钥文件后自动恢复。
+            return False
         except Exception as e:
             logger.error(f"Failed to verify callback signature: {str(e)}")
             return False
