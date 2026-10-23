@@ -49,7 +49,7 @@
 
   "welcome_desc": "我是您的营销助手，可以帮助您创作带货脚本、广告创意、产品文案等营销内容。请告诉我您的需求。",
 
-  "input_placeholder": "输入想法、剧本或上传参考，输入 @ 引用媒体文件...",
+  "input_placeholder": "输入想法、剧本或上传参考，支持粘贴截图/视频，输入 @ 引用媒体文件...",
   "verification_placeholder": "请输入您的选择...",
 
   "mode_agent": "Agent 模式",

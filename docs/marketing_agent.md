@@ -404,6 +404,8 @@ Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文�
 | 视频 | 3 个 | 100MB（可配置） | 15 秒（可配置） | 前端按 480px 目标短边和 409600 最低总像素转码后上传到 `/api/upload-agent-video` |
 | 音频 | 5 个 | 20MB | 15 秒（可配置） | 上传到 `/api/upload-agent-audio` |
 
+除文件选择和拖拽外，支持直接粘贴剪贴板媒体文件（截图/视频/音频，文件管理器多选复制后可一次粘贴多张/多个，Agent 对话模式按各自上限累积：图片 9 张、视频 3 个、音频 5 个）。实现要点：`marketing_agent.js` 在 `document` 上全局监听 `paste` 事件（`handleDocumentPaste`），由 `extractClipboardMediaFiles` 从 `clipboardData` 提取 `kind === 'file'` 且 MIME 为 `image/*`/`video/*`/`audio/*` 的文件；因 Chromium 在 Windows 从文件管理器复制多文件时文件列表只在 `files` 暴露而 `items` 可能为空（chromium:41071856），提取时合并 `files` 与 `items` 两个来源并按 名字|大小|修改时间 去重；截图等来源的 File 常缺少文件名扩展名，图片按扩展名白名单、音视频按"名字无扩展名"判断，命中时按 MIME 映射重建带扩展名的 File（`clipboard_<时间戳>_<序号>.<ext>`）。提取到媒体时拦截默认粘贴行为并走统一上传链路 `processSelectedFiles`（与文件选择/拖拽共用的校验与上传逻辑，数量、格式、大小、时长限制一致；非 Agent 模式按既有规则只取第一个文件）；剪贴板无媒体文件时不干预，纯文本/富文本粘贴行为不变。注意系统剪贴板同一时刻只保存最后一次复制的内容：逐个复制的文件需逐个粘贴累积，"一次粘贴多个"依赖源端一次性放入多文件（如文件管理器多选复制）。视频粘贴同样经过压缩（Canvas+MediaRecorder）与上传链路，要求页面处于前台（浏览器对后台标签页会暂停视频播放导致压缩失败，与文件选择上传行为一致）。页面卸载时随 `onUnmounted` 移除监听。
+
 #### Agent 视频模式
 
 支持上传参考图（首尾帧/全能参考）、参考视频和参考音频。图片上传到 `/api/upload-agent-image`，通过 `image_urls` 字段传给后端。

@@ -49,7 +49,7 @@
 
   "welcome_desc": "I'm your marketing assistant. I can help you create sales scripts, ad creative, product copywriting and more. Tell me what you need.",
 
-  "input_placeholder": "Enter ideas, scripts or upload references, use @ to mention media files...",
+  "input_placeholder": "Enter ideas, scripts or upload references, paste screenshots/videos directly, use @ to mention media files...",
   "verification_placeholder": "Please enter your choice...",
 
   "mode_agent": "Agent Mode",
