@@ -58,8 +58,18 @@ class SubscriptionCancelRequest(BaseModel):
 
 # ==================== 鉴权辅助（与 /api/recharge/wechat-pay 一致） ====================
 
-async def _verify_auth_token(auth_token: str, user_id: int) -> str:
-    """校验用户登录状态，失败抛 SubscriptionServiceError(401)"""
+async def _verify_auth_token(request: Request, auth_token: str, user_id: int) -> str:
+    """校验用户登录状态，失败抛 SubscriptionServiceError(401)
+
+    属主绑定（审计 BUG-R2-S2-A1-H3，CWE-639/IDOR）：require_permission 已将
+    token 解析出的登录身份注入 request.state.user_id；客户端携带的 user_id
+    必须与其一致，否则任何登录用户可解约/查询任意他人订阅（含批量终止全站
+    自动续费合约）。user_id 是 AUTO_INCREMENT 顺序整数 + 响应形态构成订阅
+    者枚举 oracle，必须在此收口。
+    """
+    auth_user_id = getattr(request.state, "user_id", None)
+    if auth_user_id is None or int(user_id) != int(auth_user_id):
+        raise SubscriptionServiceError("user_id 与当前登录用户不一致", status_code=403)
     success, message, _ = await async_make_perseids_request(
         endpoint='user/check_computing_power',
         method='GET',
@@ -133,7 +143,7 @@ async def create_subscription_sign_pay(request: Request, payload: SubscriptionSi
     try:
         if not payload.auth_token:
             raise HTTPException(status_code=400, detail="Authentication token is required")
-        await _verify_auth_token(payload.auth_token, payload.user_id)
+        await _verify_auth_token(request, payload.auth_token, payload.user_id)
 
         # 生产安全闸：V2 密钥（api_v2_key）缺失时 V2 签名/验签会降级（验签旁路仅限开发），
         # 不允许发起签约支付/展示二维码
@@ -172,7 +182,7 @@ async def get_subscription_status(request: Request, user_id: int, auth_token: Op
         token = _resolve_auth_token(request, auth_token)
         if not token:
             raise SubscriptionServiceError("登录已过期，请重新登录", status_code=401)
-        await _verify_auth_token(token, user_id)
+        await _verify_auth_token(request, token, user_id)
         status = subscription_service.get_subscription_status(user_id)
         return JSONResponse({"success": True, "subscription": status})
     except SubscriptionServiceError as e:
@@ -199,7 +209,7 @@ async def get_subscription_order_status(
         token = _resolve_auth_token(request, auth_token)
         if not token:
             raise SubscriptionServiceError("登录已过期，请重新登录", status_code=401)
-        await _verify_auth_token(token, user_id)
+        await _verify_auth_token(request, token, user_id)
         order = await asyncio.to_thread(SubscriptionOrdersModel.get_by_order_id, order_id)
         if not order or int(order.user_id) != int(user_id):
             raise HTTPException(status_code=404, detail="订单不存在")
@@ -224,7 +234,7 @@ async def get_subscription_order_status(
 async def cancel_subscription(request: Request, payload: SubscriptionCancelRequest):
     """用户解约：当期已付权益保留至周期结束，之后不再扣款"""
     try:
-        await _verify_auth_token(payload.auth_token, payload.user_id)
+        await _verify_auth_token(request, payload.auth_token, payload.user_id)
         result = await subscription_service.cancel_subscription(payload.user_id)
         result["success"] = True
         result["message"] = "订阅已取消，当期权益保留至周期结束"
