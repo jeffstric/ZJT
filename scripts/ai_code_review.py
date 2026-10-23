@@ -34,10 +34,15 @@ DEFAULT_MAX_FILE_CHARS = 20_000
 DEFAULT_MAX_FILES = 40
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0.3
-DEFAULT_VLLM_TIMEOUT = 600
+DEFAULT_VLLM_TIMEOUT = 120
 DEFAULT_VLLM_PROBE_TIMEOUT = 15
 DEFAULT_GITLAB_TIMEOUT = 60
-DEFAULT_LLM_ATTEMPTS = 2
+DEFAULT_LLM_ATTEMPTS = 3
+# 路由器长时间不回包时，改直连两台 vLLM。非流式接口要等整段生成完才返回状态行，CI 上会读超时。
+DIRECT_VLLM_BACKENDS = (
+    "http://192.168.10.112:8000",
+    "http://192.168.10.243:8000",
+)
 DEFAULT_GIT_TIMEOUT = 120
 
 COMMENT_MARKER = "<!-- ai-code-review commit:{sha} -->"
@@ -184,7 +189,13 @@ def open_http(
         response = exc
     except urllib.error.URLError as exc:
         raise ReviewError(f"连接失败 {request.full_url}: {exc.reason}", retryable=True) from exc
-    raw = response.read()
+    except TimeoutError as exc:
+        # getresponse() 的读超时不是 URLError，不接住就会变成裸 Traceback，也不会换后端。
+        raise ReviewError(f"连接超时 {request.full_url}", retryable=True) from exc
+    try:
+        raw = response.read()
+    except TimeoutError as exc:
+        raise ReviewError(f"读取超时 {request.full_url}", retryable=True) from exc
     status = getattr(response, "status", None) or response.getcode()
     body = raw.decode("utf-8", errors="replace")
     closer = getattr(response, "close", None)
@@ -373,21 +384,22 @@ def resolve_diff_range(env: Mapping[str, str], runner: GitRunner | None, timeout
     head = (env.get("CI_COMMIT_SHA") or "HEAD").strip() or "HEAD"
     base = (env.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "").strip()
     target = (env.get("CI_MERGE_REQUEST_TARGET_BRANCH_NAME") or "").strip()
-    if base and _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
-        return base, head
-    if base:
-        _git(["git", "fetch", "--depth=200", "origin", base], timeout, runner)
-        if _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
-            return base, head
+    # 先跟目标分支做 merge-base。CI_MERGE_REQUEST_DIFF_BASE_SHA 有时只是上一次提交，
+    # 那样会漏掉本次 MR 里更早的提交。
     if target:
-        _git(["git", "fetch", "--depth=200", "origin", target], timeout, runner)
+        _git(["git", "fetch", "--depth=500", "origin", target], timeout, runner)
         ref = f"origin/{target}"
         if _git_ok(["git", "cat-file", "-e", f"{ref}^{{commit}}"], timeout, runner):
             code, out, _err = _git(["git", "merge-base", ref, head], timeout, runner)
             merged = out.decode("utf-8", "replace").strip()
             if code == 0 and merged:
                 return merged, head
-            return ref, head
+    if base and _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
+        return base, head
+    if base:
+        _git(["git", "fetch", "--depth=200", "origin", base], timeout, runner)
+        if _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
+            return base, head
     if _git_ok(["git", "cat-file", "-e", "HEAD~1^{commit}"], timeout, runner):
         print("未找到 MR diff base，退回与 HEAD~1 比较", file=sys.stderr)
         return "HEAD~1", head
@@ -636,6 +648,53 @@ def strip_model_wrapper(text: str) -> str:
     return cleaned
 
 
+def parse_sse(body: str) -> tuple[str, dict]:
+    """解析 vLLM 流式输出。思考片段不写进评论，只有正文为空时才回退。"""
+    content: list[str] = []
+    reasoning: list[str] = []
+    usage: dict = {}
+    for line in body.splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            event = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event.get("usage"), dict):
+            usage = event["usage"]
+        for choice in event.get("choices") or []:
+            delta = choice.get("delta") or {}
+            if delta.get("content"):
+                content.append(delta["content"])
+            piece = delta.get("reasoning_content") or delta.get("reasoning") or ""
+            if piece:
+                reasoning.append(piece)
+            message = choice.get("message") or {}
+            if message.get("content"):
+                content.append(message["content"])
+    text = strip_model_wrapper("".join(content))
+    if not text:
+        text = strip_model_wrapper("".join(reasoning))
+    if not text:
+        raise ReviewError("vLLM 返回空审查内容", retryable=True)
+    return text, usage
+
+
+def parse_vllm_body(body: str) -> tuple[str, dict]:
+    stripped = body.lstrip()
+    if stripped.startswith("data:"):
+        return parse_sse(body)
+    try:
+        parsed = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ReviewError(f"vLLM 响应不是 JSON: {body[:300]}") from exc
+    return extract_review_text(parsed)
+
+
 def extract_review_text(payload: dict) -> tuple[str, dict]:
     choices = payload.get("choices") or []
     if not choices:
@@ -677,6 +736,7 @@ def call_vllm_once(
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "stream": True,
         "chat_template_kwargs": {"enable_thinking": False},
     }
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -695,11 +755,18 @@ def call_vllm_once(
         raise ReviewError(f"vLLM HTTP {result.status}: {result.body[:500]}", retryable=True)
     if result.status != 200:
         raise ReviewError(f"vLLM HTTP {result.status}: {result.body[:500]}", retryable=False)
-    try:
-        parsed = json.loads(result.body)
-    except json.JSONDecodeError as exc:
-        raise ReviewError(f"vLLM 响应不是 JSON: {result.body[:300]}") from exc
-    return extract_review_text(parsed)
+    return parse_vllm_body(result.body)
+
+
+def vllm_candidates(base_url: str, limit: int) -> list[str]:
+    seen: list[str] = []
+    for url in (base_url, *DIRECT_VLLM_BACKENDS):
+        item = (url or "").strip().rstrip("/")
+        if item and item not in seen:
+            seen.append(item)
+        if len(seen) >= limit:
+            break
+    return seen
 
 
 def call_vllm(
@@ -714,11 +781,13 @@ def call_vllm(
     opener: Opener | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> tuple[str, dict]:
+    urls = vllm_candidates(base_url, max(1, attempts))
     last: ReviewError | None = None
-    for attempt in range(1, attempts + 1):
+    for attempt, url in enumerate(urls, start=1):
+        print(f"调用 vLLM {url} ({attempt}/{len(urls)})", flush=True)
         try:
             return call_vllm_once(
-                base_url,
+                url,
                 model,
                 messages,
                 timeout=timeout,
@@ -728,9 +797,9 @@ def call_vllm(
             )
         except ReviewError as exc:
             last = exc
-            if not exc.retryable or attempt == attempts:
+            if not exc.retryable or attempt == len(urls):
                 raise
-            print(f"vLLM 调用失败，准备重试 ({attempt}/{attempts}): {exc}", file=sys.stderr)
+            print(f"vLLM 调用失败，换下一个地址 ({attempt}/{len(urls)}): {exc}", file=sys.stderr, flush=True)
             sleep(3)
     assert last is not None
     raise last

@@ -108,6 +108,7 @@ def test_call_vllm_retries_then_reads_content():
         calls["n"] += 1
         payload = json.loads(request.data.decode("utf-8"))
         assert payload["chat_template_kwargs"]["enable_thinking"] is False
+        assert payload["stream"] is True
         assert payload["model"] == "qwen3.8:27b"
         assert timeout == 12
         if calls["n"] == 1:
@@ -338,3 +339,64 @@ def test_run_uses_local_git_diff_instead_of_diffs_api():
     }
     assert review.run(env, opener=opener, sleep=lambda _seconds: None, command_runner=command_runner) == "posted"
     assert "未发现必须修改的问题" in posted[0]
+
+
+def test_parse_sse_keeps_content_and_skips_reasoning():
+    body = """data: {"choices":[{"delta":{"reasoning_content":"先想"}}]}
+data: {"choices":[{"delta":{"content":"未发现必须修改的问题"}}]}
+data: {"usage":{"prompt_tokens":4,"completion_tokens":2}}
+data: [DONE]
+"""
+    text, usage = review.parse_sse(body)
+    assert text == "未发现必须修改的问题"
+    assert usage["prompt_tokens"] == 4
+
+
+def test_call_vllm_treats_read_timeout_as_retryable():
+    calls = {"n": 0}
+
+    def opener(request, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise TimeoutError("timed out")
+        return FakeResponse(
+            200,
+            json.dumps({"choices": [{"message": {"content": "OK"}}], "usage": {}}, ensure_ascii=False),
+        )
+
+    text, _usage = review.call_vllm(
+        "http://192.168.10.112:4000",
+        "qwen3.8:27b",
+        [{"role": "user", "content": "hi"}],
+        timeout=5,
+        max_tokens=16,
+        temperature=0.3,
+        attempts=2,
+        opener=opener,
+        sleep=lambda _seconds: None,
+    )
+    assert text == "OK"
+    assert calls["n"] == 2
+
+
+def test_resolve_diff_range_prefers_target_merge_base():
+    def runner(args, timeout):
+        if args[1] == "fetch":
+            return 0, b"", b""
+        if args[1:3] == ["cat-file", "-e"] and args[3].startswith("origin/develop"):
+            return 0, b"", b""
+        if args[1] == "merge-base":
+            return 0, b"226f4406aaaa\n", b""
+        raise AssertionError(args)
+
+    base, head = review.resolve_diff_range(
+        {
+            "CI_COMMIT_SHA": "3088da12bbbb",
+            "CI_MERGE_REQUEST_DIFF_BASE_SHA": "43c856b1cccc",
+            "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        },
+        runner,
+        5,
+    )
+    assert base == "226f4406aaaa"
+    assert head == "3088da12bbbb"

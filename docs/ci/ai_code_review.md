@@ -21,7 +21,7 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 
 - 只在 `CI_PIPELINE_SOURCE == merge_request_event` 时运行。
 - `stage: review`，并设置 `needs: []`，因此和 lint 同时开始，不等待、也不拦住 `test` / `e2e`。
-- `timeout: 20m`。脚本里 vLLM 单次 HTTP 超时默认 600 秒，5xx 或连接失败再试一次。
+- `timeout: 20m`。vLLM 用流式补全，单次读超时默认 120 秒。路由器一直不回包时，改直连 jeffS7:8000，再不行直连 jeffS10:8000。
 - 同一 commit 已有带标记的审查评论时跳过，避免重跑流水线刷屏。
 - 锁文件、二进制、`bin/`、`node_modules` 不送进模型。文本 diff 默认最多 40 个文件、共 8 万字符。
 
@@ -51,7 +51,8 @@ diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 M
 | `VLLM_BASE_URL` | `http://192.168.10.112:4000` | 路由器地址 |
 | `VLLM_MODEL` | `qwen3.8:27b` | `--served-model-name` |
 | `AI_REVIEW_PROBE_TIMEOUT` | `15` | 调用前探测 `/v1/models` 的超时（秒），连不上就失败，不再空等补全超时 |
-| `AI_REVIEW_VLLM_TIMEOUT` | `600` | 单次补全超时（秒） |
+| `AI_REVIEW_VLLM_TIMEOUT` | `120` | 流式补全时，两次读之间的超时（秒）。整段生成可以更长 |
+| `AI_REVIEW_LLM_ATTEMPTS` | `3` | 依次尝试的地址数：路由器、jeffS7:8000、jeffS10:8000 |
 | `AI_REVIEW_MAX_TOKENS` | `4096` | 审查输出上限 |
 | `AI_REVIEW_MAX_DIFF_CHARS` | `80000` | 送进模型的 diff 总字符 |
 | `AI_REVIEW_MAX_FILES` | `40` | 送进模型的文件数 |
