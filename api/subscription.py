@@ -135,8 +135,8 @@ async def create_subscription_sign_pay(request: Request, payload: SubscriptionSi
             raise HTTPException(status_code=400, detail="Authentication token is required")
         await _verify_auth_token(payload.auth_token, payload.user_id)
 
-        # 生产安全闸：V2 密钥（api_v2_key）缺失时 V2 签名/验签会降级（验签旁路仅限开发），
-        # 不允许发起签约支付/展示二维码
+        # 生产安全闸：V2 密钥（api_v2_key）缺失时回调验签 fail-closed（回调将被拒绝），
+        # 不允许发起签约支付/展示二维码，从源头避免"用户已付款但回调无法入账"
         if not (get_dynamic_config_value("pay", "wxpay", "api_v2_key", default="") or "").strip():
             logger.error("pay.wxpay.api_v2_key missing; refuse to create subscription sign-pay order")
             raise HTTPException(status_code=503, detail="微信支付密钥未配置，无法发起订阅支付，请联系管理员")

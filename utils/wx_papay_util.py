@@ -95,7 +95,8 @@ class WxPapayUtil:
         Args:
             app_id: 公众号/小程序 AppID
             mch_id: 微信支付商户号
-            api_v2_key: V2 API 密钥（32位，XML 报文 MD5 签名用；为空时验签降级跳过）
+            api_v2_key: V2 API 密钥（32位，XML 报文 MD5 签名用；为空时回调验签 fail-closed 拒绝，
+                仅开发联调双开关旁路可放行，见 _dev_callback_sign_bypass_enabled）
             plan_template_id: 商户平台「委托代扣协议模板」ID（hardcode 配置）
             v3_authorization_builder: 可调用对象 (http_method, url_path, body) -> Authorization头，
                 由 WechatPayUtil.generate_v3_authorization 提供（预扣费通知 V3 接口用）
