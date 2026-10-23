@@ -5240,7 +5240,7 @@ const AdminApp = {
                 'happy_horse_image_to_video': 'Happy Horse 图生视频',
                 'happy_horse_reference_to_video': 'Happy Horse 参考生视频',
                 'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑',
-                'runninghub_ai_app_image': 'qwenimage2.1'
+                'qwen_2_1_image': 'qwenimage2.1'
             };
             return keyMap[driverKey] || driverKey;
         },

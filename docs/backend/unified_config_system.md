@@ -100,6 +100,7 @@ const data = await response.json();
 | `model_name` | str | ✅（内置任务） | 用户可见的纯模型名，不包含 ID、供应商或能力后缀 |
 | `variant_label` | str | ❌ | 同一能力下的同名模型消歧，如“首帧”“多参考” |
 | `legacy_names` | list | ❌ | 历史名称别名，用于旧请求/快照反查 |
+| `legacy_keys` | list | ❌ | 历史 key / short_key，用于已保存工作流重载 |
 | `category` | str | ✅ | 分类，使用 TaskCategory 常量 |
 | `provider` | str | ✅ | 供应商，使用 TaskProvider 常量 |
 | `driver_name` | str | ❌ | 业务驱动名称 |
@@ -119,7 +120,7 @@ const data = await response.json();
 | ID | key | 名称 | 说明 |
 |----|-----|------|------|
 | 38 | `qwen-image-edit` | Qwen Image Edit | 空壳任务，`hidden=True`，不下拉展示；无实现方；无比例/分辨率选项（跟随原图缩到约 1MP） |
-| 52 | `runninghub-ai-app-image` | qwenimage2.1 | 用户可见名 qwenimage2.1；实现为 RunningHub AI App 图片工作流，图片编辑 + 文生图 |
+| 52 | `qwenimage2.1` | qwenimage2.1 | 模型标识 `QWEN_2_1_IMAGE` / `qwen_2_1_image`。实现方仍是 RunningHub AI App 图片工作流，图片编辑 + 文生图。旧 key `runninghub-ai-app-image`、`runninghub-ai-app` 在 `legacy_keys` |
 
 完整列表见 `config/unified_config.py` 的 `ALL_TASK_CONFIGS`。
 
@@ -127,8 +128,8 @@ const data = await response.json();
 
 `id` / `key` 是调度与持久化标识，不应拼入面向用户的模型名。
 新界面读取 `model_name`，必要时附加 `variant_label`；`name` 在存量前端
-完成迁移前继续下发。`matches_identifier()` 同时识别 key、纯模型名、
-历史 `name` 和 `legacy_names`，以保证已保存偏好和任务快照可继续恢复。
+完成迁移前继续下发。`matches_identifier()` 同时识别 key、short_key、纯模型名、
+历史 `name`、`legacy_names` 和 `legacy_keys`。`get_by_key()` 在主键未命中时回退 `legacy_keys`，已保存工作流里的旧 short_key 仍能恢复到当前任务。
 
 ## 分类常量 (TaskCategory)
 

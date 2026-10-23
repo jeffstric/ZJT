@@ -4,8 +4,12 @@ RunningHub AI App 图片 v1 驱动单元测试
 依赖 stub 通过 tests/base/test_isolation.py 官方工具安装并恢复。
 """
 import asyncio
+import os
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, AsyncMock
+
+from PIL import Image
 
 from tests.base.test_isolation import stub_modules
 
@@ -92,12 +96,40 @@ class TestMappings(unittest.TestCase):
         self.assertEqual(self.driver._map_megapixels('99K'), '4')
         self.assertEqual(self.driver._map_megapixels('0K'), '1')
 
+    def test_target_canvas_matches_resolution_selector(self):
+        """编辑画布与 ComfyUI ResolutionSelector 同算法，并对齐到 32。"""
+        self.assertEqual(self.driver.target_canvas('1:1', '4K'), (2048, 2048))
+        self.assertEqual(self.driver.target_canvas('16:9', '4K'), (2720, 1536))
+        self.assertEqual(self.driver.target_canvas('9:16', '4K'), (1536, 2720))
+        self.assertEqual(self.driver.target_canvas('16:9', '2K'), (1920, 1088))
+        self.assertEqual(self.driver.target_canvas('1:1', '1K'), (1024, 1024))
+        self.assertEqual(self.driver.target_canvas('21:9', '4K'), (3136, 1344))
+        self.assertEqual(self.driver.target_canvas('nope', '4K'), (2048, 2048))
+
+    def test_fit_image_cover_crops_to_exact_canvas(self):
+        """宽图缩到 1:1 时居中裁切，输出像素精确等于目标画布。"""
+        src = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        dest = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        src.close()
+        dest.close()
+        try:
+            Image.new('RGB', (1920, 1080), (12, 34, 56)).save(src.name)
+            self.driver.fit_image_to_canvas(src.name, dest.name, 2048, 2048)
+            with Image.open(dest.name) as img:
+                self.assertEqual(img.size, (2048, 2048))
+        finally:
+            os.remove(src.name)
+            os.remove(dest.name)
+
 
 class TestBuildCreateRequestImageEdit(unittest.TestCase):
     """测试图片编辑模式（有参考图）的请求构建"""
 
     def setUp(self):
         self.driver = _create_driver()
+        # 现有用例只检查节点参数。缩放图 1 需要真实文件，这里保持原 URL 上传。
+        self.driver._fit_first_reference = AsyncMock(
+            side_effect=lambda url, ratio, image_size: url)
 
     def _run_async(self, coro):
         loop = asyncio.new_event_loop()
@@ -134,6 +166,51 @@ class TestBuildCreateRequestImageEdit(unittest.TestCase):
             _find_node(node_list, '28', 'aspect_ratio')['fieldValue'],
             '16:9 (Widescreen)')
         self.assertEqual(_find_node(node_list, '28', 'megapixels')['fieldValue'], '4')
+        self.driver._fit_first_reference.assert_awaited_once_with(
+            'http://example.com/a.png', '16:9', '4K')
+
+    def test_edit_first_image_resized_to_4k_canvas(self):
+        """4K 16:9 编辑把图 1 缩成 2720x1536 再上传，其余参考图不缩放。"""
+        src = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+        src.close()
+        Image.new('RGB', (1920, 1080), (1, 2, 3)).save(src.name)
+        uploaded = []
+
+        async def _upload(key, path):
+            record = {'path': path}
+            if os.path.isfile(path):
+                with Image.open(path) as img:
+                    record['size'] = img.size
+            uploaded.append(record)
+            result = MagicMock()
+            result.success = True
+            result.url = None
+            result.key = f'pasted/{len(uploaded)}.png'
+            return result
+
+        async def _fit(url, ratio, image_size):
+            return await type(self.driver)._fit_first_reference(
+                self.driver, url, ratio, image_size)
+
+        self.driver._fit_first_reference = _fit
+        self.driver._materialize_reference = AsyncMock(return_value=(src.name, False))
+        self.driver._storage.upload_file = _upload
+        tool = _make_ai_tool(
+            image_path=src.name + ',http://example.com/b.png',
+            ratio='16:9', image_size='4K')
+        try:
+            result = self._run_async(self.driver.build_create_request(tool))
+        finally:
+            if os.path.exists(src.name):
+                os.remove(src.name)
+
+        node_list = result['json']['nodeInfoList']
+        self.assertEqual(_find_node(node_list, '17', 'image')['fieldValue'], 'pasted/1.png')
+        self.assertEqual(_find_node(node_list, '18', 'image')['fieldValue'], 'pasted/2.png')
+        self.assertNotEqual(uploaded[0]['path'], src.name)
+        self.assertEqual(uploaded[0]['size'], (2720, 1536))
+        self.assertEqual(uploaded[1]['path'], 'http://example.com/b.png')
+        self.assertFalse(os.path.exists(uploaded[0]['path']))
 
     def test_edit_mode_multi_image(self):
         """多图编辑：按槽位顺序填充"""
@@ -275,6 +352,8 @@ class TestSubmitTask(unittest.TestCase):
 
     def setUp(self):
         self.driver = _create_driver()
+        self.driver._fit_first_reference = AsyncMock(
+            side_effect=lambda url, ratio, image_size: url)
 
     def _run_async(self, coro):
         loop = asyncio.new_event_loop()

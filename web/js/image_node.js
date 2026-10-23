@@ -540,6 +540,9 @@
         if(!node.data.model) {
           node.data.model = firstImageModelValue;
         }
+        if (node.data.model && window.TaskConfig && window.TaskConfig.canonicalModelKey) {
+          node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+        }
         // 确保已保存的模型值在下拉框中可见
         if(modelEl) {
           ensureSelectHasSavedOption(modelEl, node.data.model);

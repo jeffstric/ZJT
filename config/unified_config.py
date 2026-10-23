@@ -539,6 +539,7 @@ class UnifiedTaskConfig:
     model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
     variant_label: str = ''  # 仅区分同能力下的同名任务条目
     legacy_names: List[str] = field(default_factory=list)  # 兼容旧的用户可见名称
+    legacy_keys: List[str] = field(default_factory=list)  # 兼容旧 key / short_key，供工作流重载
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
     implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
@@ -600,6 +601,7 @@ class UnifiedTaskConfig:
             self.name,
             self.get_model_name(),
             *(self.legacy_names or []),
+            *(self.legacy_keys or []),
         }
         return candidate in {str(alias).strip() for alias in aliases if alias not in (None, '')}
 
@@ -722,6 +724,7 @@ class UnifiedTaskConfig:
             'id': self.id,
             'key': self.key,
             'short_key': self.short_key or self.key,
+            'legacy_keys': list(self.legacy_keys or []),
             'name': self.name,
             'model_name': self.get_model_name(),
             'variant_label': self.variant_label,
@@ -974,8 +977,14 @@ class UnifiedConfigRegistry:
     
     @classmethod
     def get_by_key(cls, key: str) -> Optional[UnifiedTaskConfig]:
-        """按 key 获取配置"""
-        return cls._configs.get(key)
+        """按 key 获取配置。未命中时再查 legacy_keys，供旧 short_key 重载。"""
+        found = cls._configs.get(key)
+        if found or not key:
+            return found
+        for config in cls._configs.values():
+            if key in (config.legacy_keys or []):
+                return config
+        return None
     
     @classmethod
     def get_by_category(cls, category: str) -> List[UnifiedTaskConfig]:
@@ -1727,7 +1736,7 @@ class DriverKey:
     QWEN_IMAGE_EDIT = 'qwen_image_edit'
 
     # qwenimage2.1（同一工作流支持图片编辑与文生图）
-    RUNNINGHUB_AI_APP_IMAGE = 'runninghub_ai_app_image'
+    QWEN_2_1_IMAGE = 'qwen_2_1_image'
 
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
@@ -1886,7 +1895,7 @@ class TaskTypeId:
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
-        'RUNNINGHUB_AI_APP_IMAGE': 'qwenimage2.1',
+        'QWEN_2_1_IMAGE': 'qwenimage2.1',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
@@ -1939,7 +1948,7 @@ class TaskTypeId:
     SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
     QWEN_IMAGE_EDIT = 38
-    RUNNINGHUB_AI_APP_IMAGE = 52
+    QWEN_2_1_IMAGE = 52
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
@@ -2213,20 +2222,24 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         hidden=True,  # 隐藏，前端不显示
     ),
     UnifiedTaskConfig(
-        # qwenimage2.1。实现走已有 RunningHub AI App（ai-app 2113539132868874242），
-        # 不新增任务常量。同一工作流同时支持图片编辑（nodeId 17-22 传 1-6 张图）
-        # 与文生图（图片全填 None）。两种模式都按所选比例和分辨率写节点 28；
-        # 编辑模式额外开启「原图无偏移」，「使用图片尺寸」保持关闭。
-        id=TaskTypeId.RUNNINGHUB_AI_APP_IMAGE,
-        key='runninghub-ai-app-image',
-        short_key='runninghub-ai-app',
+        # qwenimage2.1。模型标识是 TaskTypeId.QWEN_2_1_IMAGE / DriverKey.QWEN_2_1_IMAGE，
+        # 数字 id 仍是 52。实现方仍是 RunningHub AI App（ai-app 2113539132868874242），
+        # 类名与 implementation 字符串不改。同一工作流同时支持图片编辑
+        # （nodeId 17-22 传 1-6 张图）与文生图（图片全填 None）。两种模式都按所选
+        # 比例和分辨率写节点 28。编辑开启「原图无偏移」后画布跟随图 1，所以上传前
+        # 把图 1 缩到所选画布；「使用图片尺寸」关闭。
+        # 旧 key 放在 legacy_keys，已保存工作流重载仍能对上。
+        id=TaskTypeId.QWEN_2_1_IMAGE,
+        key='qwenimage2.1',
+        short_key='qwenimage2.1',
         name='qwenimage2.1',
         model_name='qwenimage2.1',
         legacy_names=['RunningHub AI App 图片', 'RunningHub AI App'],
+        legacy_keys=['runninghub-ai-app-image', 'runninghub-ai-app'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.RUNNINGHUB,
-        driver_name=DriverKey.RUNNINGHUB_AI_APP_IMAGE,
+        driver_name=DriverKey.QWEN_2_1_IMAGE,
         implementation=DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,
         computing_power=2,
         supported_ratios=['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'],

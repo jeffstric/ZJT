@@ -26,7 +26,7 @@
 
 ## 当前行为
 
-- `hidden=True`。图片编辑下拉只显示可用的 qwenimage2.1（任务 52，`runninghub-ai-app`），不再把本空壳和它并列成两条 Qwen 图片模型。
+- `hidden=True`。图片编辑下拉只显示可用的 qwenimage2.1（任务 52，`TaskTypeId.QWEN_2_1_IMAGE`，选项 value 为 `qwenimage2.1`），不再把本空壳和它并列成两条 Qwen 图片模型。
 - `/api/system/task-configs` 仍返回该任务，但前端模型选择器按 `hidden` 排除。
 - 无已注册驱动时，`get_driver_availability` 标记为不可用。
 - `POST /api/image-edit` 接受显式 `task_id=38`。未绑定实现方时扣 1 点算力；绑定接口模块后由该实现方出图。
