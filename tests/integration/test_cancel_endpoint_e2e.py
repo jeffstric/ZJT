@@ -10,9 +10,10 @@
 覆盖：E1 取消全链路 / E2 生成中 409 / E5 双取消 / 属主 403 /
 E6 步骤连带取消 / E4 HTTP×DB 闸门竞态 / E11 退款失败路径 / get-status 前端契约。
 
-⚠️ 退费安全：perseids 指向生产。所有常规用例通过预插 refund 流水触发幂等跳过
-（零外部调用）；仅 test_e11 故意走一次真实退款失败（user 424242 在生产不存在，
-调用必然失败、不产生资金变动）。
+⚠️ 退费说明：社区版 make_perseids_request 是进程内本地实现（perseids_server/
+client.py 直接路由到本地 service，无外部 HTTP、只写隔离库 computing_power_log），
+常规用例通过预插 refund 流水触发幂等跳过；退款「上游失败」分支由单测
+test_refund_returns_false_when_upstream_fails 锁定。
 """
 import json
 import os
@@ -241,27 +242,30 @@ class TestCancelEndpointE2E(unittest.TestCase):
         self.assertGreater(cancel_won + gate_won, 0)
         print(f"\nE4 竞态 20 轮: 取消赢 {cancel_won}, 闸门赢 {gate_won}")
 
-    @unittest.expectedFailure
     def test_e11_refund_failure_path(self):
-        """E11（缺陷记录）：退款失败时响应应提示「退款处理中」。
+        """E11：退费无法完成时响应明示「退款处理中」（S1 修复验证）。
 
-        实测证明该提示为死代码：_refund_computing_power 所有失败路径均静默
-        return（task/visual_task.py:250-274，含外层 except 吞异常），永不向上
-        抛 → 取消接口 refund_done 恒 True → 用户永远看到「任务已取消」，
-        退款失败只能靠 L4 对账名单发现。缺陷修复后本用例应转绿（去 xfail）。"""
-        txn = f"s0-norefund-{uuid.uuid4().hex[:8]}"
-        rid = _new_task(txn=txn)
-        execute_update(
-            "INSERT INTO computing_power_log (transaction_id, user_id, computing_power, "
-            "behavior, message, created_at) VALUES (%s,%s,-10,1,'扣费',NOW())",
-            (txn, USER))
+        构造金额无法解析的任务（无扣费流水 + 未注册任务类型，三级回退全落空）
+        → resolve_refund_amount 返回 None → _refund_computing_power 返回 False
+        → 响应带「退款处理中」，且取消终态不受影响。
+        注：社区版 make_perseids_request 为进程内本地实现（无外部 HTTP），
+        正常金额的退款会真实写本地 computing_power_log 且必然成功——
+        所以「上游调用失败」分支由单测 test_refund_returns_false_when_upstream_fails
+        锁定，此处验证端到端消息构造。tasks 行用调度器不识别的 task_type，
+        避免 409 竞态。"""
+        rid = _new_task()  # 无 transaction_id
+        execute_update("UPDATE ai_tools SET type=99 WHERE id=%s", (rid,))  # 无配置类型（tinyint 上限内）
+        execute_update("UPDATE tasks SET task_type='s0_no_sched' WHERE task_id=%s", (rid,))
         status, body = _http("POST", f"/api/ai-tool/{rid}/cancel")
         self.assertEqual(status, 200)
         self.assertEqual(body["code"], 0)
         self.assertIn("退款处理中", body["message"],
-                      "退款失败应向用户明示（当前为死代码，见用例 docstring）")
+                      "退费无法完成应向用户明示（_refund_computing_power 返回 False）")
         self.assertEqual(_ai(rid)["status"], AI_TOOL_STATUS_CANCELLED,
                          "退款失败不得回滚取消终态")
+        # 幂等复跑：二次取消 409，不会再次进入退费分支
+        s2, _ = _http("POST", f"/api/ai-tool/{rid}/cancel")
+        self.assertEqual(s2, 409)
 
     def test_get_status_contract_queued_and_cancelled(self):
         """前端契约：get-status 对排队状态返回 QUEUED、取消后返回 CANCELLED。"""

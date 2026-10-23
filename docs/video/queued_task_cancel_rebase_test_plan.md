@@ -48,20 +48,23 @@ rebase 冲突恰好落在取消互斥的核心区域，以下回归点已代码�
 
 ## 2. 测试分层
 
-> **⚡ 执行状态（2026-10-23）**：L1/L2 已全部执行通过；L3 已自动化 9 项（E1/E2/E4/E4b/E5/
-> E6/E11/属主 403/无鉴权 401/get-status 契约），另发现 1 个真实缺陷（见 §2.5）。
+> **⚡ 执行状态（2026-10-23）**：L1/L2 已全部执行通过；L3 已自动化 10 项（E1/E2/E4/E4b/E5/
+> E6/E11/属主 403/无鉴权 401/get-status 契约）全绿。发现的退款失败提示死代码缺陷
+> （§2.5-1）已修复并回归（单测 3 项新增 + E11 转正）。
 > 测试资产：`tests/integration/test_cancel_concurrency.py`（15 用例）、
-> `tests/integration/test_cancel_endpoint_e2e.py`（9 过 + 1 xfail）。
+> `tests/integration/test_cancel_endpoint_e2e.py`（10 用例）。
 
 ### 2.5 执行发现（缺陷与实证）
 
-1. **【缺陷·S1】退款失败提示为死代码**：`_refund_computing_power`
-   （task/visual_task.py:250-274）所有失败路径静默 return、外层 except 吞异常，
-   永不向上抛 → 取消接口 `refund_done` 恒 True → 「退款处理中，如未到账请联系客服」
-   提示永远不出现。实测（E11，服务日志 "Failed to get auth token" 已证实退款真实
-   失败但响应仍是「任务已取消」）。**影响**：退款失败用户无感知，只能靠 §L4 对账
-   名单兜底。修复方向：让 `_refund_computing_power` 返回成败（或在 endpoint 侧
-   复查 `is_already_refunded`）。已用 xfail 用例锁定（修复后去掉装饰器即转绿）。
+1. **【缺陷·S1→已修复】退款失败提示为死代码**：`_refund_computing_power`
+   原实现所有失败路径静默 return、外层 except 吞异常，永不向上抛 → 取消接口
+   `refund_done` 恒 True → 「退款处理中，如未到账请联系客服」提示永远不出现。
+   **修复**（2026-10-23）：函数改为返回 bool（True=成功/幂等跳过/无扣费主体；
+   False=上游失败/金额无法解析——金额不可解析保守判失败，宁可让免费任务用户
+   多看一眼提示），取消接口消费返回值驱动提示；配套新增 3 个单测
+   （tests/utils/test_refund_amount_consistency.py）+ E2E E11 转正通过
+   （构造无流水+无配置类型任务验证端到端提示出现）。次要修复：server.py 补
+   `import sys`（迁移失败 `sys.exit(1)` NameError、剪映导出 sys.path 同病）。
 2. **【实证】I1/I2 互斥成立**：真库 100 轮屏障竞态（取消 vs 0→1 上游提交闸门）
    每轮恰好一方成功，双侧都赢过；HTTP×DB 20 轮竞态 XOR 干净；
    「取消先行 → 闸门 0 行 + project_id 保持 NULL」确定性用例通过。
@@ -71,11 +74,17 @@ rebase 冲突恰好落在取消互斥的核心区域，以下回归点已代码�
 4. **【实证】并发双取消恰好一个 affected=1**（100 轮）→ 只有一次退费路径。
 5. **【实证】退费幂等键生效**：预插 `refund-{txn}` 流水后 `is_already_refunded`
    拦截二次退费（HTTP 层 E1 同时验证响应不再出现退款提示）。
-6. **【次要发现】server.py 迁移失败时 `sys.exit(1)` 抛 NameError**（sys 未导入，
-   server.py:12252）——失败退出路径自身崩溃，仅影响错误退出时的日志整洁。
+6. **【次要发现→已修复】server.py 迁移失败时 `sys.exit(1)` 抛 NameError**
+   （sys 未导入）——已随本次修复补 `import sys`。
 7. **【环境备忘】本机 MySQL 实际端口 13314**（config_prod.yml 写的 3406、旧记忆
    3313 均已过期）；隔离测试库 `zjt_cancel_test`（schema 从 zjt 克隆 + alembic
    版本戳对齐），测试 token `s0-test-token-424242`（user 424242）。
+8. **【认知修正】社区版 `make_perseids_request` 是进程内本地实现**
+   （perseids_server/client.py 按 endpoint 路由到本地 service，写本地
+   computing_power_log，无外部 HTTP）——此前「perseids 指向生产、退款测试
+   有资金风险」的担心不成立；E2E 中的退费都是隔离库内的本地写入。
+   另注意 computing_power_log.behavior 是 enum('increase','deduct')，
+   插桩数据必须写字符串（int 1/2 会按枚举序隐式转换成错误语义）。
 
 ### 2.6 隔离环境复现手册（HTTP E2E）
 
@@ -162,7 +171,8 @@ WHERE a.status = -2 AND NOT EXISTS (
 
 ## 3. 已知接受的残余风险（非阻塞）
 
-- 取消成功但退款 HTTP 失败：无自动重试，靠响应文案 + L4 对账名单人工补偿（S1）。
+- 取消成功但退款失败：无自动重试（响应已明示「退款处理中」，用户有感知），
+  仍需 L4 对账名单人工补偿（S1）。
 - 409 文案对"已被取消"与"已开始"未区分（并发双取消时第二条提示略歧义）。
 - f997 取消守卫 `return True` 计入 success_count 统计（口径轻微偏差，无调度影响）。
 

@@ -194,13 +194,13 @@ def calculate_next_retry_delay(try_count):
     return min(delay_seconds, VIDEO_TASK_RETRY_DELAY_MAX_SECONDS)
 
 
-def _refund_computing_power(ai_tool, reason: str):
+def _refund_computing_power(ai_tool, reason: str) -> bool:
     """
     退还算力 - 两层回退机制
 
     ⚠️ 退费金额计算优先级（resolve_refund_amount，修改时必须保持）：
       1. ai_tools.transaction_id 关联扣费流水 → 实际扣减金额原额退还（推荐，
-         免疫供应商切换/价格热更新导致的扣返不一致）
+         免疫供应商切换/价格热更新的扣返不一致）
       2. get_computing_power_for_task() 重算 → 考虑实现方修饰符、分辨率等上下文
       3. TASK_COMPUTING_POWER[type] → 旧静态配置回退（不含修饰符，可能金额不准）
 
@@ -212,6 +212,14 @@ def _refund_computing_power(ai_tool, reason: str):
     Args:
         ai_tool: AITool 对象
         reason: 退还原因（仅用于日志）
+
+    Returns:
+        bool: True = 退费成功 / 幂等跳过（已退过）/ 无扣费主体（无 user_id），
+              钱两讫，调用方无需提示；
+              False = 退费尝试失败或金额无法解析（历史所有失败路径均静默
+              return，取消接口的「退款处理中」提示因此成为死代码——退款失败
+              用户无感知，只能靠对账兜底。现以返回值显式上报，调用方据此
+              提示用户并落入补偿名单）。
     """
     try:
         user_id = ai_tool.user_id
@@ -220,7 +228,7 @@ def _refund_computing_power(ai_tool, reason: str):
 
         if not user_id:
             logger.warning(f"Task {task_id} has no user_id, skipping refund")
-            return
+            return True
 
         from utils.computing_power import (
             resolve_refund_amount,
@@ -230,13 +238,16 @@ def _refund_computing_power(ai_tool, reason: str):
 
         if is_already_refunded(ai_tool):
             logger.info(f"Task {task_id} already refunded (idempotent transaction), skipping")
-            return
+            return True
 
         computing_power = resolve_refund_amount(ai_tool, task_type=ai_tool_type)
 
         if not computing_power:
+            # 金额解析失败：可能任务本免费，也可能扣费流水缺失导致无法原额退还。
+            # 保守按失败上报（False），宁可让免费任务的用户多看一眼提示，
+            # 不可让已扣费用户对退款失败无感知。
             logger.warning(f"Task {task_id} type {ai_tool_type} has no computing power config")
-            return
+            return False
 
         transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
         logger.info(f"Refunding {computing_power} computing power for user {user_id}, reason: {reason}")
@@ -249,7 +260,7 @@ def _refund_computing_power(ai_tool, reason: str):
 
         if not success:
             logger.error(f"Failed to get auth token for user {user_id}: {message}")
-            return
+            return False
 
         auth_token = response_data['token']
         headers = {'Authorization': f'Bearer {auth_token}'}
@@ -267,11 +278,14 @@ def _refund_computing_power(ai_tool, reason: str):
 
         if success:
             logger.info(f"Task {task_id} refund ({computing_power}) processed successfully")
-        else:
-            logger.error(f"Task {task_id} refund ({computing_power}) failed: {message}")
+            return True
+
+        logger.error(f"Task {task_id} refund ({computing_power}) failed: {message}")
+        return False
 
     except Exception as e:
         logger.error(f"Failed to process refund for task {ai_tool.id}: {e}")
+        return False
 
 
 async def _submit_new_task(ai_tool):

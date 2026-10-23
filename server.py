@@ -16,6 +16,7 @@ import logging
 import traceback
 import shutil
 import subprocess
+import sys
 import tempfile
 import hashlib
 import re
@@ -2783,12 +2784,14 @@ async def cancel_queued_ai_tool_task(
         )
 
         # 幂等退费（refund-{原扣费流水号}，重复调用自动跳过）；
-        # 退款内含同步 HTTP，放线程池避免阻塞事件循环（AGENTS.md 第1条）
+        # 退款内含同步 HTTP，放线程池避免阻塞事件循环（AGENTS.md 第1条）。
+        # 返回值语义：True=成功/幂等跳过/无扣费主体；False=退费尝试失败或金额
+        # 无法解析 → 响应明示「退款处理中」，依赖上线对账名单人工补偿。
         refund_done = False
         try:
             from task.visual_task import _refund_computing_power
-            await asyncio.to_thread(_refund_computing_power, task_record, "用户取消排队任务")
-            refund_done = True
+            refund_done = await asyncio.to_thread(
+                _refund_computing_power, task_record, "用户取消排队任务")
         except Exception as e:
             logger.error(f"Refund for cancelled ai_tool {ai_tool_id} failed: {e}")
 
