@@ -179,6 +179,24 @@ URL 参数，切号后旧标签页仍带旧 `user_id`，天然"串号"。
 `except HTTPException: raise` 防鉴权 401 被吞成 500。守卫测试
 `tests/api/test_reference_images_owner_guard.py`（AST 断言 4 端点三要素）。
 
+## 五b、latest-task 泄漏明文 token 与同族 writer 属主断言（2026-10-23，审计 BUG-R2-S2-A8-H1）
+
+`GET /api/session/{id}/latest-task` 曾只挂登录装饰器、无属主断言，直接返回
+agent_tasks 行的 `to_dict()`——含任务属主**明文登录 token**（唯一会话凭证）。
+storyboard 场景会话 id 是 `storyboard-scene-{自增}` 可枚举，任何登录用户可
+批量收割他人 live token = 完整账号接管（admin 受害者可读管理台明文密钥、
+给自己提权）。修复：
+
+- `AgentTaskEntity.to_dict()` 不再序列化 `auth_token`（服务端内部仍走
+  `task.auth_token` 属性；前端 latest-task 只读 `status`/`task_id`，无适配）
+- `latest-task` 补 `ensure_owner` 属主断言（非本人 404 防枚举，与
+  `/session/{id}/history`、`/task/{id}/status` 同规则）
+- 同族 writer `POST /session/{id}/clean-pending-tasks`、
+  `POST /session/{id}/replace-pending-task` 一并补会话属主断言
+  （审计 open lead，均可凭 session_id 改写他人会话消息）
+- 测试：`tests/api/test_latest_task_owner.py`（他人 404 / 本人 200 且响应
+  无 token / 无任务 404 / 未登录 401，脱敏断言走真实实体序列化）
+
 ## 六、认证 cookie 滑动续期补齐（2026-10-21）
 
 ### 问题

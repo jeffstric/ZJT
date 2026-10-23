@@ -110,7 +110,9 @@ class AgentTaskEntity:
             'user_id': self.user_id,
             'world_id': self.world_id,
             'user_message': self.user_message,
-            'auth_token': self.auth_token,
+            # auth_token 不对外序列化（审计 BUG-R2-S2-A8-H1）：该列存的是任务
+            # 属主的明文登录凭证，曾随 to_dict 直接回传客户端（latest-task 端点
+            # 泄漏他人 token = 完整账号接管）。服务端内部用 task.auth_token 访问。
             'vendor_id': self.vendor_id,
             'model_id': self.model_id,
             'enable_thinking': self.enable_thinking,
