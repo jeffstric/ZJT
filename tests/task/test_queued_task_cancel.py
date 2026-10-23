@@ -209,6 +209,96 @@ class TestFailureHandlerCancelGuard(unittest.TestCase):
         mock_ai_tools.update.assert_not_called()
 
 
+class TestPipelineStageAdvanceCancelGuard(unittest.TestCase):
+    """_check_pipeline_stage 推进回 PENDING 的取消互斥（rebase 冲突解决点）：
+    CAS 4→0 抢占失败（任务已取消）时不写 tasks、不推进；返回值遵循
+    PROCESS_RESULT_* 协议，防止外层误按失败退避重试。"""
+
+    def _run_param_prepare_stage(self, steps, ai_status, transition_result):
+        from task import visual_task as mod
+        from task.pipeline_processor import PipelineProcessor
+        from model.ai_tool_pipeline_steps import PipelineStepStatus
+
+        ai_tool = MagicMock()
+        ai_tool.id = 77
+        completed_steps = [
+            MagicMock(status=PipelineStepStatus.COMPLETED, step_type="x")
+        ] if steps else []
+
+        with patch.object(PipelineProcessor, "get_all_steps", return_value=completed_steps):
+            with patch.object(PipelineProcessor, "apply_results") as mock_apply:
+                with patch.object(mod.AIToolsModel, "get_by_id",
+                                  return_value=MagicMock(status=ai_status)):
+                    with patch.object(mod.AIToolsModel, "transition_status",
+                                      return_value=transition_result) as mock_cas:
+                        with patch.object(mod.TasksModel, "update_by_task_id") as mock_tasks:
+                            result = mod._check_pipeline_stage(
+                                ai_tool, mod.PipelineStage.PARAM_PREPARE
+                            )
+        return result, mock_cas, mock_tasks, mock_apply
+
+    def test_no_steps_advance_blocked_when_cancelled(self):
+        from task import visual_task as mod
+
+        result, mock_cas, mock_tasks, _ = self._run_param_prepare_stage(
+            steps=False, ai_status=None, transition_result=0
+        )
+
+        self.assertEqual(result, mod.PROCESS_RESULT_IN_FLIGHT)
+        mock_cas.assert_called_once_with(
+            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING
+        )
+        mock_tasks.assert_not_called()
+
+    def test_no_steps_advance_normal(self):
+        from task import visual_task as mod
+
+        result, _, mock_tasks, _ = self._run_param_prepare_stage(
+            steps=False, ai_status=None, transition_result=1
+        )
+
+        self.assertEqual(result, mod.PROCESS_RESULT_IN_FLIGHT)
+        mock_tasks.assert_called_once_with(77, status=mod.TASK_STATUS_QUEUED)
+
+    def test_completed_cancelled_skips_apply_and_advance(self):
+        from task import visual_task as mod
+
+        result, mock_cas, mock_tasks, mock_apply = self._run_param_prepare_stage(
+            steps=True, ai_status=mod.AI_TOOL_STATUS_CANCELLED, transition_result=0
+        )
+
+        self.assertTrue(result)  # 已处理（终态），外层不得退避重试
+        mock_apply.assert_not_called()
+        mock_cas.assert_not_called()
+        mock_tasks.assert_not_called()
+
+    def test_completed_cas_rejected_keeps_cancelled(self):
+        from task import visual_task as mod
+
+        result, mock_cas, mock_tasks, mock_apply = self._run_param_prepare_stage(
+            steps=True, ai_status=mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            transition_result=0
+        )
+
+        self.assertTrue(result)
+        mock_apply.assert_called_once()
+        mock_cas.assert_called_once_with(
+            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING
+        )
+        mock_tasks.assert_not_called()
+
+    def test_completed_normal_advances_to_pending(self):
+        from task import visual_task as mod
+
+        result, _, mock_tasks, _ = self._run_param_prepare_stage(
+            steps=True, ai_status=mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            transition_result=1
+        )
+
+        self.assertEqual(result, mod.PROCESS_RESULT_IN_FLIGHT)
+        mock_tasks.assert_called_once_with(77, status=mod.TASK_STATUS_QUEUED)
+
+
 
 if __name__ == "__main__":
     unittest.main()
