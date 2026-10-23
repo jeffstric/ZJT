@@ -302,6 +302,9 @@ const PROVIDER_DEFINITIONS = [
         nameKeyParams: { n: 1 },
         descKey: 'provider_site_desc',
         descKeyParams: { n: 1 },
+        // 实例站点与注册引导链接，展示在快速配置卡片上（exampleName/exampleUrl，缺省不展示）
+        exampleName: 'openlux',
+        exampleUrl: 'https://www.openlux.ai/register?aff=OIt4',
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -323,6 +326,8 @@ const PROVIDER_DEFINITIONS = [
         nameKeyParams: { n: 2 },
         descKey: 'provider_site_desc',
         descKeyParams: { n: 2 },
+        exampleName: 'comfly',
+        exampleUrl: 'https://ai.comfly.chat',
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -531,6 +536,8 @@ function translateProvider(p, tFn) {
     translated.description = p.descKey ? tFn(p.descKey, p.descKeyParams || {}) : (p.description || '');
     translated.impacts = p.impactsKey ? tFn(p.impactsKey).split(',').map(s => s.trim()) : (p.impacts || []);
     translated.docUrlLabel = p.docUrlLabelKey ? tFn(p.docUrlLabelKey) : (p.docUrlLabel || '');
+    translated.exampleName = p.exampleName || '';
+    translated.exampleUrl = p.exampleUrl || '';
     translated.fields = p.fields.map(f => ({
         ...f,
         label: f.labelKey ? tFn(f.labelKey) : (f.label || ''),
