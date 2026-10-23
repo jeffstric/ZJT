@@ -6680,13 +6680,19 @@
 
             // 剪贴板图片扩展名白名单（与上传校验的 ALLOWED_IMAGE_EXTENSIONS 一致）
             const PASTE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-            const PASTE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+            // MIME→扩展名映射：截图/聊天工具复制的媒体 File 常缺少文件名/扩展名，
+            // 而图片上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
+            const PASTE_MIME_EXT = {
+                'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
+                'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-msvideo': 'avi',
+                'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg'
+            };
 
-            // 从剪贴板提取图片文件。Chromium 在 Windows 从文件管理器复制多文件时，
-            // 文件列表只在 clipboardData.files 暴露而 items 可能为空（chromium:41071856），
-            // 故合并两个来源并按 名字|大小|修改时间 去重；截图等来源的 File 常缺少
-            // 文件名/扩展名，而上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
-            function extractClipboardImageFiles(clipboardData) {
+            // 从剪贴板提取媒体文件（图片/视频/音频，后续模式校验与上传链路同文件选择）。
+            // Chromium 在 Windows 从文件管理器复制多文件时，文件列表只在 clipboardData.files
+            // 暴露而 items 可能为空（chromium:41071856），故合并两个来源并按 名字|大小|修改时间 去重；
+            // 图片按扩展名白名单、音视频按"缺扩展名"判断是否需要按 MIME 重建文件名
+            function extractClipboardMediaFiles(clipboardData) {
                 if (!clipboardData) return [];
                 const candidates = [];
                 if (clipboardData.files) candidates.push(...clipboardData.files);
@@ -6701,12 +6707,19 @@
                 const files = [];
                 const seen = new Set();
                 for (const file of candidates) {
-                    if (!file || !file.type.startsWith('image/')) continue;
+                    if (!file || !file.type) continue;
+                    const isImage = file.type.startsWith('image/');
+                    const isVideo = file.type.startsWith('video/');
+                    const isAudio = file.type.startsWith('audio/');
+                    if (!isImage && !isVideo && !isAudio) continue;
                     const key = (file.name || '') + '|' + file.size + '|' + file.lastModified;
                     if (seen.has(key)) continue;
                     seen.add(key);
                     const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
-                    if (PASTE_MIME_EXT[file.type] && !PASTE_IMAGE_EXTENSIONS.includes(ext)) {
+                    const needsRename = isImage
+                        ? (PASTE_MIME_EXT[file.type] && !PASTE_IMAGE_EXTENSIONS.includes(ext))
+                        : (PASTE_MIME_EXT[file.type] && !file.name.includes('.'));
+                    if (needsRename) {
                         const newName = 'clipboard_' + Date.now() + '_' + (files.length + 1) + '.' + PASTE_MIME_EXT[file.type];
                         files.push(new File([file], newName, { type: file.type }));
                     } else {
@@ -6716,9 +6729,9 @@
                 return files;
             }
 
-            // 剪贴板粘贴：含图片文件时拦截默认行为并走统一上传链路；纯文本/富文本粘贴不干预
+            // 剪贴板粘贴：含媒体文件时拦截默认行为并走统一上传链路；纯文本/富文本粘贴不干预
             function handleDocumentPaste(e) {
-                const files = extractClipboardImageFiles(e.clipboardData);
+                const files = extractClipboardMediaFiles(e.clipboardData);
                 if (files.length === 0) return;
                 e.preventDefault();
                 processSelectedFiles(files);
