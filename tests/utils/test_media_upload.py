@@ -6,6 +6,7 @@
 """
 import io
 import os
+import ast
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from starlette.datastructures import UploadFile
 from config.constant import MediaUploadSafetyConstants
 from utils.media_upload import (
     UploadValidationError,
+    check_media_magic,
     convert_tiff_file_to_png,
     max_upload_size_for_ext,
     resolve_media_extension,
@@ -251,3 +253,58 @@ class TestConvertTiffToPng:
         save_upload_chunked(_upload(content, "x.tif"), target, ".tif")
         dst = convert_tiff_file_to_png(target)
         assert os.path.exists(dst) and not os.path.exists(target)
+
+
+# ============ check_media_magic ============
+
+class TestCheckMediaMagic:
+    """check_media_magic：供已持有文件内容的调用方复用的魔数校验。"""
+
+    @pytest.mark.parametrize("ext,head", [
+        (".png", PNG_BYTES[:32]),
+        (".jpg", JPEG_BYTES[:32]),
+        (".webp", WEBP_BYTES[:32]),
+        (".mp4", MP4_BYTES[:32]),
+        (".mp3", MP3_ID3_BYTES[:32]),
+        (".tif", TIFF_LE_BYTES[:32]),
+        (".tiff", TIFF_BE_BYTES[:32]),
+    ])
+    def test_matching_magic_accepted(self, ext, head):
+        assert check_media_magic(ext, head) is True
+
+    @pytest.mark.parametrize("ext", [".png", ".jpg", ".gif", ".webp"])
+    def test_html_bytes_rejected(self, ext):
+        # 伪造扩展名的 HTML 载荷（存储型 XSS）：魔数不符一律拒绝
+        assert check_media_magic(ext, HTML_BYTES[:32]) is False
+
+    def test_empty_head_rejected(self):
+        assert check_media_magic(".png", b"") is False
+
+    def test_unknown_ext_rejected(self):
+        # 无对应魔数表的扩展名直接拒绝（防御未知格式混入）
+        assert check_media_magic(".xyz", PNG_BYTES[:32]) is False
+
+
+# ============ _validate_image_size 收口守卫 ============
+
+class TestValidateImageSizeChokePoint:
+    """AST 源码守卫：characters/locations/props 参考图 12 处落盘点的唯一校验
+    入口 server.py::_validate_image_size 必须包含扩展名白名单 + 魔数校验，
+    防止后续重构时退回仅大小校验（.html/.svg 落盘即同域存储型 XSS）。
+    """
+
+    def _validate_image_size_calls(self):
+        tree = ast.parse((ROOT / "server.py").read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "_validate_image_size":
+                return {
+                    n.func.id if isinstance(n.func, ast.Name) else getattr(n.func, "attr", "")
+                    for n in ast.walk(node)
+                    if isinstance(n, ast.Call)
+                }
+        raise AssertionError("server.py 中未找到 _validate_image_size 函数")
+
+    def test_choke_point_keeps_whitelist_and_magic(self):
+        calls = self._validate_image_size_calls()
+        assert "resolve_media_extension" in calls, "必须保留扩展名白名单校验"
+        assert "check_media_magic" in calls, "必须保留魔数校验"
