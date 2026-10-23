@@ -220,6 +220,7 @@
 | 文档 | 说明 | 飞书链接 |
 |------|------|----------|
 | [E2E 测试说明](e2e_testing.md) | 端到端测试框架 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/PVbYdlpI4oi3fwxZQFBcG7b0nyb) |
+| [MR 大模型代码审查](ci/ai_code_review.md) | MR Pipeline 调用 vLLM（jeffS7/jeffS10）写审查评论，失败不阻塞合并 | 待补充 |
 | [E2E Mock 实现方案](e2e_mock_implementation_plan.md) | 测试 Mock 设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Zbq4d8oCKovWyyxtNlNcCkLynXc) |
 
 ---
