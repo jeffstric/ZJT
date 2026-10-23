@@ -22,21 +22,25 @@ logger = logging.getLogger(__name__)
 
 
 def _dev_callback_sign_bypass_enabled() -> bool:
-    """开发联调专用验签旁路（默认关闭，fail-closed 兜底）。
+    """开发联调专用验签旁路（默认留空关闭，fail-closed 兜底）。
 
-    需双开关同时开启：test_mode.enabled 且 test_mode.wechat_pay_skip_callback_sign
-    （system_config，管理台可配，TTL 缓存热更新）。双开关设计防生产环境误触
-    单个开关绕过回调来源认证。仅覆盖"验签密钥文件缺失"分支——密钥存在但
-    签名错误仍然拒绝。读取异常按未开启处理（安全失败）。
+    pay.wxpay.dev_skip_callback_sign 的值必须精确等于确认串
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE（'DEV-OK-I-KNOW-THE-RISK'）才生效：
+    显式声明式开关，填 true/1/随手字符串均不放行，防管理台误配置。
+    与 test_mode 挡板体系完全解耦（不牵连媒体生成 mock）。仅覆盖
+    "验签密钥文件缺失"分支——密钥存在但签名错误仍然拒绝。
+    读取异常按未开启处理（安全失败）。
     """
     try:
         from config.config_util import get_dynamic_config_value
 
-        test_mode = get_dynamic_config_value('test_mode', 'enabled', default=False)
-        bypass = get_dynamic_config_value(
-            'test_mode', 'wechat_pay_skip_callback_sign', default=False
+        value = str(
+            get_dynamic_config_value('pay', 'wxpay', 'dev_skip_callback_sign', default='')
+            or ''
         )
-        return bool(test_mode) and bool(bypass)
+        # 严格精确匹配（不 trim）：粘贴带空白/大小写不符均不放行，
+        # 保证"显式声明"语义，防止误配置静默绕过验签
+        return value == SubscriptionConstants.DEV_CALLBACK_SIGN_BYPASS_PHRASE
     except Exception as e:
         logger.warning(f"Failed to read dev callback sign bypass config: {e}")
         return False
@@ -599,9 +603,9 @@ class WechatPayUtil:
         except FileNotFoundError:
             logger.error(f"WeChat Pay platform public key file not found: {public_key_path}")
             # 开发联调旁路：开发环境通常没有微信平台公钥/证书文件，真实支付的
-            # 回调验签无密可用。双开关（test_mode.enabled +
-            # test_mode.wechat_pay_skip_callback_sign）显式开启时放行，
-            # 每次跳过均打 WARNING 便于审计；默认关闭，生产保持 fail-closed。
+            # 回调验签无密可用。pay.wxpay.dev_skip_callback_sign 填入确认串
+            # DEV-OK-I-KNOW-THE-RISK 时放行，每次跳过均打 WARNING 便于审计；
+            # 默认留空，生产保持 fail-closed。
             if _dev_callback_sign_bypass_enabled():
                 logger.warning(
                     "DEV BYPASS: skipping WeChat Pay callback signature verification "

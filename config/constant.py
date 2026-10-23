@@ -2732,6 +2732,10 @@ RECHARGE_PACKAGES = [
 # 商户产品参数（协议模板ID / V2密钥等）见 config/subscription_config.py（临时 hardcode）。
 class SubscriptionConstants:
     """月度订阅业务常量"""
+    # 开发联调验签旁路的显式确认串：pay.wxpay.dev_skip_callback_sign 的值
+    # 必须精确等于本串才生效（填 true/1/随手字符串均不放行），防止管理台
+    # 误配置绕过微信回调验签。生产环境严禁配置该键。
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE = 'DEV-OK-I-KNOW-THE-RISK'
     # HTTP 调用微信支付接口的超时（秒）
     HTTP_TIMEOUT_SECONDS = 30
     # 订阅周期长度（天）：每月=30天

@@ -86,14 +86,16 @@
   平台证书文件、以及 `pay.wxpay.api_v2_key` 均已配置，否则真实回调将被拒绝。
 - **开发环境联调旁路（V3 验签，2026-10-23）**：开发环境通常没有微信平台
   公钥/证书文件，fail-closed 会卡死真实支付的回调入账。专用配置
-  `test_mode.wechat_pay_skip_callback_sign`（管理台 system_config，默认
-  关闭）需与 `test_mode.enabled` **双开关同时开启**才生效——仅在验签
-  密钥文件缺失分支放行回调（密钥存在但签名错误仍拒绝），每次跳过打
-  WARNING `DEV BYPASS` 便于审计。双开关设计防生产环境误触单个开关；
-  配置读取异常按未开启处理（安全失败）。TTL 缓存热更新，改完约 30 秒
-  内生效，无需重启。测试见
-  `tests/utils/test_wechat_pay_callback_verify.py`（双开关放行/单开关
-  拒绝/读取异常拒绝/密钥在但签名错不受旁路影响）。
+  `pay.wxpay.dev_skip_callback_sign`（管理台 system_config 可编辑，默认
+  留空）——值必须**精确填入** `DEV-OK-I-KNOW-THE-RISK`（严格匹配，不
+  trim、区分大小写；true/1/随手字符串均不放行）才生效，仅在验签密钥
+  文件缺失分支放行回调（密钥存在但签名错误仍拒绝），每次跳过打
+  WARNING `DEV BYPASS` 便于审计。显式确认串设计防管理台误配置；配置
+  读取异常按未开启处理（安全失败）。与 test_mode 挡板体系完全解耦
+  （test_mode 会 mock 掉所有媒体生成任务，且 test_mode.* 被管理台 403
+  仅允许脚本修改——支付联调不应牵连）。TTL 缓存热更新（30s），改完
+  无需重启。测试见 `tests/utils/test_wechat_pay_callback_verify.py`
+  （确认串放行/随手值拒绝/读取异常拒绝/密钥在但签名错不受旁路影响）。
 
 ## 业务规则
 
