@@ -6682,15 +6682,29 @@
             const PASTE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
             const PASTE_MIME_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
 
-            // 从剪贴板提取图片文件。截图等来源的 File 常缺少文件名/扩展名，
-            // 而上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
+            // 从剪贴板提取图片文件。Chromium 在 Windows 从文件管理器复制多文件时，
+            // 文件列表只在 clipboardData.files 暴露而 items 可能为空（chromium:41071856），
+            // 故合并两个来源并按 名字|大小|修改时间 去重；截图等来源的 File 常缺少
+            // 文件名/扩展名，而上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
             function extractClipboardImageFiles(clipboardData) {
-                if (!clipboardData || !clipboardData.items) return [];
+                if (!clipboardData) return [];
+                const candidates = [];
+                if (clipboardData.files) candidates.push(...clipboardData.files);
+                if (clipboardData.items) {
+                    for (const item of clipboardData.items) {
+                        if (item.kind !== 'file') continue;
+                        let itemFile = null;
+                        try { itemFile = item.getAsFile(); } catch (e) { itemFile = null; }
+                        if (itemFile) candidates.push(itemFile);
+                    }
+                }
                 const files = [];
-                for (const item of clipboardData.items) {
-                    if (item.kind !== 'file') continue;
-                    const file = item.getAsFile();
+                const seen = new Set();
+                for (const file of candidates) {
                     if (!file || !file.type.startsWith('image/')) continue;
+                    const key = (file.name || '') + '|' + file.size + '|' + file.lastModified;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
                     const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
                     if (PASTE_MIME_EXT[file.type] && !PASTE_IMAGE_EXTENSIONS.includes(ext)) {
                         const newName = 'clipboard_' + Date.now() + '_' + (files.length + 1) + '.' + PASTE_MIME_EXT[file.type];
