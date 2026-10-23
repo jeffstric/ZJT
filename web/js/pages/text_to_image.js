@@ -104,6 +104,27 @@
           { value: 4, label: '4张' }
         ];
       },
+      computingPower() {
+        // 使用 TaskConfig API 动态获取算力（自动适配新增模型）
+        if (!this.configLoaded) {
+          return 0;  // 配置未加载时返回0
+        }
+
+        // 根据分辨率构建 context，用于算力修饰符计算
+        // （如 nano-banana-2.1 按 1K/2K/4K 不同倍率计费）
+        const context = {};
+        if (this.imageSize) {
+          context['resolution'] = this.imageSize;
+        }
+
+        // 使用 TaskConfig.getComputingPower 动态获取算力
+        // 该方法会自动处理固定算力和按时长计费两种情况，以及应用修饰符
+        return TaskConfig.getComputingPower(this.model, null, context);
+      },
+      totalComputingPower() {
+        // 总算力 = 单个算力 × 生成数量
+        return this.computingPower * this.count;
+      },
       statusText() {
         switch(this.status) {
           case 'submitted': return '任务已提交，等待处理...';
@@ -471,6 +492,16 @@
             <select class="input" v-model.number="count">
               <option v-for="opt in countOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
+          </div>
+
+          <div class="field" style="background: #1a1f2e; padding: 12px; border-radius: 8px; border: 1px solid var(--border);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="color: var(--muted); font-size: 14px;">{{ $t('power_consumption_label') || '算力消耗：' }}</span>
+              <span style="color: #60a5fa; font-weight: bold; font-size: 16px;">{{ totalComputingPower }} {{ $t('power_unit') || '算力' }}</span>
+            </div>
+            <div style="margin-top: 6px; font-size: 12px; color: var(--muted);">
+              {{ $t('single_power') || '单个' }} {{ computingPower }} {{ $t('power_unit') || '算力' }} × {{ count }} {{ $t('multiply_count') || '个' }} = {{ totalComputingPower }} {{ $t('total_power') || '算力' }}
+            </div>
           </div>
 
           <div class="field">
