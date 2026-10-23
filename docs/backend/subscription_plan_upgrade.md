@@ -80,7 +80,10 @@
 - 验签 fail-closed（2026-10-23，审计 BUG-R2-S1-A3-H1/BUG-R2-S2-A1-H1 修复）：
   `verify_callback_signature` 缺公钥文件、`verify_v2_sign` 缺 V2 密钥一律
   `return False` 拒绝回调——密钥缺失即无法确认通知来源，接受回调等于接受
-  任意伪造的支付/签约通知。微信侧收到 FAIL/4xx 后会重试，补齐密钥自动恢复。
+  任意伪造的支付/签约通知（曾可伪造回调免费入账算力、复活已解约合约）。
+  微信侧收到 FAIL/4xx 后按 15s..6h 计划重试，补齐密钥后自动恢复，无需重启。
+  上线前请确认 `secret/wechat/` 下平台公钥（`pub_key.pem`，公钥模式）或
+  平台证书文件、以及 `pay.wxpay.api_v2_key` 均已配置，否则真实回调将被拒绝。
   Docker 部署注意：容器重建会重新生成 in-container config，若
   `pay.wxpay.api_v2_key` 只存在于容器内配置文件（非管理台/DB），重建后密钥
   回归未配置状态——请通过管理台配置或持久化 secret 目录。
@@ -88,11 +91,17 @@
   覆盖缺密钥拒绝/正确签名通过/伪造签名拒绝）
 - **开发环境联调旁路（V2/V3 共用，2026-10-23）**：开发环境通常没有微信
   平台公钥文件/V2 密钥，fail-closed 会卡死真实支付的回调入账。专用配置
-  `test_mode.wechat_pay_skip_callback_sign`（管理台 system_config，默认
-  关闭）需与 `test_mode.enabled` **双开关同时开启**才生效——仅覆盖验签
-  密钥缺失分支（密钥存在但签名错误仍拒绝），每次跳过打 WARNING
-  `DEV BYPASS` 便于审计。双开关防生产误触；配置读取异常按未开启处理。
-  TTL 缓存热更新（30s），无需重启。
+  `pay.wxpay.dev_skip_callback_sign`（管理台 system_config 可编辑，默认
+  留空）——值必须**精确填入** `DEV-OK-I-KNOW-THE-RISK`（严格匹配，不
+  trim、区分大小写；true/1/随手字符串均不放行）才生效，仅在验签密钥
+  缺失分支（V3 缺平台公钥文件/V2 缺 api_v2_key）放行回调（密钥存在但
+  签名错误仍拒绝），每次跳过打 WARNING `DEV BYPASS` 便于审计。显式确认串
+  设计防管理台误配置；配置读取异常按未开启处理（安全失败）。与 test_mode
+  挡板体系完全解耦（test_mode 会 mock 掉所有媒体生成任务，且 test_mode.*
+  被管理台 403 仅允许脚本修改——支付联调不应牵连）。TTL 缓存热更新（30s），
+  改完无需重启。测试见 `tests/utils/test_wechat_pay_callback_verify.py`、
+  `tests/utils/test_wx_papay_v2_sign.py`（确认串放行/随手值拒绝/读取异常
+  拒绝/密钥在但签名错不受旁路影响）。
 
 ## 业务规则
 
