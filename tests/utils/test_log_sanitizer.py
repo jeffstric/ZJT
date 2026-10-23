@@ -124,3 +124,19 @@ def test_formatter_redacts_exception_text() -> None:
     assert "13800138000" not in output
     assert "unsafe-exception-password" not in output
     assert "138****8000" in output
+
+def test_redact_sensitive_text_covers_auth_token_query() -> None:
+    """access log 请求行形态：GET /api/...?auth_token=<64hex>（审计 BUG-R2-S2-A8-H4）。
+
+    会话 token 是裸 64 位 hex（非 Bearer/JWT 形态），此前的 key 清单不含
+    auth_token，默认开启的 access log 会把 live token 原样落盘。
+    """
+    token = "a" * 64
+    message = (
+        f"GET /api/subscription/order-status?order_id=S1&user_id=1&auth_token={token} HTTP/1.1"
+    )
+
+    redacted = redact_sensitive_text(message)
+
+    assert token not in redacted
+    assert "auth_token=" in redacted

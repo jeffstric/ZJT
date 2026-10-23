@@ -169,6 +169,16 @@ URL 参数，切号后旧标签页仍带旧 `user_id`，天然"串号"。
   本地 token 有效、上游 perseids 失效的路径（见 auth_token_401_semantics.md），中间件放行。
 - 遗留清单中 `api/marketing_publications.py` 的 X-User-Id 裸信任由中间件全局覆盖。
 
+### 残余收口：reference-images 4 端点属主校验（2026-10-23，审计 BUG-R2-S2-A8-H3）
+
+上述中间件挡住了匿名/冒充访问，但 characters/locations 的参考图 4 端点
+（`POST/DELETE /api/{characters,locations}/{id}/reference-images[/{image_id}]`）
+仍解析 user_id 后从不使用——任何**登录用户**可对**他人**资产增删参考图
+（IDOR 残余）。已补齐：身份改用 `resolve_authenticated_user_id`（token 为准），
+资源加载后比对属主（`resource.user_id != user_id` → 403），并
+`except HTTPException: raise` 防鉴权 401 被吞成 500。守卫测试
+`tests/api/test_reference_images_owner_guard.py`（AST 断言 4 端点三要素）。
+
 ## 五b、latest-task 泄漏明文 token 与同族 writer 属主断言（2026-10-23，审计 BUG-R2-S2-A8-H1）
 
 `GET /api/session/{id}/latest-task` 曾只挂登录装饰器、无属主断言，直接返回

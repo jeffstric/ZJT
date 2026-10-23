@@ -301,7 +301,9 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 1 },
+        // 实例站点与注册引导链接：出现在描述文案中的 exampleName 会被渲染为指向 exampleUrl 的超链接（缺省不展示链接）
+        exampleName: 'openlux',
+        exampleUrl: 'https://www.openlux.ai/register?aff=OIt4',
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -322,7 +324,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 2 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 2 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -344,7 +345,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 3 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 3 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -366,7 +366,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 4 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 4 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -388,7 +387,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 5 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 5 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -531,6 +529,16 @@ function translateProvider(p, tFn) {
     translated.description = p.descKey ? tFn(p.descKey, p.descKeyParams || {}) : (p.description || '');
     translated.impacts = p.impactsKey ? tFn(p.impactsKey).split(',').map(s => s.trim()) : (p.impacts || []);
     translated.docUrlLabel = p.docUrlLabelKey ? tFn(p.docUrlLabelKey) : (p.docUrlLabel || '');
+    translated.exampleName = p.exampleName || '';
+    translated.exampleUrl = p.exampleUrl || '';
+    // 描述中的实例站点名渲染为超链接（静态 i18n 文案 + 常量 URL，无用户输入，直接拼接）
+    translated.descriptionHtml = '';
+    if (translated.exampleName && translated.exampleUrl && translated.description.includes(translated.exampleName)) {
+        translated.descriptionHtml = translated.description.replace(
+            translated.exampleName,
+            `<a href="${translated.exampleUrl}" target="_blank" rel="noopener noreferrer" class="qc-example-link">${translated.exampleName}</a>`
+        );
+    }
     translated.fields = p.fields.map(f => ({
         ...f,
         label: f.labelKey ? tFn(f.labelKey) : (f.label || ''),
@@ -793,7 +801,8 @@ const AdminApp = {
                 testResults: {},         // { providerId: { success: boolean, message: string } }
                 saveLoading: {},         // { providerId: boolean }
                 secretRevealed: {},      // { baseName::fieldId: boolean } 密钥毛玻璃是否已揭开
-                leftPanelOpen: true
+                leftPanelOpen: true,
+                userSwitchedCategory: false  // 用户是否在配置加载期间手动切换过分类 tab
             },
 
             // 字段示例图灯箱（快速配置字段 helpImage 点击放大查看）
@@ -3837,6 +3846,12 @@ const AdminApp = {
         
         // ==================== 快速配置方法（两栏模式） ====================
 
+        // 切换分类 tab：记录用户手动切换，配置异步加载完成后不再自动跳转覆盖
+        switchQuickConfigCategory(cat) {
+            this.quickConfigModal.userSwitchedCategory = true;
+            this.quickConfigModal.activeCategory = cat;
+        },
+
         // 打开快速配置弹窗
         async openQuickConfigModal() {
             this.quickConfigModal.show = true;
@@ -3850,6 +3865,7 @@ const AdminApp = {
             this.quickConfigModal.secretRevealed = {};
             this.quickConfigModal.leftPanelOpen = true;
             this.quickConfigModal.quickSelected = false;
+            this.quickConfigModal.userSwitchedCategory = false;
 
             // 从后端加载现有配置值
             try {
@@ -3898,15 +3914,17 @@ const AdminApp = {
                         }
                     }
 
-                    // 切换到第一个有选中服务商的分类
-                    for (const cat of Object.keys(CATEGORY_LABELS)) {
-                        const hasSelected = this.quickConfigModal.selectedProviderIds.some(id => {
-                            const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
-                            return p && p.category === cat;
-                        });
-                        if (hasSelected) {
-                            this.quickConfigModal.activeCategory = cat;
-                            break;
+                    // 切换到第一个有选中服务商的分类（用户在加载期间已手动切 tab 则尊重其选择）
+                    if (!this.quickConfigModal.userSwitchedCategory) {
+                        for (const cat of Object.keys(CATEGORY_LABELS)) {
+                            const hasSelected = this.quickConfigModal.selectedProviderIds.some(id => {
+                                const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
+                                return p && p.category === cat;
+                            });
+                            if (hasSelected) {
+                                this.quickConfigModal.activeCategory = cat;
+                                break;
+                            }
                         }
                     }
                 }

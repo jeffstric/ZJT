@@ -2371,6 +2371,16 @@ body {
     line-height: 1.4;
 }
 
+.qc-example-link {
+    color: #3b82f6;
+    font-weight: 500;
+    text-decoration: none;
+}
+
+.qc-example-link:hover {
+    text-decoration: underline;
+}
+
 .qc-card-impacts {
     display: flex;
     flex-wrap: wrap;

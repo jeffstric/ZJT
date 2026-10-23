@@ -1187,7 +1187,9 @@
           return;
         }
         const downloadUrl = node.data.url || node.data.preview;
-        const fileName = node.data.name || 'image.png';
+        // 生成结果名（"生成结果1"）无后缀，CDN attname 原样透传会下载出
+        // 无扩展名文件，统一走扩展名兜底
+        const fileName = window.ensureDownloadExtension(node.data.name, downloadUrl, 'png');
         
         // 图片直接下载，不需要后端代理
         // 如果是跨域图片，使用fetch+blob方式下载
