@@ -31,22 +31,24 @@ logger = logging.getLogger(__name__)
 
 
 def _dev_callback_sign_bypass_enabled() -> bool:
-    """开发联调专用验签旁路（默认关闭，fail-closed 兜底）。
+    """开发联调专用验签旁路（默认留空关闭，fail-closed 兜底）。
 
-    与 utils/wechat_pay_util.py 的 V3 旁路共用同一对开关：
-    test_mode.enabled 且 test_mode.wechat_pay_skip_callback_sign
-    （system_config，管理台可配，TTL 缓存热更新）。双开关设计防生产
-    环境误触单个开关绕过回调来源认证。仅覆盖"api_v2_key 未配置"分支。
-    读取异常按未开启处理（安全失败）。
+    与 utils/wechat_pay_util.py 的 V3 旁路共用同一配置：
+    pay.wxpay.dev_skip_callback_sign 的值必须精确等于确认串
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE（'DEV-OK-I-KNOW-THE-RISK'）才生效：
+    显式声明式开关，填 true/1/随手字符串均不放行，防管理台误配置。
+    与 test_mode 挡板体系完全解耦（不牵连媒体生成 mock）。仅覆盖
+    "api_v2_key 未配置"分支。读取异常按未开启处理（安全失败）。
     """
     try:
         from config.config_util import get_dynamic_config_value
 
-        test_mode = get_dynamic_config_value('test_mode', 'enabled', default=False)
-        bypass = get_dynamic_config_value(
-            'test_mode', 'wechat_pay_skip_callback_sign', default=False
+        value = str(
+            get_dynamic_config_value('pay', 'wxpay', 'dev_skip_callback_sign', default='')
+            or ''
         )
-        return bool(test_mode) and bool(bypass)
+        # 严格精确匹配（不 trim）：粘贴带空白/大小写不符均不放行
+        return value == SubscriptionConstants.DEV_CALLBACK_SIGN_BYPASS_PHRASE
     except Exception as e:
         logger.warning(f"Failed to read dev callback sign bypass config: {e}")
         return False
@@ -132,9 +134,9 @@ class WxPapayUtil:
         """
         if not self.api_v2_key:
             # 开发联调旁路：开发环境通常未配置 V2 密钥，fail-closed 会卡死
-            # 订阅支付的回调入账。与 V3 验签共用双开关
-            # （test_mode.enabled + test_mode.wechat_pay_skip_callback_sign），
-            # 显式开启时放行，每次跳过打 WARNING 便于审计；默认关闭。
+            # 订阅支付的回调入账。与 V3 验签共用 pay.wxpay.dev_skip_callback_sign
+            # 确认串，填入 DEV-OK-I-KNOW-THE-RISK 时放行，每次跳过打 WARNING
+            # 便于审计；默认留空。
             if _dev_callback_sign_bypass_enabled():
                 logger.warning(
                     "DEV BYPASS: skipping V2 callback signature verification "

@@ -48,33 +48,35 @@ def test_forged_sign_rejected():
     assert _util().verify_v2_sign(forged) is False
 
 
-# ==================== 开发联调旁路（双开关，默认关闭） ====================
+# ==================== 开发联调旁路（显式确认串，默认留空关闭） ====================
 
-def _set_bypass(monkeypatch, test_mode=False, bypass=False, raise_error=False):
+PHRASE = "DEV-OK-I-KNOW-THE-RISK"
+
+
+def _set_bypass(monkeypatch, value="", raise_error=False):
     def fake_get(*keys, default=None):
         if raise_error:
             raise RuntimeError("db down")
-        if keys == ('test_mode', 'enabled'):
-            return test_mode
-        if keys == ('test_mode', 'wechat_pay_skip_callback_sign'):
-            return bypass
+        if keys == ('pay', 'wxpay', 'dev_skip_callback_sign'):
+            return value
         return default
 
     monkeypatch.setattr("config.config_util.get_dynamic_config_value", fake_get)
 
 
-def test_dev_bypass_double_switch_allows_missing_key(monkeypatch):
-    """双开关齐开 + api_v2_key 未配置 → 放行（开发联调订阅回调可入账）"""
-    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+def test_dev_bypass_confirm_phrase_allows_missing_key(monkeypatch):
+    """配置精确等于确认串 + api_v2_key 未配置 → 放行（开发联调订阅回调可入账）"""
+    _set_bypass(monkeypatch, value=PHRASE)
     assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is True
 
 
-def test_dev_bypass_requires_both_switches(monkeypatch):
-    """只开单个开关 → 仍拒绝"""
-    _set_bypass(monkeypatch, test_mode=False, bypass=True)
-    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False
-    _set_bypass(monkeypatch, test_mode=True, bypass=False)
-    assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False
+def test_dev_bypass_rejects_casual_values(monkeypatch):
+    """随手值（true/1/错串/空）→ 仍拒绝（显式声明式开关，防管理台误配置）"""
+    for casual in ("", "true", "1", "yes", "dev-ok", PHRASE.lower(), PHRASE + " "):
+        _set_bypass(monkeypatch, value=casual)
+        assert _util(key="").verify_v2_sign({"out_trade_no": "X", "sign": "ANY"}) is False, (
+            f"值 {casual!r} 不得放行"
+        )
 
 
 def test_dev_bypass_config_error_fails_closed(monkeypatch):
@@ -85,7 +87,7 @@ def test_dev_bypass_config_error_fails_closed(monkeypatch):
 
 def test_dev_bypass_never_overrides_wrong_sign(monkeypatch):
     """旁路只覆盖密钥缺失分支：api_v2_key 在但签名错误仍拒绝"""
-    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+    _set_bypass(monkeypatch, value=PHRASE)
     params = {"out_trade_no": "SUB_1", "result_code": "SUCCESS"}
     forged = dict(params)
     forged["sign"] = "DEADBEEF"
