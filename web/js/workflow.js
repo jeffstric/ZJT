@@ -505,9 +505,13 @@
 
           // 集中同步各结果节点「取消排队」按钮可见性（按 project_id 反查节点，
           // 所有 pollVideoStatus 消费方共用；仅排队中的任务显示）
+          // ⚠️ 过滤集合必须包含 CANCELLED：已取消任务的节点要走到下方
+          // markNodeCancelled 分支写「✗ 已取消」终态（重载恢复依赖此路径）。
+          // 此前只收 RUNNING/QUEUED，CANCELLED 节点在 runningIds 检查处提前
+          // return，标记分支成为死代码——刷新后已取消节点永远卡「生成中」。
           if(result.tasks && window.AiToolTimeline && typeof window.AiToolTimeline.setNodeCancelVisible === 'function'){
             const runningIds = new Set(
-              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED')
+              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLED')
                 .map(t => String(t.project_id))
             );
             state.nodes.forEach(node => {

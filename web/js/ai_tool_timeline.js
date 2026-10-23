@@ -387,11 +387,19 @@
         if (!el) return;
         var ids = nodeTaskIds(node);
         if (!ids.length) return;
+        var cancelledText = '✗ ' + tr('ai_task_cancelled', '已取消（算力已退还）');
 
         if (node.type === 'image' && !node.data.url) {
             var placeholder = el.querySelector('.image-generating-placeholder');
             if (placeholder) {
                 placeholder.style.display = 'flex';
+                // 重载恢复：快照已持久化的取消终态直接渲染，不等远端纠正
+                //（此前无条件走生成占位，刷新后已取消节点卡「生成中」）
+                if (node.data.cancelled) {
+                    placeholder.classList.add('is-failed');
+                    var cancelledLabel = placeholder.querySelector('.image-generating-label');
+                    if (cancelledLabel) cancelledLabel.textContent = cancelledText;
+                }
                 ensureNodeCancelBtn(placeholder, node);
             }
         } else if (node.type === 'video') {
@@ -399,7 +407,15 @@
             var statusEl = el.querySelector('.video-status');
             if (statusField && statusEl) {
                 statusField.style.display = 'block';
-                if (!node.data.url) statusEl.textContent = tr('timeline_generating', '生成中...');
+                if (!node.data.url) {
+                    // 重载恢复：快照已持久化的取消终态直接渲染，不等远端纠正
+                    if (node.data.cancelled) {
+                        statusEl.textContent = cancelledText;
+                        statusEl.style.color = '#9ca3af';
+                    } else {
+                        statusEl.textContent = tr('timeline_generating', '生成中...');
+                    }
+                }
                 var row = statusField.querySelector('.video-status-row');
                 if (row) ensureNodeCancelBtn(row, node);
             }
@@ -439,7 +455,9 @@
             var task = (data && data.tasks && data.tasks[0]) || null;
             if (!task) return;
             if (task.status === 'CANCELLED') {
-                markNodeCancelled(node.id, true);
+                // 完整标记（写「✗ 已取消」终态文案）：覆盖快照未持久化取消态的
+                // 重载场景（如保存晚于取消），仅 persistOnly 会把节点留在「生成中」
+                markNodeCancelled(node.id);
             } else {
                 setNodeCancelVisible(node.id, task.status === 'QUEUED');
             }

@@ -98,19 +98,22 @@ rebase 冲突恰好落在取消互斥的核心区域，以下回归点已代码�
 | B1 | 登录/初始余额 | ✅ 93206 |
 | B2 | 提交后节点乐观显示取消按钮 | ✅ |
 | B3 | **排队中取消（核心 S0）** | ✅ 生成后 1.0s 抢点成功（调度器 5s 轮询间隙）；toast「任务已取消，算力将自动退还」；节点「✗ 已取消（算力已退还）」；按钮隐藏；DB：440 status=-2、**project_id=NULL（上游零调用）**、扣 6 退 6 净零、refund-{原流水} 幂等键、tasks 同步 -2、user_cancelled 日志；余额对账 93206−6×3+6=93194 与 UI 一致 |
-| B4 | 刷新重载复原（AGENTS.md 第4条） | ❌ **发现新 BUG**（见下） |
+| B4 | 刷新重载复原（AGENTS.md 第4条） | ✅ 修复后通过：已取消节点首屏即「✗ 已取消（算力已退还）」（修复前卡「生成中」，见 §2.55 BUG 条目） |
 | B5 | 已提交后取消 → 409 | ✅ 真实时序两次撞上（439）：toast「任务已开始生成或已结束，无法取消」、按钮恢复后隐藏、任务继续、不退费 |
 | 附 | 438 真实生成完成 | ✅ 画布渲染视频 ✓ 生成成功 |
 
-**【新发现·BUG】重载后已取消节点永远卡「生成中」**（web/js/workflow.js:509-521）：
-`runningIds` 只收 RUNNING/QUEUED，517 行 `if(!runningIds.has(pid)) return;` 把
-CANCELLED 任务的节点提前返回——520 行 `markNodeCancelled` 对已取消任务**不可达**
-（死代码）。后果：刷新/重载工作流后，已取消任务的节点显示「生成中...」而非
-「已取消（算力已退还）」，且 get-status/440 响应无顶层聚合 status，轮询持续
-走 onProgress 分支。用户会误以为任务仍在生成/退款未到账。后端无恙（非 S0），
-属前端状态恢复缺陷，违反 AGENTS.md 第 4 条与 fc029daa 提交声称的「重载恢复
-已取消终态」。修复方向：runningIds 过滤集合加入 CANCELLED（或改为按 tasks
-反查节点驱动）。取消按钮本体无复活风险（按钮隐藏正确）。
+**【新发现·BUG→已修复】重载后已取消节点永远卡「生成中」**：
+三处叠加缺陷——① web/js/workflow.js 轮询集中同步的 `runningIds` 只收
+RUNNING/QUEUED，CANCELLED 节点在集合检查处提前 return，`markNodeCancelled`
+分支对已取消任务不可达（死代码）；② ai_tool_timeline.js `markNodeGenerating`
+渲染时无条件写「生成中...」，不识别快照已持久化的 `data.cancelled`；
+③ 渲染期远端纠正 `syncNodeCancelFromRemote` 用 persistOnly 变体只藏按钮、
+不写终态文案。**修复**（2026-10-23，浏览器实测验证）：① 过滤集合加入
+CANCELLED；② 渲染时快照取消态直接出「✗ 已取消（算力已退还）」灰色终态；
+③ 远端纠正改完整标记。修复后刷新画布：已取消节点（440）首屏即显示
+「✗ 已取消（算力已退还）」（不再依赖远端轮询纠正）；同画布 438/439 出片
+正常、取消按钮全部正确隐藏。静态断言 tests/js/test_ai_task_cancel_frontend.js
+新增 5 条锁定三处修复。
 
 ### 2.6 隔离环境复现手册（HTTP E2E）
 

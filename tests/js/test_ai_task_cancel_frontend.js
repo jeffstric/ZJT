@@ -46,6 +46,26 @@ assert.match(timelineJs, /task\.status === 'QUEUED'/, '远端同步应仅排队�
 // 已取消节点持久化，重载后不重复显示生成态按钮
 assert.match(timelineJs, /node\.data\.cancelled = true/, '取消状态应写入 node.data（重载恢复）');
 
+// ---- 重载恢复死代码修复（2026-10-23 浏览器实测发现）----
+// 修复①：快照已持久化取消态的节点，markNodeGenerating 必须直接渲染「✗ 已取消」
+// 终态，而非无条件写「生成中...」（否则刷新后已取消节点卡生成中）。
+const genFn = timelineJs.slice(
+  timelineJs.indexOf('function markNodeGenerating'),
+  timelineJs.indexOf('/** 在容器内创建（幂等）')
+);
+assert.ok(genFn.length > 100, 'markNodeGenerating 源码段截取失败');
+assert.match(genFn, /node\.data\.cancelled/, 'markNodeGenerating 应识别快照持久化的取消终态');
+assert.match(genFn, /ai_task_cancelled/, 'markNodeGenerating 应渲染已取消终态文案');
+// 修复②：远端纠正 CANCELLED 时必须用完整 markNodeCancelled（写终态文案），
+// 仅 persistOnly 只藏按钮不写文案，节点仍卡「生成中」。
+const syncFn = timelineJs.slice(
+  timelineJs.indexOf('function syncNodeCancelFromRemote'),
+  timelineJs.indexOf('/** 设置节点「取消排队」按钮可见性')
+);
+assert.ok(syncFn.length > 100, 'syncNodeCancelFromRemote 源码段截取失败');
+assert.doesNotMatch(syncFn, /markNodeCancelled\(node\.id, true\)/, '远端纠正不得用 persistOnly（不写终态文案）');
+assert.match(syncFn, /markNodeCancelled\(node\.id\)/, '远端纠正 CANCELLED 应完整标记节点终态');
+
 // ---- workflow.js：轮询终态与集中同步 ----
 const pollFn = workflowJs.slice(
   workflowJs.indexOf('function pollVideoStatus'),
@@ -54,6 +74,13 @@ const pollFn = workflowJs.slice(
 assert.match(pollFn, /result\.status === 'CANCELLED'/, 'pollVideoStatus 终态判断应包含 CANCELLED');
 assert.match(pollFn, /setNodeCancelVisible\(node\.id, task\.status === 'QUEUED'\)/, '轮询应按任务状态集中同步取消按钮可见性');
 assert.match(pollFn, /markNodeCancelled\(node\.id\)/, '轮询发现 CANCELLED 时应标记节点终态');
+// 修复③：轮询集中同步的过滤集合必须包含 CANCELLED——此前只收 RUNNING/QUEUED，
+// CANCELLED 节点在 runningIds 检查处提前 return，markNodeCancelled 分支不可达。
+assert.match(
+  pollFn,
+  /t\.status === 'RUNNING' \|\| t\.status === 'QUEUED' \|\| t\.status === 'CANCELLED'/,
+  '轮询同步过滤集合必须包含 CANCELLED（否则终态标记为死代码）'
+);
 
 // ---- i18n：中英文案齐备 ----
 const i18nKeys = [
