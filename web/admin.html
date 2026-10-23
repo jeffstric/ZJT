@@ -2934,7 +2934,7 @@
                             <button v-for="(label, cat) in categoryLabels"
                                     :key="cat"
                                     :class="['qc-tab', { active: quickConfigModal.activeCategory === cat }]"
-                                    @click="quickConfigModal.activeCategory = cat">
+                                    @click="switchQuickConfigCategory(cat)">
                                 {{ label }}
                                 <span v-if="categoryStatus[cat]" class="qc-tab-check">&#10003;</span>
                             </button>
@@ -2957,7 +2957,7 @@
                                             <span v-if="provider.isOfficialAPI" class="qc-badge qc-badge-official">{{ t('badge_official_api') }}</span>
                                             <span v-if="isCommunityEdition && provider.commercialOnly" class="qc-badge qc-badge-commercial">{{ t('badge_commercial_only') }}</span>
                                         </div>
-                                        <div class="qc-card-desc">{{ provider.description }}</div>
+                                        <div class="qc-card-desc" v-html="provider.descriptionHtml || provider.description"></div>
                                         <div v-if="provider.impacts && provider.impacts.length" class="qc-card-impacts">
                                             <span v-for="(impact, idx) in provider.impacts" :key="idx" class="qc-badge qc-badge-impact">
                                                 {{ impact }}
@@ -2993,7 +2993,7 @@
                                 <div class="qc-config-header">
                                     <div>
                                         <h4>{{ provider.icon }} {{ provider.name }}</h4>
-                                        <p>{{ provider.description }}</p>
+                                        <p v-html="provider.descriptionHtml || provider.description"></p>
                                         <a v-if="provider.docUrl" :href="provider.docUrl" target="_blank" class="qc-register-link">
                                             &#128279; {{ provider.docUrlLabel || t('btn_register_guide') }}
                                         </a>
