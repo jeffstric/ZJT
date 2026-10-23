@@ -411,6 +411,8 @@
   "image_node_upload_label": "上传图片",
   "image_node_clear_btn": "清除",
   "image_node_download_btn": "下载",
+  "image_node_add_asset_btn": "入库",
+  "asset_library_entry": "资产库",
   "image_node_prompt_label": "编辑提示词（可选）",
   "image_node_prompt_placeholder": "输入提示词进行图片编辑",
   "image_node_model_label": "模型",

@@ -919,10 +919,23 @@ function activeFrameMentionPrompt(userText, scene) {
     return scene?.videoPrompt || '';
 }
 
+/** 共享资产库提及数据加载（一次；提及菜单与胶囊层共用 state.assetMentionItems） */
+let assetMentionLoadStarted = false;
+function ensureAssetMentionItems() {
+    if (assetMentionLoadStarted || !window.AssetLibrary) return;
+    assetMentionLoadStarted = true;
+    window.AssetLibrary.fetchMentionItems('').then((items) => {
+        state.assetMentionItems = items || [];
+        // 历史输入中已有资产 token 时补渲染胶囊
+        syncChatMentionChips();
+    }).catch(() => {});
+}
+
 function openChatMentionPopup(textarea) {
     chatMentionCaret = textarea && typeof textarea.selectionStart === 'number'
         ? textarea.selectionStart
         : (state.inputMessage || '').length;
+    ensureAssetMentionItems();
     if (state.showMentionPopup) return;
     state.showMentionPopup = true;
     rerenderModals();
@@ -986,7 +999,7 @@ function guardFrameMentions(promptText) {
 async function sendStoryboardAgentMessage(current) {
     const streamSceneId = current.id;
     if (!streamSceneId || isSceneAgentRunning(streamSceneId)) return;
-    const message = (state.inputMessage || '').trim();
+    let message = (state.inputMessage || '').trim();
     if (!message) {
         notify(t('msg_enter_adjustment', '请输入要调整的内容'));
         return;
@@ -1030,6 +1043,12 @@ async function sendStoryboardAgentMessage(current) {
             rerenderModals();
             return;
         }
+    }
+
+    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见
+    // web/js/asset_library.js），使资产图片进入 Agent 生成上下文
+    if (window.AssetLibrary && message.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+        message = await window.AssetLibrary.resolveMentionTokens(message);
     }
 
     if (!guardFrameMentions(activeFrameMentionPrompt(message, current))) return;
@@ -1197,6 +1216,10 @@ async function sendDirectVideo(current) {
         }
     }
 
+    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见 web/js/asset_library.js）
+    if (window.AssetLibrary && prompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+        prompt = await window.AssetLibrary.resolveMentionTokens(prompt);
+    }
     if (!isDh && !guardFrameMentions(prompt)) return;
 
     // 占用 running 态（禁用发送按钮防重复提交）；toast 就近确认 + 候选区乐观占位卡即时反馈
@@ -1345,10 +1368,14 @@ async function sendDirectImage(current) {
         return;
     }
     // 生图提示词不能为空（文本框预填分镜画面提示词，预填为空时需手填）
-    const prompt = (state.inputMessage || '').trim();
+    let prompt = (state.inputMessage || '').trim();
     if (!prompt) {
         notify(t('msg_enter_image_prompt', '请输入生图提示词'));
         return;
+    }
+    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见 web/js/asset_library.js）
+    if (window.AssetLibrary && prompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+        prompt = await window.AssetLibrary.resolveMentionTokens(prompt);
     }
     // 必须已选生图模型（mode='auto' 注入参考图，走图生图/编辑模型槽位）
     const imageTaskId = getSelectedImageTaskId(true);
@@ -2039,6 +2066,23 @@ async function handleAction(action, target) {
             stopPlayback();
         }
         await openFirstFrameColoring(rerender);
+        return;
+    }
+
+    if (action === 'add-scene-image-to-asset-library') {
+        // 当前分镜预览图加入共享资产库（弹窗见 web/js/asset_library.js）
+        const imageUrl = target.dataset.imageUrl || '';
+        if (!imageUrl || !window.AssetLibrary) return;
+        window.AssetLibrary.promptAdd({
+            sourceUrl: imageUrl,
+            name: (target.dataset.assetName || '').slice(0, 60)
+        });
+        return;
+    }
+
+    if (action === 'open-asset-library') {
+        // 顶栏「资产库」入口：浏览共享资产库
+        if (window.AssetLibrary) window.AssetLibrary.openModal();
         return;
     }
 

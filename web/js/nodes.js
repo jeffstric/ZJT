@@ -4528,11 +4528,47 @@
       return items;
     }
 
+    // 共享资产库提及条目（@资产:{id} token，提交前由前端还原为 markdown 图片；
+    // 见 web/js/asset_library.js）。首用后台加载，完成后刷新最近打开的下拉。
+    let assetMentionItems = [];
+    let assetMentionLoaded = false;
+    let assetMentionLoading = false;
+    let lastMentionDropdownCtx = null;
+
+    function ensureAssetMentionItems() {
+      if (!window.AssetLibrary || assetMentionLoading) return;
+      if (assetMentionLoaded) return;
+      assetMentionLoading = true;
+      window.AssetLibrary.fetchMentionItems('').then(items => {
+        assetMentionItems = (items || []).map(a => ({
+          token: '@资产:' + a.id,
+          label: a.name,
+          url: a.thumb || ''
+        }));
+        assetMentionLoaded = true;
+        // 数据到位后刷新仍在展示的下拉（占位「资产库加载中…」→ 实际条目）
+        const ctx = lastMentionDropdownCtx;
+        if (!ctx) return;
+        const dropdown = document.getElementById(`character-dropdown-${ctx.dropdownKey}-${ctx.nodeId}`);
+        if (dropdown && dropdown.style.display !== 'none') {
+          showCharacterDropdownForImagePrompt(ctx.nodeId, ctx.textarea, ctx.cursorPos, ctx.dropdownKey);
+        }
+      }).catch(() => {}).finally(() => { assetMentionLoading = false; });
+    }
+
+    function listAssetMentionItems() {
+      ensureAssetMentionItems();
+      return assetMentionItems;
+    }
+
     // 显示角色选择下拉框（用于图片提示词，使用 state.worldCharacters）
     function showCharacterDropdownForImagePrompt(nodeId, textarea, cursorPos, dropdownKey = 'imageprompt') {
       const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
       let dropdown = document.getElementById(dropdownId);
-      
+
+      // 记录上下文供资产条目异步加载完成后刷新下拉
+      lastMentionDropdownCtx = { nodeId, textarea, cursorPos, dropdownKey };
+
       // 如果下拉框不存在，创建一个
       if (!dropdown) {
         dropdown = document.createElement('div');
@@ -4542,17 +4578,20 @@
         textarea.parentNode.style.position = 'relative';
         textarea.parentNode.appendChild(dropdown);
       }
-      
+
       const frameItems = dropdownKey === 'videoprompt' ? listVideoPromptFrameMentions(nodeId) : [];
+      const assetItems = listAssetMentionItems();
       const worldId = state.defaultWorldId;
       const characters = worldId ? (state.worldCharacters || []) : [];
-      if (frameItems.length === 0 && !worldId) {
+      if (frameItems.length === 0 && assetItems.length === 0 && !window.AssetLibrary && !worldId) {
         dropdown.innerHTML = '<div style="padding: 8px; color: #6b7280; font-size: 12px;">请先选择世界</div>';
         dropdown.style.display = 'block';
         return;
       }
-      if (frameItems.length === 0 && characters.length === 0) {
-        dropdown.innerHTML = '<div style="padding: 8px; color: #6b7280; font-size: 12px;">暂无角色</div>';
+      if (frameItems.length === 0 && assetItems.length === 0 && characters.length === 0) {
+        dropdown.innerHTML = assetMentionLoading
+          ? '<div style="padding: 8px; color: #6b7280; font-size: 12px;">资产库加载中…</div>'
+          : '<div style="padding: 8px; color: #6b7280; font-size: 12px;">暂无可引用内容</div>';
         dropdown.style.display = 'block';
         return;
       }
@@ -4561,6 +4600,13 @@
         <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
           <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
           <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
+        </div>
+      `).join('');
+      const assetHtml = assetItems.map(item => `
+        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" title="共享资产库" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
+          <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
+          <span style="font-size: 10px; color: #9ca3af; margin-left: auto;">资产库</span>
         </div>
       `).join('');
       const charHtml = characters.map(char => {
@@ -4576,7 +4622,7 @@
           </div>
         `;
       }).join('');
-      dropdown.innerHTML = frameHtml + charHtml;
+      dropdown.innerHTML = frameHtml + assetHtml + charHtml;
 
       dropdown.querySelectorAll('.shot-frame-mention-item').forEach(item => {
         item.addEventListener('click', () => {

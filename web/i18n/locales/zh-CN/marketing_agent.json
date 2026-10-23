@@ -27,6 +27,7 @@
   "nav_inspiration": "灵感",
   "nav_generate": "生成",
   "nav_assets": "资产",
+  "nav_shared_asset_library": "资产库",
   "asset_library_title": "资产库",
   "asset_library_desc": "查看你在 AI 工具中生成的所有图片和视频结果。",
   "asset_empty_title": "暂无生成资产",
@@ -190,6 +191,7 @@
   "create_order_failed": "创建支付订单失败",
 
   "type_image": "图片",
+  "type_asset": "资产",
   "type_video": "视频",
   "type_audio": "音频",
 

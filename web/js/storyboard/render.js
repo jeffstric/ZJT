@@ -631,6 +631,14 @@ function renderFirstFrameColoringToolbar(scene) {
                 data-action="color-first-frame"
                 title="${i18nT('title_color_edit_scene', '涂鸦编辑分镜图')}"
             >${icon('edit', 14)} ${i18nT('btn_color_edit', '涂鸦编辑')}</button>
+            <button
+                type="button"
+                class="preview-tool-btn"
+                data-action="add-scene-image-to-asset-library"
+                data-image-url="${escapeHtml(previewMedia.url)}"
+                data-asset-name="${escapeHtml(scene.title || '')}"
+                title="${i18nT('title_add_to_asset_library', '加入资产库')}"
+            >${icon('star', 14)} ${i18nT('btn_add_to_asset_library', '入库')}</button>
         </div>`;
 }
 
@@ -1038,6 +1046,7 @@ function renderHeader() {
                 <button class="header-nav-btn" data-route="script">${i18nT('btn_back_to_script', '剧本策划')}</button>
                 <button class="header-nav-btn" data-route="canvas">${i18nT('btn_canvas_mode', '画布')}</button>
                 <button class="header-nav-btn active" type="button">${i18nT('btn_editor_mode', '编辑器')}</button>
+                <button class="header-nav-btn" type="button" data-action="open-asset-library" title="${i18nT('title_open_asset_library', '共享资产库')}">${icon('folder', 14)} ${i18nT('label_asset_library', '资产库')}</button>
             </nav>
             <div class="header-right">
                 <span class="header-lang-slot" data-lang-switcher-slot></span>
@@ -2693,9 +2702,11 @@ function renderMentionPopup() {
         character: state.characters,
         scene: state.locations,
         prop: state.props,
+        asset: state.assetMentionItems || [],
     };
     const items = groups[state.mentionTab] || [];
     const frameButtons = renderFrameMentionButtons();
+    const isAssetTab = state.mentionTab === 'asset';
     return `
         <div class="mention-popup">
             ${frameButtons}
@@ -2703,12 +2714,18 @@ function renderMentionPopup() {
                 <button data-mention-tab="character" class="${state.mentionTab === 'character' ? 'active' : ''}">${i18nT('label_character', '角色')}</button>
                 <button data-mention-tab="scene" class="${state.mentionTab === 'scene' ? 'active' : ''}">${i18nT('label_scene', '场景')}</button>
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
+                <button data-mention-tab="asset" class="${isAssetTab ? 'active' : ''}">${i18nT('label_asset_library', '资产库')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => {
-                    const preview = item.avatar || item.reference_image || '';
-                    return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
-                }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${isAssetTab
+                    ? (items.length
+                        ? items.map(item => `<button data-mention-item="${escapeHtml('资产:' + item.id)}" data-hover-preview="${escapeHtmlAttr(item.thumb || '')}"><img src="${escapeHtml(getThumbnailUrl(item.thumb, 24))}" alt=""><span>${escapeHtml(item.name || ('资产' + item.id))}</span></button>`).join('')
+                        : `<div class="empty-note">${i18nT('msg_no_asset_library_items', '资产库为空，可在各页面生成图片后入库')}</div>`)
+                    : items.map(item => {
+                        const preview = item.avatar || item.reference_image || '';
+                        return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
+                    }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`
+                }
             </div>
         </div>`;
 }

@@ -190,6 +190,9 @@ const state = {
         submitting: false,
     },
     mentionTab: 'character',
+    /** 共享资产库提及条目：[{id, name, thumb}]（提及菜单/胶囊层共用，
+     *  经 window.AssetLibrary.fetchMentionItems 加载，见 events.js） */
+    assetMentionItems: [],
     isSaving: false,
     error: '',
     showGenerateFromScriptDialog: false,

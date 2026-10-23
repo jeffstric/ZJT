@@ -29,7 +29,9 @@
         'style', 'controls', 'preload', 'type', 'disabled', 'checked',
         // 事件委托改造后承载点击行为的 data 属性（见 migrateLegacyOnclick / 调用方）
         'data-full-src', 'data-modal-src', 'data-tool-id', 'data-tool-title',
-        'data-publish-tool-id', 'data-publish-title'
+        'data-publish-tool-id', 'data-publish-title',
+        // 资产库「入库」按钮（历史消息回放，见 web/js/asset_library.js）
+        'data-asset-add-src'
     ];
 
     // 与 DOMPurify 默认一致的 URI 白名单（http/https/mailto/tel/blob + 相对地址），

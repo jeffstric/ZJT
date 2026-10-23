@@ -47,6 +47,12 @@ function frameUrlByKey() {
     return { first: frames.frame_first_url || '', last: frames.frame_last_url || '' };
 }
 
+/** 资产提及条目 id → {name, url}（数据源 state.assetMentionItems） */
+function assetMentionById(assetId) {
+    const item = (state.assetMentionItems || []).find((a) => Number(a.id) === Number(assetId));
+    return item ? { name: item.name || '', url: item.thumb || '' } : null;
+}
+
 const syncedTextareas = new WeakSet();
 let resizeObserver = null;
 
@@ -61,7 +67,9 @@ export function syncChatMentionChips(depth = 0) {
     ensureSyncListeners(ta);
     const urlByKey = frameUrlByKey();
     const text = String(ta.value ?? '');
-    const tokens = scanFrameMentionTokens(text).filter((t) => urlByKey[t.key]);
+    const tokens = scanFrameMentionTokens(text).filter((t) => urlByKey[t.key]
+        // 资产引用胶囊依赖资产数据（未加载/无权限时退化为纯文本）
+        || (t.key === 'asset' && assetMentionById(t.assetId)));
     if (!tokens.length) {
         mirror.innerHTML = '';
         return;
@@ -71,7 +79,20 @@ export function syncChatMentionChips(depth = 0) {
     syncMirrorTypography(ta, mirror, scrollbar);
     const parts = [];
     let cursor = 0;
-    tokens.forEach(({ key, token, start, end }) => {
+    tokens.forEach(({ key, token, start, end, assetId }) => {
+        if (key === 'asset') {
+            const asset = assetMentionById(assetId);
+            if (!asset) return;
+            parts.push(escapeHtml(text.slice(cursor, start)));
+            parts.push(
+                `<span class="chip-anchor">${escapeHtml(token)}<span class="chat-mention-chip" data-hover-preview="${escapeHtmlAttr(asset.url)}" data-start="${start}" data-end="${end}">`
+                + `<img src="${escapeHtml(getThumbnailUrl(asset.url, 28))}" alt="">`
+                + `<span class="chat-mention-chip-id">${escapeHtml(asset.name.slice(0, 8))}</span>`
+                + `</span></span>`,
+            );
+            cursor = end;
+            return;
+        }
         const url = urlByKey[key];
         // 标记自带 id 后缀（@首帧图:xxxx）时以文本里的 id 为准，与底层文本一致
         const embedded = /:([0-9a-f]{8})$/.exec(token);

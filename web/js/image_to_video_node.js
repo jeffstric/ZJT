@@ -1303,12 +1303,21 @@
             }
           });
 
-          // 构建 media_references（用于 @ 提及解析）
-          const mediaReferences = getMentionableItems().map(item => ({
-            displayName: item.displayName,
-            type: item.type,
-            fileUrl: item.url
-          }));
+          // 构建 media_references（用于 @ 提及解析）；资产条目为共享资产库
+          // 引用（`@资产:{id}` token，提交前还原为 markdown 图片），不进入
+          // 本地媒体引用表
+          const mediaReferences = getMentionableItems()
+            .filter(item => item.type !== 'asset')
+            .map(item => ({
+              displayName: item.displayName,
+              type: item.type,
+              fileUrl: item.url
+            }));
+
+          // 共享资产库 token 提交前还原（见 web/js/asset_library.js）
+          if (window.AssetLibrary && submitPrompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+            submitPrompt = await window.AssetLibrary.resolveMentionTokens(submitPrompt);
+          }
 
           // 调用生成API
           let result;
@@ -1595,6 +1604,20 @@
       // ===== @ 提及系统 =====
       let mentionState = { visible: false, query: '', queryStart: -1, selectedIndex: 0 };
       let mentionDropdownEl = null;
+      // 共享资产库条目（异步加载一次，见 web/js/asset_library.js）
+      let assetMentionItems = [];
+      let assetMentionLoaded = false;
+
+      function ensureAssetMentionItems(){
+        if (!window.AssetLibrary || assetMentionLoaded) return;
+        assetMentionLoaded = true;
+        window.AssetLibrary.fetchMentionItems('').then(items => {
+          assetMentionItems = (items || []).map(a => ({
+            displayName: a.name, type: 'asset', url: a.thumb, assetId: a.id
+          }));
+          if (mentionState.visible) showMentionDropdown();
+        }).catch(() => {});
+      }
 
       function getMentionableItems(){
         const items = [];
@@ -1603,6 +1626,8 @@
         (node.data.referenceUrls || []).forEach((url, i) => items.push({displayName: `Image${i+1}`, type: 'image', url}));
         (node.data.audioUrls || []).forEach((item, i) => items.push({displayName: `音频${i+1}`, type: 'audio', url: item.url}));
         (node.data.videoUrls || []).forEach((item, i) => items.push({displayName: `视频${i+1}`, type: 'video', url: item.url}));
+        ensureAssetMentionItems();
+        assetMentionItems.forEach(a => items.push(a));
         return items;
       }
 
@@ -1628,7 +1653,8 @@
           item.displayName.toLowerCase().includes(query) ||
           (item.type === 'image' && '图片'.includes(query)) ||
           (item.type === 'audio' && '音频'.includes(query)) ||
-          (item.type === 'video' && '视频'.includes(query))
+          (item.type === 'video' && '视频'.includes(query)) ||
+          (item.type === 'asset' && '资产库'.includes(query))
         );
         if(filtered.length === 0){
           hideMentionDropdown();
@@ -1640,8 +1666,8 @@
           promptEl.parentElement.style.position = 'relative';
           promptEl.parentElement.appendChild(mentionDropdownEl);
         }
-        const typeIcons = {image: '🖼️', audio: '🎵', video: '🎬'};
-        const typeNames = {image: '图片', audio: '音频', video: '视频'};
+        const typeIcons = {image: '🖼️', audio: '🎵', video: '🎬', asset: '🗂'};
+        const typeNames = {image: '图片', audio: '音频', video: '视频', asset: '资产库'};
         mentionDropdownEl.innerHTML = filtered.map((item, i) => {
           const isImage = item.type === 'image';
           const thumbHtml = isImage && item.url ? `<img src="${escapeHtml(item.url)}" class="mention-thumb" style="width:32px;height:32px;object-fit:cover;border-radius:4px;margin-right:8px;flex-shrink:0;" />` : '';
@@ -1673,11 +1699,16 @@
       function insertMention(item){
         const before = promptEl.value.substring(0, mentionState.queryStart);
         const after = promptEl.value.substring(promptEl.selectionStart);
-        promptEl.value = before + '@' + item.displayName + ' ' + after;
+        // 资产库条目插入 `@资产:{id}` token（提交前还原为 markdown 图片），
+        // 本地素材沿用 @名称 文本
+        const insertText = item.type === 'asset' && window.AssetLibrary
+          ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
+          : '@' + item.displayName;
+        promptEl.value = before + insertText + ' ' + after;
         node.data.prompt = promptEl.value;
         hideMentionDropdown();
         promptEl.focus();
-        const newPos = mentionState.queryStart + item.displayName.length + 2;
+        const newPos = mentionState.queryStart + insertText.length + 1;
         promptEl.setSelectionRange(newPos, newPos);
         if(promptPreview){
           const preview = node.data.prompt.length > 50 ? node.data.prompt.substring(0, 50) + '...' : node.data.prompt;
@@ -1694,7 +1725,8 @@
           item.displayName.toLowerCase().includes(query) ||
           (item.type === 'image' && '图片'.includes(query)) ||
           (item.type === 'audio' && '音频'.includes(query)) ||
-          (item.type === 'video' && '视频'.includes(query))
+          (item.type === 'video' && '视频'.includes(query)) ||
+          (item.type === 'asset' && '资产库'.includes(query))
         );
         if(filtered.length === 0) return;
         if(e.key === 'ArrowDown'){

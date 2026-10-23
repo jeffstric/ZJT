@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/css/subscription.css?v=__VERSION__">
     <link rel="stylesheet" href="/css/model_catalog.css?v=__VERSION__">
     <link rel="stylesheet" href="/css/marketing_article_card.css?v=__VERSION__">
+    <link rel="stylesheet" href="/css/asset_library.css?v=__VERSION__">
     <script src="/js/vendor/vue.global.prod.js"></script>
     <script src="/js/vendor/axios.min.js"></script>
     <script src="/js/vendor/marked.min.js"></script>
@@ -22,6 +23,7 @@
     <script src="/js/model_catalog.js?v=__VERSION__"></script>
     <script src="/js/video_compressor.js?v=__VERSION__"></script>
     <script src="/js/agent_message_dedupe.js?v=__VERSION__"></script>
+    <script src="/js/asset_library.js?v=__VERSION__"></script>
     <link rel="stylesheet" href="/css/github.min.css?v=__VERSION__">
     <!-- i18n 支持 -->
     <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -53,6 +55,10 @@
             <div class="marketing-nav-item" :class="{active: activeView === 'assets'}" @click="switchView('assets')" :title="$t('nav_assets')">
                 <div class="marketing-nav-icon">📁</div>
                 <div class="marketing-nav-text">{{ $t('nav_assets') }}</div>
+            </div>
+            <div class="marketing-nav-item" @click="openSharedAssetLibrary()" :title="sharedAssetLibraryTitle">
+                <div class="marketing-nav-icon">🗂</div>
+                <div class="marketing-nav-text">{{ sharedAssetLibraryTitle }}</div>
             </div>
         </nav>
 
@@ -317,9 +323,9 @@
                                          style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s;"
                                          :style="{ background: idx === mentionDropdown.selectedIndex ? '#e6f7ff' : 'transparent' }">
                                         <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" style="width: 28px; height: 28px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" />
-                                        <div v-else style="width: 28px; height: 28px; border-radius: 4px; background: #f0f4f8; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">{{ item.type === 'video' ? '🎬' : '🎵' }}</div>
+                                        <div v-else style="width: 28px; height: 28px; border-radius: 4px; background: #f0f4f8; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">{{ item.type === 'video' ? '🎬' : item.type === 'asset' ? '🗂' : '🎵' }}</div>
                                         <span style="flex: 1; font-size: 13px; color: #1a1a1a;">{{ item.displayName }}</span>
-                                        <span style="font-size: 11px; color: #94a3b8; padding: 2px 6px; border-radius: 3px; background: #f0f4f8;">{{ item.type === 'image' ? $t('type_image') : item.type === 'video' ? $t('type_video') : $t('type_audio') }}</span>
+                                        <span style="font-size: 11px; color: #94a3b8; padding: 2px 6px; border-radius: 3px; background: #f0f4f8;">{{ item.type === 'image' ? $t('type_image') : item.type === 'video' ? $t('type_video') : item.type === 'asset' ? $t('type_asset') : $t('type_audio') }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -823,6 +829,7 @@
                             </div>
                             <div class="asset-card-actions">
                                 <a :href="asset.result_url" target="_blank" rel="noopener">{{ $t('view_original') }}</a>
+                                <button v-if="!isAssetVideo(asset)" @click="addHistoryAssetToLibrary(asset)">{{ $t('add_to_asset_library') }}</button>
                                 <button v-if="!isAssetVideo(asset)" @click="useAssetForVideo(asset)">{{ $t('generate_video') }}</button>
                                 <button class="publish-asset-btn" @click="publishAsset(asset)" :disabled="asset.published">{{ asset.published ? '已发布' : '发布' }}</button>
                             </div>

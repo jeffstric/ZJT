@@ -1,0 +1,98 @@
+# 资产库（Asset Library）
+
+> 分支：`develop_f1086` · 迁移：`no_156_20261024_add_asset_library_tables` · 前端公共模块：`web/js/asset_library.js` + `web/css/asset_library.css`
+
+## 1. 功能概述
+
+资产库让用户把 **marketing_agent / video_workflow / storyboard** 三个页面中生成的图片（首期仅图片，表结构已预留 video/audio）收藏为可复用资产：
+
+- **入库**：各页面生成图片卡片上的「入库」按钮 → 弹窗设置名称/分组/权限 → 服务端把源文件**复制/下载到本地永久目录**（`upload/asset_library/<user_id>/`），资产文件不受媒体缓存清理策略影响（`utils/media_cache.py` 不扫描该目录）、普通用户不可删除。
+- **权限**：每个资产独立的「查看」与「编辑」权限，各自支持 `private`（仅自己）/ `specified`（指定成员）/ `public`（所有人）；编辑权限隐含查看权限。
+- **分组**：`asset_group` 分组目录**全局共享**（所有登录用户可见同一套目录、均可创建；重命名/删除限创建者或管理员，组内有资产时拒绝删除）。
+- **@ 引用**：三个页面通过 @ 提及引用资产库内容（见 §5）。
+- **容量**：资产文件不受存储容量限制，但按用户记录已用容量（`asset_library_quota`），管理员逐人设置上限（admin 用户管理 →「资产库容量」，`0=不限`，默认 2GB）；管理员清除资产文件后自动扣减该用户容量记录。
+
+## 2. 数据表（4 张）
+
+| 表 | 说明 | 关键字段 |
+|---|---|---|
+| `asset_group` | 分组（目录），全局共享 | `name`(unique), `creator_user_id` |
+| `asset_library` | 资产记录 | `user_id`(属主=容量计入者), `group_id`, `asset_type`(image/预留), `name`, `source_url`(溯源), `file_path`(相对 upload), `file_size`, `view_permission`, `edit_permission` |
+| `asset_permission_member` | 指定成员 | `asset_id`, `user_id`, `perm_type`(view/edit)，uk(asset,user,perm) |
+| `asset_library_quota` | 用户容量 | `user_id`(unique), `quota_bytes`(0=不限), `used_bytes` |
+
+模型文件：`model/asset_group.py` / `model/asset_library.py` / `model/asset_permission_member.py` / `model/asset_library_quota.py`（末尾附 CREATE_TABLE_SQL，与迁移一致）。
+
+## 3. 可见性与权限规则（services/asset_library_service.py）
+
+可见 = `user_id = 自己` ∪ `view|edit_permission = 'public'` ∪ `(view|edit = 'specified' 且在 asset_permission_member 中被指定 view 或 edit)`。
+
+列表 SQL 的可见性片段（`_visible_where`）与分组计数共用同一语义；`can_edit` = 属主 ∪ `edit=public` ∪ 被指定 edit ∪ 管理员。
+
+**删除红线**：`DELETE /api/asset-library/assets/{id}` 仅管理员可用（`purge_asset`：删文件 + 删记录 + 删成员 + `quota.release` 扣减容量记录）。普通用户无删除入口。
+
+## 4. 后端接口
+
+用户侧 `api/asset_library.py`（prefix `/api/asset-library`，`@require_permission` 登录即可，DB/IO 全部 `asyncio.to_thread`/线程池，不阻塞事件循环）：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/assets?page&page_size&group_id&group_scope=ungrouped&asset_type&keyword&scope=all\|mine\|shared` | 资产列表（只返回可见资产，附 `owner_name/can_edit/view_members/edit_members`） |
+| POST | `/assets` | 入库：`{source_url, name, group_id, asset_type, view_permission, edit_permission, view_members, edit_members}` |
+| GET | `/assets/{id}` | 详情（需查看权限） |
+| PUT | `/assets/{id}` | 编辑元信息（需编辑权限） |
+| DELETE | `/assets/{id}` | **仅管理员**：清除资产并扣减容量记录 |
+| GET | `/groups` | 共享分组目录 + 每组可见资产计数 + 未分组计数 |
+| POST | `/groups` / PUT `/groups/{id}` / DELETE `/groups/{id}` | 分组管理（改名/删除限创建者或管理员） |
+| GET | `/quota` | 我的容量 `{quota_bytes, used_bytes}` |
+| GET | `/users?keyword=` | 用户搜索（指定成员选择器，仅返回 id+display_name） |
+
+管理员侧 `api/admin.py`：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/admin/users/{id}/asset-quota` | 查询配额与用量、资产数 |
+| PUT | `/api/admin/users/{id}/asset-quota` | 设置 `quota_bytes`（0=不限） |
+| GET | `/api/admin/asset-library/assets?user_id=` | 按用户列资产（清除入口数据源） |
+
+### 入库流程与配额并发安全（`svc.add_asset`）
+
+1. 校验参数（类型/权限枚举/分组存在/成员数 ≤50）；
+2. 源文件持久化：`/upload/` 本站路径直接复制，外链走 aiohttp 下载（超时常量 `AssetLibraryConstants.DOWNLOAD_*`；写盘丢 `utils/download_io_pool` 长寿线程池）；
+3. **原子预留**：`quota.try_reserve` 用条件 UPDATE（`used_bytes + size <= quota_bytes OR quota_bytes = 0`）无锁防超卖；失败返回 `quota_exceeded`；
+4. `os.replace` 转正文件名 → 插入 `asset_library` → 写指定成员；
+5. `finally` 兜底：失败路径清理临时/已转正文件并 `quota.release`（AGENTS.md 第 10 条 try/finally 清理红线）。
+
+单文件上限 `MAX_FILE_SIZE_BYTES=50MB`（下载流式统计，超限即中断）。
+
+## 5. @ 引用（`@资产:{id}` token）
+
+**统一 token 格式**：`@资产:{asset_library.id}`（常量 `AssetLibraryConstants.MENTION_TOKEN_PREFIX`）。
+
+- **marketing_agent**：@ 下拉合并资产条目（`mentionableItems`），选择插入 token；`handleSend` 提交前 `resolveMentionTokens` 还原为 `![名称](绝对URL)` markdown 图片。
+- **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`）与图生视频节点独立 @（`image_to_video_node.js`）均含资产条目；图片生成（`image_node.js`）、分镜视频（`shot_frame_video_generator.js`）、图生视频提交前同样还原。
+- **storyboard**：@ 提及弹窗新增「资产库」tab（`renderMentionPopup`）；胶囊镜像层（`chat_mention_chips.js` + `frame_mention.js scanFrameMentionTokenRanges`）把 token 渲染为「缩略图+名称」胶囊（原子删除、悬停大图，与 @首帧图 同一套机制）；Agent 对话/直连生图/直连视频提交前还原。
+
+还原语义：`resolveMentionTokens(text)` 把 token 替换为 `![name](绝对URL)`，使资产图片以 URL 形式进入生成上下文（文生图参考图提取、LLM、VL 均可消费）；无权访问/已清除的 token 保留原文不阻断提交。
+
+## 6. 前端集成点
+
+| 页面 | 入库按钮 | 资产库入口 | @ 引用 |
+|---|---|---|---|
+| marketing_agent | 生成图片卡 `.generated-result-actions`「入库」（`data-asset-add-src` 委托） | 左侧 nav「资产库」 | @ 下拉（含资产 tab 数据源） |
+| video_workflow | 图片节点「上传图片」行「入库」（`image-add-asset-lib-btn`） | 顶栏 `#assetLibraryBtn` | 提示词下拉 + 图生视频节点 @ |
+| storyboard | 主预览 hover 工具条「入库」（`data-action="add-scene-image-to-asset-library"`） | 顶栏 nav（`data-action="open-asset-library"`） | @ 弹窗「资产库」tab + 胶囊 |
+
+公共模块 `window.AssetLibrary`：`promptAdd`（入库弹窗）、`openModal`（浏览/分组/搜索/分页/权限编辑）、`fetchMentionItems`、`buildMentionToken`、`resolveMentionTokens`、`toast`。所有动态 HTML 经 `window.escapeHtml` 转义（XSS 红线）；历史消息回放的新增 `data-asset-add-src` 已加入 `web/js/security.js` 白名单。
+
+## 7. 相关常量与文档
+
+- 常量：`config/constant.py` `AssetLibraryConstants`（权限枚举/类型/默认配额 2GB/单文件 50MB/下载超时/分页/token 前缀）、`UploadPathConstants.ASSET_LIBRARY_DIR`。
+- admin 前端：用户管理操作列「资产库容量」弹窗（`web/js/admin.js assetQuotaModal`）。
+- i18n：`marketing_agent.json`（`nav_shared_asset_library`/`add_to_asset_library`/`type_asset`）、`video_workflow.json`（`image_node_add_asset_btn`/`asset_library_entry`）、`admin.json`（`btn_asset_quota` 等）；storyboard 侧 `i18nT(key, fallback)` 自带中文 fallback。
+
+## 8. 后续扩展（本期未做）
+
+- 视频/音频资产：`asset_type` 已预留，入库白名单（`ASSET_TYPE_EXTENSIONS`）与前端 `accept` 需扩展。
+- 资产库文件 CDN 化：可复用 `media_file_mapping`，但需保证清除策略不误删资产文件。
+- 服务端 token 解析：当前由前端提交前还原；如需服务端兜底，可在对应生成链路按 `MENTION_TOKEN_PREFIX` 正则还原。

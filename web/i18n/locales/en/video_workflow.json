@@ -411,6 +411,8 @@
   "image_node_upload_label": "Upload Image",
   "image_node_clear_btn": "Clear",
   "image_node_download_btn": "Download",
+  "image_node_add_asset_btn": "Save",
+  "asset_library_entry": "Asset Library",
   "image_node_prompt_label": "Edit Prompt (Optional)",
   "image_node_prompt_placeholder": "Enter prompt to edit image",
   "image_node_model_label": "Model",

@@ -666,6 +666,17 @@ const AdminApp = {
                 loading: false
             },
 
+            // 资产库容量设置弹窗（见 docs/backend/asset_library.md）
+            assetQuotaModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                quotaGB: 2,
+                usedText: '',
+                assetCount: 0,
+                loading: false
+            },
+
             // 用户备注编辑弹窗
             remarkModal: {
                 show: false,
@@ -3006,6 +3017,83 @@ const AdminApp = {
             } finally {
                 this.powerModal.loading = false;
             }
+        },
+
+        // 打开资产库容量设置弹窗：先查当前用量再展示
+        async openAssetQuotaModal(user) {
+            this.assetQuotaModal.userId = user.user_id;
+            this.assetQuotaModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
+            this.assetQuotaModal.quotaGB = 2;
+            this.assetQuotaModal.usedText = '';
+            this.assetQuotaModal.assetCount = 0;
+            this.assetQuotaModal.loading = false;
+            this.assetQuotaModal.show = true;
+            try {
+                const response = await axios.get(
+                    `/api/admin/users/${user.user_id}/asset-quota`,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    const data = response.data.data;
+                    this.assetQuotaModal.quotaGB = data.quota_bytes > 0
+                        ? Math.round(data.quota_bytes / (1024 * 1024 * 1024) * 100) / 100
+                        : 0;
+                    this.assetQuotaModal.usedText = this.formatBytes(data.used_bytes);
+                    this.assetQuotaModal.assetCount = data.asset_count || 0;
+                }
+            } catch (error) {
+                console.error('Load asset quota failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_load_failed');
+                this.showToast(detail, 'error');
+                this.assetQuotaModal.show = false;
+            }
+        },
+
+        // 关闭资产库容量设置弹窗
+        closeAssetQuotaModal() {
+            this.assetQuotaModal.show = false;
+            this.assetQuotaModal.userId = null;
+            this.assetQuotaModal.userName = '';
+            this.assetQuotaModal.quotaGB = 2;
+            this.assetQuotaModal.usedText = '';
+            this.assetQuotaModal.assetCount = 0;
+        },
+
+        // 提交资产库容量设置（0=不限制）
+        async submitAssetQuota() {
+            if (this.assetQuotaModal.quotaGB === null || this.assetQuotaModal.quotaGB === undefined
+                || this.assetQuotaModal.quotaGB < 0) {
+                this.showToast(this.t('modal_asset_quota_hint'), 'error');
+                return;
+            }
+            this.assetQuotaModal.loading = true;
+            try {
+                const quotaBytes = Math.round(parseFloat(this.assetQuotaModal.quotaGB) * 1024 * 1024 * 1024);
+                const response = await axios.put(
+                    `/api/admin/users/${this.assetQuotaModal.userId}/asset-quota`,
+                    { quota_bytes: quotaBytes },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_asset_quota_set'), 'success');
+                    this.closeAssetQuotaModal();
+                }
+            } catch (error) {
+                console.error('Set asset quota failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_adjust_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetQuotaModal.loading = false;
+            }
+        },
+
+        // 字节数可读化（资产库用量展示）
+        formatBytes(bytes) {
+            const n = Number(bytes) || 0;
+            if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+            if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+            if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+            return n + ' B';
         },
 
         // 打开用户备注编辑弹窗

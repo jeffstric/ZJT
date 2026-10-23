@@ -618,6 +618,10 @@ app.include_router(announcements_admin_router)
 from api.subscription import router as subscription_router
 app.include_router(subscription_router)
 
+# 资产库 API 路由（生成产物收藏/共享/@引用，见 docs/backend/asset_library.md）
+from api.asset_library import router as asset_library_router
+app.include_router(asset_library_router)
+
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
 

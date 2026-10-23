@@ -235,6 +235,7 @@
                 <input class="image-file" type="file" accept="image/*,.tif,.tiff" />
                 <button class="mini-btn image-clear" type="button" data-i18n="image_node_clear_btn">${window.t ? window.t('image_node_clear_btn') : '清除'}</button>
                 <button class="mini-btn image-download-icon-btn" type="button" data-i18n="image_node_download_btn">${window.t ? window.t('image_node_download_btn') : '下载'}</button>
+                <button class="mini-btn image-add-asset-lib-btn" type="button" data-i18n="image_node_add_asset_btn" title="${window.t ? window.t('image_node_add_asset_btn') : '入库'}">${window.t ? window.t('image_node_add_asset_btn') : '入库'}</button>
               </div>
             </div>
             <div class="image-form-prompt field">
@@ -490,6 +491,7 @@
       const modelEl = el.querySelector('.image-model');
       const editBtn = el.querySelector('.image-edit-btn');
       const downloadBtn = el.querySelector('.image-download-icon-btn');
+      const addAssetLibBtn = el.querySelector('.image-add-asset-lib-btn');
       const doodleBtn = el.querySelector('.image-doodle-btn');
       const statusEl = el.querySelector('.image-edit-status');
       const drawCountLabel = el.querySelector('.image-draw-count-label');
@@ -1019,6 +1021,12 @@
 
           let finalPrompt = node.data.prompt || '';
 
+          // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片
+          // （见 web/js/asset_library.js），使资产图片进入生成上下文
+          if (window.AssetLibrary && finalPrompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+            finalPrompt = await window.AssetLibrary.resolveMentionTokens(finalPrompt);
+          }
+
           if(state.style && state.style.name){
             finalPrompt = `${finalPrompt}\n\n图片风格：${state.style.name}`;
           }
@@ -1205,6 +1213,23 @@
           showToast(window.t ? window.t('download_image_failed') : '下载图片失败', 'error');
         }
       });
+
+      // 入库按钮：把节点当前图片加入共享资产库（弹窗见 web/js/asset_library.js）
+      if (addAssetLibBtn) {
+        addAssetLibBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!window.AssetLibrary) return;
+          const assetUrl = node.data.url || node.data.preview;
+          if (!assetUrl) {
+            showToast('请先生成或上传图片', 'warning');
+            return;
+          }
+          window.AssetLibrary.promptAdd({
+            sourceUrl: assetUrl,
+            name: (node.data.name || '').slice(0, 60)
+          });
+        });
+      }
 
       // 相机控制按钮：自动创建相机控制节点并连接
       if(cameraControlBtn){

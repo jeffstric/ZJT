@@ -797,6 +797,98 @@ class SetZJTTokenRequest(BaseModel):
     enabled: bool
 
 
+class AssetQuotaRequest(BaseModel):
+    """资产库容量配额设置（字节；0=不限制）"""
+    quota_bytes: int = -1
+
+
+@router.get("/users/{user_id}/asset-quota")
+async def admin_get_user_asset_quota(
+    user_id: int = Path(...),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员查询用户资产库容量配额与使用情况"""
+    await require_admin(auth_token)
+    try:
+        from services import asset_library_service as asset_svc
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        quota = asset_svc.get_quota(user_id)
+        asset_total = asset_svc.list_user_assets_for_admin(user_id, limit=1)["total"]
+        return {
+            "code": 0,
+            "data": {
+                "user_id": user_id,
+                "quota_bytes": quota["quota_bytes"],
+                "used_bytes": quota["used_bytes"],
+                "asset_count": asset_total,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get asset quota for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/users/{user_id}/asset-quota")
+async def admin_set_user_asset_quota(
+    user_id: int = Path(...),
+    request: AssetQuotaRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员设置用户资产库容量上限（quota_bytes=0 表示不限制）"""
+    await require_admin(auth_token)
+    if not request or request.quota_bytes < 0:
+        raise HTTPException(status_code=400, detail="quota_bytes 必须是非负整数（0=不限制）")
+    try:
+        from model.asset_library_quota import AssetLibraryQuotaModel
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        old = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+        AssetLibraryQuotaModel.set_quota(user_id, request.quota_bytes)
+        new = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+        return {
+            "code": 0,
+            "message": "资产库容量设置成功",
+            "data": {
+                "old_quota_bytes": old.get("quota_bytes", 0),
+                "new_quota_bytes": new.get("quota_bytes", 0),
+                "used_bytes": new.get("used_bytes", 0),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set asset quota for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/asset-library/assets")
+async def admin_list_user_assets(
+    user_id: int = Query(..., description="按用户筛选"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员按用户列出资产库资产（清除入口）"""
+    await require_admin(auth_token)
+    try:
+        from services import asset_library_service as asset_svc
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        result = asset_svc.list_user_assets_for_admin(user_id, limit=page_size, offset=(page - 1) * page_size)
+        return {"code": 0, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list assets for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class SetZJTTokenExpireRequest(BaseModel):
     expire_at: Optional[str]  # 过期时间 ISO格式字符串，null表示永不过期
 

@@ -368,13 +368,19 @@
                 return `<button class="publish-result-btn" data-publish-tool-id="${escapeHtml(aiToolId)}" data-publish-title="${escapeHtml(title || '')}">发布</button>`;
             }
 
+            // 「入库」按钮：把生成图加入共享资产库（弹窗走 web/js/asset_library.js）
+            function buildAddToAssetLibraryButton(sourceUrl) {
+                if (!sourceUrl || !window.AssetLibrary) return '';
+                return `<button class="publish-result-btn" data-asset-add-src="${escapeHtml(sourceUrl)}" title="${window.t('add_to_asset_library')}">${window.t('add_to_asset_library')}</button>`;
+            }
+
             function buildGeneratedMediaRowsHtml(type, rows) {
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
                         const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
-                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}${buildAddToAssetLibraryButton(url)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
@@ -1236,14 +1242,35 @@
                 }
             }
 
-            // @ 引用可选项
+            // @ 引用可选项（本地上传媒体 + 共享资产库资产）
+            // 资产条目 isAsset=true，插入 `@资产:{id}` token（提交时由
+            // AssetLibrary.resolveMentionTokens 还原为 markdown 图片）
+            const mentionAssets = Vue.ref([]);
+            let mentionAssetsLoading = false;
+            function loadMentionAssets() {
+                if (mentionAssetsLoading || !window.AssetLibrary) return;
+                mentionAssetsLoading = true;
+                window.AssetLibrary.fetchMentionItems('').then(items => {
+                    mentionAssets.value = items;
+                }).finally(() => { mentionAssetsLoading = false; });
+            }
+
             const mentionableItems = Vue.computed(() => {
-                return mediaItems.value.filter(m => m.fileUrl && !m.uploading && !m.uploadFailed).map(m => ({
+                const local = mediaItems.value.filter(m => m.fileUrl && !m.uploading && !m.uploadFailed).map(m => ({
                     id: m.id,
                     displayName: m.displayName,
                     type: m.type,
                     thumbnailUrl: m.thumbnailUrl
                 }));
+                const assets = mentionAssets.value.map(a => ({
+                    id: `asset-${a.id}`,
+                    assetId: a.id,
+                    displayName: a.name,
+                    type: 'asset',
+                    thumbnailUrl: a.thumb,
+                    isAsset: true
+                }));
+                return local.concat(assets);
             });
 
             const hasPendingAgentImages = Vue.computed(() => {
@@ -1425,7 +1452,7 @@
                 const q = mentionDropdown.value.query.toLowerCase();
                 return mentionableItems.value.filter(item =>
                     item.displayName.toLowerCase().includes(q) ||
-                    (item.type === 'image' ? window.t('type_image') : item.type === 'video' ? window.t('type_video') : window.t('type_audio')).includes(q)
+                    (item.type === 'image' ? window.t('type_image') : item.type === 'video' ? window.t('type_video') : item.type === 'asset' ? window.t('type_asset') : window.t('type_audio')).includes(q)
                 );
             });
 
@@ -1970,6 +1997,19 @@
                         );
                         return;
                     }
+                    // 「入库」按钮：加入共享资产库（弹窗由公共模块提供）
+                    const addAssetBtn = e.target.closest('[data-asset-add-src]');
+                    if (addAssetBtn) {
+                        const src = addAssetBtn.getAttribute('data-asset-add-src') || '';
+                        const card = addAssetBtn.closest('[data-tool-title]');
+                        if (src && window.AssetLibrary) {
+                            window.AssetLibrary.promptAdd({
+                                sourceUrl: src,
+                                name: ((card && card.getAttribute('data-tool-title')) || '').slice(0, 60)
+                            });
+                        }
+                        return;
+                    }
                     const zoomTarget = e.target.closest('img[data-full-src], [data-modal-src]');
                     if (!zoomTarget) return;
                     const src = zoomTarget.getAttribute('data-full-src')
@@ -2369,9 +2409,15 @@
 
             // 发送消息
             async function handleSend() {
-                const text = inputText.value.trim();
+                let text = inputText.value.trim();
                 if (!text || (isLoading.value && !pendingVerificationId.value)) return;
                 isLoading.value = true;
+
+                // 共享资产库 @引用 token（`@资产:{id}`）提交前还原为 markdown 图片，
+                // 使图片 URL 进入生成上下文（文生图参考图提取 / LLM 均可消费）
+                if (window.AssetLibrary && text.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+                    text = await window.AssetLibrary.resolveMentionTokens(text);
+                }
 
                 // ===== 发送前：统一等待图片/视频上传完成 =====
                 if (selectedType.value === 'agent') {
@@ -6265,6 +6311,7 @@
                     mentionDropdown.value.query = atMatch[1];
                     mentionDropdown.value.queryStart = cursorPos - atMatch[0].length;
                     mentionDropdown.value.selectedIndex = 0;
+                    loadMentionAssets();
                 } else {
                     mentionDropdown.value.visible = false;
                 }
@@ -6322,7 +6369,11 @@
                 const end = start + 1 + mentionDropdown.value.query.length;
                 const before = inputText.value.substring(0, start);
                 const after = inputText.value.substring(end);
-                const insertText = `@${item.displayName}`;
+                // 资产库条目插入 `@资产:{id}` token，提交时还原为 markdown 图片；
+                // 本地媒体沿用 @名称 文本
+                const insertText = item.isAsset && window.AssetLibrary
+                    ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
+                    : `@${item.displayName}`;
 
                 inputText.value = before + insertText + ' ' + after;
                 mentionDropdown.value.visible = false;
@@ -6352,6 +6403,7 @@
                 mentionDropdown.value.query = '';
                 mentionDropdown.value.queryStart = actualAtPos;
                 mentionDropdown.value.selectedIndex = 0;
+                loadMentionAssets();
 
                 nextTick(() => {
                     const newCursorPos = actualAtPos + 1;
@@ -7287,6 +7339,10 @@
                 searchQuery,
                 activeView,
                 switchView,
+                sharedAssetLibraryTitle: window.t('nav_shared_asset_library'),
+                openSharedAssetLibrary() {
+                    if (window.AssetLibrary) window.AssetLibrary.openModal();
+                },
                 assetItems,
                 assetsLoading,
                 assetsPage,
@@ -7298,6 +7354,13 @@
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
+                addHistoryAssetToLibrary(asset) {
+                    if (!window.AssetLibrary || !asset || !asset.result_url) return;
+                    window.AssetLibrary.promptAdd({
+                        sourceUrl: asset.result_url,
+                        name: (asset.prompt || '').slice(0, 60)
+                    });
+                },
                 publishAsset,
 
                 sessions,
