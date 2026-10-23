@@ -92,3 +92,71 @@ def test_forged_signature_rejected(tmp_path, monkeypatch):
         "1700000000", "nonce123", b'{"a":1}', forged, "PUB_KEY_ID_123"
     )
     assert ok is False
+
+
+# ==================== 开发联调旁路（双开关，默认关闭） ====================
+
+def _set_bypass(monkeypatch, test_mode=False, bypass=False, raise_error=False):
+    def fake_get(*keys, default=None):
+        if raise_error:
+            raise RuntimeError("db down")
+        if keys == ('test_mode', 'enabled'):
+            return test_mode
+        if keys == ('test_mode', 'wechat_pay_skip_callback_sign'):
+            return bypass
+        return default
+
+    monkeypatch.setattr("config.config_util.get_dynamic_config_value", fake_get)
+
+
+def _missing_key(monkeypatch):
+    """让 open 抛 FileNotFoundError，模拟开发环境无平台公钥文件。"""
+    import builtins
+
+    def _no_file(*args, **kwargs):
+        raise FileNotFoundError(args[0] if args else "missing")
+
+    monkeypatch.setattr(builtins, "open", _no_file)
+
+
+def test_dev_bypass_double_switch_allows_missing_key(monkeypatch):
+    """双开关齐开 + 密钥缺失 → 放行（开发联调真实支付回调可入账）"""
+    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+    _missing_key(monkeypatch)
+    assert WechatPayUtil().verify_callback_signature(
+        "1", "n", b"{}", "sig", "PUB_KEY_ID_1"
+    ) is True
+
+
+def test_dev_bypass_requires_both_switches(monkeypatch):
+    """只开单个开关 → 仍拒绝（防生产误触单开关绕过验签）"""
+    _missing_key(monkeypatch)
+    _set_bypass(monkeypatch, test_mode=False, bypass=True)
+    assert WechatPayUtil().verify_callback_signature(
+        "1", "n", b"{}", "sig", "PUB_KEY_ID_1"
+    ) is False
+    _set_bypass(monkeypatch, test_mode=True, bypass=False)
+    assert WechatPayUtil().verify_callback_signature(
+        "1", "n", b"{}", "sig", "PUB_KEY_ID_1"
+    ) is False
+
+
+def test_dev_bypass_config_error_fails_closed(monkeypatch):
+    """配置读取异常 → 按未开启处理（安全失败）"""
+    _set_bypass(monkeypatch, raise_error=True)
+    _missing_key(monkeypatch)
+    assert WechatPayUtil().verify_callback_signature(
+        "1", "n", b"{}", "sig", "PUB_KEY_ID_1"
+    ) is False
+
+
+def test_dev_bypass_never_overrides_wrong_signature(tmp_path, monkeypatch):
+    """旁路只覆盖密钥缺失分支：密钥存在但签名错误仍拒绝（fail-closed 不变）"""
+    _set_bypass(monkeypatch, test_mode=True, bypass=True)
+    _patch_key_dir(monkeypatch, tmp_path)
+    _make_key_pair(tmp_path)
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    forged = _sign(other_key, "1700000000\nnonce123\n{\"a\":1}\n")
+    assert WechatPayUtil().verify_callback_signature(
+        "1700000000", "nonce123", b'{"a":1}', forged, "PUB_KEY_ID_1"
+    ) is False
