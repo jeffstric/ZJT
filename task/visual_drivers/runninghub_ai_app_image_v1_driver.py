@@ -1,11 +1,13 @@
 """
-RunningHub AI App 图片 v1 版本驱动实现
+qwenimage2.1 的图片驱动（实现类 RunninghubAiAppImageV1Driver）。
 
+用户可见模型名是 qwenimage2.1，任务常量是已有的 TaskTypeId.RUNNINGHUB_AI_APP_IMAGE。
 对接 RunningHub ai-app 工作流（默认 app id 2113539132868874242），
 同一工作流同时支持两种模式：
 - 图片编辑：nodeId 17-22 传入 1-6 张图（不足补 "None"，工作流节点 16
-  easy makeImageList 的 skip_empty=true 会自动忽略 None），并开启
-  「原图无偏移」（nodeId 25）与「使用图片尺寸」（nodeId 29）跟随图 1。
+  easy makeImageList 的 skip_empty=true 会自动忽略 None），开启
+  「原图无偏移」（nodeId 25）。关闭「使用图片尺寸」（nodeId 29），
+  按用户所选比例和分辨率走节点 28，避免编辑结果被锁在原图像素上。
 - 文生图：图片槽全填 "None"，关闭节点 25/29（文档要求文生图必须关闭，
   否则画面偏移或报错），通过节点 28 显式指定 aspect_ratio + megapixels。
 """
@@ -22,7 +24,7 @@ from .exceptions import ImageExpiredError
 
 
 class RunninghubAiAppImageV1Driver(BaseVideoDriver):
-    """RunningHub AI App 图片驱动（图片编辑 + 文生图）"""
+    """qwenimage2.1 图片驱动（图片编辑 + 文生图）"""
 
     # 工作流固定 app id；可通过动态配置 runninghub.ai_app_image_webapp_id 覆盖
     DEFAULT_WEBAPP_ID = "2113539132868874242"
@@ -143,8 +145,8 @@ class RunninghubAiAppImageV1Driver(BaseVideoDriver):
             ai_tool: AITool 对象
                 - prompt: 提示词（编辑模式为修改指令，文生图为完整画面描述）
                 - image_path: 参考图 URL（逗号分隔，可为空 = 文生图模式）
-                - ratio: 图片比例（文生图模式生效，编辑模式跟随图 1 尺寸）
-                - image_size: 分辨率档位 1K/2K/4K（文生图模式生效）
+                - ratio: 图片比例（编辑与文生图都写入节点 28）
+                - image_size: 分辨率档位 1K/2K/4K（编辑与文生图都写入节点 28）
 
         Returns:
             Dict[str, Any]: 请求参数字典
@@ -206,34 +208,26 @@ class RunninghubAiAppImageV1Driver(BaseVideoDriver):
             "description": "原图无偏移（文生图需关闭）"
         })
 
-        if has_image:
-            # 使用图片尺寸：编辑模式跟随图 1 尺寸，忽略节点 28
-            node_info_list.append({
-                "nodeId": "29",
-                "fieldName": "value",
-                "fieldValue": "true",
-                "description": "使用图片尺寸"
-            })
-        else:
-            # 使用图片尺寸关闭，显式指定比例 + 百万像素
-            node_info_list.append({
-                "nodeId": "29",
-                "fieldName": "value",
-                "fieldValue": "false",
-                "description": "使用图片尺寸（文生图需关闭）"
-            })
-            node_info_list.append({
-                "nodeId": "28",
-                "fieldName": "aspect_ratio",
-                "fieldValue": self._map_aspect_ratio(getattr(ai_tool, 'ratio', None)),
-                "description": "图片比例"
-            })
-            node_info_list.append({
-                "nodeId": "28",
-                "fieldName": "megapixels",
-                "fieldValue": self._map_megapixels(getattr(ai_tool, 'image_size', None)),
-                "description": "自定义尺寸 多少 100万像素"
-            })
+        # 使用图片尺寸始终关闭。打开后工作流跟随图 1 像素，会忽略用户选的 1K/2K/4K。
+        # 编辑和文生图都把所选比例、百万像素写到节点 28。
+        node_info_list.append({
+            "nodeId": "29",
+            "fieldName": "value",
+            "fieldValue": "false",
+            "description": "使用图片尺寸（关闭后按所选分辨率）"
+        })
+        node_info_list.append({
+            "nodeId": "28",
+            "fieldName": "aspect_ratio",
+            "fieldValue": self._map_aspect_ratio(getattr(ai_tool, 'ratio', None)),
+            "description": "图片比例"
+        })
+        node_info_list.append({
+            "nodeId": "28",
+            "fieldName": "megapixels",
+            "fieldValue": self._map_megapixels(getattr(ai_tool, 'image_size', None)),
+            "description": "自定义尺寸 多少 100万像素"
+        })
 
         return {
             "url": f"{self._host}/openapi/v2/run/ai-app/{self._webapp_id}",

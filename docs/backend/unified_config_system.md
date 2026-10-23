@@ -118,7 +118,8 @@ const data = await response.json();
 
 | ID | key | 名称 | 说明 |
 |----|-----|------|------|
-| 38 | `qwen-image-edit` | Qwen Image Edit | 空壳任务，无实现方；无比例/分辨率选项（跟随原图缩到约 1MP） |
+| 38 | `qwen-image-edit` | Qwen Image Edit | 空壳任务，`hidden=True`，不下拉展示；无实现方；无比例/分辨率选项（跟随原图缩到约 1MP） |
+| 52 | `runninghub-ai-app-image` | qwenimage2.1 | 用户可见名 qwenimage2.1；实现为 RunningHub AI App 图片工作流，图片编辑 + 文生图 |
 
 完整列表见 `config/unified_config.py` 的 `ALL_TASK_CONFIGS`。
 

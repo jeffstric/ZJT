@@ -23,6 +23,7 @@ def test_image_binding_model_names_are_pure_and_consistent():
         TaskTypeId.SEEDREAM_4_5_IMAGE: "Seedream 4.5",
         TaskTypeId.SEEDREAM_5_0_PRO: "Seedream 5.0 Pro",
         TaskTypeId.GPT_IMAGE_2_EDIT: "GPT Image 2",
+        TaskTypeId.RUNNINGHUB_AI_APP_IMAGE: "qwenimage2.1",
     }
 
     actual = {
@@ -40,6 +41,13 @@ def test_legacy_and_canonical_model_names_both_resolve():
     assert gpt_image.matches_identifier("GPT Image 2 图片编辑")
     assert nano_pro.matches_identifier("nano-banana Pro")
     assert nano_pro.matches_identifier("nano-banana-Pro")
+
+    qwen_image = UnifiedConfigRegistry.get_by_id(TaskTypeId.RUNNINGHUB_AI_APP_IMAGE)
+    assert qwen_image.name == "qwenimage2.1"
+    assert qwen_image.get_model_name() == "qwenimage2.1"
+    assert qwen_image.matches_identifier("qwenimage2.1")
+    assert qwen_image.matches_identifier("RunningHub AI App 图片")
+    assert qwen_image.matches_identifier("RunningHub AI App")
 
 
 def test_frontend_payload_exposes_model_name_and_variant_separately():

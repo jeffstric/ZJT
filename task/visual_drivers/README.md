@@ -399,7 +399,7 @@ assert driver.driver_type == 14
 |------|---------|---------|--------|------|
 | 10 | ltx2_image_to_video | ltx2_runninghub_v1 | Ltx2RunninghubV1Driver | 图生视频 |
 | 11 | wan22_image_to_video | wan22_runninghub_v1 | Wan22RunninghubV1Driver | 图生视频 |
-| 52 | runninghub_ai_app_image | runninghub_ai_app_image_v1 | RunninghubAiAppImageV1Driver | AI App 图片（图片编辑+文生图） |
+| 52 | runninghub_ai_app_image | runninghub_ai_app_image_v1 | RunninghubAiAppImageV1Driver | qwenimage2.1（图片编辑+文生图） |
 | 13 | digital_human | digital_human_runninghub_v1 | DigitalHumanRunninghubV1Driver | 数字人生成 |
 
 ### 慧梦网关（huimengi）

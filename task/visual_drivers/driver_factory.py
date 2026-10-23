@@ -904,7 +904,7 @@ def register_all_drivers():
 
     try:
         from .runninghub_ai_app_image_v1_driver import RunninghubAiAppImageV1Driver
-        # 注册 RunningHub AI App 图片 v1 版本（图片编辑 + 文生图）
+        # 注册 qwenimage2.1（RunningHub AI App 图片 v1，图片编辑 + 文生图）
         VideoDriverFactory.register_driver(DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1, RunninghubAiAppImageV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import RunninghubAiAppImageV1Driver: {e}")

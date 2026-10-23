@@ -107,9 +107,10 @@ class TestBuildCreateRequestImageEdit(unittest.TestCase):
             loop.close()
 
     def test_edit_mode_single_image(self):
-        """单图编辑：图1 传上传结果，其余槽位填 None，开启 25/29 且不传 28"""
+        """单图编辑：图1 传上传结果，其余槽位填 None，开启 25，按所选分辨率写 28"""
         tool = _make_ai_tool(prompt='图片1 的人物穿上图片2的服饰',
-                             image_path='http://example.com/a.png')
+                             image_path='http://example.com/a.png',
+                             ratio='16:9', image_size='4K')
         _mock_upload(self.driver, key='pasted/aaa.png')
 
         result = self._run_async(self.driver.build_create_request(tool))
@@ -126,11 +127,13 @@ class TestBuildCreateRequestImageEdit(unittest.TestCase):
         self.assertEqual(_find_node(node_list, '23', 'value')['fieldValue'], tool.prompt)
         self.assertEqual(_find_node(node_list, '24', 'value')['fieldValue'], 'false')
 
-        # 编辑模式：原图无偏移 + 使用图片尺寸开启，不传 28（跟随图1尺寸）
+        # 编辑模式：原图无偏移开启；使用图片尺寸关闭，节点 28 带上所选比例和百万像素
         self.assertEqual(_find_node(node_list, '25', 'value')['fieldValue'], 'true')
-        self.assertEqual(_find_node(node_list, '29', 'value')['fieldValue'], 'true')
-        self.assertIsNone(_find_node(node_list, '28', 'aspect_ratio'))
-        self.assertIsNone(_find_node(node_list, '28', 'megapixels'))
+        self.assertEqual(_find_node(node_list, '29', 'value')['fieldValue'], 'false')
+        self.assertEqual(
+            _find_node(node_list, '28', 'aspect_ratio')['fieldValue'],
+            '16:9 (Widescreen)')
+        self.assertEqual(_find_node(node_list, '28', 'megapixels')['fieldValue'], '4')
 
     def test_edit_mode_multi_image(self):
         """多图编辑：按槽位顺序填充"""

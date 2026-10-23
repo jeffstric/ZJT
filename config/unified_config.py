@@ -1361,7 +1361,7 @@ class DriverImplementation:
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
 
-    # RunningHub AI App 图片（图片编辑 + 文生图）
+    # qwenimage2.1（RunningHub AI App 实现，图片编辑 + 文生图）
     RUNNINGHUB_AI_APP_IMAGE_V1 = 'runninghub_ai_app_image_v1'
 
     # Grok
@@ -1522,6 +1522,10 @@ class DriverImplementationId:
     # MiniMax H3 首帧参考混合生视频（参考模式点名 @首帧图/@尾帧图 时提交，不进下拉）
     MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 100
 
+    # qwenimage2.1（RunningHub AI App 图片）。未登记时落库 implementation=0，
+    # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
+    RUNNINGHUB_AI_APP_IMAGE_V1 = 101
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1550,6 +1554,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'seedance_2_0_mini_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
+    'runninghub_ai_app_image_v1': DriverImplementationId.RUNNINGHUB_AI_APP_IMAGE_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
     'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
     'gpt_image_common_site0_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE0_V1,
@@ -1721,7 +1726,7 @@ class DriverKey:
     # Qwen Image Edit
     QWEN_IMAGE_EDIT = 'qwen_image_edit'
 
-    # RunningHub AI App 图片（同一工作流支持图片编辑与文生图）
+    # qwenimage2.1（同一工作流支持图片编辑与文生图）
     RUNNINGHUB_AI_APP_IMAGE = 'runninghub_ai_app_image'
 
     # 文生图
@@ -1881,7 +1886,7 @@ class TaskTypeId:
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
-        'RUNNINGHUB_AI_APP_IMAGE': 'RunningHub AI App 图片',
+        'RUNNINGHUB_AI_APP_IMAGE': 'qwenimage2.1',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
@@ -2208,14 +2213,16 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         hidden=True,  # 隐藏，前端不显示
     ),
     UnifiedTaskConfig(
-        # RunningHub AI App（ai-app 2113539132868874242）：同一工作流同时支持
-        # 图片编辑（nodeId 17-22 传 1-6 张图）与文生图（图片全填 None）。
-        # 编辑模式自动开启「原图无偏移/使用图片尺寸」，文生图模式改为显式比例+像素。
+        # qwenimage2.1。实现走已有 RunningHub AI App（ai-app 2113539132868874242），
+        # 不新增任务常量。同一工作流同时支持图片编辑（nodeId 17-22 传 1-6 张图）
+        # 与文生图（图片全填 None）。两种模式都按所选比例和分辨率写节点 28；
+        # 编辑模式额外开启「原图无偏移」，「使用图片尺寸」保持关闭。
         id=TaskTypeId.RUNNINGHUB_AI_APP_IMAGE,
         key='runninghub-ai-app-image',
         short_key='runninghub-ai-app',
-        name='RunningHub AI App 图片',
-        model_name='RunningHub AI App',
+        name='qwenimage2.1',
+        model_name='qwenimage2.1',
+        legacy_names=['RunningHub AI App 图片', 'RunningHub AI App'],
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.RUNNINGHUB,
@@ -2251,6 +2258,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=16,
         supports_grid_image=False,
         max_multi_ref_images=3,  # 对齐官方 I2I 1–3 张参考图
+        # 下拉框只保留可用的 qwenimage2.1（任务 52）。本空壳仍可用 task_id=38 显式调用。
+        hidden=True,
     ),
 
     # ==================== 文生图/图片编辑 ====================
@@ -3932,6 +3941,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub Qwen 多角度图片编辑接口',
         sort_order=7500.0,
+        required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
+        name=DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,
+        display_name='RunningHub',
+        driver_class='RunninghubAiAppImageV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='qwenimage2.1 图片接口（图片编辑 + 文生图）',
+        sort_order=7510.0,
         required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
