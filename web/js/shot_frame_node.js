@@ -393,6 +393,9 @@
         modelEl.innerHTML = '';
         let firstImageModelValue = 'gpt-image-2';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          if (node.data.model && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           const gptImage2 = options.find(o => o.value === 'gpt-image-2');
           if(gptImage2) {

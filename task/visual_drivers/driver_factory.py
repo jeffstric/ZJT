@@ -902,6 +902,13 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import QwenMultiAngleRunninghubV1Driver: {e}")
 
+    try:
+        from .runninghub_ai_app_image_v1_driver import RunninghubAiAppImageV1Driver
+        # 注册 qwenimage2.1（RunningHub AI App 图片 v1，图片编辑 + 文生图）
+        VideoDriverFactory.register_driver(DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1, RunninghubAiAppImageV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import RunninghubAiAppImageV1Driver: {e}")
+
     # Grok 通用聚合站点驱动注册（无条件注册，配置检查在运行时进行）
     try:
         from .grok_common_v1_driver import (

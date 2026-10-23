@@ -276,6 +276,9 @@
       if(shotGroupModelEl){
         let firstModelValue = 'gpt-image-2';
         if(window.TaskConfig && window.TaskConfig.isLoaded()){
+          if (node.data.model && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           const modelOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
           const gptImage2 = modelOptions.find(o => o.value === 'gpt-image-2');
           if(gptImage2) {
