@@ -1,6 +1,6 @@
 # MR 大模型代码审查
 
-Merge Request Pipeline 会跑 `ai_code_review`：用本地 git 取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。
+Merge Request Pipeline 会跑 `ai_code_review`：用本地 git 取本次 MR 的 diff，调用内网 vLLM，把审查意见写到 MR 评论。审查失败或超时不会把流水线打红（`allow_failure: true`）。审查成功但评论发不出去时（例如未配置 `AI_REVIEW_GITLAB_TOKEN`，`CI_JOB_TOKEN` 被拒）脚本只告警并正常退出，审查正文保留在 job 日志里，job 不失败。
 
 ## 模型路由
 
@@ -36,7 +36,7 @@ diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 M
 1. CI/CD Variable `AI_REVIEW_GITLAB_TOKEN`（`PRIVATE-TOKEN`）
 2. 流水线自带的 `CI_JOB_TOKEN`（先 `JOB-TOKEN`，401/403/404 时再试 `PRIVATE-TOKEN`）
 
-`CI_JOB_TOKEN` 不能创建 MR note，接口同样返回 `404 Project Not Found`。要在 MR 里看到评论，在项目 **Settings → CI/CD → Variables** 增加：
+`CI_JOB_TOKEN` 不能创建 MR note，接口同样返回 `404 Project Not Found`。此时脚本不会失败：审查正文已打印在 job 日志里，stderr 会给出配置提示。但日志里的评论无法去重（拉取已有评论也被拒），每次重跑流水线都会重新调用一次模型。要在 MR 里看到评论并启用「同一 commit 跳过重审」，在项目 **Settings → CI/CD → Variables** 增加：
 
 | 变量 | 值 |
 |------|----|

@@ -420,8 +420,10 @@ frontend_tests:
 # MR 大模型代码审查
 # 经 jeffS7:4000 会话路由器调用 qwen3.8:27b（分流 jeffS7:8000 / jeffS10:8000），
 # 把审查意见写到 MR 评论。needs: [] 让它和 lint 同时开跑，不占用 test/e2e 的阶段门闩。
-# allow_failure：模型超时、路由不可达、评论接口 403 都不把流水线打红。
-# 发表评论需要 CI_JOB_TOKEN 具备 notes 权限，或在 CI/CD Variables 配置
+# allow_failure：模型超时、路由不可达都不把流水线打红。
+# 审查成功但评论发不出去（未配置 AI_REVIEW_GITLAB_TOKEN 时 CI_JOB_TOKEN 会被拒），
+# 脚本只告警并退出 0，审查正文保留在 job 日志里，job 不失败。
+# 要在 MR 页面看到评论，在 CI/CD Variables 配置
 # AI_REVIEW_GITLAB_TOKEN（项目 Access Token，api 范围）。详见 docs/ci/ai_code_review.md。
 # =============================================================================
 ai_code_review:

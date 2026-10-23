@@ -233,6 +233,52 @@ def test_run_empty_diff_does_not_call_model():
     assert "没有需要审查的文本 diff" in posted[0]
 
 
+def test_run_comment_failure_degrades_instead_of_failing_job():
+    """审查成功但评论 401 时，应返回 post_failed 而不是抛 ReviewError（否则 CI job 打红）。"""
+    posted_status = []
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and "/diffs?" in url:
+            return FakeResponse(
+                200,
+                json.dumps([{"new_path": "api/foo.py", "diff": "@@ -1 +1 @@\n-old\n+new\n"}]),
+            )
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            return FakeResponse(
+                200,
+                json.dumps(
+                    {"choices": [{"message": {"content": "## 结论\n未发现必须修改的问题。"}}], "usage": {}},
+                    ensure_ascii=False,
+                ),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            posted_status.append(401)
+            return FakeResponse(401, '{"message":"401 Unauthorized"}')
+        raise AssertionError(f"unexpected {method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "7",
+        "CI_MERGE_REQUEST_IID": "15",
+        "CI_COMMIT_SHA": "abc123def456",
+        "CI_JOB_TOKEN": "job-token",
+        "CI_MERGE_REQUEST_TITLE": "修复空指针",
+        "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "fix",
+        "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _seconds: None) == "post_failed"
+    # JOB-TOKEN 401 后会用同一令牌换 PRIVATE-TOKEN 再试一次，仍 401 才降级
+    assert posted_status == [401, 401]
+
+
 def test_job_token_header_falls_back_after_401():
     seen = []
 

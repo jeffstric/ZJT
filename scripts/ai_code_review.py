@@ -7,7 +7,9 @@
    按权重分流到 jeffS7:8000 与 jeffS10:8000）
 3. 把审查意见发到该 MR 的评论
 
-只依赖 Python 标准库。失败时非 0 退出；CI job 配置 allow_failure，不把流水线打红。
+只依赖 Python 标准库。审查本身失败时非 0 退出（CI job 配置 allow_failure，不把流水线打红）；
+审查成功但评论发不出去（如未配置 AI_REVIEW_GITLAB_TOKEN）只告警并正常退出，
+审查正文保留在 job 日志里，不让 job 失败。
 """
 from __future__ import annotations
 
@@ -864,6 +866,27 @@ def post_note(
         )
 
 
+def post_note_best_effort(
+    api_base: str,
+    project_id: str,
+    iid: str,
+    token: str,
+    token_kind: str,
+    body: str,
+    *,
+    timeout: float = DEFAULT_GITLAB_TIMEOUT,
+    opener: Opener | None = None,
+) -> str:
+    """尽力发表评论。失败只告警不抛错：审查正文已打印在 job 日志，评论发不出不应打红 job。"""
+    try:
+        post_note(api_base, project_id, iid, token, token_kind, body, timeout=timeout, opener=opener)
+    except ReviewError as exc:
+        print(f"ai_code_review: {exc}", file=sys.stderr)
+        print("审查已完成，正文见上方 job 日志；本次评论未发表。", file=sys.stderr)
+        return "post_failed"
+    return "posted"
+
+
 def run(
     env: Mapping[str, str] | None = None,
     *,
@@ -922,9 +945,10 @@ def run(
             omitted_count=len(omitted),
             usage={},
         )
-        post_note(api_base, project_id, iid, token, token_kind, note, timeout=gitlab_timeout, opener=opener)
-        print("已发表「无文本 diff」评论")
-        return "empty"
+        if post_note_best_effort(api_base, project_id, iid, token, token_kind, note, timeout=gitlab_timeout, opener=opener) == "posted":
+            print("已发表「无文本 diff」评论")
+            return "empty"
+        return "post_failed"
 
     probe_timeout = env_int(env, "AI_REVIEW_PROBE_TIMEOUT", DEFAULT_VLLM_PROBE_TIMEOUT)
     try:
@@ -969,9 +993,10 @@ def run(
         usage=usage,
     )
     print(note)
-    post_note(api_base, project_id, iid, token, token_kind, note, timeout=gitlab_timeout, opener=opener)
-    print("已发表 MR 审查评论")
-    return "posted"
+    if post_note_best_effort(api_base, project_id, iid, token, token_kind, note, timeout=gitlab_timeout, opener=opener) == "posted":
+        print("已发表 MR 审查评论")
+        return "posted"
+    return "post_failed"
 
 
 def main() -> None:
