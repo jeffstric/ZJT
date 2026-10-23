@@ -169,6 +169,46 @@ URL 参数，切号后旧标签页仍带旧 `user_id`，天然"串号"。
   本地 token 有效、上游 perseids 失效的路径（见 auth_token_401_semantics.md），中间件放行。
 - 遗留清单中 `api/marketing_publications.py` 的 X-User-Id 裸信任由中间件全局覆盖。
 
+## 六、认证 cookie 滑动续期补齐（2026-10-21）
+
+### 问题
+
+`auth_cookie_translation_middleware` 的响应阶段此前只给"无 Authorization 头、靠
+cookie 翻译鉴权"的请求续期 cookie（`translated` 路径）。而页面日常心跳 / SSE 全部
+自带 Bearer——DB token 由 `UserTokensModel.get_user_id_by_token` 统一滑动续期
+（剩余 <2 天顺延 7 天），活跃页面几乎永不过期；cookie 却没有任何请求续期，固定
+max_age（7 天）后必然消失。于是出现"DB token 仍活但 cookie 先死"的假过期窗口：
+无显式凭证的轮询（`GET /api/get-status/{ids}`，凭证设计走 cookie 翻译）401 →
+401 自愈（`web/js/auth_self_heal.js`）清掉 localStorage 里**仍有效**的 token →
+裸探测无 cookie 失败 → 用户被踢到登录页。触发条件：距上次生成类请求超过 7 天的
+活跃用户。同类根因此前已在宫格生图（本文 90 行）、画布音频（116 行）以不同
+症状出现过。
+
+### 修复
+
+- 新增 `utils/resource_access.py::decide_auth_cookie_renewal(path, bearer_token,
+  cookie_token)`（纯函数，独立可单测）：响应阶段统一判定是否续期——
+  - 非 `/api/` 路径、无 cookie → 不续；
+  - `/api/auth/` 前缀（登录/登出/注册端点自管理 cookie）→ 不续，防止用旧值
+    覆盖登录响应的新 cookie；
+  - 无 Authorization 头（cookie 翻译路径）→ 续（既有行为不变）；
+  - 自带 Bearer 且与 cookie token **相同**（正常单会话页面，localStorage token
+    即 cookie token）→ 续，cookie 寿命跟随 DB token 的活跃期；
+  - Bearer 与 cookie token **不同**（多标签页/顶号后各持不同 token，见本文
+    116 行）→ 不续，绝不用旧 token 覆盖浏览器里较新的 cookie。
+- `server.py` 的 `auth_cookie_translation_middleware` 改为调用该判定；
+  翻译注入逻辑不变。
+- 语义边界：续期只延长浏览器存储有效期，信任与否永远以服务端查库为准
+  （顶号删 token、禁用用户、登出删 cookie 的行为均不受影响；登出后无 cookie
+  可比，cookie 不会被复活）。
+
+### 相关测试
+
+- `tests/api/test_auth_cookie_renewal.py`（新增，7 例）：续期判定全矩阵
+  （非 /api、无 cookie、/api/auth/ 排除、翻译路径、Bearer 同源、Bearer 异源）。
+- 既有 `web/tests/marketing_agent_poll_auth.test.js`（轮询凭证 + 401 自愈前端
+  回归）不受影响。
+
 ## 相关测试（本次新增/更新）
 
 - `tests/api/test_x_user_id_consistency.py`（新增，14 例）：助手与中间件全矩阵
