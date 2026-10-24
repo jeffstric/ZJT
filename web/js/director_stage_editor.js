@@ -306,10 +306,9 @@
       color: new THREE.Color(colorHex).multiplyScalar(0.8), roughness: 0.55, metalness: 0.0
     });
     var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
-    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1d26 });
 
     var rig = {
-      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat, eyeMat],
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
       hipH: t.hipH, labelY: t.labelY, bodyType: normalizeBodyType(bodyTypeKey)
     };
 
@@ -490,17 +489,7 @@
       chin.position.set(0, headCY - t.headR * 0.55, t.headR * 0.18);
       head.add(chin);
     }
-    // 鼻梁微凸
-    var nose = ellip(t.headR * 0.10, t.headR * 0.15, t.headR * 0.11);
-    nose.position.set(0, headCY - t.headR * 0.08, t.headR * 0.90);
-    head.add(nose);
-    var eyeRad = t.headR * 0.11;
-    var eyeL = new THREE.Mesh(new THREE.SphereGeometry(eyeRad, 10, 8), eyeMat);
-    eyeL.position.set(t.headR * 0.32, headCY + t.headR * 0.10, t.headR * 0.88);
-    head.add(eyeL);
-    var eyeRight = eyeL.clone();
-    eyeRight.position.x = -t.headR * 0.32;
-    head.add(eyeRight);
+    // 无脸蛋形头（LibTV 风格）：仅保留下颌融合塑形，不画眼鼻
 
     function buildArm(side) {
       var s = side === 'L' ? 1 : -1;

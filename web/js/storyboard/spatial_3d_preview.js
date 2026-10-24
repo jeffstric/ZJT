@@ -168,6 +168,99 @@ function makeLabel(THREE, text, { color = '#1f2937', bg = 'rgba(255,255,255,0.92
 
 // ============ 代码重放沙箱（three_scene_code 方案核心） ============
 
+/**
+ * LibTV 风格人偶（与导演台人偶同风格）：胶囊四肢 + 球形关节接缝 +
+ * 蛋形无脸头 + 面甲深色带指示朝向。root 在脚底，身高约 1.55m。
+ * 纯静态站姿（预览不做姿态编辑），几何体每偶独立，随预览 dispose。
+ */
+function buildMannequin(THREE, color, name, facing) {
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.0 });
+    const seamMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(color).multiplyScalar(0.78), roughness: 0.55, metalness: 0.0,
+    });
+    const group = new THREE.Group();
+    const body = new THREE.Group();
+    group.add(body);
+    const sphere = new THREE.SphereGeometry(1, 20, 16);
+
+    const ellip = (rx, ry, rz, m2) => {
+        const mesh = new THREE.Mesh(sphere, m2 || mat);
+        mesh.scale.set(rx, ry, rz);
+        body.add(mesh);
+        return mesh;
+    };
+    const seg = (rTop, rBottom, h, y) => {
+        const mesh = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBottom, h, 14), mat);
+        mesh.position.y = y;
+        body.add(mesh);
+        return mesh;
+    };
+    const ballAt = (r, x, y, z) => {
+        const mesh = new THREE.Mesh(sphere, seamMat);
+        mesh.scale.set(r, r, r);
+        mesh.position.set(x, y, z);
+        body.add(mesh);
+        return mesh;
+    };
+
+    // 腿：脚 → 小腿 → 膝 → 大腿 → 髋关节
+    for (const s of [1, -1]) {
+        const foot = ellip(0.052, 0.026, 0.095);
+        foot.position.set(s * 0.082, 0.026, 0.02);
+        seg(0.040, 0.046, 0.36, 0.24);
+        ballAt(0.048, s * 0.082, 0.43, 0);
+        seg(0.058, 0.048, 0.36, 0.61);
+        ballAt(0.054, s * 0.082, 0.80, 0);
+    }
+    // 躯干：骨盆 → 腹 → 胸 → 肩线
+    ellip(0.135, 0.10, 0.095).position.y = 0.885;
+    ellip(0.125, 0.075, 0.09).position.y = 0.985;
+    ellip(0.15, 0.125, 0.10).position.y = 1.095;
+    ellip(0.165, 0.05, 0.055).position.y = 1.20;
+    // 臂：肩关节 → 上臂 → 肘 → 前臂 → 手（略微外张的垂臂）
+    for (const s of [1, -1]) {
+        ballAt(0.05, s * 0.165, 1.195, 0);
+        const arm = new THREE.Group();
+        arm.position.set(s * 0.165, 1.19, 0);
+        arm.rotation.z = s * 0.09;
+        const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.24, 12), mat);
+        upper.position.y = -0.12;
+        const elbow = new THREE.Mesh(sphere, seamMat);
+        elbow.scale.set(0.040, 0.040, 0.040);
+        elbow.position.y = -0.245;
+        const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.030, 0.22, 12), mat);
+        lower.position.y = -0.355;
+        const hand = new THREE.Mesh(sphere, mat);
+        hand.scale.set(0.032, 0.048, 0.022);
+        hand.position.y = -0.50;
+        arm.add(upper, elbow, lower, hand);
+        body.add(arm);
+    }
+    // 颈 + 蛋形头（下颌融合）+ 面甲深色带（朝向指示，正面 = +Z）
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.034, 0.07, 12), mat);
+    neck.position.y = 1.26;
+    body.add(neck);
+    const head = new THREE.Mesh(sphere, mat);
+    head.scale.set(0.087, 0.103, 0.092);
+    head.position.y = 1.395;
+    body.add(head);
+    const jaw = new THREE.Mesh(sphere, mat);
+    jaw.scale.set(0.062, 0.048, 0.06);
+    jaw.position.set(0, 1.345, 0.016);
+    body.add(jaw);
+    const visor = new THREE.Mesh(sphere, seamMat);
+    visor.scale.set(0.058, 0.026, 0.016);
+    visor.position.set(0, 1.408, 0.078);
+    body.add(visor);
+
+    const label = makeLabel(THREE, name);
+    label.position.y = 1.62;
+    group.add(label);
+    group.rotation.y = (Number(facing) || 0) * Math.PI / 180;
+    return group;
+}
+
+
 /** 故事板画幅宽高比（跟随 workflowRatio，9:16 竖屏故事板不能按 16:9 取景）。 */
 function previewAspect() {
     return aspectFromRatio(state.workflowRatio, 16 / 9);
@@ -247,28 +340,8 @@ function createReplayContext(THREE, aspect) {
             const color = Number(options.color != null
                 ? options.color
                 : ACTOR_PALETTE[ctx.actorColorIndex++ % ACTOR_PALETTE.length]);
-            const group = new THREE.Group();
-            const body = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.16, 0.2, 0.9, 16),
-                new THREE.MeshLambertMaterial({ color }),
-            );
-            body.position.y = 0.53;
-            const head = new THREE.Mesh(
-                new THREE.SphereGeometry(0.15, 18, 14),
-                new THREE.MeshLambertMaterial({ color }),
-            );
-            head.position.y = 1.14;
-            const nose = new THREE.Mesh(
-                new THREE.ConeGeometry(0.05, 0.16, 8),
-                new THREE.MeshBasicMaterial({ color: 0xf76f5e }),
-            );
-            nose.rotation.x = Math.PI / 2;
-            nose.position.set(0, 1.14, 0.16);
-            const label = makeLabel(THREE, String(name));
-            label.position.y = 1.56;
-            group.add(body, head, nose, label);
+            const group = buildMannequin(THREE, color, String(name), Number(options.facing) || 0);
             group.position.set(x, 0, z);
-            if (options.facing != null) group.rotation.y = Number(options.facing) * Math.PI / 180;
             ctx.root.add(group);
             ctx.actors[name] = group;
             return group;
