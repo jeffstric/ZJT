@@ -166,11 +166,19 @@ export function applyCameraPreset(preset, focal, radius = 4.5) {
 export function cameraSeesActors(camera, actors, aspect = 16 / 9) {
     const list = Array.isArray(actors) ? actors : [];
     const total = list.length;
-    if (!camera || !Array.isArray(camera.eye) || !Array.isArray(camera.target)) {
+    if (!camera || !camera.eye || !camera.target) {
         return { visible: 0, total };
     }
-    const [ex, ey, ez] = camera.eye.map(Number);
-    const [tx, ty, tz] = camera.target.map(Number);
+    // eye/target 兼容两种格式：数组 [x,y,z]（重放 cameraInfo / 导演台记录器）
+    // 或对象 {x,y,z}（normalizeCamera 后的机位，3D 预览诊断传参）
+    const toArr = (p) => Array.isArray(p)
+        ? p.map(Number)
+        : [Number(p.x), Number(p.y), Number(p.z)];
+    const [ex, ey, ez] = toArr(camera.eye);
+    const [tx, ty, tz] = toArr(camera.target);
+    if (![ex, ey, ez, tx, ty, tz].every(Number.isFinite)) {
+        return { visible: 0, total };
+    }
     // three.js lookAt 基：相机 -Z 朝 target，即 +Z 指向后方 = normalize(eye - target)
     let zx = ex - tx, zy = ey - ty, zz = ez - tz;
     const zl = Math.hypot(zx, zy, zz);

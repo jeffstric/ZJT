@@ -184,3 +184,23 @@ describe('cameraSeesActors 空镜检查', () => {
     expect(cameraSeesActors(camera, [{ x: NaN, z: 1 }]).visible).toBe(0);
   });
 });
+
+describe('cameraSeesActors 双格式入参（对象/数组 eye/target）', () => {
+  it('对象格式 {x,y,z}（3D 预览 normalizeCamera 传参）与数组等价', () => {
+    const asObject = cameraSeesActors(
+      { eye: { x: 2.4, y: 1.7, z: 5.4 }, target: { x: 1.2, y: 1.3, z: 3.4 }, fov: 48 },
+      [{ x: 1.2, z: 3.4 }],
+    );
+    const asArray = cameraSeesActors(
+      { eye: [2.4, 1.7, 5.4], target: [1.2, 1.3, 3.4], fov: 48 },
+      [{ x: 1.2, z: 3.4 }],
+    );
+    expect(asObject).toEqual(asArray);
+    expect(asObject.visible).toBe(1); // 角色在注视点上，必须可见
+  });
+
+  it('对象格式 + 非法字段安全返回', () => {
+    expect(cameraSeesActors({ eye: {}, target: {}, fov: 50 }, [{ x: 0, z: 0 }]).visible).toBe(0);
+    expect(cameraSeesActors({ eye: { x: NaN, y: 1, z: 1 }, target: { x: 0, y: 1, z: 0 } }, [{ x: 0, z: 0 }]).visible).toBe(0);
+  });
+});

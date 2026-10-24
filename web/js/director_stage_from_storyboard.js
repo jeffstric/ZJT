@@ -172,8 +172,14 @@
     var list = Array.isArray(actors) ? actors : [];
     var total = list.length;
     if (!camera || !camera.eye || !camera.target) return { visible: 0, total: total };
-    var ex = Number(camera.eye[0]), ey = Number(camera.eye[1]), ez = Number(camera.eye[2]);
-    var tx = Number(camera.target[0]), ty = Number(camera.target[1]), tz = Number(camera.target[2]);
+    // eye/target 兼容数组与 {x,y,z} 对象两种格式（与 spatial_camera_edit.js 同步）
+    var toArr = function (p) {
+      return Array.isArray(p) ? p.map(Number) : [Number(p.x), Number(p.y), Number(p.z)];
+    };
+    var e = toArr(camera.eye), t = toArr(camera.target);
+    var ex = e[0], ey = e[1], ez = e[2];
+    var tx = t[0], ty = t[1], tz = t[2];
+    if (![ex, ey, ez, tx, ty, tz].every(isFinite)) return { visible: 0, total: total };
     // three.js lookAt 基：相机 -Z 朝 target，+Z 指向后方 = normalize(eye - target)
     var zx = ex - tx, zy = ey - ty, zz = ez - tz;
     var zl = Math.hypot(zx, zy, zz);

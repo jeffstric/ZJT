@@ -319,3 +319,33 @@ def test_scene_to_shot_carries_three_scene_code():
     shot3, _, _ = _scene_to_shot(scene3, 3, {})
     assert 'three_scene_code' not in shot3
     assert 'three_scene_seq_start' not in shot3
+
+
+def test_reverse_conversion_preserves_three_scene_code():
+    """W→S 反向：分镜帧 shotJson 的 3D 字段经 parsed_data + 共享 builder 保留（往返稳定）。"""
+    from api.storyboard_conversion import _build_parsed_data_from_frames
+    from api.storyboard import build_storyboard_scenes_from_parsed_script
+
+    code = (
+        "startScene('大厦大堂');\n"
+        "makeActor('李卫国', 0.3, -0.3, {facing: 180});\n"
+        "setCamera(-0.6, 1.5, 1.8, 0.2, 0.8, -0.2, 50);"
+    )
+    frame = {
+        'id': 2, 'type': 'shot_frame', 'title': '分镜1', 'x': 0, 'y': 0,
+        'data': {
+            'shotJson': {'shot_id': 's1', 'shot_number': 1, 'three_scene_code': code,
+                         'three_scene_seq_start': True, 'dialogue': [],
+                         'characters_present': [], 'db_character_info': []},
+            'imageUrl': '', 'previewImageUrl': '', 'lastFrameUrl': '',
+        },
+    }
+    parsed, _ = _build_parsed_data_from_frames(
+        [{'group_id': 'g1', 'group_name': '幕1', 'frames': [frame]}], {}, '', {})
+    # 深拷贝透传：parsed shot 原样保留
+    assert parsed['shot_groups'][0]['shots'][0]['three_scene_code'] == code
+
+    # 共享落库 builder：写回 prompt_json.three_scene_code（反向转换的核心落点）
+    payloads = build_storyboard_scenes_from_parsed_script(parsed)
+    assert len(payloads) == 1
+    assert payloads[0]['prompt']['three_scene_code'] == code

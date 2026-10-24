@@ -925,8 +925,10 @@ class Spatial3dSession {
                 model_id: modelId,
                 vendor_id: vendorId,
             });
-            if (result && result.success && result.camera) {
-                this._applyShotCamera(result.camera, { commit: true });
+            // 服务端返回扁平结构 {success, eye, target, fov, reason}；兼容嵌套 camera:{} 形态
+            const cam = result && (result.camera || result);
+            if (result && result.success && cam && cam.eye && cam.target) {
+                this._applyShotCamera({ eye: cam.eye, target: cam.target, fov: cam.fov }, { commit: true });
                 this._showChatNote(result.reason ? `✓ ${result.reason}` : '✓ 机位已更新', 'ok');
                 this.el.chatInput.value = '';
             } else {
