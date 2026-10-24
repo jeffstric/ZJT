@@ -457,6 +457,13 @@
       return mesh;
     }
 
+    // 骨盆 v9：短裤腰线接缝（LibTV 标志性的髋部深色环带）
+    var waistBandY = 0.02;
+    var waistPr = profileAt(waistBandY);
+    var waistBand = ellip(waistPr.rx * 1.015, 0.026, waistPr.rz * 1.015, seamMat);
+    waistBand.position.set(0, waistBandY, waistPr.z);
+    hipsY.add(waistBand);
+
     var waistSplit = spineAbs * 0.55;                 // 髋/腰分段高度
     var chestSplit = spineAbs + t.chestJointY * 0.55; // 腰/胸分段高度
     torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0);
@@ -466,6 +473,38 @@
     var shoulderBar = ellip(t.shoulderX * 0.92, t.upperArmR * 1.25, t.upperArmR * 1.1);
     shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
     chest.add(shoulderBar);
+
+    // 胸部造型 v4：男=胸肌板（微凸受光），女=乳房（更低更收）
+    if (t.label === '女人') {
+      var breastL = ellip(0.058, 0.052, 0.048);
+      breastL.position.set(0.070, 0.085, 0.086);
+      chest.add(breastL);
+      var breastR = ellip(0.058, 0.052, 0.048);
+      breastR.position.set(-0.070, 0.085, 0.086);
+      chest.add(breastR);
+    } else {
+      var pecL = ellip(0.058, 0.048, 0.032);
+      pecL.position.set(0.058, 0.115, 0.092);
+      pecL.rotation.z = 0.15;
+      chest.add(pecL);
+      var pecR = ellip(0.058, 0.048, 0.032);
+      pecR.position.set(-0.058, 0.115, 0.092);
+      pecR.rotation.z = -0.15;
+      chest.add(pecR);
+    }
+
+    // 背部造型 v6：肩胛浅凸 + 脊柱沟（背面受光识别）
+    var scapL = ellip(0.075, 0.095, 0.040);
+    scapL.position.set(0.085, 0.115, -0.082);
+    scapL.rotation.z = 0.25;
+    chest.add(scapL);
+    var scapR = ellip(0.075, 0.095, 0.040);
+    scapR.position.set(-0.085, 0.115, -0.082);
+    scapR.rotation.z = -0.25;
+    chest.add(scapR);
+    var spineGroove = ellip(0.022, 0.13, 0.028, seamMat);
+    spineGroove.position.set(0, 0.10, -0.085);
+    chest.add(spineGroove);
 
     var neck = joint('neck', chest, 0, t.neckY, 0);
     var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);
@@ -489,7 +528,26 @@
       chin.position.set(0, headCY - t.headR * 0.55, t.headR * 0.18);
       head.add(chin);
     }
-    // 无脸蛋形头（LibTV 风格）：仅保留下颌融合塑形，不画眼鼻
+    // 头部雕塑 v1（LibTV 参考是"无眼球但有五官浮雕"的头雕）：
+    // 眉弓 / 鼻梁 / 唇 / 耳，全部同体色浅浮雕，眼区保持平滑
+    var brow = ellip(t.headR * 0.54, t.headR * 0.09, t.headR * 0.18);
+    brow.position.set(0, headCY + t.headR * 0.26, t.headR * 0.74);
+    head.add(brow);
+    var noseV1 = ellip(t.headR * 0.15, t.headR * 0.24, t.headR * 0.22);
+    noseV1.position.set(0, headCY - t.headR * 0.06, t.headR * 0.88);
+    head.add(noseV1);
+    var lipUp = ellip(t.headR * 0.23, t.headR * 0.045, t.headR * 0.09);
+    lipUp.position.set(0, headCY - t.headR * 0.36, t.headR * 0.76);
+    head.add(lipUp);
+    var lipDn = ellip(t.headR * 0.19, t.headR * 0.055, t.headR * 0.09);
+    lipDn.position.set(0, headCY - t.headR * 0.46, t.headR * 0.74);
+    head.add(lipDn);
+    var earV1 = ellip(t.headR * 0.09, t.headR * 0.19, t.headR * 0.11);
+    earV1.position.set(t.headR * 0.92, headCY - t.headR * 0.02, -t.headR * 0.04);
+    head.add(earV1);
+    var earV1R = ellip(t.headR * 0.09, t.headR * 0.19, t.headR * 0.11);
+    earV1R.position.set(-t.headR * 0.92, headCY - t.headR * 0.02, -t.headR * 0.04);
+    head.add(earV1R);
 
     function buildArm(side) {
       var s = side === 'L' ? 1 : -1;
@@ -504,6 +562,10 @@
         [-uaH * 0.72, uaR * 0.92], [-uaH + 0.012, uaR * 0.82], [-uaH - 0.01, uaR * 0.5]
       ]);
       var elbow = joint('elbow' + side, sh, 0, -uaH, 0);
+      // 肘前浅壳板 v5（关节板件感，seamMat 深一档）
+      var elbowCap = ellip(uaR * 0.66, uaR * 0.8, uaR * 0.36, seamMat);
+      elbowCap.position.set(0, -uaR * 0.05, laR * 0.95);
+      elbow.add(elbowCap);
       var laH = t.lowerArmH, laR = t.lowerArmR;
       limbSeg(elbow, [
         [0.012, laR * 0.9], [-laH * 0.18, laR * 1.22], [-laH * 0.5, laR * 0.98],
@@ -513,6 +575,11 @@
       var hand = ellip(t.hand[0], t.hand[1], t.hand[2]);
       hand.position.y = -t.hand[1] * 0.55;
       wrist.add(hand);
+      // 手部 v2：连指手 + 拇指（斜向体前），不再是纯椭球
+      var thumb = ellip(t.hand[0] * 0.38, t.hand[1] * 0.46, t.hand[0] * 0.38);
+      thumb.position.set(-s * t.hand[0] * 0.34, -t.hand[1] * 0.14, t.hand[2] * 0.68);
+      thumb.rotation.x = 0.5;
+      wrist.add(thumb);
     }
     buildArm('L');
     buildArm('R');
@@ -526,19 +593,29 @@
         [-ulH + 0.012, ulR * 0.76], [-ulH - 0.01, ulR * 0.5]
       ]);
       var knee = joint('knee' + side, hip, 0, -ulH, 0);
+      // 髌骨板 v5：膝盖前侧浅壳
+      var kneeCap = ellip(ulR * 0.80, ulR * 0.92, ulR * 0.42, seamMat);
+      kneeCap.position.set(0, -ulR * 0.12, llR * 0.92);
+      knee.add(kneeCap);
       var llH = t.lowerLegH, llR = t.lowerLegR;
       limbSeg(knee, [
         [0.012, llR * 0.92], [-llH * 0.22, llR * 1.14], [-llH * 0.55, llR * 0.86],
         [-llH + 0.010, llR * 0.60], [-llH - 0.008, llR * 0.42]
       ]);
       var ankle = joint('ankle' + side, knee, 0, -t.lowerLegH, 0);
-      // 鞋形脚：跟部 + 前掌两块拼合
+      // 鞋形脚 v3（LibTV 运动鞋感）：深色鞋底 + 跟部/前掌 + 踝部领口
+      var sole = ellip(t.foot[0] * 1.06, t.foot[1] * 0.40, t.foot[2] * 1.04, seamMat);
+      sole.position.set(0, -t.foot[1] * 0.78, t.foot[2] * 0.14);
+      ankle.add(sole);
       var heel = ellip(t.foot[0] * 0.88, t.foot[1], t.foot[2] * 0.55);
-      heel.position.set(0, -t.foot[1] * 0.3, -t.foot[2] * 0.12);
+      heel.position.set(0, -t.foot[1] * 0.18, -t.foot[2] * 0.12);
       ankle.add(heel);
       var toe = ellip(t.foot[0], t.foot[1] * 0.82, t.foot[2] * 0.62);
-      toe.position.set(0, -t.foot[1] * 0.42, t.foot[2] * 0.40);
+      toe.position.set(0, -t.foot[1] * 0.30, t.foot[2] * 0.40);
       ankle.add(toe);
+      var collar = ellip(llR * 1.22, t.foot[1] * 0.55, llR * 1.22, seamMat);
+      collar.position.set(0, t.foot[1] * 1.15, 0);
+      ankle.add(collar);
     }
     buildLeg('L');
     buildLeg('R');

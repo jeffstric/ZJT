@@ -203,21 +203,34 @@ function buildMannequin(THREE, color, name, facing) {
         return mesh;
     };
 
-    // 腿：脚 → 小腿 → 膝 → 大腿 → 髋关节
+    // 腿：深色鞋底 + 脚 → 小腿 → 膝（髌骨板）→ 大腿 → 髋关节
     for (const s of [1, -1]) {
+        const sole = ellip(0.055, 0.011, 0.098, seamMat);
+        sole.position.set(s * 0.082, 0.009, 0.02);
         const foot = ellip(0.052, 0.026, 0.095);
-        foot.position.set(s * 0.082, 0.026, 0.02);
+        foot.position.set(s * 0.082, 0.037, 0.02);
         seg(0.040, 0.046, 0.36, 0.24);
         ballAt(0.048, s * 0.082, 0.43, 0);
+        const kneeCap = ellip(0.036, 0.041, 0.017, seamMat);
+        kneeCap.position.set(s * 0.082, 0.415, 0.042);
         seg(0.058, 0.048, 0.36, 0.61);
         ballAt(0.054, s * 0.082, 0.80, 0);
     }
-    // 躯干：骨盆 → 腹 → 胸 → 肩线
+    // 躯干：骨盆（+短裤腰线）→ 腹 → 胸（+胸肌板）→ 肩线
     ellip(0.135, 0.10, 0.095).position.y = 0.885;
+    const waistBand = ellip(0.130, 0.022, 0.092, seamMat);
+    waistBand.position.y = 0.905;
+    body.add(waistBand);
     ellip(0.125, 0.075, 0.09).position.y = 0.985;
     ellip(0.15, 0.125, 0.10).position.y = 1.095;
+    const pecL = ellip(0.046, 0.038, 0.025);
+    pecL.position.set(0.055, 1.13, 0.085);
+    pecL.rotation.z = 0.15;
+    const pecR = ellip(0.046, 0.038, 0.025);
+    pecR.position.set(-0.055, 1.13, 0.085);
+    pecR.rotation.z = -0.15;
     ellip(0.165, 0.05, 0.055).position.y = 1.20;
-    // 臂：肩关节 → 上臂 → 肘 → 前臂 → 手（略微外张的垂臂）
+    // 臂：肩 → 上臂 → 肘（壳板）→ 前臂 → 手（连指+拇指）
     for (const s of [1, -1]) {
         ballAt(0.05, s * 0.165, 1.195, 0);
         const arm = new THREE.Group();
@@ -228,15 +241,21 @@ function buildMannequin(THREE, color, name, facing) {
         const elbow = new THREE.Mesh(sphere, seamMat);
         elbow.scale.set(0.040, 0.040, 0.040);
         elbow.position.y = -0.245;
+        const elbowCap = ellip(0.025, 0.030, 0.013, seamMat);
+        elbowCap.position.set(0, -0.242, 0.032);
         const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.030, 0.22, 12), mat);
         lower.position.y = -0.355;
         const hand = new THREE.Mesh(sphere, mat);
         hand.scale.set(0.032, 0.048, 0.022);
         hand.position.y = -0.50;
-        arm.add(upper, elbow, lower, hand);
+        const thumb = new THREE.Mesh(sphere, mat);
+        thumb.scale.set(0.012, 0.022, 0.012);
+        thumb.position.set(-s * 0.011, -0.458, 0.015);
+        thumb.rotation.x = 0.5;
+        arm.add(upper, elbow, elbowCap, lower, hand, thumb);
         body.add(arm);
     }
-    // 颈 + 蛋形头（下颌融合）+ 面甲深色带（朝向指示，正面 = +Z）
+    // 颈 + 蛋形头（下颌融合）+ 头部雕塑（眉/鼻/唇/耳）+ 面甲深色带（朝向指示，正面 = +Z）
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.034, 0.07, 12), mat);
     neck.position.y = 1.26;
     body.add(neck);
@@ -248,6 +267,20 @@ function buildMannequin(THREE, color, name, facing) {
     jaw.scale.set(0.062, 0.048, 0.06);
     jaw.position.set(0, 1.345, 0.016);
     body.add(jaw);
+    // 头部雕塑 v7（与导演台同款，尺寸按 0.79 缩放）
+    const brow = ellip(0.042, 0.007, 0.014);
+    brow.position.set(0, 1.416, 0.070);
+    const nose = ellip(0.012, 0.019, 0.017);
+    nose.position.set(0, 1.388, 0.080);
+    const lipUp = ellip(0.018, 0.0035, 0.007);
+    lipUp.position.set(0, 1.363, 0.066);
+    const lipDn = ellip(0.015, 0.004, 0.007);
+    lipDn.position.set(0, 1.354, 0.064);
+    const earL = ellip(0.007, 0.015, 0.009);
+    earL.position.set(0.079, 1.393, -0.004);
+    const earR = ellip(0.007, 0.015, 0.009);
+    earR.position.set(-0.079, 1.393, -0.004);
+    body.add(brow, nose, lipUp, lipDn, earL, earR);
     const visor = new THREE.Mesh(sphere, seamMat);
     visor.scale.set(0.058, 0.026, 0.016);
     visor.position.set(0, 1.408, 0.078);
