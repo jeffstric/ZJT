@@ -195,3 +195,39 @@ describe('故事板3D空间→导演台：空镜检查（与 spatial_camera_edit
     expect(ok.visible).toBe(2);
   });
 });
+
+describe('导演台编辑器：对话改机位（接线层源码断言）', () => {
+  const editorSrc = readSource('web/js/director_stage_editor.js');
+  const serverSrc = readSource('server.py');
+  const cssSrc = readSource('web/css/director_stage.css');
+
+  it('编辑器具备对话条 UI（输入条/模型选择/发送/提示）', () => {
+    expect(editorSrc).toContain("id=\"dsChatBar\"");
+    expect(editorSrc).toContain("id=\"dsChatInput\"");
+    expect(editorSrc).toContain("id=\"dsChatModel\"");
+    expect(editorSrc).toContain("id=\"dsChatSend\"");
+    expect(editorSrc).toContain("id=\"dsChatNote\"");
+  });
+
+  it('编辑器接线：sendCameraChat / loadChatModels / Esc 输入框守卫', () => {
+    expect(editorSrc).toContain('sendCameraChat = function');
+    expect(editorSrc).toContain('loadChatModels = function');
+    expect(editorSrc).toContain("fetch('/api/video-workflow/camera-chat'");
+    expect(editorSrc).toContain('current_camera');
+    // 输入框聚焦时 Esc 不应关闭整个导演台
+    expect(editorSrc).toContain('inField && document.activeElement && document.activeElement.blur');
+  });
+
+  it('后端路由：/api/video-workflow/camera-chat 复用机位对话服务', () => {
+    expect(serverSrc).toContain("'/api/video-workflow/camera-chat'");
+    expect(serverSrc).toContain('VideoWorkflowCameraChatRequest');
+    expect(serverSrc).toContain('parse_camera_instruction');
+    // 与故事板场景路由同款模型归一化
+    expect(serverSrc).toContain('normalize_model_selection_refs');
+  });
+
+  it('CSS：对话条与提示样式', () => {
+    expect(cssSrc).toContain('.ds-chatbar');
+    expect(cssSrc).toContain('.ds-chat-note.is-error');
+  });
+});

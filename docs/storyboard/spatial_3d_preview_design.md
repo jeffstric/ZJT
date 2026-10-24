@@ -201,4 +201,10 @@ three.js）把该镜空间映射为导演台人偶与机位，首次点击自动
 节点并连线。详见
 `docs/storyboard/storyboard_workflow_conversion.md` §3D 空间 → 导演台；
 实现 `web/js/director_stage_from_storyboard.js`，测试
-`web/tests/director_stage_from_storyboard.test.js`（10 例）。
+`web/tests/director_stage_from_storyboard.test.js`（13 例）。
+
+**画布导演台也支持对话改机位**：编辑器视口左下对话条（模型下拉 + 输入
++ 发送），走 `POST /api/video-workflow/camera-chat`（与故事板共用
+`parse_camera_instruction`；LLM 输入注入导演台人偶坐标）。应用后随
+工作流 400ms 防抖自动保存落库。机位 eye/target 双格式（数组/对象）
+在前后端全链路兼容。

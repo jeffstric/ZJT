@@ -800,6 +800,12 @@
           '<canvas id="dsPipCanvas"></canvas>' +
         '</div>' +
         '<div class="ds-selection-tip" id="dsSelectionTip"></div>' +
+        '<div class="ds-chat-note" id="dsChatNote" style="display:none;"></div>' +
+        '<div class="ds-chatbar" id="dsChatBar">' +
+          '<select class="ds-chat-model" id="dsChatModel" title="对话模型"></select>' +
+          '<input class="ds-chat-input" id="dsChatInput" type="text" maxlength="300" placeholder="对话调整机位，如：把机位移到人偶正面稍高处" />' +
+          '<button class="ds-chat-send" id="dsChatSend">发送</button>' +
+        '</div>' +
         '<div class="ds-add-pop" id="dsAddPop">' +
           '<div class="ds-add-pop-head"><span>添加人偶</span><button class="ds-puppet-del" id="dsAddPopClose" style="font-size:16px;">✕</button></div>' +
           '<div class="ds-add-pop-body" id="dsAddPopBody"></div>' +
@@ -2354,6 +2360,147 @@
     this.setStatus('机位：' + preset.label);
   };
 
+  // ---------- 对话改机位（/api/video-workflow/camera-chat） ----------
+
+  DirectorEditor.prototype._showChatNote = function (text, kind) {
+    var note = this.$('dsChatNote');
+    if (!note) return;
+    note.style.display = 'block';
+    note.textContent = text;
+    note.className = 'ds-chat-note is-' + (kind || 'info');
+    clearTimeout(this._chatNoteTimer);
+    if (kind !== 'error') {
+      this._chatNoteTimer = setTimeout(function () { note.style.display = 'none'; }, 6000);
+    }
+  };
+
+  DirectorEditor.prototype.loadChatModels = function () {
+    var self = this;
+    var sel = this.$('dsChatModel');
+    if (!sel) return;
+    var headers = {};
+    if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+    if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+    Promise.all([
+      fetch('/api/models?scene=llm.script_split', { headers: headers })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .catch(function () { return {}; }),
+      fetch('/api/vendors', { headers: headers })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .catch(function () { return {}; }),
+    ]).then(function (results) {
+      var models = (results[0] && results[0].success && results[0].models) || [];
+      var vendors = (results[1] && results[1].success && results[1].vendors) || [];
+      var vendorNames = {};
+      vendors.forEach(function (v) { vendorNames[v.id] = v.vendor_name || v.name || ('供应商' + v.id); });
+      self._chatModels = models.map(function (m) {
+        return {
+          model: m.name || m.model || '',
+          model_id: m.model_id || m.id,
+          vendor_id: m.vendor_id,
+          vendor_name: vendorNames[m.vendor_id] || '',
+        };
+      }).filter(function (m) { return m.model && m.model_id != null; });
+      sel.innerHTML = '';
+      self._chatModels.forEach(function (m, i) {
+        var opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = m.model + (m.vendor_name ? ' · ' + m.vendor_name : '');
+        sel.appendChild(opt);
+      });
+      // 恢复上次选择
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem('ds_chat_model') || 'null'); } catch (e) { saved = null; }
+      if (saved) {
+        for (var i = 0; i < self._chatModels.length; i++) {
+          if (self._chatModels[i].model_id === saved.model_id && self._chatModels[i].vendor_id === saved.vendor_id) {
+            sel.value = String(i);
+            break;
+          }
+        }
+      }
+    });
+  };
+
+  DirectorEditor.prototype.sendCameraChat = function () {
+    var self = this;
+    if (this._chatBusy) return;
+    var input = this.$('dsChatInput');
+    var send = this.$('dsChatSend');
+    if (!input || !send) return;
+    var message = (input.value || '').trim();
+    if (!message) return;
+    var sel = this.$('dsChatModel');
+    var model = (this._chatModels || [])[parseInt(sel && sel.value, 10)];
+    if (!model) {
+      this.setStatus('请先选择对话模型');
+      this._showChatNote('请先选择对话模型', 'error');
+      return;
+    }
+
+    var cfg = this.virtualCamCfg;
+    var entities = this.puppets.map(function (p) {
+      return { name: p.name, kind: 'actor', x: p.x, z: p.z, facing: p.rotY };
+    });
+
+    this._chatBusy = true;
+    send.disabled = true;
+    input.disabled = true;
+    send.textContent = '思考中…';
+    this._showChatNote('正在根据指令计算新机位…', 'info');
+
+    var headers = { 'Content-Type': 'application/json' };
+    if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+    if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+
+    fetch('/api/video-workflow/camera-chat', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        message: message,
+        current_camera: {
+          eye: [cfg.pos.x, cfg.pos.y, cfg.pos.z],
+          target: [cfg.target.x, cfg.target.y, cfg.target.z],
+          fov: cfg.fov,
+        },
+        entities: entities,
+        model: model.model,
+        model_id: model.model_id,
+        vendor_id: model.vendor_id,
+      }),
+    }).then(function (resp) { return resp.json().catch(function () { return {}; }); })
+      .then(function (data) {
+        // 服务端返回扁平 {success, eye, target, fov, reason}；兼容嵌套 camera:{} 形态
+        var cam = data && (data.camera || data);
+        if (data && data.success && cam && cam.eye && cam.target) {
+          var pos = Array.isArray(cam.eye) ? cam.eye : [cam.eye.x, cam.eye.y, cam.eye.z];
+          var tgt = Array.isArray(cam.target) ? cam.target : [cam.target.x, cam.target.y, cam.target.z];
+          // 与滑杆同范围约束，保持 UI 一致
+          cfg.pos.set(clamp(num(pos[0]), -30, 30), clamp(num(pos[1]), 0.2, 8), clamp(num(pos[2]), -30, 30));
+          cfg.target.set(clamp(num(tgt[0]), -9.5, 9.5), clamp(num(tgt[1]), 0, 4), clamp(num(tgt[2]), -9.5, 9.5));
+          cfg.fov = clamp(num(cam.fov), 15, 90);
+          self.updateCamHelper();
+          self.renderPropsPanel();
+          self.markDirty();
+          try { localStorage.setItem('ds_chat_model', JSON.stringify(model)); } catch (e) { /* ignore */ }
+          self._showChatNote('✓ ' + (data.reason || '机位已更新'), 'ok');
+          input.value = '';
+          self.setStatus('机位：对话调整');
+        } else {
+          self._showChatNote((data && data.error) || '机位调整失败，请重试', 'error');
+        }
+      })
+      .catch(function (err) {
+        self._showChatNote((err && err.message) || '机位调整失败，请重试', 'error');
+      })
+      .then(function () {
+        self._chatBusy = false;
+        send.disabled = false;
+        input.disabled = false;
+        send.textContent = '发送';
+      });
+  };
+
   // ---------- 多机位（机位列表） ----------
 
   DirectorEditor.prototype.getActiveCamera = function () {
@@ -3420,6 +3567,16 @@
       if (self._recorder) self.stopRecording();
       else self.startRecording();
     });
+    // 对话改机位（与故事板 3D 预览同款交互，走 /api/video-workflow/camera-chat）
+    this.on(this.$('dsChatSend'), 'click', function () { self.sendCameraChat(); });
+    this.on(this.$('dsChatInput'), 'keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.sendCameraChat();
+      }
+    });
+    this.loadChatModels();
     // 必须用原生 'keydown'。'keydown.directorStage' 不会被 addEventListener 识别，
     // 监听从未挂上，Delete/Backspace 会冒泡到画布并删掉仍处于选中态的导演台节点。
     this.on(document, 'keydown', function (e) {
@@ -3428,6 +3585,11 @@
       var inField = tag === 'INPUT' || tag === 'TEXTAREA' ||
         (document.activeElement && document.activeElement.isContentEditable);
       if (e.key === 'Escape') {
+        // 输入框聚焦时 Esc 仅退出聚焦（对话输入条内不应关闭整个导演台）
+        if (inField && document.activeElement && document.activeElement.blur) {
+          document.activeElement.blur();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         self.close(true);

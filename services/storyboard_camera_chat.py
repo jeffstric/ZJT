@@ -61,11 +61,26 @@ def build_camera_chat_messages(
     entities: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """组装单轮消息：当前机位 + 对象清单 + 用户指令。"""
-    eye = current_camera.get("eye") or {}
-    target = current_camera.get("target") or {}
-    fmt = lambda p: f"[{p.get('x', 0):.2f}, {p.get('y', 0):.2f}, {p.get('z', 0):.2f}]"  # noqa: E731
+    def _fmt(p: Any) -> str:
+        """兼容 [x,y,z] 数组与 {x,y,z} 对象两种机位点格式。"""
+        if isinstance(p, dict):
+            vals = [p.get('x', 0), p.get('y', 0), p.get('z', 0)]
+        elif isinstance(p, (list, tuple)) and len(p) >= 3:
+            vals = p[:3]
+        else:
+            vals = (0, 0, 0)
+        nums = []
+        for v in vals:
+            try:
+                nums.append(float(v))
+            except (TypeError, ValueError):
+                nums.append(0.0)
+        return f"[{nums[0]:.2f}, {nums[1]:.2f}, {nums[2]:.2f}]"
+
+    eye = current_camera.get('eye') or {}
+    target = current_camera.get('target') or {}
     lines = [
-        f"当前机位：eye={fmt(eye)} target={fmt(target)} fov={current_camera.get('fov', SB_CAMERA_CHAT_FOV_DEFAULT)}",
+        f"当前机位：eye={_fmt(eye)} target={_fmt(target)} fov={current_camera.get('fov', SB_CAMERA_CHAT_FOV_DEFAULT)}",
     ]
     clean_entities = (entities or [])[:SB_CAMERA_CHAT_MAX_ENTITIES]
     if clean_entities:
