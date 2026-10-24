@@ -204,3 +204,29 @@ describe('cameraSeesActors 双格式入参（对象/数组 eye/target）', () =>
     expect(cameraSeesActors({ eye: { x: NaN, y: 1, z: 1 }, target: { x: 0, y: 1, z: 0 } }, [{ x: 0, z: 0 }]).visible).toBe(0);
   });
 });
+
+import { aspectFromRatio } from '../js/storyboard/spatial_camera_edit.js';
+
+describe('aspectFromRatio 画幅比例解析', () => {
+  it('竖屏 9:16 → 0.5625（故事板竖屏画幅）', () => {
+    expect(aspectFromRatio('9:16')).toBeCloseTo(0.5625, 6);
+  });
+  it('横屏 16:9 与默认一致', () => {
+    expect(aspectFromRatio('16:9')).toBeCloseTo(16 / 9, 6);
+    expect(aspectFromRatio('16:9')).toBeCloseTo(aspectFromRatio(null), 6);
+  });
+  it('非法值回退 fallback', () => {
+    expect(aspectFromRatio('abc', 1.5)).toBe(1.5);
+    expect(aspectFromRatio('0:9', 1.5)).toBe(1.5);
+    expect(aspectFromRatio('', 1.5)).toBe(1.5);
+  });
+  it('竖屏下视锥水平范围更窄（可见性随之收紧）', () => {
+    // 角色在画面边缘：16:9 可见，9:16 应超出水平视野
+    const cam = { eye: [0, 1.5, 4], target: [0, 1.0, 0], fov: 50 };
+    const edgeActor = [{ x: 2.4, z: 0 }];
+    const wide = cameraSeesActors(cam, edgeActor, 16 / 9);
+    const portrait = cameraSeesActors(cam, edgeActor, 9 / 16);
+    expect(wide.visible).toBe(1);
+    expect(portrait.visible).toBe(0);
+  });
+});

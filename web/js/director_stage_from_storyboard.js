@@ -165,10 +165,24 @@
   /**
    * 空镜检查：机位视锥内是否能看到角色（见 spatial_camera_edit.js 的
    * cameraSeesActors，两侧逻辑互为镜像，改动需同步）。
-   * camera {eye:[x,y,z], target:[x,y,z], fov}；actors [{x, z}]。
+   * camera {eye:[x,y,z] 或 {x,y,z}, target:[...], fov}；actors [{x, z}]。
+   * aspect 取画布当前画幅（工作流可能是 9:16 竖屏，不能硬编码 16:9）。
    */
+  function aspectFromRatio(ratio, fallback) {
+    fallback = fallback || 16 / 9;
+    var m = /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.exec(String(ratio || '').trim());
+    if (!m) return fallback;
+    var w = Number(m[1]), h = Number(m[2]);
+    return (isFinite(w) && isFinite(h) && w > 0 && h > 0) ? w / h : fallback;
+  }
+
+  function canvasAspect() {
+    var st = canvasState();
+    return aspectFromRatio(st && st.ratio, 16 / 9);
+  }
+
   function cameraSeesActors(camera, actors, aspect) {
-    aspect = aspect || 16 / 9;
+    aspect = aspect || canvasAspect();
     var list = Array.isArray(actors) ? actors : [];
     var total = list.length;
     if (!camera || !camera.eye || !camera.target) return { visible: 0, total: total };

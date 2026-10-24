@@ -155,6 +155,20 @@ export function applyCameraPreset(preset, focal, radius = 4.5) {
 }
 
 /**
+ * 画幅比例字符串 → 宽高比数值（w/h）。'9:16' → 0.5625。
+ * 非法/缺失时回退 fallback（默认 16:9 横屏）。供 3D 预览 PiP / 视锥 /
+ * 可见性检查共用——故事板可能是竖屏画幅，不能硬编码 16:9。
+ */
+export function aspectFromRatio(ratio, fallback = 16 / 9) {
+    const m = /^(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)$/.exec(String(ratio || '').trim());
+    if (!m) return fallback;
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return fallback;
+    return w / h;
+}
+
+/**
  * 空镜检查：机位视锥内是否有角色。
  *
  * camera：{eye:[x,y,z], target:[x,y,z], fov}（度，Y-up 米制）；

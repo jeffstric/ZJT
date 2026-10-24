@@ -25,6 +25,7 @@ import {
     CAMERA_LIMITS,
     CAMERA_PRESETS,
     applyCameraPreset,
+    aspectFromRatio,
     cameraSeesActors,
     clampCamera,
     findLastSetCameraCall,
@@ -167,20 +168,26 @@ function makeLabel(THREE, text, { color = '#1f2937', bg = 'rgba(255,255,255,0.92
 
 // ============ 代码重放沙箱（three_scene_code 方案核心） ============
 
+/** 故事板画幅宽高比（跟随 workflowRatio，9:16 竖屏故事板不能按 16:9 取景）。 */
+function previewAspect() {
+    return aspectFromRatio(state.workflowRatio, 16 / 9);
+}
+
 /**
  * 创建一次重放会话：root 承载世界对象，registries 是暴露给代码的
  * actors/props/stage 对象表，shotCamera 是本镜相机（画中画取景器使用）。
  * helper 集合与 LLM prompt 契约（llm/script_parser.py THREE_SCENE_CODE_REQUIREMENTS）
  * 一一对应，两端需同步修改。
  */
-function createReplayContext(THREE) {
+function createReplayContext(THREE, aspect) {
+    const ar = Number.isFinite(aspect) && aspect > 0 ? aspect : 16 / 9;
     const ctx = {
         THREE,
         root: new THREE.Group(),
         actors: {},
         props: {},
         stage: {},
-        shotCamera: new THREE.PerspectiveCamera(50, 16 / 9, 0.05, 200),
+        shotCamera: new THREE.PerspectiveCamera(50, ar, 0.05, 200),
         cameraInfo: null,       // setCamera 记录 {eye, target, fov}
         sceneLabel: '',
         actorColorIndex: 0,
@@ -355,7 +362,7 @@ function replayToIndex(THREE, previews, index) {
         i--;
     }
     const start = (i >= 0 && isCodePreview(previews[i])) ? i : i + 1;
-    const { ctx, helpers } = createReplayContext(THREE);
+    const { ctx, helpers } = createReplayContext(THREE, previewAspect());
     let chainLength = 0;
     for (let j = start; j <= index; j++) {
         if (!isCodePreview(previews[j])) continue;
@@ -379,8 +386,9 @@ function replayToIndex(THREE, previews, index) {
 }
 
 /** 机位视锥 + 朝向箭头（代码方案：米制坐标，直接使用）。
+ * aspect 为本镜取景宽高比（跟随故事板画幅）；
  * 机位方块 userData.dragKind='camera'、焦点球 'focus'，主视图可直接拖拽编辑。 */
-function makeCameraGizmoFromInfo(THREE, cameraInfo) {
+function makeCameraGizmoFromInfo(THREE, cameraInfo, aspect = 16 / 9) {
     const group = new THREE.Group();
     const { eye, target } = cameraInfo;
     if (!eye || !target) return group;
@@ -389,7 +397,7 @@ function makeCameraGizmoFromInfo(THREE, cameraInfo) {
     const fovRad = ((cameraInfo.fov || 50) * Math.PI) / 180;
     const dist = Math.hypot(target.x - eye.x, target.y - eye.y, target.z - eye.z) || 1;
     const halfH = Math.tan(fovRad / 2) * dist;
-    const halfW = halfH * 16 / 9;
+    const halfW = halfH * aspect;
 
     const frame = new THREE.Mesh(
         new THREE.PlaneGeometry(halfW * 2, halfH * 2),
@@ -495,7 +503,7 @@ function makeCameraGizmo(THREE, camera) {
         eye: mapped,
         target: mappedTarget,
         fov: camera.fov_deg || 50,
-    });
+    }, previewAspect());
 }
 
 /** 按后端 three_scene JSON 构建 three.js 场景内容（不含灯光与观察相机）。 */
@@ -978,7 +986,7 @@ class Spatial3dSession {
         if (!this.replayCtx || !this.shotCameraInfo) return null;
         const actorList = Object.values(this.replayCtx.actors).map((g) => ({ x: g.position.x, z: g.position.z }));
         if (!actorList.length) return null;
-        const seen = cameraSeesActors(this.shotCameraInfo, actorList);
+        const seen = cameraSeesActors(this.shotCameraInfo, actorList, previewAspect());
         if (seen.visible) return null;
         const t = this.shotCameraInfo.target;
         return `机位视野内无角色（注视点约 (${t.x.toFixed(2)}, ${t.y.toFixed(2)}, ${t.z.toFixed(2)})，所有角色均在视锥外），镜头画面将为空景；可调整机位`;
@@ -1023,7 +1031,7 @@ class Spatial3dSession {
             this.worldGroup.remove(this.gizmoGroup);
             this._disposeObject(this.gizmoGroup);
         }
-        this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo);
+        this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo, previewAspect());
         this.worldGroup.add(this.gizmoGroup);
     }
 
@@ -1146,9 +1154,10 @@ class Spatial3dSession {
         this.renderer.render(this.scene, this.camera);
 
         // 镜头视角画中画：用本镜 setCamera 的相机从机位看向场景
+        // （画幅跟随故事板 workflowRatio：9:16 竖屏故事板 PiP 亦为竖屏）
         if (this.shotCamera) {
             const pipW = Math.max(Math.round(width * 0.3), 120);
-            const pipH = Math.round(pipW * 9 / 16);
+            const pipH = Math.round(pipW / previewAspect());
             const margin = 12;
             this.shotCamera.aspect = pipW / pipH;
             this.shotCamera.updateProjectionMatrix();
@@ -1208,7 +1217,7 @@ class Spatial3dSession {
             this._chainInfo = { chainStart, chainLength };
             this.shotCamera = replayCtx.shotCamera;
             this.shotCameraInfo = normalizeCamera(replayCtx.cameraInfo);
-            this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo);
+            this.gizmoGroup = makeCameraGizmoFromInfo(this.THREE, this.shotCameraInfo, previewAspect());
             this.worldGroup.add(this.gizmoGroup);
         } else {
             this.worldGroup = buildWorldGroup(this.THREE, preview.three_scene);
@@ -1258,6 +1267,9 @@ class Spatial3dSession {
             this._syncCamSliders();
         }
         this.el.chatNote.hidden = true;
+        // PiP 边框与实际渲染画幅一致（9:16 竖屏故事板 → 竖长条画中画）
+        const ar = previewAspect();
+        this.el.pip.style.aspectRatio = String(ar);
         this.el.pip.hidden = !this.shotCamera;
         if (this.el.loading) this.el.loading.hidden = true;
     }
