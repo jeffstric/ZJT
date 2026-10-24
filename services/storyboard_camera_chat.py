@@ -57,10 +57,12 @@ SYSTEM_PROMPT = (
 
 def build_camera_chat_messages(
     message: str,
-    current_camera: Dict[str, Any],
+    current_camera: Any,
     entities: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, str]]:
     """组装单轮消息：当前机位 + 对象清单 + 用户指令。"""
+    if not isinstance(current_camera, dict):
+        current_camera = {}
     def _fmt(p: Any) -> str:
         """兼容 [x,y,z] 数组与 {x,y,z} 对象两种机位点格式。"""
         if isinstance(p, dict):
@@ -112,6 +114,9 @@ def _clamp_component(value: float, key: str) -> float:
 
 
 def _parse_point(raw: Any, y_key: str, default_y: float) -> Optional[Dict[str, float]]:
+    # 兼容 [x,y,z] 数组与 {x,y,z} 对象两种格式（LLM 偶尔返回对象）
+    if isinstance(raw, dict):
+        raw = [raw.get('x'), raw.get('y'), raw.get('z')]
     if not isinstance(raw, (list, tuple)) or len(raw) < 3:
         return None
     try:

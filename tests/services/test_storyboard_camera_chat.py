@@ -79,3 +79,22 @@ class TestParseCameraInstruction(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(result["success"])
         self.assertIn("模型", result["error"])
+
+
+class TestDualFormatAndRobustness:
+    """三轮自测补充：eye/target 双格式 + 非法入参健壮性。"""
+
+    def test_parse支持对象格式eye(self):
+        # LLM 偶尔返回 {x,y,z} 对象而非数组
+        parsed = parse_camera_json('{"eye":{"x":1,"y":2,"z":3},"target":{"x":0,"y":1,"z":0},"fov":45}')
+        assert parsed['eye'] == {'x': 1.0, 'y': 2.0, 'z': 3.0}
+        assert parsed['fov'] == 45
+
+    def test_messages_机位为字符串或None不崩(self):
+        for bad in ('not-a-dict', None, 42):
+            msgs = build_camera_chat_messages('升高', bad, [])
+            assert 'eye=[0.00, 0.00, 0.00]' in msgs[0]['content']
+
+    def test_messages_数组格式机位(self):
+        msgs = build_camera_chat_messages('升高', {'eye': [2, 1.8, 9], 'target': [1.2, 1.2, -1], 'fov': 55}, [])
+        assert 'eye=[2.00, 1.80, 9.00]' in msgs[0]['content']
