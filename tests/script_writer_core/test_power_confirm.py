@@ -120,6 +120,54 @@ class TestParseConfirmAnswer(unittest.TestCase):
         self.assertEqual(parse_confirm_answer("随便看看"), ConfirmAnswer.REJECT)
 
 
+class TestConfirmStateFromApprovals(unittest.TestCase):
+    def test_approve_sets_ceiling(self):
+        state = power_confirm.confirm_state_from_approvals([{
+            "context": {"estimated_cost": 233},
+            "result": {"user_input": "确认生成"},
+        }])
+        self.assertEqual(state["approved_ceiling"], 233)
+        self.assertFalse(state["skip"])
+
+    def test_max_cost_across_rows_and_json_strings(self):
+        state = power_confirm.confirm_state_from_approvals([
+            {
+                "context": '{"estimated_cost": 210}',
+                "result": '{"user_input": "确认生成"}',
+            },
+            {
+                "context": {"estimated_cost": 233},
+                "result": {"user_input": "确认生成"},
+            },
+        ])
+        self.assertEqual(state["approved_ceiling"], 233)
+
+    def test_cancel_does_not_count_even_if_marked_approved(self):
+        state = power_confirm.confirm_state_from_approvals([{
+            "context": {"estimated_cost": 233},
+            "result": {"action": "confirm", "user_input": "取消本次生成"},
+        }])
+        self.assertEqual(state["approved_ceiling"], 0)
+        self.assertFalse(state["skip"])
+
+    def test_skip_sets_flag_and_ceiling(self):
+        state = power_confirm.confirm_state_from_approvals([{
+            "context": {"estimated_cost": 303},
+            "result": {"user_input": "本次对话不再询问"},
+        }])
+        self.assertTrue(state["skip"])
+        self.assertEqual(state["approved_ceiling"], 303)
+
+    def test_bool_and_empty_input_are_ignored(self):
+        state = power_confirm.confirm_state_from_approvals([
+            {"context": {"estimated_cost": True}, "result": {"user_input": "确认生成"}},
+            {"context": {"estimated_cost": 180}, "result": {"user_input": ""}},
+            {"context": {"estimated_cost": 0}, "result": {"user_input": "确认生成"}},
+        ])
+        self.assertEqual(state["approved_ceiling"], 0)
+        self.assertFalse(state["skip"])
+
+
 class TestValidateThreshold(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(validate_threshold(0), 0)

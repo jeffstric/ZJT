@@ -12,6 +12,10 @@ from config.constant import FilePathConstants
 from model.agent_tasks import AgentTasksModel, AgentTaskEntity
 from model.agent_task_messages import AgentTaskMessagesModel
 from model.agent_verifications import AgentVerificationsModel, AgentVerificationEntity
+from script_writer_core.agents.power_confirm import (
+    VERIFICATION_TYPE_POWER_CONFIRM,
+    confirm_state_from_approvals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,12 +211,14 @@ class AgentTask:
 class TaskManager:
     """任务管理器 - 管理后台任务的生命周期"""
     
-    def __init__(self):
+    def __init__(self, power_confirm_approval_loader=None):
         self.tasks: Dict[str, AgentTask] = {}
         self.task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
-        # session_id -> {skip, unconfirmed_cost, approved_ceiling}
+        # 仅本进程：小额未确认累计，以及本次同意后、记录尚未被其他进程读到时的副本。
+        # 已同意单价和免打扰的跨进程真相在 agent_verifications。
         self._power_confirm_state: Dict[str, Dict[str, Any]] = {}
+        self._power_confirm_approval_loader = power_confirm_approval_loader
         logger.info("TaskManager initialized")
     
     def create_task(
@@ -495,10 +501,7 @@ class TaskManager:
     def _blank_power_confirm_state(self) -> Dict[str, Any]:
         return {"skip": False, "unconfirmed_cost": 0, "approved_ceiling": 0}
 
-    def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
-        """读取会话级算力确认状态（skip / 本轮未确认累计 / 已同意最高单笔）。"""
-        if not session_id:
-            return self._blank_power_confirm_state()
+    def _local_power_confirm_state(self, session_id: str) -> Dict[str, Any]:
         with self._lock:
             state = self._power_confirm_state.get(session_id) or {}
             return {
@@ -506,6 +509,47 @@ class TaskManager:
                 "unconfirmed_cost": int(state.get("unconfirmed_cost") or 0),
                 "approved_ceiling": int(state.get("approved_ceiling") or 0),
             }
+
+    def _load_power_confirm_approvals(self, session_id: str):
+        if self._power_confirm_approval_loader is not None:
+            return self._power_confirm_approval_loader(session_id)
+        return AgentVerificationsModel.list_approved_by_session(
+            session_id,
+            VERIFICATION_TYPE_POWER_CONFIRM,
+        )
+
+    def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
+        """读取会话级算力确认状态（skip / 本轮未确认累计 / 已同意最高单笔）。
+
+        已同意单价和免打扰来自本会话已提交的算力确认记录，所有 worker 都能读到。
+        读库失败时不沿用本进程记忆，继续询问。小额未确认累计仍只在本进程。
+        """
+        if not session_id:
+            return self._blank_power_confirm_state()
+        local = self._local_power_confirm_state(session_id)
+        try:
+            shared = confirm_state_from_approvals(
+                self._load_power_confirm_approvals(session_id)
+            )
+        except Exception as e:
+            logger.warning(
+                "读取会话算力确认记录失败，本次继续询问 session_id=%s: %s",
+                session_id,
+                e,
+            )
+            return {
+                "skip": False,
+                "unconfirmed_cost": local["unconfirmed_cost"],
+                "approved_ceiling": 0,
+            }
+        return {
+            "skip": bool(shared["skip"] or local["skip"]),
+            "unconfirmed_cost": local["unconfirmed_cost"],
+            "approved_ceiling": max(
+                int(shared["approved_ceiling"] or 0),
+                local["approved_ceiling"],
+            ),
+        }
 
     def set_power_confirm_skip(self, session_id: Optional[str], skip: bool = True) -> None:
         if not session_id:

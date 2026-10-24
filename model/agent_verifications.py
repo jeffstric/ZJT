@@ -165,6 +165,36 @@ class AgentVerificationsModel:
             raise
 
     @staticmethod
+    def list_approved_by_session(session_id: str, verification_type: str) -> list:
+        """列出某会话里已提交为 approved 的验证。供算力确认门跨进程读取。
+
+        前端三个按钮都会把 approved 写成 true，调用方必须自己解析 result.user_input。
+        同时用 task_id 匹配，覆盖还没有会话 id、只能落到任务 id 的旧路径。
+        """
+        sql = """
+            SELECT v.context, v.result
+            FROM agent_verifications v
+            INNER JOIN agent_tasks t ON t.task_id = v.task_id
+            WHERE v.verification_type = %s
+              AND v.status = 'approved'
+              AND (t.session_id = %s OR v.task_id = %s)
+        """
+        try:
+            rows = execute_query(
+                sql,
+                (verification_type, session_id, session_id),
+                fetch_all=True,
+            )
+            return rows or []
+        except Exception as e:
+            logger.error(
+                "Failed to list approved verifications for session %s: %s",
+                session_id,
+                e,
+            )
+            raise
+
+    @staticmethod
     def get_latest_completed_by_task(
         task_id: str,
         verification_type: str = 'ask_user'

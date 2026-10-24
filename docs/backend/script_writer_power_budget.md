@@ -9,7 +9,7 @@
 ## 机制
 
 - **计量**：任务启动时（`PMAgent.execute` → `PowerBudget.create_for_task`）快照一次余额 `start_balance`；PM/专家循环每轮迭代用最新余额折算 `consumed = start_balance - current`。暂停线比较的是未授权消耗 `consumed - authorized`。
-- **已授权生成**：用户在确认门点了「确认生成」或「本次对话不再询问」、本笔落在已同意单价内且高于软阈值、或剧本链路确认门关闭而直接放行时，工具返回的实扣算力记入 `authorized`。一条 303 的 Seedance 确认并生成后，不会因为这笔扣费立刻暂停；同会话下一条同价视频不再弹确认。没有授权的后续消耗（主要是 LLM 空转）仍累计到上限才暂停。低于软阈值、未经确认就放行的小额生成不划入 `authorized`，继续计入未授权消耗。
+- **已授权生成**：用户在确认门点了「确认生成」或「本次对话不再询问」、本笔落在已同意单价内且高于软阈值、或剧本链路确认门关闭而直接放行时，工具返回的实扣算力记入 `authorized`。一条 303 的 Seedance 确认并生成后，不会因为这笔扣费立刻暂停。同会话下一条同价视频不再弹确认：已同意单价来自本会话已通过的算力确认记录，gunicorn 各 worker 都能读到。没有授权的后续消耗（主要是 LLM 空转）仍累计到上限才暂停。低于软阈值、未经确认就放行的小额生成不划入 `authorized`，继续计入未授权消耗。
 - **充值容错**：中途充值使余额高于快照时自动重置快照（视为新预算起点），不会误停。
 - **超限**：抛 `PowerBudgetExhaustedError`（`InsufficientComputingPowerError` 的子类），复用既有「算力不足」逐层停止链路：
   1. 专家循环（`expert_agent._run_task_loop` 每迭代 `observe_and_check`）截断历史上抛；
@@ -44,4 +44,4 @@
 
 `tests/script_writer_core/test_power_budget.py`：超限判定、已授权生成不暂停、充值重置授权额度、哨兵值忽略、fail-open、解析顺序与非法值回退、异常子类契约、ask_user 超限立即返回 / 未超限不受影响。
 
-`tests/script_writer_core/test_power_confirm.py`：已同意单价内不再确认、更贵再确认、免打扰后单笔高于硬阈值不再确认、多笔小额累计仍确认。
+`tests/script_writer_core/test_power_confirm.py`：已同意单价内不再确认、更贵再确认、免打扰后单笔高于硬阈值不再确认、多笔小额累计仍确认、从确认记录还原最高价（取消不计入）。

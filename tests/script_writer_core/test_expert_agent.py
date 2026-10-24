@@ -363,7 +363,7 @@ class TestPowerConfirmSwitch(TestExpertAgent):
                 power_confirm_enabled=True,
                 allowed_tools=["image_to_video"],
             )
-        agent.task_manager = TaskManager()
+        agent.task_manager = TaskManager(power_confirm_approval_loader=lambda session_id: [])
         agent.task_id = "task-1"
         agent._session_id = "session-1"
         agent.power_budget = PowerBudget(limit=200, start_balance=1000)
@@ -393,6 +393,43 @@ class TestPowerConfirmSwitch(TestExpertAgent):
             self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 15}))
             self.assertEqual(ask_again.call_count, 1)
             self.assertEqual(agent.task_manager.get_power_confirm_state("session-1")["approved_ceiling"], 454)
+
+    def test_approved_price_is_visible_to_another_task_manager(self):
+        from script_writer_core.agents.power_confirm import should_confirm
+        from script_writer_core.agents.task_manager import TaskManager
+
+        approvals = [{
+            "context": {"estimated_cost": 233, "type": "computing_power_confirm"},
+            "result": {"action": "confirm", "user_input": "确认生成"},
+        }]
+        first = TaskManager(power_confirm_approval_loader=lambda session_id: approvals)
+        second = TaskManager(power_confirm_approval_loader=lambda session_id: approvals)
+        state = second.get_power_confirm_state("27be256f-session")
+        self.assertEqual(state["approved_ceiling"], 233)
+        self.assertFalse(state["skip"])
+        decision = should_confirm(210, 0, False, 35, 200, approved_ceiling=state["approved_ceiling"])
+        self.assertFalse(decision.need_confirm)
+        self.assertEqual(decision.reason, "within_approved_ceiling")
+        self.assertEqual(first.get_power_confirm_state("27be256f-session")["approved_ceiling"], 233)
+
+        cancelled = [{
+            "context": {"estimated_cost": 210},
+            "result": {"action": "confirm", "user_input": "取消本次生成"},
+        }]
+        fresh = TaskManager(power_confirm_approval_loader=lambda session_id: cancelled)
+        self.assertEqual(fresh.get_power_confirm_state("27be256f-session")["approved_ceiling"], 0)
+
+        def broken(session_id):
+            raise RuntimeError("db down")
+
+        failed = TaskManager(power_confirm_approval_loader=broken)
+        failed.raise_approved_ceiling("27be256f-session", 233)
+        failed.set_power_confirm_skip("27be256f-session", True)
+        failed.add_unconfirmed_power_cost("27be256f-session", 12)
+        downgraded = failed.get_power_confirm_state("27be256f-session")
+        self.assertEqual(downgraded["approved_ceiling"], 0)
+        self.assertFalse(downgraded["skip"])
+        self.assertEqual(downgraded["unconfirmed_cost"], 12)
 
 
 if __name__ == '__main__':

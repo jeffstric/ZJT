@@ -7,6 +7,7 @@ Agent 生成工具算力确认门。
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -230,6 +231,55 @@ def parse_confirm_answer(user_input: Optional[str]) -> ConfirmAnswer:
     if any(key in normalized for key in approve_keys):
         return ConfirmAnswer.APPROVE
     return ConfirmAnswer.REJECT
+
+
+def _json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _positive_cost(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def confirm_state_from_approvals(rows: Any) -> Dict[str, Any]:
+    """从已同意的算力确认记录还原本会话状态。
+
+    只认「确认生成」和「本次对话不再询问」。取消也常被写成 approved，
+    必须看 user_input，不能只看状态。超时和无法识别的回答不抬价。
+    """
+    ceiling = 0
+    skip = False
+    if not rows:
+        return {"skip": False, "approved_ceiling": 0}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        context = _json_object(row.get("context"))
+        result = _json_object(row.get("result"))
+        user_input = result.get("user_input")
+        answer = parse_confirm_answer(user_input if isinstance(user_input, str) else None)
+        if answer == ConfirmAnswer.REJECT:
+            continue
+        if answer == ConfirmAnswer.SKIP_SESSION:
+            skip = True
+        cost = _positive_cost(context.get("estimated_cost"))
+        if cost > ceiling:
+            ceiling = cost
+    return {"skip": skip, "approved_ceiling": ceiling}
 
 
 def build_confirm_description(
