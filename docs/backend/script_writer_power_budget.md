@@ -44,4 +44,4 @@
 
 `tests/script_writer_core/test_power_budget.py`：超限判定、已授权生成不暂停、充值重置授权额度、哨兵值忽略、fail-open、解析顺序与非法值回退、异常子类契约、ask_user 超限立即返回 / 未超限不受影响。
 
-`tests/script_writer_core/test_power_confirm.py`：已同意单价内不再确认、更贵再确认、免打扰后单笔高于硬阈值不再确认、多笔小额累计仍确认、从确认记录还原最高价（取消不计入）。
+`tests/script_writer_core/test_power_confirm.py`：已同意单价内不再确认、更贵再确认、免打扰后单笔高于硬阈值不再确认、从确认记录还原最高价（取消不计入）。多笔小额累计触发确认的机制已移除（进程内累计在多 worker 部署下不可靠），连续小额的失控由本预算按真实余额兜底。

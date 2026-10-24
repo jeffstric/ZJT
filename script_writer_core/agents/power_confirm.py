@@ -71,7 +71,6 @@ class PowerEstimate:
 class ConfirmDecision:
     need_confirm: bool
     reason: str
-    projected_total: int
 
 
 def get_platform_thresholds() -> tuple[int, int]:
@@ -152,39 +151,36 @@ def validate_threshold(raw: Any) -> int:
 
 def should_confirm(
     cost: int,
-    unconfirmed_cost: int,
     skip_session: bool,
     soft_threshold: int,
     hard_threshold: int,
     unknown: bool = False,
     approved_ceiling: int = 0,
 ) -> ConfirmDecision:
-    """判定本次生成是否需要弹出确认。
+    """判定本次生成是否需要弹出确认。只看单笔，不做多笔累计
+    （进程内累计在多 worker 下不可靠已移除；连续小额的失控由
+    单次任务算力上限按真实余额兜底）。
 
     - 点过「确认生成」后，会话记下已同意的最高单笔。不超过这个价格不再问；
       更贵（更长时长、更高分辨率、更大数量）再问一次。
-    - 点过「本次对话不再询问」后，硬阈值只累计多笔小生成。
-      单笔本身已经超过硬阈值的（如 Seedance 一条 303），不再因为硬阈值再问。
+    - 点过「本次对话不再询问」后，本会话不再弹确认。
     """
-    projected = max(0, int(unconfirmed_cost or 0)) + max(0, int(cost or 0))
     cost = max(0, int(cost or 0))
     ceiling = max(0, int(approved_ceiling or 0))
     if unknown:
-        return ConfirmDecision(True, "unknown", projected)
+        return ConfirmDecision(True, "unknown")
 
     if skip_session:
         if cost > hard_threshold:
-            return ConfirmDecision(False, "single_item_over_hard_allowed", projected)
-        if projected > hard_threshold:
-            return ConfirmDecision(True, "over_hard", projected)
-        return ConfirmDecision(False, "below_threshold", projected)
+            return ConfirmDecision(False, "single_item_over_hard_allowed")
+        return ConfirmDecision(False, "below_threshold")
 
     if ceiling > 0 and cost <= ceiling:
-        return ConfirmDecision(False, "within_approved_ceiling", projected)
+        return ConfirmDecision(False, "within_approved_ceiling")
 
-    if cost > soft_threshold or projected > soft_threshold:
-        return ConfirmDecision(True, "over_soft", projected)
-    return ConfirmDecision(False, "below_threshold", projected)
+    if cost > soft_threshold:
+        return ConfirmDecision(True, "over_soft")
+    return ConfirmDecision(False, "below_threshold")
 
 
 def generation_is_budget_authorized(
@@ -285,7 +281,6 @@ def confirm_state_from_approvals(rows: Any) -> Dict[str, Any]:
 def build_confirm_description(
     estimate: PowerEstimate,
     balance: Optional[int],
-    unconfirmed_cost: int,
     soft_threshold: int,
 ) -> str:
     lines = [
@@ -309,8 +304,6 @@ def build_confirm_description(
             unit_hint = f"（单条 {estimate.unit_cost} × {estimate.count}）"
         lines.append(f"预计消耗：{estimate.cost} 算力{unit_hint}")
 
-    if unconfirmed_cost:
-        lines.append(f"本轮已用未确认：{unconfirmed_cost}")
     if balance is not None:
         lines.append(f"当前余额：{balance}")
     lines.append(f"您的自动确认上限：{soft_threshold}")

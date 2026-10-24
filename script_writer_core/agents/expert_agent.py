@@ -596,7 +596,6 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         soft, hard, _is_custom = get_effective_thresholds(str(self.user_id or ""))
         decision = should_confirm(
             cost=estimate.cost,
-            unconfirmed_cost=state.get("unconfirmed_cost") or 0,
             skip_session=bool(state.get("skip")),
             soft_threshold=soft,
             hard_threshold=hard,
@@ -604,9 +603,6 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             approved_ceiling=state.get("approved_ceiling") or 0,
         )
         if not decision.need_confirm:
-            # 只有低于阈值的自动放行才累计「未确认」。已同意单价内的高价生成不再累进硬阈值。
-            if not estimate.unknown and decision.reason == "below_threshold":
-                self.task_manager.add_unconfirmed_power_cost(session_key, estimate.cost)
             if generation_is_budget_authorized(decision.reason, estimate.cost, soft):
                 self._budget_authorize_next = True
             return None
@@ -614,7 +610,6 @@ class ExpertAgent(BaseAgent, AskUserMixin):
         question = build_confirm_description(
             estimate=estimate,
             balance=balance,
-            unconfirmed_cost=state.get("unconfirmed_cost") or 0,
             soft_threshold=soft,
         )
         logger.info(
@@ -657,7 +652,6 @@ class ExpertAgent(BaseAgent, AskUserMixin):
             self.task_manager.set_power_confirm_skip(session_key, True)
         if not estimate.unknown and estimate.cost > 0:
             self.task_manager.raise_approved_ceiling(session_key, estimate.cost)
-        self.task_manager.clear_unconfirmed_power_cost(session_key)
         self._budget_authorize_next = True
         return None
 

@@ -201,18 +201,18 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 | 情况 | 行为 |
 |---|---|
-| 本次及本轮累计 ≤ 用户软阈值 | 直接提交，不弹确认 |
-| 超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
+| 单笔 ≤ 用户软阈值 | 直接提交，不弹确认 |
+| 单笔超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
 | 余额不足 | 不弹确认，直接告诉模型算力不足 |
 | 用户点「确认生成」 | 同意写在该次算力确认记录里。之后任意 worker 读取本会话已同意记录的最高价，不超过不再问；更贵再问一次 |
-| 用户点「本次对话不再询问」 | 本会话后续小额生成不再问。多笔小额累计超过硬阈值时再问一次。单笔本身已超过硬阈值的（如 Seedance 一条视频）不再因为硬阈值再问。免打扰同样写在确认记录里，各 worker 都能读到 |
+| 用户点「本次对话不再询问」 | 本会话后续生成不再问。免打扰同样写在确认记录里，各 worker 都能读到 |
 | 底部「图片 / 视频」直出模式 | 不走此门（用户已主动点生成） |
 
 阈值分层：
 
 1. **用户软阈值**：每人可在自定义面板「自动确认上限」自行设置，存 `user_preferences.pref_type=power_confirm`（`world_id=_global`，换对话/换世界共用）。
 2. **平台默认软阈值**：用户未设置时使用 `agent.power_confirm_threshold`，默认 35。
-3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200。只在「本次对话不再询问」之后，约束多笔小额的累计。单笔标价已经高于硬阈值时，不再用它再弹一次确认。
+3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200。仅用于免打扰后单笔超硬的放行标记（该笔生成计入任务预算的已授权消耗）。多笔小额累计触发确认的机制已移除（进程内累计在多 worker 部署下不可靠；连续小额的失控由单次任务算力上限按真实余额兜底）。
 
 企业版走 `enterprise/routes/user.py` 注册同一组接口（社区版走 `api/user.py`）。商业版不会加载社区用户路由，因此两端都要挂上。
 
@@ -224,7 +224,7 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 确认不可被模型绕过：拦截点在 `ExpertAgent._execute_tool`，确认完成前不会调用 `generate_*`。模型也不应再自己用 `ask_user` 问算力。
 
-已同意单价和「不再询问」不写在对话正文上，也不放在进程内存里当唯一依据。判断前读取本会话 `agent_verifications` 中 `verification_type=computing_power_confirm` 且 `status=approved` 的记录，用 `result.user_input` 区分确认、免打扰和取消（三个按钮提交时 `approved` 都是 true）。超时取消的记录不计入。读取失败时继续询问。低于软阈值的小额累计仍只记在处理该任务的进程内。
+已同意单价和「不再询问」不写在对话正文上，也不放在进程内存里当唯一依据。判断前读取本会话 `agent_verifications` 中 `verification_type=computing_power_confirm` 且 `status=approved` 的记录，用 `result.user_input` 区分确认、免打扰和取消（三个按钮提交时 `approved` 都是 true）。超时取消的记录不计入。读取失败时继续询问。
 
 > **作用范围**：算力确认门仅对营销智能体（`MarketingPMAgent`，`session_type=2`）及分镜（storyboard）链路开启。剧本创作页（`script_writer.html`，`PMAgent`）已于 2026-09-01 关闭此门（`power_confirm_enabled=False`，见 `docs/backend/incidents/2026-09-01-script-writer-power-confirm-loop.md`）：生成前不弹「算力确认」，也不在系统提示中注入阈值说明。
 

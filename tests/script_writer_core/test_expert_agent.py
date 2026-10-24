@@ -407,7 +407,7 @@ class TestPowerConfirmSwitch(TestExpertAgent):
         state = second.get_power_confirm_state("27be256f-session")
         self.assertEqual(state["approved_ceiling"], 233)
         self.assertFalse(state["skip"])
-        decision = should_confirm(210, 0, False, 35, 200, approved_ceiling=state["approved_ceiling"])
+        decision = should_confirm(210, False, 35, 200, approved_ceiling=state["approved_ceiling"])
         self.assertFalse(decision.need_confirm)
         self.assertEqual(decision.reason, "within_approved_ceiling")
         self.assertEqual(first.get_power_confirm_state("27be256f-session")["approved_ceiling"], 233)
@@ -425,11 +425,9 @@ class TestPowerConfirmSwitch(TestExpertAgent):
         failed = TaskManager(power_confirm_approval_loader=broken)
         failed.raise_approved_ceiling("27be256f-session", 233)
         failed.set_power_confirm_skip("27be256f-session", True)
-        failed.add_unconfirmed_power_cost("27be256f-session", 12)
         downgraded = failed.get_power_confirm_state("27be256f-session")
         self.assertEqual(downgraded["approved_ceiling"], 0)
         self.assertFalse(downgraded["skip"])
-        self.assertEqual(downgraded["unconfirmed_cost"], 12)
 
 
 if __name__ == '__main__':

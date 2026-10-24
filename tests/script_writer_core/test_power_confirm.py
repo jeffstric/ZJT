@@ -30,54 +30,53 @@ validate_threshold = power_confirm.validate_threshold
 
 class TestShouldConfirm(unittest.TestCase):
     def test_low_cost_skips(self):
-        decision = should_confirm(2, 0, False, 35, 200)
+        decision = should_confirm(2, False, 35, 200)
         self.assertFalse(decision.need_confirm)
         self.assertEqual(decision.reason, "below_threshold")
 
     def test_exactly_threshold_skips(self):
-        decision = should_confirm(35, 0, False, 35, 200)
+        decision = should_confirm(35, False, 35, 200)
         self.assertFalse(decision.need_confirm)
 
     def test_over_soft_confirms(self):
-        decision = should_confirm(36, 0, False, 35, 200)
+        decision = should_confirm(36, False, 35, 200)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(decision.reason, "over_soft")
 
-    def test_accumulate_over_soft(self):
-        decision = should_confirm(10, 30, False, 35, 200)
-        self.assertTrue(decision.need_confirm)
-        self.assertEqual(decision.projected_total, 40)
+    def test_only_single_item_counts(self):
+        # 小额累计机制已移除：连续多笔小额各自独立判定，不因历史累计弹确认
+        decision = should_confirm(10, False, 35, 200)
+        self.assertFalse(decision.need_confirm)
 
     def test_skip_allows_below_hard(self):
-        decision = should_confirm(80, 0, True, 35, 200)
+        decision = should_confirm(80, True, 35, 200)
         self.assertFalse(decision.need_confirm)
 
     def test_skip_allows_single_item_over_hard(self):
         # Seedance 一条 303 高于硬阈值：点过「不再询问」后不再为这一条再弹
-        decision = should_confirm(303, 0, True, 35, 200)
+        decision = should_confirm(303, True, 35, 200)
         self.assertFalse(decision.need_confirm)
         self.assertEqual(decision.reason, "single_item_over_hard_allowed")
 
-    def test_skip_still_confirms_when_small_items_accumulate_over_hard(self):
-        decision = should_confirm(30, 180, True, 35, 200)
-        self.assertTrue(decision.need_confirm)
-        self.assertEqual(decision.reason, "over_hard")
-        self.assertEqual(decision.projected_total, 210)
+    def test_skip_never_confirms_after_accumulation_removal(self):
+        # 小额累计机制已移除：免打扰后多笔小额也不再弹确认
+        decision = should_confirm(30, True, 35, 200)
+        self.assertFalse(decision.need_confirm)
 
     def test_approved_ceiling_allows_same_or_cheaper_price(self):
-        decision = should_confirm(303, 0, False, 35, 200, approved_ceiling=303)
+        decision = should_confirm(303, False, 35, 200, approved_ceiling=303)
         self.assertFalse(decision.need_confirm)
         self.assertEqual(decision.reason, "within_approved_ceiling")
-        cheaper = should_confirm(152, 0, False, 35, 200, approved_ceiling=303)
+        cheaper = should_confirm(152, False, 35, 200, approved_ceiling=303)
         self.assertFalse(cheaper.need_confirm)
 
     def test_more_expensive_than_ceiling_confirms_again(self):
-        decision = should_confirm(454, 0, False, 35, 200, approved_ceiling=303)
+        decision = should_confirm(454, False, 35, 200, approved_ceiling=303)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(decision.reason, "over_soft")
 
     def test_unknown_confirms_even_with_ceiling(self):
-        decision = should_confirm(0, 0, False, 35, 200, unknown=True, approved_ceiling=303)
+        decision = should_confirm(0, False, 35, 200, unknown=True, approved_ceiling=303)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(decision.reason, "unknown")
 
@@ -90,17 +89,17 @@ class TestShouldConfirm(unittest.TestCase):
         self.assertFalse(authorize("below_threshold", 20, 35))
 
     def test_unknown_always_confirms(self):
-        decision = should_confirm(0, 0, False, 35, 200, unknown=True)
+        decision = should_confirm(0, False, 35, 200, unknown=True)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(decision.reason, "unknown")
 
     def test_user_a_vs_user_b_thresholds(self):
         # 同样 20 算力：阈值 10 要问，阈值 80 不问
-        self.assertTrue(should_confirm(20, 0, False, 10, 200).need_confirm)
-        self.assertFalse(should_confirm(20, 0, False, 80, 200).need_confirm)
+        self.assertTrue(should_confirm(20, False, 10, 200).need_confirm)
+        self.assertFalse(should_confirm(20, False, 80, 200).need_confirm)
 
     def test_zero_threshold_always_asks(self):
-        self.assertTrue(should_confirm(2, 0, False, 0, 200).need_confirm)
+        self.assertTrue(should_confirm(2, False, 0, 200).need_confirm)
 
 
 class TestParseConfirmAnswer(unittest.TestCase):
@@ -228,20 +227,19 @@ class TestGateDecisionWiring(unittest.TestCase):
     """不依赖 ExpertAgent 导入，验证门控决策与回答解析的组合。"""
 
     def test_reject_means_do_not_execute(self):
-        decision = should_confirm(80, 0, False, 35, 200)
+        decision = should_confirm(80, False, 35, 200)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(parse_confirm_answer(OPTION_REJECT), ConfirmAnswer.REJECT)
 
     def test_approve_after_confirm(self):
-        decision = should_confirm(80, 0, False, 35, 200)
+        decision = should_confirm(80, False, 35, 200)
         self.assertTrue(decision.need_confirm)
         self.assertEqual(parse_confirm_answer(OPTION_APPROVE), ConfirmAnswer.APPROVE)
 
-    def test_skip_session_then_below_hard(self):
+    def test_skip_session_never_confirms(self):
         self.assertEqual(parse_confirm_answer(OPTION_SKIP_SESSION), ConfirmAnswer.SKIP_SESSION)
-        self.assertFalse(should_confirm(80, 0, True, 35, 200).need_confirm)
-        self.assertFalse(should_confirm(303, 0, True, 35, 200).need_confirm)
-        self.assertTrue(should_confirm(30, 180, True, 35, 200).need_confirm)
+        self.assertFalse(should_confirm(80, True, 35, 200).need_confirm)
+        self.assertFalse(should_confirm(303, True, 35, 200).need_confirm)
 
 
 if __name__ == "__main__":

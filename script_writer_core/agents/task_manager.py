@@ -215,7 +215,7 @@ class TaskManager:
         self.tasks: Dict[str, AgentTask] = {}
         self.task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
-        # 仅本进程：小额未确认累计，以及本次同意后、记录尚未被其他进程读到时的副本。
+        # 仅本进程副本：本次同意后、确认记录尚未被其他进程读到时的兜底。
         # 已同意单价和免打扰的跨进程真相在 agent_verifications。
         self._power_confirm_state: Dict[str, Dict[str, Any]] = {}
         self._power_confirm_approval_loader = power_confirm_approval_loader
@@ -499,14 +499,13 @@ class TaskManager:
         logger.info(f"Task {task.task_id} thread started")
     
     def _blank_power_confirm_state(self) -> Dict[str, Any]:
-        return {"skip": False, "unconfirmed_cost": 0, "approved_ceiling": 0}
+        return {"skip": False, "approved_ceiling": 0}
 
     def _local_power_confirm_state(self, session_id: str) -> Dict[str, Any]:
         with self._lock:
             state = self._power_confirm_state.get(session_id) or {}
             return {
                 "skip": bool(state.get("skip")),
-                "unconfirmed_cost": int(state.get("unconfirmed_cost") or 0),
                 "approved_ceiling": int(state.get("approved_ceiling") or 0),
             }
 
@@ -519,10 +518,10 @@ class TaskManager:
         )
 
     def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
-        """读取会话级算力确认状态（skip / 本轮未确认累计 / 已同意最高单笔）。
+        """读取会话级算力确认状态（skip / 已同意最高单笔）。
 
         已同意单价和免打扰来自本会话已提交的算力确认记录，所有 worker 都能读到。
-        读库失败时不沿用本进程记忆，继续询问。小额未确认累计仍只在本进程。
+        读库失败时不沿用本进程记忆，继续询问。
         """
         if not session_id:
             return self._blank_power_confirm_state()
@@ -539,12 +538,10 @@ class TaskManager:
             )
             return {
                 "skip": False,
-                "unconfirmed_cost": local["unconfirmed_cost"],
                 "approved_ceiling": 0,
             }
         return {
             "skip": bool(shared["skip"] or local["skip"]),
-            "unconfirmed_cost": local["unconfirmed_cost"],
             "approved_ceiling": max(
                 int(shared["approved_ceiling"] or 0),
                 local["approved_ceiling"],
@@ -571,25 +568,6 @@ class TaskManager:
             )
             state["approved_ceiling"] = max(int(state.get("approved_ceiling") or 0), amount)
             return state["approved_ceiling"]
-
-    def add_unconfirmed_power_cost(self, session_id: Optional[str], cost: int) -> int:
-        if not session_id:
-            return 0
-        with self._lock:
-            state = self._power_confirm_state.setdefault(
-                session_id, self._blank_power_confirm_state()
-            )
-            state["unconfirmed_cost"] = int(state.get("unconfirmed_cost") or 0) + max(0, int(cost or 0))
-            return state["unconfirmed_cost"]
-
-    def clear_unconfirmed_power_cost(self, session_id: Optional[str]) -> None:
-        if not session_id:
-            return
-        with self._lock:
-            state = self._power_confirm_state.setdefault(
-                session_id, self._blank_power_confirm_state()
-            )
-            state["unconfirmed_cost"] = 0
 
     def create_verification(
         self,
