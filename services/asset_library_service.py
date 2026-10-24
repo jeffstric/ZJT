@@ -33,6 +33,7 @@ from model.asset_group import AssetGroupModel
 from model.asset_library import AssetLibraryModel, AssetItem
 from model.asset_library_quota import AssetLibraryQuotaModel
 from model.asset_permission_member import AssetPermissionMemberModel
+from model.database import execute_query
 from model.users import UsersModel
 from utils.download_io_pool import get_download_io_executor
 from utils.project_path import get_upload_subdir, resolve_upload_url_to_local_path
@@ -392,7 +393,6 @@ def list_assets(
     """列出用户可见的资产（分页 + 附加属主名/成员映射/可编辑标志）。"""
     page = max(1, int(page or 1))
     page_size = min(max(1, int(page_size or ALC.DEFAULT_PAGE_SIZE)), ALC.MAX_PAGE_SIZE)
-    from .database import execute_query
 
     visible_where, visible_params = _visible_where(user_id)
     filters = _apply_filters(visible_params, group_id, asset_type, keyword, scope, user_id)
@@ -515,8 +515,6 @@ def purge_asset(asset_id: int) -> Dict[str, Any]:
 
 def list_groups(user_id: int) -> Tuple[List[Dict[str, Any]], int]:
     """共享分组目录 + 每组可见资产计数 + 未分组计数。返回 (groups, ungrouped_count)。"""
-    from .database import execute_query
-
     groups = AssetGroupModel.list_all()
     visible_where, visible_params = _visible_where(user_id)
     count_sql = f"""

@@ -124,11 +124,15 @@ class AssetLibraryModel:
 
     @staticmethod
     def count_by_group(group_ids: List[int]) -> Dict[int, int]:
-        """统计每个分组的资产总数（管理侧/删除守卫用）。"""
+        """统计每个分组的资产总数（管理侧/删除守卫用）。
+
+        必须带 GROUP BY：无 GROUP BY 的聚合在 MySQL 返回单行 (NULL, 0)，
+        空组会被误读成"有一条 group_id=NULL 的记录"导致 int(None) 崩溃。
+        """
         if not group_ids:
             return {}
         placeholders = ','.join(['%s'] * len(group_ids))
-        sql = f"SELECT group_id, COUNT(*) AS cnt FROM asset_library WHERE group_id IN ({placeholders})"
+        sql = f"SELECT group_id, COUNT(*) AS cnt FROM asset_library WHERE group_id IN ({placeholders}) GROUP BY group_id"
         try:
             rows = execute_query(sql, tuple(group_ids), fetch_all=True)
             return {int(r['group_id']): int(r['cnt']) for r in rows} if rows else {}

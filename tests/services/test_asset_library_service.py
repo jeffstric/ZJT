@@ -288,3 +288,18 @@ def test_search_users_uses_nickname_channel_only(monkeypatch):
     assert result == [{'user_id': 3, 'display_name': '张三'}]
     assert calls['nickname'] == ['张']
     assert calls['account'] == []  # 账号通道未被触碰
+
+
+def test_count_by_group_sql_has_group_by(monkeypatch):
+    # 回归：无 GROUP BY 时 MySQL 聚合对空组返回单行 (NULL,0)，int(None) 崩溃（真实环境抓到）
+    from model import asset_library as asset_model
+    captured = {}
+
+    def fake_query(sql, params, fetch_all=True, **kw):
+        captured['sql'] = sql
+        # 模拟带 GROUP BY 的正确行为：空组返回 0 行
+        return []
+
+    monkeypatch.setattr(asset_model, 'execute_query', staticmethod(fake_query))
+    assert asset_model.AssetLibraryModel.count_by_group([7]) == {}
+    assert 'GROUP BY group_id' in captured['sql']
