@@ -428,14 +428,14 @@ def list_assets(
     return {"items": data, "total": total, "page": page, "page_size": page_size}
 
 
-def get_asset_detail(user_id: int, asset_id: int) -> Dict[str, Any]:
-    """资产详情（需查看权限）。"""
+def get_asset_detail(user_id: int, asset_id: int, is_admin: bool = False) -> Dict[str, Any]:
+    """资产详情（需查看权限；管理员可查看任意资产）。"""
     asset = AssetLibraryModel.get_by_id(int(asset_id))
-    if not asset or not can_view(asset, user_id):
-        raise AssetLibraryError("资产不存在或无权访问", "not_found", )
+    if not asset or not (can_view(asset, user_id) or is_admin):
+        raise AssetLibraryError("资产不存在或无权访问", "not_found")
     d = asset.to_dict()
     d["owner_name"] = UsersModel.get_display_names([asset.user_id]).get(asset.user_id, f"用户{asset.user_id}")
-    d["can_edit"] = can_edit(asset, user_id)
+    d["can_edit"] = can_edit(asset, user_id, is_admin)
     members = _perm_members(asset.id)
     d["view_members"] = members.get("view", [])
     d["edit_members"] = members.get("edit", [])
@@ -488,7 +488,7 @@ def update_asset(
     if edit_members is not None:
         AssetPermissionMemberModel.replace_for_asset(
             asset.id, ALC.PERM_TYPE_EDIT, _normalize_members(edit_members), exclude_user_id=asset.user_id)
-    return get_asset_detail(user_id, asset_id)
+    return get_asset_detail(user_id, asset_id, is_admin)
 
 
 def purge_asset(asset_id: int) -> Dict[str, Any]:
@@ -499,10 +499,14 @@ def purge_asset(asset_id: int) -> Dict[str, Any]:
     AssetPermissionMemberModel.delete_for_asset(asset.id)
     AssetLibraryModel.delete(asset.id)
     AssetLibraryQuotaModel.release(asset.user_id, asset.file_size)
-    # 文件删除丢调用方线程池（API 层 asyncio.to_thread 包装本函数）
+    # 文件删除丢调用方线程池（API 层 asyncio.to_thread 包装本函数）；
+    # 记录/配额已清理，文件路径异常（脏数据）不应让接口失败造成"半清除"误报
     if asset.file_path:
-        local = resolve_upload_url_to_local_path(f"/upload/{asset.file_path}")
-        _remove_file_quietly(Path(local))
+        try:
+            local = resolve_upload_url_to_local_path(f"/upload/{asset.file_path}")
+            _remove_file_quietly(Path(local))
+        except ValueError as e:
+            logger.warning(f"Asset {asset_id} has invalid file_path '{asset.file_path}', skip file removal: {e}")
     logger.info(f"Asset {asset_id} purged by admin (owner={asset.user_id}, freed {asset.file_size} bytes)")
     return {"asset_id": asset.id, "freed_bytes": asset.file_size, "owner_user_id": asset.user_id}
 
@@ -587,9 +591,13 @@ def get_quota(user_id: int) -> Dict[str, Any]:
 
 
 def search_users(keyword: str, limit: int = ALC.MEMBER_SEARCH_LIMIT) -> List[Dict[str, Any]]:
-    """按昵称/手机号/邮箱搜索用户（指定成员选择器数据源）。"""
+    """按昵称搜索用户（指定成员选择器数据源）。
+
+    仅昵称通道：手机号/邮箱精确匹配可被用于枚举注册用户，不走账号通道
+    （find_ids_by_nickname_or_account 仅供管理端 scope 查询使用）。
+    """
     text = (keyword or "").strip()
-    ids = UsersModel.find_ids_by_nickname_or_account(text, limit=limit)
+    ids = UsersModel.find_ids_by_nickname(text, limit=limit)
     if not ids:
         return []
     names = UsersModel.get_display_names(ids)

@@ -1697,7 +1697,10 @@ function renderAgentMessages() {
     const rows = state.agentMessages.slice(-8).map((message, index) => {
         const role = message.role || 'assistant';
         const label = role === 'user' ? i18nT('label_you', '你') : (role === 'status' ? i18nT('label_status', '状态') : i18nT('label_agent', '智能体'));
-        const full = String(message.content || message.status || '');
+        // 纯文本面板：markdown 图片语法（资产库 @引用 提交时还原产生）折叠为
+        // 「[图片:名]」占位，避免整段 URL 原文刷屏（历史回放与长消息均受益）
+        const full = String(message.content || message.status || '')
+            .replace(/!\[([^\]]*)\]\([^)\s]+\)/g, (_m, alt) => `[图片${alt ? ':' + alt : ''}]`);
         const key = agentMessageKey(message, index);
         const limit = role === 'status' ? 160 : 280;
         const isExpanded = Boolean(expandedMap[key]);

@@ -143,7 +143,7 @@
 
     function renderMemberBox(kind, members, hint) {
         var html = '<div class="al-member-box" data-al-memberbox="' + kind + '">';
-        html += '<input type="text" class="al-input al-member-search" placeholder="搜索昵称 / 手机号 / 邮箱添加成员" data-al-member-search>';
+        html += '<input type="text" class="al-input al-member-search" placeholder="搜索昵称添加成员" data-al-member-search>';
         html += '<div class="al-member-candidates" data-al-member-candidates hidden></div>';
         html += '<div class="al-member-tags" data-al-member-tags></div>';
         html += '<div class="al-hint">' + esc(hint) + '</div>';
@@ -657,7 +657,8 @@
             return text.replace(new RegExp(MENTION_PREFIX + '(\\d+)(?![\\d])', 'g'), function (all, idStr) {
                 var asset = assetCache[Number(idStr)];
                 if (!asset || !asset.file_url) return all;
-                return '![' + String(asset.name || '资产').replace(/[\[\]]/g, '') + '](' + absoluteUrl(asset.file_url) + ')';
+                // alt 清洗掉 markdown 语法字符（[]()），名称含括号时不破坏图片语法
+                return '![' + String(asset.name || '资产').replace(/[\[\]()]/g, '') + '](' + absoluteUrl(asset.file_url) + ')';
             });
         });
     }

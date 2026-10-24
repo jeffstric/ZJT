@@ -224,6 +224,38 @@ class UsersModel:
             logger.error(f"Failed to find users by nickname like: {e}")
             raise
         return [int(row["id"]) for row in like_rows]
+
+    @staticmethod
+    def find_ids_by_nickname(query: str, limit: int = 20) -> List[int]:
+        """仅按昵称找用户 id（不含手机号/邮箱通道）。
+
+        供普通用户侧的成员搜索（资产库指定成员等）：账号精确匹配可被用于
+        枚举注册用户（逐个试探手机号），昵称搜索无此风险。
+        """
+        text = (query or "").strip()
+        try:
+            capped = int(limit)
+        except (TypeError, ValueError):
+            capped = 20
+        if capped <= 0 or not text:
+            return []
+        capped = min(capped, 50)
+        exact_sql = "SELECT id FROM users WHERE nickname = %s ORDER BY id ASC LIMIT %s"
+        try:
+            exact_rows = execute_query(exact_sql, (text, capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname: {e}")
+            raise
+        if exact_rows:
+            return [int(row["id"]) for row in exact_rows]
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_sql = "SELECT id FROM users WHERE nickname LIKE %s ORDER BY id ASC LIMIT %s"
+        try:
+            like_rows = execute_query(like_sql, (f"%{escaped}%", capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname like (nickname-only): {e}")
+            raise
+        return [int(row["id"]) for row in like_rows]
     
     @staticmethod
     def get_by_phone(phone: str) -> Optional[User]:

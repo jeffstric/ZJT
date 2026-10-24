@@ -4583,15 +4583,17 @@
       const assetItems = listAssetMentionItems();
       const worldId = state.defaultWorldId;
       const characters = worldId ? (state.worldCharacters || []) : [];
-      if (frameItems.length === 0 && assetItems.length === 0 && !window.AssetLibrary && !worldId) {
-        dropdown.innerHTML = '<div style="padding: 8px; color: #6b7280; font-size: 12px;">请先选择世界</div>';
-        dropdown.style.display = 'block';
-        return;
-      }
       if (frameItems.length === 0 && assetItems.length === 0 && characters.length === 0) {
-        dropdown.innerHTML = assetMentionLoading
-          ? '<div style="padding: 8px; color: #6b7280; font-size: 12px;">资产库加载中…</div>'
-          : '<div style="padding: 8px; color: #6b7280; font-size: 12px;">暂无可引用内容</div>';
+        // 无任何条目：区分「资产库加载中」/「未选世界（角色需世界）」/「确实为空」
+        let hintText;
+        if (assetMentionLoading) {
+          hintText = '资产库加载中…';
+        } else if (!worldId) {
+          hintText = '请先选择世界（角色引用需要世界）；也可引用资产库图片';
+        } else {
+          hintText = '暂无可引用内容';
+        }
+        dropdown.innerHTML = `<div style="padding: 8px; color: #6b7280; font-size: 12px;">${hintText}</div>`;
         dropdown.style.display = 'block';
         return;
       }

@@ -1045,15 +1045,17 @@ async function sendStoryboardAgentMessage(current) {
         }
     }
 
-    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见
-    // web/js/asset_library.js），使资产图片进入 Agent 生成上下文
+    // 共享资产库 @资产:{id} token：仅发送给 API 的文本还原为 markdown 图片
+    // （见 web/js/asset_library.js）；本地显示/存档保留原始 token（agent 消息
+    // 面板为纯文本渲染，还原文本会显示一长串 markdown 原文）
+    const displayMessage = message;
     if (window.AssetLibrary && message.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
         message = await window.AssetLibrary.resolveMentionTokens(message);
     }
 
     if (!guardFrameMentions(activeFrameMentionPrompt(message, current))) return;
     startSceneAgentRun(streamSceneId);
-    pushAgentMessageForScene(streamSceneId, 'user', message);
+    pushAgentMessageForScene(streamSceneId, 'user', displayMessage);
     state.inputMessage = '';
     // 清空输入 + running 态：只刷助手面板
     rerenderAgentPanel();

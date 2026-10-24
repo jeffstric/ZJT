@@ -39,13 +39,13 @@
 |---|---|---|
 | GET | `/assets?page&page_size&group_id&group_scope=ungrouped&asset_type&keyword&scope=all\|mine\|shared` | 资产列表（只返回可见资产，附 `owner_name/can_edit/view_members/edit_members`） |
 | POST | `/assets` | 入库：`{source_url, name, group_id, asset_type, view_permission, edit_permission, view_members, edit_members}` |
-| GET | `/assets/{id}` | 详情（需查看权限） |
+| GET | `/assets/{id}` | 详情（需查看权限；管理员可查看任意资产） |
 | PUT | `/assets/{id}` | 编辑元信息（需编辑权限） |
 | DELETE | `/assets/{id}` | **仅管理员**：清除资产并扣减容量记录 |
 | GET | `/groups` | 共享分组目录 + 每组可见资产计数 + 未分组计数 |
 | POST | `/groups` / PUT `/groups/{id}` / DELETE `/groups/{id}` | 分组管理（改名/删除限创建者或管理员） |
 | GET | `/quota` | 我的容量 `{quota_bytes, used_bytes}` |
-| GET | `/users?keyword=` | 用户搜索（指定成员选择器，仅返回 id+display_name） |
+| GET | `/users?keyword=` | 用户搜索（指定成员选择器，仅返回 id+display_name；**只走昵称通道**——手机号/邮箱精确匹配可枚举注册用户，账号通道仅管理端 scope 查询可用） |
 
 管理员侧 `api/admin.py`：
 
@@ -73,7 +73,7 @@
 - **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`）与图生视频节点独立 @（`image_to_video_node.js`）均含资产条目；图片生成（`image_node.js`）、分镜视频（`shot_frame_video_generator.js`）、图生视频提交前同样还原。
 - **storyboard**：@ 提及弹窗新增「资产库」tab（`renderMentionPopup`）；胶囊镜像层（`chat_mention_chips.js` + `frame_mention.js scanFrameMentionTokenRanges`）把 token 渲染为「缩略图+名称」胶囊（原子删除、悬停大图，与 @首帧图 同一套机制）；Agent 对话/直连生图/直连视频提交前还原。
 
-还原语义：`resolveMentionTokens(text)` 把 token 替换为 `![name](绝对URL)`，使资产图片以 URL 形式进入生成上下文（文生图参考图提取、LLM、VL 均可消费）；无权访问/已清除的 token 保留原文不阻断提交。
+还原语义：`resolveMentionTokens(text)` 把 token 替换为 `![name](绝对URL)`，使资产图片以 URL 形式进入生成上下文（文生图参考图提取、LLM、VL 均可消费）；alt 中的 markdown 语法字符（`[]()`）会被清洗，资产名含括号不破坏图片语法；无权访问/已清除的 token 保留原文不阻断提交。storyboard 的 agent 消息面板为纯文本渲染，`![..](..)` 由渲染层折叠为 `[图片:名]` 占位（renderAgentMessages），本地会话显示保留原始 token。
 
 ## 6. 前端集成点
 

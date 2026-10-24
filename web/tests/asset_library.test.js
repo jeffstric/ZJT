@@ -82,6 +82,17 @@ describe('@资产 token 构造与还原', () => {
     // 1234 未在缓存：详情接口 mock 返回的是列表接口结构，详情 data 为空对象 → token 保留
     expect(out).toContain('@资产:1234');
   });
+
+  test('resolveMentionTokens：资产名含 markdown 语法字符（[]()）不破坏图片语法', async () => {
+    mockFetch(() => jsonResponse({
+      code: 0,
+      data: { items: [{ id: 5, name: '产品图(主视觉)[终版]', file_url: '/upload/b.png' }], total: 1 },
+    }));
+    await window.AssetLibrary.fetchMentionItems('');
+    const out = await window.AssetLibrary.resolveMentionTokens('参考 @资产:5');
+    // alt 中 []() 已被清洗，输出为合法 markdown 图片
+    expect(out).toBe(`参考 ![产品图主视觉终版](${location.origin}/upload/b.png)`);
+  });
 });
 
 describe('absoluteUrl', () => {

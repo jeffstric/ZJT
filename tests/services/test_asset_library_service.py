@@ -242,3 +242,49 @@ def test_add_asset_rejects_relative_upload_path_when_missing(monkeypatch):
     with pytest.raises(AssetLibraryError) as ei:
         asyncio.run(svc.add_asset(user_id=1, source_url='/upload/temp/al_test/not_exist.png', name='x'))
     assert ei.value.code == 'source_missing'
+
+
+# ============ 第三轮修复回归 ============
+
+def test_get_asset_detail_admin_can_view_private(monkeypatch):
+    # admin 查看他人 private 资产：is_admin 放行（此前 update_asset 后返回详情会 404）
+    other_private = make_asset(user_id=10, view_permission='private', edit_permission='private')
+    monkeypatch.setattr(svc.AssetLibraryModel, 'get_by_id', staticmethod(lambda aid: other_private))
+    monkeypatch.setattr(svc, '_perm_members', lambda aid: {'view': [], 'edit': []})
+    monkeypatch.setattr(svc.UsersModel, 'get_display_names', staticmethod(lambda ids: {10: '他人'}))
+    detail = svc.get_asset_detail(user_id=99, asset_id=1, is_admin=True)
+    assert detail['owner_name'] == '他人'
+    assert detail['can_edit'] is True
+    # 普通用户仍不可见
+    with pytest.raises(AssetLibraryError) as ei:
+        svc.get_asset_detail(user_id=99, asset_id=1)
+    assert ei.value.code == 'not_found'
+
+
+def test_purge_asset_tolerates_dirty_file_path(monkeypatch):
+    # file_path 脏数据（resolve 抛 ValueError）时清除仍成功：记录/配额已清理，不 500
+    dirty = make_asset(user_id=10, file_path='../../etc/passwd')
+    monkeypatch.setattr(svc.AssetLibraryModel, 'get_by_id', staticmethod(lambda aid: dirty))
+    monkeypatch.setattr(svc.AssetLibraryModel, 'delete', staticmethod(lambda aid: 1))
+    releases = []
+    monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'release',
+                        staticmethod(lambda uid, size: releases.append((uid, size))))
+    monkeypatch.setattr(svc.AssetPermissionMemberModel, 'delete_for_asset',
+                        staticmethod(lambda aid: None))
+    result = svc.purge_asset(1)
+    assert result['freed_bytes'] == 100
+    assert releases == [(10, 100)]
+
+
+def test_search_users_uses_nickname_channel_only(monkeypatch):
+    # 成员搜索仅走昵称通道（手机号/邮箱精确匹配可枚举注册用户，禁用）
+    calls = {'nickname': [], 'account': []}
+    monkeypatch.setattr(svc.UsersModel, 'find_ids_by_nickname',
+                        staticmethod(lambda q, limit=20: (calls['nickname'].append(q), [3])[1]))
+    monkeypatch.setattr(svc.UsersModel, 'find_ids_by_nickname_or_account',
+                        staticmethod(lambda q, limit=20: (calls['account'].append(q), [])[1]))
+    monkeypatch.setattr(svc.UsersModel, 'get_display_names', staticmethod(lambda ids: {3: '张三'}))
+    result = svc.search_users('张')
+    assert result == [{'user_id': 3, 'display_name': '张三'}]
+    assert calls['nickname'] == ['张']
+    assert calls['account'] == []  # 账号通道未被触碰

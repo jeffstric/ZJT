@@ -129,10 +129,11 @@ async def add_asset(request: Request, body: AssetAddRequest):
 @router.get("/assets/{asset_id}")
 @require_permission("asset_library:view")
 async def get_asset(request: Request, asset_id: int):
-    """资产详情（需查看权限）。"""
+    """资产详情（需查看权限；管理员可查看任意资产）。"""
     user_id = _current_user_id(request)
+    is_admin = await _is_admin(user_id)
     try:
-        detail = await asyncio.to_thread(svc.get_asset_detail, user_id, asset_id)
+        detail = await asyncio.to_thread(svc.get_asset_detail, user_id, asset_id, is_admin)
         return {"code": 0, "data": detail}
     except AssetLibraryError as e:
         raise _http_error(e)
