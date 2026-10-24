@@ -301,14 +301,15 @@
   function buildPuppetRig(colorHex, bodyTypeKey) {
     var t = getBodyType(bodyTypeKey);
     // 哑光木偶材质（接近参考图质感）；关节球用体色加深，模拟人偶关节接缝
-    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.0 });
+    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.0 });
     var seamMat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(colorHex).multiplyScalar(0.8), roughness: 0.55, metalness: 0.0
     });
     var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
+    var darkMat = new THREE.MeshStandardMaterial({ color: 0x11151d, roughness: 0.5, metalness: 0.0 });
 
     var rig = {
-      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat, darkMat],
       hipH: t.hipH, labelY: t.labelY, bodyType: normalizeBodyType(bodyTypeKey)
     };
 
@@ -332,9 +333,16 @@
       g.position.set(x, y, z);
       parent.add(g);
       rig.joints[key] = g;
-      // 四肢关节球：体色加深、半埋进肢体，只露一圈接缝
+      // 仿生咬合关节：同色关节球（半径略大于肢体端径）+ 深色细咬合环，
+      // 呈"承口"结构而非生硬卡球
       if (LIMB_JOINTS[key]) {
-        g.add(ball(t.jointR, seamMat));
+        g.add(ball(t.jointR * 1.06, mat));
+        var biteRing = new THREE.Mesh(
+          new THREE.TorusGeometry(t.jointR * 0.98, t.jointR * 0.15, 8, 18),
+          seamMat,
+        );
+        biteRing.rotation.x = Math.PI / 2; // 环面法线沿肢体延伸轴（局部 -Y）
+        g.add(biteRing);
       }
       var markerMat = markerBaseMat.clone();
       rig.materials.push(markerMat);
@@ -474,6 +482,28 @@
     shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
     chest.add(shoulderBar);
     // 躯干保持光滑一体（lathe 轮廓自带胸腰起伏）——凸起块在曲面上会呈"包子"感，已移除
+    // 解剖线条 v5：胸中缝/腹肌沟/锁骨——深色细条贴面=凹线视觉（非凸块）
+    var pecLineY = chestAbs + 0.085;
+    var pecLine = ellip(0.013, 0.082, 0.013, seamMat);
+    pecLine.position.set(0, pecLineY, profileAt(pecLineY).rz + 0.001);
+    chest.add(pecLine);
+    var absLineY = spineAbs - 0.03;
+    var absLine = ellip(0.011, 0.088, 0.011, seamMat);
+    absLine.position.set(0, absLineY, profileAt(absLineY).rz + 0.001);
+    hipsY.add(absLine);
+    var absCrossY = spineAbs * 0.60;
+    var absCross = ellip(0.058, 0.009, 0.011, seamMat);
+    absCross.position.set(0, absCrossY, profileAt(absCrossY).rz + 0.001);
+    hipsY.add(absCross);
+    var clavY = chestAbs + 0.165;
+    var clavL = ellip(0.082, 0.011, 0.013, seamMat);
+    clavL.position.set(0.098, clavY, profileAt(clavY).rz * 0.70);
+    clavL.rotation.z = -0.40;
+    chest.add(clavL);
+    var clavR = ellip(0.082, 0.011, 0.013, seamMat);
+    clavR.position.set(-0.098, clavY, profileAt(clavY).rz * 0.70);
+    clavR.rotation.z = 0.40;
+    chest.add(clavR);
 
     var neck = joint('neck', chest, 0, t.neckY, 0);
     var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);
@@ -541,13 +571,26 @@
         [-laH + 0.012, laR * 0.72], [-laH - 0.01, laR * 0.5]
       ]);
       var wrist = joint('wrist' + side, elbow, 0, -laH, 0);
-      var hand = ellip(t.hand[0], t.hand[1], t.hand[2]);
-      hand.position.y = -t.hand[1] * 0.55;
-      wrist.add(hand);
-      // 手部 v2：连指手 + 拇指（斜向体前），不再是纯椭球
-      var thumb = ellip(t.hand[0] * 0.38, t.hand[1] * 0.46, t.hand[0] * 0.38);
-      thumb.position.set(-s * t.hand[0] * 0.34, -t.hand[1] * 0.14, t.hand[2] * 0.68);
-      thumb.rotation.x = 0.5;
+      // 手部 v3：掌体 + 分节四指（有指节轮廓，中指最长）+ 拇指
+      var palm = ellip(t.hand[0], t.hand[1] * 0.70, t.hand[2] * 1.12);
+      palm.position.y = -t.hand[1] * 0.28;
+      wrist.add(palm);
+      var fr = t.hand[0] * 0.185;
+      var fingerLens = [0.44, 0.62, 0.58, 0.50];
+      for (var fi = 0; fi < 4; fi++) {
+        var fl = t.hand[1] * fingerLens[fi];
+        var fx = s * (fi - 1.5) * fr * 2.05;
+        var fseg = new THREE.Mesh(new THREE.CylinderGeometry(fr * 0.80, fr, fl, 8), mat);
+        fseg.position.set(fx, -t.hand[1] * 0.58 - fl * 0.5, 0.002);
+        wrist.add(fseg);
+        var ftip = ball(fr * 0.80);
+        ftip.position.set(fx, -t.hand[1] * 0.58 - fl, 0.002);
+        wrist.add(ftip);
+      }
+      var thumb = ellip(t.hand[0] * 0.36, t.hand[1] * 0.44, t.hand[0] * 0.36);
+      thumb.position.set(-s * t.hand[0] * 0.42, -t.hand[1] * 0.16, t.hand[2] * 0.62);
+      thumb.rotation.x = 0.55;
+      thumb.rotation.z = s * 0.3;
       wrist.add(thumb);
     }
     buildArm('L');
@@ -572,16 +615,21 @@
         [-llH + 0.010, llR * 0.60], [-llH - 0.008, llR * 0.42]
       ]);
       var ankle = joint('ankle' + side, knee, 0, -t.lowerLegH, 0);
-      // 鞋形脚 v3（LibTV 运动鞋感）：深色鞋底 + 跟部/前掌 + 踝部领口
-      var sole = ellip(t.foot[0] * 1.06, t.foot[1] * 0.40, t.foot[2] * 1.04, seamMat);
-      sole.position.set(0, -t.foot[1] * 0.78, t.foot[2] * 0.14);
+      // 未来感靴 v4：厚鞋底 + 鞋身/鞋头盖 + 鞋带孔三粒 + 踝领
+      var sole = ellip(t.foot[0] * 1.08, t.foot[1] * 0.62, t.foot[2] * 1.08, seamMat);
+      sole.position.set(0, -t.foot[1] * 0.55, t.foot[2] * 0.12);
       ankle.add(sole);
-      var heel = ellip(t.foot[0] * 0.88, t.foot[1], t.foot[2] * 0.55);
-      heel.position.set(0, -t.foot[1] * 0.18, -t.foot[2] * 0.12);
-      ankle.add(heel);
-      var toe = ellip(t.foot[0], t.foot[1] * 0.82, t.foot[2] * 0.62);
-      toe.position.set(0, -t.foot[1] * 0.30, t.foot[2] * 0.40);
-      ankle.add(toe);
+      var upper = ellip(t.foot[0] * 0.94, t.foot[1] * 0.72, t.foot[2] * 0.64);
+      upper.position.set(0, -t.foot[1] * 0.05, t.foot[2] * 0.16);
+      ankle.add(upper);
+      var heelCap = ellip(t.foot[0] * 0.84, t.foot[1] * 0.58, t.foot[2] * 0.40);
+      heelCap.position.set(0, -t.foot[1] * 0.26, -t.foot[2] * 0.32);
+      ankle.add(heelCap);
+      for (var li = 0; li < 3; li++) {
+        var lace = ball(t.foot[1] * 0.14, darkMat);
+        lace.position.set(0, t.foot[1] * (0.10 + li * 0.22), t.foot[2] * (0.42 - li * 0.15));
+        ankle.add(lace);
+      }
       var collar = ellip(llR * 1.22, t.foot[1] * 0.55, llR * 1.22, seamMat);
       collar.position.set(0, t.foot[1] * 1.15, 0);
       ankle.add(collar);
@@ -885,17 +933,20 @@
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x14161d);
 
-    // 光照（略提亮，让木偶关节球和体型轮廓更清楚）
-    this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 1.05));
-    var key = new THREE.DirectionalLight(0xffffff, 0.95);
+    // 光照（PBR 感：主光 + 冷补光 + 双边缘光勾轮廓）
+    this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 0.95));
+    var key = new THREE.DirectionalLight(0xffffff, 0.9);
     key.position.set(4, 7, 5);
     this.scene.add(key);
-    var fill = new THREE.DirectionalLight(0x88aaff, 0.32);
+    var fill = new THREE.DirectionalLight(0x88aaff, 0.30);
     fill.position.set(-5, 3, -4);
     this.scene.add(fill);
-    var rim = new THREE.DirectionalLight(0xc5d4ff, 0.22);
-    rim.position.set(-2, 4, -6);
+    var rim = new THREE.DirectionalLight(0xc5d4ff, 0.6);
+    rim.position.set(-3, 5, -7);
     this.scene.add(rim);
+    var rim2 = new THREE.DirectionalLight(0xffffff, 0.35);
+    rim2.position.set(6, 3, -6);
+    this.scene.add(rim2);
 
     // 地面
     var ground = new THREE.Mesh(

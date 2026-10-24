@@ -174,10 +174,11 @@ function makeLabel(THREE, text, { color = '#1f2937', bg = 'rgba(255,255,255,0.92
  * 纯静态站姿（预览不做姿态编辑），几何体每偶独立，随预览 dispose。
  */
 function buildMannequin(THREE, color, name, facing) {
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.0 });
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.0 });
     const seamMat = new THREE.MeshStandardMaterial({
         color: new THREE.Color(color).multiplyScalar(0.78), roughness: 0.55, metalness: 0.0,
     });
+    const darkMat = new THREE.MeshStandardMaterial({ color: 0x11151d, roughness: 0.5, metalness: 0.0 });
     const group = new THREE.Group();
     const body = new THREE.Group();
     group.add(body);
@@ -203,18 +204,34 @@ function buildMannequin(THREE, color, name, facing) {
         return mesh;
     };
 
-    // 腿：深色鞋底 + 脚 → 小腿 → 膝（髌骨板）→ 大腿 → 髋关节
+    // 腿：未来感靴（厚底+鞋带孔）→ 小腿 → 膝（咬合环+髌骨板）→ 大腿 → 髋（咬合环）
     for (const s of [1, -1]) {
-        const sole = ellip(0.055, 0.011, 0.098, seamMat);
-        sole.position.set(s * 0.082, 0.009, 0.02);
-        const foot = ellip(0.052, 0.026, 0.095);
-        foot.position.set(s * 0.082, 0.037, 0.02);
+        const sole = ellip(0.056, 0.015, 0.100, seamMat);
+        sole.position.set(s * 0.082, 0.014, 0.02);
+        const upper = ellip(0.049, 0.019, 0.060);
+        upper.position.set(s * 0.082, 0.042, 0.033);
+        const heelCap = ellip(0.044, 0.015, 0.037);
+        heelCap.position.set(s * 0.082, 0.030, -0.032);
+        for (let li = 0; li < 3; li++) {
+            const lace = new THREE.Mesh(sphere, darkMat);
+            lace.scale.set(0.0035, 0.0035, 0.0035);
+            lace.position.set(s * 0.082, 0.062 + li * 0.016, 0.042 - li * 0.013);
+            body.add(lace);
+        }
         seg(0.040, 0.046, 0.36, 0.24);
-        ballAt(0.048, s * 0.082, 0.43, 0);
-        const kneeCap = ellip(0.036, 0.041, 0.017, seamMat);
+        ballAt(0.050, s * 0.082, 0.43, 0);
+        const kneeRing = new THREE.Mesh(new THREE.TorusGeometry(0.046, 0.008, 8, 18), seamMat);
+        kneeRing.rotation.x = Math.PI / 2;
+        kneeRing.position.set(s * 0.082, 0.43, 0);
+        body.add(kneeRing);
+        const kneeCap = ellip(0.030, 0.034, 0.015, seamMat);
         kneeCap.position.set(s * 0.082, 0.415, 0.042);
         seg(0.058, 0.048, 0.36, 0.61);
-        ballAt(0.054, s * 0.082, 0.80, 0);
+        ballAt(0.055, s * 0.082, 0.80, 0);
+        const hipRing = new THREE.Mesh(new THREE.TorusGeometry(0.052, 0.009, 8, 18), seamMat);
+        hipRing.rotation.x = Math.PI / 2;
+        hipRing.position.set(s * 0.082, 0.80, 0);
+        body.add(hipRing);
     }
     // 躯干：骨盆（+短裤腰线）→ 腹 → 胸 → 肩线（光滑一体，凸块呈"包子"感已移除）
     ellip(0.135, 0.10, 0.095).position.y = 0.885;
@@ -224,29 +241,59 @@ function buildMannequin(THREE, color, name, facing) {
     ellip(0.125, 0.075, 0.09).position.y = 0.985;
     ellip(0.15, 0.125, 0.10).position.y = 1.095;
     ellip(0.165, 0.05, 0.055).position.y = 1.20;
-    // 臂：肩 → 上臂 → 肘（壳板）→ 前臂 → 手（连指+拇指）
+    // 解剖线条：胸中缝 + 腹肌沟（深色细条贴面 = 凹线视觉）
+    const pecLine = ellip(0.011, 0.062, 0.011, seamMat);
+    pecLine.position.set(0, 1.155, 0.093);
+    const absLine = ellip(0.009, 0.062, 0.009, seamMat);
+    absLine.position.set(0, 1.00, 0.086);
+    const absCross = ellip(0.044, 0.007, 0.009, seamMat);
+    absCross.position.set(0, 0.975, 0.087);
+    body.add(pecLine, absLine, absCross);
+    // 臂：肩（咬合环）→ 上臂 → 肘（咬合环+壳板）→ 前臂 → 手（分节四指+拇指）
     for (const s of [1, -1]) {
-        ballAt(0.05, s * 0.165, 1.195, 0);
+        ballAt(0.052, s * 0.165, 1.195, 0);
+        const shoulderRing = new THREE.Mesh(new THREE.TorusGeometry(0.048, 0.008, 8, 18), seamMat);
+        shoulderRing.rotation.x = Math.PI / 2;
+        shoulderRing.position.set(s * 0.165, 1.195, 0);
+        body.add(shoulderRing);
         const arm = new THREE.Group();
         arm.position.set(s * 0.165, 1.19, 0);
         arm.rotation.z = s * 0.09;
         const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.038, 0.24, 12), mat);
         upper.position.y = -0.12;
-        const elbow = new THREE.Mesh(sphere, seamMat);
-        elbow.scale.set(0.040, 0.040, 0.040);
+        const elbow = new THREE.Mesh(sphere, mat);
+        elbow.scale.set(0.042, 0.042, 0.042);
         elbow.position.y = -0.245;
+        const elbowRing = new THREE.Mesh(new THREE.TorusGeometry(0.038, 0.007, 8, 18), seamMat);
+        elbowRing.rotation.x = Math.PI / 2;
+        elbowRing.position.y = -0.245;
         const elbowCap = ellip(0.025, 0.030, 0.013, seamMat);
         elbowCap.position.set(0, -0.242, 0.032);
         const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.030, 0.22, 12), mat);
         lower.position.y = -0.355;
-        const hand = new THREE.Mesh(sphere, mat);
-        hand.scale.set(0.032, 0.048, 0.022);
-        hand.position.y = -0.50;
+        const palm = new THREE.Mesh(sphere, mat);
+        palm.scale.set(0.030, 0.034, 0.024);
+        palm.position.y = -0.475;
+        arm.add(upper, elbow, elbowRing, elbowCap, lower, palm);
+        // 分节四指（中指最长）+ 拇指
+        const fr = 0.0068;
+        const fingerLens = [0.038, 0.050, 0.046, 0.040];
+        for (let fi = 0; fi < 4; fi++) {
+            const fx = s * (fi - 1.5) * fr * 2.05;
+            const fl = fingerLens[fi];
+            const fseg = new THREE.Mesh(new THREE.CylinderGeometry(fr * 0.8, fr, fl, 8), mat);
+            fseg.position.set(fx, -0.505 - fl * 0.5, 0.001);
+            arm.add(fseg);
+            const ftip = new THREE.Mesh(sphere, mat);
+            ftip.scale.set(fr * 0.8, fr * 0.8, fr * 0.8);
+            ftip.position.set(fx, -0.505 - fl, 0.001);
+            arm.add(ftip);
+        }
         const thumb = new THREE.Mesh(sphere, mat);
-        thumb.scale.set(0.012, 0.022, 0.012);
-        thumb.position.set(-s * 0.011, -0.458, 0.015);
-        thumb.rotation.x = 0.5;
-        arm.add(upper, elbow, elbowCap, lower, hand, thumb);
+        thumb.scale.set(0.011, 0.019, 0.011);
+        thumb.position.set(-s * 0.016, -0.462, 0.014);
+        thumb.rotation.x = 0.55;
+        arm.add(thumb);
         body.add(arm);
     }
     // 颈 + 蛋形头（下颌融合）+ 头部雕塑（眉/鼻/唇/耳）+ 面甲深色带（朝向指示，正面 = +Z）
@@ -843,10 +890,14 @@ class Spatial3dSession {
         this.el.viewport.appendChild(this.renderer.domElement);
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300);
-        this.scene.add(new THREE.HemisphereLight(0xffffff, 0xdfe6ef, 1.05));
+        this.scene.add(new THREE.HemisphereLight(0xffffff, 0xdfe6ef, 0.95));
         const dir = new THREE.DirectionalLight(0xffffff, 0.55);
         dir.position.set(4, 8, 3);
         this.scene.add(dir);
+        // 边缘光：勾人偶轮廓（LibTV 质感）
+        const rim = new THREE.DirectionalLight(0xd6e2ff, 0.5);
+        rim.position.set(-4, 6, -6);
+        this.scene.add(rim);
 
         this._bindEvents();
         this.show(this.index);
