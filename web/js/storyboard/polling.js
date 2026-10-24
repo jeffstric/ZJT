@@ -2,6 +2,9 @@
 // ai_tools/ai_audio 状态：0=PENDING, 1=PROCESSING, 2=COMPLETED, -1=FAILED（进行中=0或1）。
 // 渲染策略：某分镜产出/状态变化时，只局部更新该分镜相关的 UI（缩略图、主预览、候选、单条对话行），
 //          不再全量 renderApp()——避免对话框焦点被销毁、DevTools 选中节点失效。
+// 轮询调度（f1096）：四个轮询入口全部改走 poll_scheduler——渐进退避（无进展 2s→15s）、
+//          页面隐藏暂停、连续错误放弃、无进展 30 分钟软超时；终态停止语义与原实现一致。
+//          script-split 维持固定节奏，服务端 poll_after_ms 仍优先。
 import state, { refreshSceneFirstFrameSlot } from './state.js';
 import * as api from './api.js';
 import { formatDuration } from './adapters.js';
@@ -22,10 +25,18 @@ import {
     refresh,
     Region,
 } from './render.js';
+import scheduler from '../poll_scheduler.js';
 
 const POLL_INTERVAL = 4000;
-const pollTimers = {};
-const batchPollTimers = {};
+// 场景/批量/配音轮询共用节拍：首轮 2s 保留生成初期的响应感，无进展逐步放大到 15s，
+// 任务分钟级生成期间平均间隔 ~10s（原固定 4s），全站 task-status 请求量预期降 ~60%+。
+const SCHEDULER_OPTS = {
+    initial: 2000,
+    growth: 1.5,
+    max: 15000,
+    onDeadline: () => console.warn('[polling] 任务长时间无进展，已暂停轮询（刷新页面或重新触发生成可恢复）'),
+    onGiveUp: () => console.warn('[polling] 连续轮询失败，已暂停轮询（网络恢复后刷新页面或重新触发生成可恢复）'),
+};
 // 记录「本轮轮询见过进行中任务」：收尾时刷新候选区，把 generating 占位卡修正为最终状态
 const pollHadActivity = {};
 
@@ -176,7 +187,7 @@ function applyTaskStatus(scene, data, requestSelection) {
     // 此处即时同步到本地 state，并标记 _durationChanged 供 applySceneUpdate 刷新进度行。
     if (data.scene_duration != null) {
         const newDuration = Number(data.scene_duration);
-        if (Number.isFinite(newDuration) && Math.abs(newDuration - Number(scene.duration)) > 1e-9) {
+        if (Number.isFinite(newDuration) && Math.abs(newDuration - (scene.duration || 0)) > 1e-9) {
             scene.duration = newDuration;
             scene.durationLabel = formatDuration(newDuration);
             scene._durationChanged = true;
@@ -197,6 +208,25 @@ function hasRunning(data) {
     // 选中资产口径与 generating 对齐：DOWNLOADING(6) 仍在跑（如手动点选了下载中候选），不提前停轮询
     return vals.some(v => v === 0 || v === 1 || v === 6)
         || generatingVals.some(v => [0, 1, 3, 4, 5, 6].includes(v));
+}
+
+/**
+ * 轮询签名：任一字段变化视为「有进展」，调度器据此重置退避与软超时计时。
+ * 取状态 + 产物 URL + 配音状态——下载类任务靠 URL 落地驱动签名变化。
+ */
+function sceneTaskSignature(data) {
+    return JSON.stringify([
+        data.first_frame?.status ?? null,
+        data.first_frame?.result_url ?? null,
+        data.last_frame?.status ?? null,
+        data.last_frame?.result_url ?? null,
+        data.video?.status ?? null,
+        data.video?.result_url ?? null,
+        ['first_frame', 'last_frame', 'video'].map(key => data.generating?.[key]?.status ?? null),
+        (data.dialogues || []).map(d => [d.dialogue_id ?? null, d.status ?? null, d.audio_url ?? null]),
+        data.audio_embedded ?? null,
+        data.scene_duration ?? null,
+    ]);
 }
 
 /**
@@ -253,85 +283,86 @@ function applySceneUpdate(scene, changedDialogueIds) {
     }
 }
 
-export function pollSceneTaskStatus(sceneId) {
-    if (pollTimers[sceneId]) return;
-    const poll = async () => {
-        try {
-            const sceneAtRequest = state.scenes.find(item => item.id === sceneId);
-            const requestSelection = captureAssetSelection(sceneAtRequest);
-            const data = await api.getSceneTaskStatus(sceneId);
-            const scene = state.scenes.find(item => item.id === sceneId);
-            if (!scene) {
-                delete pollTimers[sceneId];
-                return;
+/**
+ * 生成收尾：刷新候选列表并重绘，把「生成中」占位卡修正为最终状态（成功/失败占位），
+ * 同时用选中候选的最新 URL 回写主预览（最后一轮轮询可能尚未拿到，如用户改选/失败收尾场景）。
+ * 整段自捕获异常：抛出会走调度器错误重试路径，导致已停轮询复活。
+ */
+async function finishScenePolling(sceneId) {
+    if (!pollHadActivity[sceneId]) return;
+    delete pollHadActivity[sceneId];
+    try {
+        await loadSceneCandidates(sceneId);
+        const scene = state.scenes.find(item => item.id === sceneId);
+        if (scene) {
+            const selVideo = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
+            if (selVideo?.url) {
+                scene.videoUrl = preferSceneMediaUrl(scene.videoUrl, selVideo.url);
+                if (selVideo.id) scene.selectedVideoId = selVideo.id;
             }
-            // apply 前记录 dialogue audio 快照，apply 后对比出变化的行（仅这些行需局部刷新）
-            const beforeAudio = snapshotDialogueAudio(scene);
-            applyTaskStatus(scene, data, requestSelection);
-            const changedDialogueIds = (scene.dialogues || [])
-                .filter(d => beforeAudio[d.id] !== `${d.audioUrl || ''}|${d.audioStatus ?? ''}`)
-                .map(d => d.id);
-            // 局部更新该分镜相关 UI，不再全量重建
-            applySceneUpdate(scene, changedDialogueIds);
-            if (hasRunning(data)) {
-                pollHadActivity[sceneId] = true;
-                pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL);
-            } else {
-                delete pollTimers[sceneId];
-                // 生成收尾：刷新候选列表并重绘，把「生成中」占位卡修正为最终状态（成功/失败占位），
-                // 同时用选中候选的最新 URL 回写主预览（最后一轮轮询可能尚未拿到，如用户改选/失败收尾场景）。
-                // 整段自捕获异常：外层 catch 会把收尾失败当成轮询错误退避重试，导致已停轮询复活。
-                if (pollHadActivity[sceneId]) {
-                    delete pollHadActivity[sceneId];
-                    try {
-                        await loadSceneCandidates(sceneId);
-                        const scene = state.scenes.find(item => item.id === sceneId);
-                        if (scene) {
-                            const selVideo = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
-                            if (selVideo?.url) {
-                                scene.videoUrl = preferSceneMediaUrl(scene.videoUrl, selVideo.url);
-                                if (selVideo.id) scene.selectedVideoId = selVideo.id;
-                            }
-                            const selImage = (state.sceneCandidates[sceneId]?.images || []).find(item => item.selected);
-                            if (selImage?.url) {
-                                scene.firstFrameUrl = preferSceneMediaUrl(scene.firstFrameUrl, selImage.url);
-                                if (selImage.id) scene.selectedFirstFrameId = selImage.id;
-                            }
-                            applySceneUpdate(scene, []);
-                        }
-                    } catch (e) { /* 收尾失败不影响主流程 */ }
-                }
+            const selImage = (state.sceneCandidates[sceneId]?.images || []).find(item => item.selected);
+            if (selImage?.url) {
+                scene.firstFrameUrl = preferSceneMediaUrl(scene.firstFrameUrl, selImage.url);
+                if (selImage.id) scene.selectedFirstFrameId = selImage.id;
             }
-        } catch (e) {
-            pollTimers[sceneId] = setTimeout(poll, POLL_INTERVAL * 2);
+            applySceneUpdate(scene, []);
         }
-    };
-    poll();
+    } catch (e) { /* 收尾失败不影响主流程 */ }
+}
+
+export function pollSceneTaskStatus(sceneId) {
+    const key = `scene:${sceneId}`;
+    if (scheduler.isActive(key)) return;
+    scheduler.schedule(key, async () => {
+        const sceneAtRequest = state.scenes.find(item => item.id === sceneId);
+        const requestSelection = captureAssetSelection(sceneAtRequest);
+        const data = await api.getSceneTaskStatus(sceneId);
+        const scene = state.scenes.find(item => item.id === sceneId);
+        if (!scene) return { done: true };
+        // apply 前记录 dialogue audio 快照，apply 后对比出变化的行（仅这些行需局部刷新）
+        const beforeAudio = snapshotDialogueAudio(scene);
+        applyTaskStatus(scene, data, requestSelection);
+        const changedDialogueIds = (scene.dialogues || [])
+            .filter(d => beforeAudio[d.id] !== `${d.audioUrl || ''}|${d.audioStatus ?? ''}`)
+            .map(d => d.id);
+        // 局部更新该分镜相关 UI，不再全量重建
+        applySceneUpdate(scene, changedDialogueIds);
+        if (hasRunning(data)) {
+            pollHadActivity[sceneId] = true;
+            return { done: false, signature: sceneTaskSignature(data) };
+        }
+        await finishScenePolling(sceneId);
+        return { done: true };
+    }, SCHEDULER_OPTS);
 }
 
 export function pollImageBatchStatus(batchId, callbacks = {}) {
-    if (!batchId || batchPollTimers[batchId]) return;
-    const poll = async () => {
-        try {
-            const data = await api.getStoryboardImageBatchStatus(batchId);
-            if (callbacks.onUpdate) callbacks.onUpdate(data);
-            for (const item of data.items || []) {
-                if (item.scene_id && (item.status === 'running' || item.status === 'completed')) {
-                    pollSceneTaskStatus(item.scene_id);
-                }
+    if (!batchId) return;
+    const key = `batch:${batchId}`;
+    if (scheduler.isActive(key)) return;
+    scheduler.schedule(key, async () => {
+        const data = await api.getStoryboardImageBatchStatus(batchId);
+        if (callbacks.onUpdate) callbacks.onUpdate(data);
+        for (const item of data.items || []) {
+            if (item.scene_id && (item.status === 'running' || item.status === 'completed')) {
+                pollSceneTaskStatus(item.scene_id);
             }
-            if (data.status === 'pending' || data.status === 'running') {
-                batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL);
-            } else {
-                delete batchPollTimers[batchId];
-                if (callbacks.onTerminal) callbacks.onTerminal(data);
-            }
-        } catch (e) {
-            if (callbacks.onRecoverableError) callbacks.onRecoverableError(e);
-            batchPollTimers[batchId] = setTimeout(poll, POLL_INTERVAL * 2);
         }
-    };
-    poll();
+        if (data.status === 'pending' || data.status === 'running') {
+            return {
+                done: false,
+                signature: JSON.stringify([
+                    data.status,
+                    (data.items || []).map(item => [item.scene_id ?? null, item.status ?? null]),
+                ]),
+            };
+        }
+        if (callbacks.onTerminal) callbacks.onTerminal(data);
+        return { done: true };
+    }, {
+        ...SCHEDULER_OPTS,
+        onError: e => { if (callbacks.onRecoverableError) callbacks.onRecoverableError(e); },
+    });
 }
 
 export function resumePollingTasks() {
@@ -344,7 +375,6 @@ export function resumePollingTasks() {
 }
 
 const VOICE_REPLACE_IN_FLIGHT = ['queued', 'asr', 'matching', 'converting', 'muxing'];
-const voiceReplaceTimers = {};
 
 export function isVoiceReplaceInFlight(job) {
     return !!(job && VOICE_REPLACE_IN_FLIGHT.includes(String(job.status || '')));
@@ -370,86 +400,80 @@ export async function hydrateVoiceReplace(sceneId) {
 }
 
 export function pollVoiceReplace(sceneId) {
-    if (!sceneId || voiceReplaceTimers[sceneId]) return;
-    const tick = async () => {
-        try {
-            const data = await api.getSceneVoiceReplace(sceneId);
-            const job = data.job || null;
-            const prev = state.voiceReplaceBySceneId?.[sceneId] || null;
-            setVoiceReplaceJob(sceneId, job);
-            if (state.currentSceneId === sceneId) {
-                refresh([Region.LEFT_TAB_BODY]);
-            }
-            if (isVoiceReplaceInFlight(job)) {
-                voiceReplaceTimers[sceneId] = setTimeout(tick, POLL_INTERVAL);
-                return;
-            }
-            delete voiceReplaceTimers[sceneId];
-            if (job && job.status === 'completed' && prev && prev.status !== 'completed') {
-                await loadSceneCandidates(sceneId);
-                const scene = state.scenes.find(item => item.id === sceneId);
-                const selected = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
-                if (scene && selected?.url) {
-                    scene.videoUrl = selected.url;
-                    scene.audioEmbedded = true;
-                    if (selected.id) scene.selectedVideoId = selected.id;
-                }
-                if (scene) applySceneUpdate(scene);
-            }
-        } catch (e) {
-            voiceReplaceTimers[sceneId] = setTimeout(tick, POLL_INTERVAL * 2);
+    if (!sceneId) return;
+    const key = `voiceReplace:${sceneId}`;
+    if (scheduler.isActive(key)) return;
+    scheduler.schedule(key, async () => {
+        const data = await api.getSceneVoiceReplace(sceneId);
+        const job = data.job || null;
+        const prev = state.voiceReplaceBySceneId?.[sceneId] || null;
+        setVoiceReplaceJob(sceneId, job);
+        if (state.currentSceneId === sceneId) {
+            refresh([Region.LEFT_TAB_BODY]);
         }
-    };
-    tick();
+        if (isVoiceReplaceInFlight(job)) {
+            return { done: false, signature: JSON.stringify([job?.status ?? null]) };
+        }
+        if (job && job.status === 'completed' && prev && prev.status !== 'completed') {
+            await loadSceneCandidates(sceneId);
+            const scene = state.scenes.find(item => item.id === sceneId);
+            const selected = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);
+            if (scene && selected?.url) {
+                scene.videoUrl = selected.url;
+                scene.audioEmbedded = true;
+                if (selected.id) scene.selectedVideoId = selected.id;
+            }
+            if (scene) applySceneUpdate(scene);
+        }
+        return { done: true };
+    }, SCHEDULER_OPTS);
 }
 
 // 剧本分段拆分任务轮询：见 docs/script/script_parser_incremental_split_design.md §13.3 §15。
-// 复用 batch 轮询的去重 + 退避模式，驱动 state.generateProgressSteps 反映真实进度。
-const generatePollTimers = {};
+// 维持固定节奏（growth=1），服务端 poll_after_ms 优先——拆分是用户正盯着的交互任务，
+// 不做本地退避；错误路径保留原指数退避曲线（4s→8s→16s→20s 封顶），新增连续失败放弃。
 const SPLIT_TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
 const SPLIT_INTERACTIVE_STATUSES = ['paused', 'waiting_auth'];
 
 export function pollScriptSplitTask(taskId, callbacks = {}) {
-    if (!taskId || generatePollTimers[taskId]) return;
-    let errorBackoff = 1;
-    const poll = async () => {
-        try {
-            const data = await api.getScriptSplitTaskStatus(taskId);
-            errorBackoff = 1;
-            if (callbacks.onUpdate) callbacks.onUpdate(data);
-            if (SPLIT_TERMINAL_STATUSES.indexOf(data.status) >= 0) {
-                delete generatePollTimers[taskId];
-                if (data.status === 'completed') {
-                    try {
-                        const result = await api.getScriptSplitTaskResult(taskId);
-                        if (callbacks.onComplete) callbacks.onComplete(result, data);
-                    } catch (e) {
-                        if (callbacks.onError) callbacks.onError(e);
-                    }
-                } else {
-                    if (callbacks.onError) callbacks.onError(new Error(data.message || `${t('label_task', '任务')} ${data.status}`));
+    if (!taskId) return;
+    const key = `split:${taskId}`;
+    if (scheduler.isActive(key)) return;
+    scheduler.schedule(key, async () => {
+        const data = await api.getScriptSplitTaskStatus(taskId);
+        if (callbacks.onUpdate) callbacks.onUpdate(data);
+        if (SPLIT_TERMINAL_STATUSES.indexOf(data.status) >= 0) {
+            if (data.status === 'completed') {
+                try {
+                    const result = await api.getScriptSplitTaskResult(taskId);
+                    if (callbacks.onComplete) callbacks.onComplete(result, data);
+                } catch (e) {
+                    if (callbacks.onError) callbacks.onError(e);
                 }
-                return;
+            } else {
+                if (callbacks.onError) callbacks.onError(new Error(data.message || `${t('label_task', '任务')} ${data.status}`));
             }
-            if (SPLIT_INTERACTIVE_STATUSES.indexOf(data.status) >= 0) {
-                delete generatePollTimers[taskId];
-                if (callbacks.onPaused) callbacks.onPaused(data);
-                return;
-            }
-            const interval = data.poll_after_ms || POLL_INTERVAL;
-            generatePollTimers[taskId] = setTimeout(poll, interval);
-        } catch (e) {
-            errorBackoff = Math.min(errorBackoff * 2, 5);
-            if (callbacks.onRecoverableError) callbacks.onRecoverableError(e);
-            generatePollTimers[taskId] = setTimeout(poll, POLL_INTERVAL * errorBackoff);
+            return { done: true };
         }
-    };
-    poll();
+        if (SPLIT_INTERACTIVE_STATUSES.indexOf(data.status) >= 0) {
+            if (callbacks.onPaused) callbacks.onPaused(data);
+            return { done: true };
+        }
+        return {
+            done: false,
+            pollAfterMs: data.poll_after_ms || undefined,
+            signature: JSON.stringify([data.status ?? null, data.progress ?? null]),
+        };
+    }, {
+        initial: POLL_INTERVAL,
+        growth: 1,
+        max: POLL_INTERVAL,
+        errorInitial: POLL_INTERVAL,
+        errorMax: POLL_INTERVAL * 5,
+        onError: e => { if (callbacks.onRecoverableError) callbacks.onRecoverableError(e); },
+    });
 }
 
 export function stopScriptSplitTaskPolling(taskId) {
-    if (generatePollTimers[taskId]) {
-        clearTimeout(generatePollTimers[taskId]);
-        delete generatePollTimers[taskId];
-    }
+    scheduler.cancel(`split:${taskId}`);
 }
