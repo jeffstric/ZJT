@@ -198,7 +198,7 @@
               </div>
               ${window.shotFrameHasSpatialCode && window.shotFrameHasSpatialCode(node) ? `
               <div class="field field-always-visible" style="margin-top: 4px;">
-                <button class="mini-btn shot-frame-open-director-btn" type="button" style="width: 100%; padding: 5px 8px; font-size: 11px; background: #fdf6ec; color: #9a6b2f; border: 1px solid #e8d5b5; border-radius: 6px;" data-i18n="shot_frame_open_director_btn">${window.t ? window.t('shot_frame_open_director_btn') : '🎬 打开导演台（3D 空间）'}</button>
+                <button class="mini-btn shot-frame-open-director-btn" type="button" style="width: 100%; padding: 5px 8px; font-size: 11px; background: #fdf6ec; color: #9a6b2f; border: 1px solid #e8d5b5; border-radius: 6px;">${(window.shotFrameDirectorLinked && window.shotFrameDirectorLinked(node)) ? (window.t ? window.t('shot_frame_open_director_btn') : '🎬 打开导演台（3D 空间）') : (window.t ? window.t('shot_frame_create_director_btn') : '🎬 创建导演台（3D 空间）')}</button>
               </div>
               ` : ''}
               <div class="field field-always-visible">

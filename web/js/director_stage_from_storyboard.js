@@ -325,6 +325,9 @@
 
     // 记住关联：再次点击直接打开，不重复创建
     frameNode.data.directorStageNodeId = newNodeId;
+    // 按钮文案即时翻转为「打开导演台」（body 模板渲染时按关联状态取文案）
+    var frameEl = document.querySelector('.node[data-node-id="' + frameNodeId + '"] .shot-frame-open-director-btn');
+    if (frameEl) frameEl.textContent = tr('shot_frame_open_director_btn', '🎬 打开导演台（3D 空间）');
 
     // 迁移提示合并为一条 toast（跳过的体块/道具 + 空镜警告）
     var msgs = [];
@@ -352,6 +355,17 @@
   /** 分镜帧是否显示「打开导演台」按钮（shotJson 携带 3D 代码）。 */
   window.shotFrameHasSpatialCode = function (frameNode) {
     return !!(frameNode && frameNode.data && hasThreeCode(frameNode));
+  };
+
+  /**
+   * 分镜帧是否已关联存活的导演台节点：已关联 → 按钮「打开导演台」，
+   * 未关联 → 「创建导演台」（首次点击才新建节点）。
+   */
+  window.shotFrameDirectorLinked = function (frameNode) {
+    if (!frameNode || !frameNode.data || !frameNode.data.directorStageNodeId) return false;
+    var st = canvasState();
+    if (!st) return false;
+    return st.nodes.some(function (n) { return n.id === frameNode.data.directorStageNodeId; });
   };
 
   // 纯逻辑测试钩子（仅 vitest 使用，生产不依赖）

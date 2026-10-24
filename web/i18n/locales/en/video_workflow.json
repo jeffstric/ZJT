@@ -741,6 +741,7 @@
   "director_stage_empty_hint": "Open the stage to place puppets, pose them and set the camera",
   "director_stage_open": "🎬 Open Stage",
   "shot_frame_open_director_btn": "🎬 Open Stage (3D Space)",
+  "shot_frame_create_director_btn": "🎬 Create Stage (3D Space)",
   "director_stage_from_sb_no_data": "No 3D spatial data available for this shot",
   "director_stage_from_sb_replay_warn": "Some spatial code failed to replay; converted from usable results",
   "director_stage_from_sb_create_fail": "Failed to create the stage node",

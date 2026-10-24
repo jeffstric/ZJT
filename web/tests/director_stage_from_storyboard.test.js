@@ -136,11 +136,19 @@ describe('故事板3D空间→导演台：接线（源码断言）', () => {
     expect(moduleSrc).toContain('window.shotFrameHasSpatialCode');
   });
 
-  it('分镜帧节点：携带 3D 代码时渲染「打开导演台」按钮并绑定', () => {
+  it('分镜帧节点：携带 3D 代码时渲染导演台按钮，双状态文案（未关联=创建 / 已关联=打开）', () => {
     const frameSrc = readSource('web/js/shot_frame_node.js');
     expect(frameSrc).toContain('shot-frame-open-director-btn');
     expect(frameSrc).toContain('shotFrameHasSpatialCode(node)');
+    expect(frameSrc).toContain('shotFrameDirectorLinked(node)');
+    expect(frameSrc).toContain("t('shot_frame_create_director_btn')");
+    expect(frameSrc).toContain("t('shot_frame_open_director_btn')");
     expect(frameSrc).toContain('openDirectorStageFromShotFrame(id)');
+  });
+
+  it('转换后按钮文案即时翻转 + 关联判定暴露', () => {
+    expect(moduleSrc).toContain('window.shotFrameDirectorLinked');
+    expect(moduleSrc).toContain("frameEl.textContent = tr('shot_frame_open_director_btn'");
   });
 
   it('video_workflow.html 引入转换模块（导演台节点之后）', () => {

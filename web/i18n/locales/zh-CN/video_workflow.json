@@ -741,6 +741,7 @@
   "director_stage_empty_hint": "点击进入导演台，摆人偶、调姿态、设镜头",
   "director_stage_open": "🎬 打开导演台",
   "shot_frame_open_director_btn": "🎬 打开导演台（3D 空间）",
+  "shot_frame_create_director_btn": "🎬 创建导演台（3D 空间）",
   "director_stage_from_sb_no_data": "该分镜没有可用的 3D 空间数据",
   "director_stage_from_sb_replay_warn": "部分空间代码执行异常，已按可用结果转换",
   "director_stage_from_sb_create_fail": "导演台节点创建失败",
