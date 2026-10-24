@@ -473,38 +473,7 @@
     var shoulderBar = ellip(t.shoulderX * 0.92, t.upperArmR * 1.25, t.upperArmR * 1.1);
     shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
     chest.add(shoulderBar);
-
-    // 胸部造型 v4：男=胸肌板（微凸受光），女=乳房（更低更收）
-    if (t.label === '女人') {
-      var breastL = ellip(0.058, 0.052, 0.048);
-      breastL.position.set(0.070, 0.085, 0.086);
-      chest.add(breastL);
-      var breastR = ellip(0.058, 0.052, 0.048);
-      breastR.position.set(-0.070, 0.085, 0.086);
-      chest.add(breastR);
-    } else {
-      var pecL = ellip(0.058, 0.048, 0.032);
-      pecL.position.set(0.058, 0.115, 0.092);
-      pecL.rotation.z = 0.15;
-      chest.add(pecL);
-      var pecR = ellip(0.058, 0.048, 0.032);
-      pecR.position.set(-0.058, 0.115, 0.092);
-      pecR.rotation.z = -0.15;
-      chest.add(pecR);
-    }
-
-    // 背部造型 v6：肩胛浅凸 + 脊柱沟（背面受光识别）
-    var scapL = ellip(0.075, 0.095, 0.040);
-    scapL.position.set(0.085, 0.115, -0.082);
-    scapL.rotation.z = 0.25;
-    chest.add(scapL);
-    var scapR = ellip(0.075, 0.095, 0.040);
-    scapR.position.set(-0.085, 0.115, -0.082);
-    scapR.rotation.z = -0.25;
-    chest.add(scapR);
-    var spineGroove = ellip(0.022, 0.13, 0.028, seamMat);
-    spineGroove.position.set(0, 0.10, -0.085);
-    chest.add(spineGroove);
+    // 躯干保持光滑一体（lathe 轮廓自带胸腰起伏）——凸起块在曲面上会呈"包子"感，已移除
 
     var neck = joint('neck', chest, 0, t.neckY, 0);
     var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);

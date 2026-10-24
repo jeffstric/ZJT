@@ -216,19 +216,13 @@ function buildMannequin(THREE, color, name, facing) {
         seg(0.058, 0.048, 0.36, 0.61);
         ballAt(0.054, s * 0.082, 0.80, 0);
     }
-    // 躯干：骨盆（+短裤腰线）→ 腹 → 胸（+胸肌板）→ 肩线
+    // 躯干：骨盆（+短裤腰线）→ 腹 → 胸 → 肩线（光滑一体，凸块呈"包子"感已移除）
     ellip(0.135, 0.10, 0.095).position.y = 0.885;
     const waistBand = ellip(0.130, 0.022, 0.092, seamMat);
     waistBand.position.y = 0.905;
     body.add(waistBand);
     ellip(0.125, 0.075, 0.09).position.y = 0.985;
     ellip(0.15, 0.125, 0.10).position.y = 1.095;
-    const pecL = ellip(0.046, 0.038, 0.025);
-    pecL.position.set(0.055, 1.13, 0.085);
-    pecL.rotation.z = 0.15;
-    const pecR = ellip(0.046, 0.038, 0.025);
-    pecR.position.set(-0.055, 1.13, 0.085);
-    pecR.rotation.z = -0.15;
     ellip(0.165, 0.05, 0.055).position.y = 1.20;
     // 臂：肩 → 上臂 → 肘（壳板）→ 前臂 → 手（连指+拇指）
     for (const s of [1, -1]) {
