@@ -268,6 +268,17 @@ def _git_ok(args: list[str], timeout: float, runner: GitRunner | None) -> bool:
     return code == 0
 
 
+_CREDENTIAL_RE = re.compile(r"://[^/@\s]+@")
+
+
+def fetch_origin_ref(ref: str, depth: int, timeout: float, runner: GitRunner | None) -> None:
+    """fetch 失败不阻断（resolve_diff_range 还有 base/HEAD~1 兜底），但把原因亮出来供排查。"""
+    code, _out, err = _git(["git", "fetch", f"--depth={depth}", "origin", ref], timeout, runner)
+    if code != 0:
+        message = _CREDENTIAL_RE.sub("://***@", err.decode("utf-8", "replace")).strip()[:200]
+        print(f"git fetch origin {ref} 失败: {message}", file=sys.stderr)
+
+
 def parse_raw_z(blob: bytes) -> list[tuple[str, str, str]]:
     """解析 `git diff --raw -z`。返回 (status, old_path, new_path)。"""
     parts = blob.split(b"\0")
@@ -389,7 +400,7 @@ def resolve_diff_range(env: Mapping[str, str], runner: GitRunner | None, timeout
     # 先跟目标分支做 merge-base。CI_MERGE_REQUEST_DIFF_BASE_SHA 有时只是上一次提交，
     # 那样会漏掉本次 MR 里更早的提交。
     if target:
-        _git(["git", "fetch", "--depth=500", "origin", target], timeout, runner)
+        fetch_origin_ref(target, 500, timeout, runner)
         ref = f"origin/{target}"
         if _git_ok(["git", "cat-file", "-e", f"{ref}^{{commit}}"], timeout, runner):
             code, out, _err = _git(["git", "merge-base", ref, head], timeout, runner)
@@ -399,7 +410,7 @@ def resolve_diff_range(env: Mapping[str, str], runner: GitRunner | None, timeout
     if base and _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
         return base, head
     if base:
-        _git(["git", "fetch", "--depth=200", "origin", base], timeout, runner)
+        fetch_origin_ref(base, 200, timeout, runner)
         if _git_ok(["git", "cat-file", "-e", f"{base}^{{commit}}"], timeout, runner):
             return base, head
     if _git_ok(["git", "cat-file", "-e", "HEAD~1^{commit}"], timeout, runner):
@@ -446,8 +457,17 @@ def load_raw_diffs(
 ) -> list[dict]:
     """MR Pipeline 优先用本地 git。CI_JOB_TOKEN 访问 /diffs 会得到 404 Project Not Found。"""
     source = (env.get("AI_REVIEW_DIFF_SOURCE") or "").strip().lower()
-    base = (env.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "").strip()
-    if source != "api" and (source == "git" or base):
+    if source != "api":
+        # 新 MR 首条 pipeline 里 CI_MERGE_REQUEST_DIFF_BASE_SHA 可能为空，不能因此直接
+        # 落到 /diffs API（job token 必 404）。MR 本体接口 job token 可读，先补全 base；
+        # 读不到时 resolve_diff_range 还有 merge-base 与 HEAD~1 兜底。
+        base = (env.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "").strip()
+        if not base:
+            detail = fetch_mr_detail(api_base, project_id, iid, token, token_kind, timeout=timeout, opener=opener)
+            base = str(((detail or {}).get("diff_refs") or {}).get("base_sha") or "").strip()
+            if base:
+                env = {**env, "CI_MERGE_REQUEST_DIFF_BASE_SHA": base}
+                print(f"CI_MERGE_REQUEST_DIFF_BASE_SHA 为空，已从 MR 详情补全 {base[:12]}")
         try:
             return load_git_diffs(env, runner=runner, timeout=env_int(env, "AI_REVIEW_GIT_TIMEOUT", DEFAULT_GIT_TIMEOUT))
         except ReviewError as exc:
@@ -457,6 +477,28 @@ def load_raw_diffs(
     return fetch_mr_diffs(
         api_base, project_id, iid, token, token_kind, timeout=timeout, opener=opener
     )
+
+
+def fetch_mr_detail(
+    api_base: str,
+    project_id: str,
+    iid: str,
+    token: str,
+    token_kind: str,
+    *,
+    timeout: float = DEFAULT_GITLAB_TIMEOUT,
+    opener: Opener | None = None,
+) -> dict | None:
+    """读 MR 本体（diff_refs 等）。失败返回 None，调用方继续走本地 git 兜底。"""
+    url = f"{project_api(api_base, project_id)}/merge_requests/{quote(str(iid), safe='')}"
+    result = gitlab_request("GET", url, token, token_kind, timeout=timeout, opener=opener)
+    if result.status != 200:
+        return None
+    try:
+        detail = json.loads(result.body)
+    except json.JSONDecodeError:
+        return None
+    return detail if isinstance(detail, dict) else None
 
 
 def fetch_mr_diffs(
@@ -479,8 +521,15 @@ def fetch_mr_diffs(
         )
         result = gitlab_request("GET", url, token, token_kind, timeout=timeout, opener=opener)
         if result.status != 200:
+            hint = ""
+            if result.status in (401, 403, 404) and token_kind == "job":
+                hint = (
+                    " CI_JOB_TOKEN 不能访问 MR diffs API（返回 404 Project Not Found）。"
+                    "本地 git diff 失败原因见上方日志；要改走 API 请在 CI/CD Variables 配置"
+                    " AI_REVIEW_GITLAB_TOKEN（项目 Access Token，api 范围）。"
+                )
             raise ReviewError(
-                f"拉取 MR diff 失败 HTTP {result.status}: {redact(result.body[:500], token)}"
+                f"拉取 MR diff 失败 HTTP {result.status}: {redact(result.body[:500], token)}.{hint}"
             )
         batch = json.loads(result.body)
         if not isinstance(batch, list):
