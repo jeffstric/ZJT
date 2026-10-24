@@ -188,6 +188,7 @@ def test_run_posts_review_and_skips_duplicate_commit():
         "CI_MERGE_REQUEST_TITLE": "修复空指针",
         "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "fix",
         "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "AI_REVIEW_DIFF_SOURCE": "api",
         "VLLM_BASE_URL": "http://192.168.10.112:4000",
         "VLLM_MODEL": "qwen3.8:27b",
     }
@@ -228,6 +229,7 @@ def test_run_empty_diff_does_not_call_model():
         "CI_MERGE_REQUEST_IID": "16",
         "CI_COMMIT_SHA": "fff",
         "AI_REVIEW_GITLAB_TOKEN": "private",
+        "AI_REVIEW_DIFF_SOURCE": "api",
     }
     assert review.run(env, opener=opener, sleep=lambda _seconds: None) == "empty"
     assert "没有需要审查的文本 diff" in posted[0]
@@ -271,6 +273,7 @@ def test_run_comment_failure_degrades_instead_of_failing_job():
         "CI_MERGE_REQUEST_TITLE": "修复空指针",
         "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "fix",
         "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "AI_REVIEW_DIFF_SOURCE": "api",
         "VLLM_BASE_URL": "http://192.168.10.112:4000",
         "VLLM_MODEL": "qwen3.8:27b",
     }
@@ -446,3 +449,126 @@ def test_resolve_diff_range_prefers_target_merge_base():
     )
     assert base == "226f4406aaaa"
     assert head == "3088da12bbbb"
+
+
+def test_run_backfills_base_sha_from_mr_detail_when_missing():
+    """新 MR 首条 pipeline 没有 CI_MERGE_REQUEST_DIFF_BASE_SHA 时，应从 MR 详情补全并走本地 git。"""
+    posted = []
+    base = "226f4406aaaabbbb"
+    raw = b":100644 100644 aaa bbb M\0api/foo.py\0"
+    unified = """diff --git a/api/foo.py b/api/foo.py
+--- a/api/foo.py
++++ b/api/foo.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+    def command_runner(args, timeout):
+        if args[1:3] == ["cat-file", "-e"] and base in args[3]:
+            return 0, b"", b""
+        if args[1:3] == ["diff", "--raw"]:
+            assert args[-2] == base
+            return 0, raw, b""
+        if args[1] == "diff":
+            return 0, unified.encode("utf-8"), b""
+        raise AssertionError(args)
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and url.endswith("/merge_requests/781"):
+            return FakeResponse(200, json.dumps({"diff_refs": {"base_sha": base}}))
+        if "/diffs?" in url:
+            raise AssertionError("must use local git instead of diffs API")
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            return FakeResponse(
+                200,
+                json.dumps(
+                    {"choices": [{"message": {"content": "## 结论\n未发现必须修改的问题。"}}], "usage": {}},
+                    ensure_ascii=False,
+                ),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            posted.append(json.loads(request.data.decode("utf-8"))["body"])
+            return FakeResponse(201, "{}")
+        raise AssertionError(f"unexpected {method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "60",
+        "CI_MERGE_REQUEST_IID": "781",
+        "CI_COMMIT_SHA": "43c856b1abcd",
+        "CI_JOB_TOKEN": "job-token",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _seconds: None, command_runner=command_runner) == "posted"
+    assert "未发现必须修改的问题" in posted[0]
+
+
+def test_run_survives_missing_base_and_failed_fetch():
+    """MR 详情与 git fetch 都失败时，退到 HEAD~1 也要完成审查，而不是落到 /diffs API 404。"""
+    posted = []
+    head = "43c856b1abcd"
+    raw = b":100644 100644 aaa bbb M\0api/foo.py\0"
+    unified = """diff --git a/api/foo.py b/api/foo.py
+--- a/api/foo.py
++++ b/api/foo.py
+@@ -1 +1 @@
+-old
++new
+"""
+
+    def command_runner(args, timeout):
+        if args[1] == "fetch":
+            return 128, b"", b"fatal: Authentication failed for 'https://gitlab.example/group/repo.git/'"
+        if args[1:3] == ["cat-file", "-e"]:
+            return (0, b"", b"") if args[3] == "HEAD~1^{commit}" else (128, b"", b"error")
+        if args[1:3] == ["diff", "--raw"]:
+            assert args[-2:] == ["HEAD~1", head]
+            return 0, raw, b""
+        if args[1] == "diff":
+            return 0, unified.encode("utf-8"), b""
+        raise AssertionError(args)
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and url.endswith("/merge_requests/782"):
+            return FakeResponse(404, '{"message":"404 Project Not Found"}')
+        if "/diffs?" in url:
+            raise AssertionError("must fall back to HEAD~1 instead of diffs API")
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            return FakeResponse(
+                200,
+                json.dumps(
+                    {"choices": [{"message": {"content": "## 结论\n未发现必须修改的问题。"}}], "usage": {}},
+                    ensure_ascii=False,
+                ),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            posted.append(json.loads(request.data.decode("utf-8"))["body"])
+            return FakeResponse(201, "{}")
+        raise AssertionError(f"unexpected {method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "60",
+        "CI_MERGE_REQUEST_IID": "782",
+        "CI_COMMIT_SHA": head,
+        "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "CI_JOB_TOKEN": "job-token",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _seconds: None, command_runner=command_runner) == "posted"
+    assert "未发现必须修改的问题" in posted[0]
