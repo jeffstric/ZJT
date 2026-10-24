@@ -1247,11 +1247,14 @@
             // AssetLibrary.resolveMentionTokens 还原为 markdown 图片）
             const mentionAssets = Vue.ref([]);
             let mentionAssetsLoading = false;
+            let mentionAssetsLoaded = false;
             function loadMentionAssets() {
-                if (mentionAssetsLoading || !window.AssetLibrary) return;
+                // 只拉一次：onPromptInput 每个字符都会命中 @ 前缀，无 loaded 标志会高频重复请求
+                if (mentionAssetsLoaded || mentionAssetsLoading || !window.AssetLibrary) return;
                 mentionAssetsLoading = true;
                 window.AssetLibrary.fetchMentionItems('').then(items => {
                     mentionAssets.value = items;
+                    mentionAssetsLoaded = true;
                 }).finally(() => { mentionAssetsLoading = false; });
             }
 

@@ -349,14 +349,17 @@
             var btn = overlay.querySelector('[data-al-submit]');
             var errBox = overlay.querySelector('[data-al-error]');
             var groupSel = overlay.querySelector('[data-al-group]');
+            // 分组下拉未加载完成时不提交 group_id（保持原分组），避免误改未分组
             var payload = {
                 name: overlay.querySelector('[data-al-name]').value.trim(),
-                group_id: groupSel && groupSel.value ? Number(groupSel.value) : null,
                 view_permission: state.view.permission,
                 edit_permission: state.edit.permission,
                 view_members: state.view.members.map(function (m) { return m.user_id; }),
                 edit_members: state.edit.members.map(function (m) { return m.user_id; })
             };
+            if (groupSel) {
+                payload.group_id = groupSel.value ? Number(groupSel.value) : null;
+            }
             btn.disabled = true;
             errBox.textContent = '';
             api('/assets/' + asset.id, { method: 'PUT', body: payload }).then(function () {

@@ -4548,7 +4548,7 @@
         assetMentionLoaded = true;
         // 数据到位后刷新仍在展示的下拉（占位「资产库加载中…」→ 实际条目）
         const ctx = lastMentionDropdownCtx;
-        if (!ctx) return;
+        if (!ctx || !ctx.textarea || !ctx.textarea.isConnected) return;
         const dropdown = document.getElementById(`character-dropdown-${ctx.dropdownKey}-${ctx.nodeId}`);
         if (dropdown && dropdown.style.display !== 'none') {
           showCharacterDropdownForImagePrompt(ctx.nodeId, ctx.textarea, ctx.cursorPos, ctx.dropdownKey);

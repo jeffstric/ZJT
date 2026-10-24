@@ -5,7 +5,7 @@ view_permission/edit_permission 为 specified 时，记录哪些用户被指定�
 同一用户对同一资产可同时持有 view 与 edit 两条记录。
 """
 import logging
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set
 
 import pymysql
 
@@ -19,9 +19,11 @@ class AssetPermissionMemberModel:
     """asset_permission_member 表数据库操作"""
 
     @staticmethod
-    def replace_for_asset(asset_id: int, perm_type: str, user_ids: List[int]) -> None:
-        """整组覆盖某资产的指定成员列表（先删后插）。user_ids 去重剔除属主。"""
-        valid_ids = sorted({int(uid) for uid in user_ids if uid})
+    def replace_for_asset(asset_id: int, perm_type: str, user_ids: List[int],
+                          exclude_user_id: Optional[int] = None) -> None:
+        """整组覆盖某资产的指定成员列表（先删后插）。去重并剔除属主。"""
+        valid_ids = sorted({int(uid) for uid in (user_ids or []) if uid}
+                           - ({int(exclude_user_id)} if exclude_user_id else set()))
         try:
             execute_update(
                 "DELETE FROM asset_permission_member WHERE asset_id = %s AND perm_type = %s",

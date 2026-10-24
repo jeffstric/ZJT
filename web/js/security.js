@@ -20,6 +20,9 @@
         'ul', 'ol', 'li', 'del', 'em', 'strong', 'b', 'i', 's', 'sup', 'sub',
         'table', 'thead', 'tbody', 'tr', 'th', 'td',
         'a', 'img', 'span', 'div', 'input',
+        // 生成结果卡操作按钮（发布/入库）：点击行为由 data-* 属性 + 事件委托驱动，
+        // on*/formaction 等危险属性仍被剥离；DOMPurify 默认白名单亦包含 button
+        'button',
         // 营销 agent 会把裸媒体 URL 转成媒体标签
         'video', 'audio', 'source'
     ];

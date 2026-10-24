@@ -88,7 +88,7 @@
 ## 7. 相关常量与文档
 
 - 常量：`config/constant.py` `AssetLibraryConstants`（权限枚举/类型/默认配额 2GB/单文件 50MB/下载超时/分页/token 前缀）、`UploadPathConstants.ASSET_LIBRARY_DIR`。
-- admin 前端：用户管理操作列「资产库容量」弹窗（`web/js/admin.js assetQuotaModal`）。
+- admin 前端：用户管理操作列「资产库容量」弹窗（`web/js/admin.js assetQuotaModal`）：设置上限、查看用量/资产数，并内嵌该用户最近 50 条资产列表与「清除」操作（二次确认，走 `DELETE /api/asset-library/assets/{id}`，清除后自动刷新用量）。
 - i18n：`marketing_agent.json`（`nav_shared_asset_library`/`add_to_asset_library`/`type_asset`）、`video_workflow.json`（`image_node_add_asset_btn`/`asset_library_entry`）、`admin.json`（`btn_asset_quota` 等）；storyboard 侧 `i18nT(key, fallback)` 自带中文 fallback。
 
 ## 8. 后续扩展（本期未做）

@@ -123,21 +123,14 @@ class AssetLibraryModel:
             raise
 
     @staticmethod
-    def count_by_group(group_ids: List[int], visible_user_id: Optional[int] = None) -> Dict[int, int]:
-        """统计每个分组的资产数。
-
-        visible_user_id 为空时统计全量（管理员视角）；否则统计该用户可见的
-        （自己的 + public + 被指定可看的，可见性 SQL 与服务层列表一致由调用方
-        保证同一语义——此处仅按 owner/public/成员三态近似聚合，分组侧栏计数
-        允许与严格过滤存在少量误差的兜底为精确子集统计，见服务层实现）。
-        """
+    def count_by_group(group_ids: List[int]) -> Dict[int, int]:
+        """统计每个分组的资产总数（管理侧/删除守卫用）。"""
         if not group_ids:
             return {}
         placeholders = ','.join(['%s'] * len(group_ids))
         sql = f"SELECT group_id, COUNT(*) AS cnt FROM asset_library WHERE group_id IN ({placeholders})"
-        params: List[Any] = list(group_ids)
         try:
-            rows = execute_query(sql, tuple(params), fetch_all=True)
+            rows = execute_query(sql, tuple(group_ids), fetch_all=True)
             return {int(r['group_id']): int(r['cnt']) for r in rows} if rows else {}
         except pymysql.MySQLError as e:
             logger.error(f"Failed to count assets by group {group_ids}: {e}")

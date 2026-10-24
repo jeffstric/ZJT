@@ -674,6 +674,9 @@ const AdminApp = {
                 quotaGB: 2,
                 usedText: '',
                 assetCount: 0,
+                assets: [],
+                assetsLoading: false,
+                purgingId: null,
                 loading: false
             },
 
@@ -3019,13 +3022,16 @@ const AdminApp = {
             }
         },
 
-        // 打开资产库容量设置弹窗：先查当前用量再展示
+        // 打开资产库容量设置弹窗：先查当前用量与资产列表再展示
         async openAssetQuotaModal(user) {
             this.assetQuotaModal.userId = user.user_id;
             this.assetQuotaModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
             this.assetQuotaModal.quotaGB = 2;
             this.assetQuotaModal.usedText = '';
             this.assetQuotaModal.assetCount = 0;
+            this.assetQuotaModal.assets = [];
+            this.assetQuotaModal.assetsLoading = true;
+            this.assetQuotaModal.purgingId = null;
             this.assetQuotaModal.loading = false;
             this.assetQuotaModal.show = true;
             try {
@@ -3046,6 +3052,61 @@ const AdminApp = {
                 const detail = error?.response?.data?.detail || this.t('error_load_failed');
                 this.showToast(detail, 'error');
                 this.assetQuotaModal.show = false;
+                return;
+            }
+            await this.loadAssetQuotaAssets();
+        },
+
+        // 拉取该用户的资产库资产（最近 50 条，供清除）
+        async loadAssetQuotaAssets() {
+            if (this.assetQuotaModal.userId == null) return;
+            this.assetQuotaModal.assetsLoading = true;
+            try {
+                const response = await axios.get(
+                    `/api/admin/asset-library/assets`,
+                    {
+                        params: { user_id: this.assetQuotaModal.userId, page: 1, page_size: 50 },
+                        headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.assetQuotaModal.assets = response.data.data.items || [];
+                }
+            } catch (error) {
+                console.error('Load user assets failed:', error);
+            } finally {
+                this.assetQuotaModal.assetsLoading = false;
+            }
+        },
+
+        // 清除资产（删文件+删记录+扣减容量；二次确认）
+        async purgeAssetLibraryAsset(asset) {
+            if (!confirm(this.t('confirm_asset_purge', { name: asset.name }))) return;
+            this.assetQuotaModal.purgingId = asset.id;
+            try {
+                const response = await axios.delete(
+                    `/api/asset-library/assets/${asset.id}`,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_asset_purged'), 'success');
+                    // 刷新用量与列表（清除会扣减容量记录）
+                    const quotaResp = await axios.get(
+                        `/api/admin/users/${this.assetQuotaModal.userId}/asset-quota`,
+                        { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                    );
+                    if (quotaResp.data.code === 0) {
+                        const data = quotaResp.data.data;
+                        this.assetQuotaModal.usedText = this.formatBytes(data.used_bytes);
+                        this.assetQuotaModal.assetCount = data.asset_count || 0;
+                    }
+                    await this.loadAssetQuotaAssets();
+                }
+            } catch (error) {
+                console.error('Purge asset failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_adjust_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetQuotaModal.purgingId = null;
             }
         },
 

@@ -15,7 +15,6 @@ asyncio.to_thread 包装（本服务层方法本身为同步 DB 组装 + 少量 
 """
 import asyncio
 import logging
-import mimetypes
 import os
 import re
 import shutil
@@ -113,6 +112,8 @@ def _normalize_members(raw: Any) -> List[int]:
         raise AssetLibraryError("成员列表格式非法", "invalid_members")
     ids: List[int] = []
     for item in raw:
+        if item is None or item == '':
+            continue
         try:
             uid = int(item)
         except (TypeError, ValueError):
@@ -124,6 +125,18 @@ def _normalize_members(raw: Any) -> List[int]:
     return ids
 
 
+# Content-Type → 扩展名显式映射（mimetypes.guess_extension 对 webp 等在
+# Windows 上返回 None，平台差异会导致扩展名与内容错配）
+_CONTENT_TYPE_EXT = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+    'image/bmp': '.bmp',
+}
+
+
 def _guess_extension(url: str, content_type: Optional[str] = None) -> str:
     """从 URL 路径 / Content-Type 推断图片扩展名，兜底 .png。"""
     allowed = ALC.ASSET_TYPE_EXTENSIONS[ALC.ASSET_TYPE_IMAGE]
@@ -133,9 +146,9 @@ def _guess_extension(url: str, content_type: Optional[str] = None) -> str:
         if lower.endswith(ext):
             return ext
     if content_type:
-        guessed = mimetypes.guess_extension(content_type.split(";")[0].strip()) or ""
-        if guessed.lower() in allowed:
-            return guessed
+        mapped = _CONTENT_TYPE_EXT.get(content_type.split(";")[0].strip().lower())
+        if mapped in allowed:
+            return mapped
     return ".png"
 
 
@@ -234,6 +247,19 @@ async def add_asset(
     view_ids = _normalize_members(view_members)
     edit_ids = _normalize_members(edit_members)
 
+    # 源文件可达性预检（轻量 stat，不触发 DB/网络）：本站 /upload 路径本地已
+    # 缺失时快速失败，避免无效请求继续走分组/配额 DB 交互
+    local_candidate = None
+    if "/upload/" in text or text.startswith("upload/"):
+        try:
+            candidate = resolve_upload_url_to_local_path(text)
+            if candidate and os.path.isfile(candidate):
+                local_candidate = candidate
+        except ValueError:
+            local_candidate = None
+        if local_candidate is None and not re.match(r"^https?://", text):
+            raise AssetLibraryError("源文件已被清理或不可访问，无法入库", "source_missing")
+
     # 分组校验（共享目录：任何用户可用任何分组）
     if group_id is not None:
         group = AssetGroupModel.get_by_id(int(group_id))
@@ -253,14 +279,6 @@ async def add_asset(
     final_path: Optional[Path] = None
     try:
         # 1) 持久化文件：本站 /upload 路径直接复制，外链走 aiohttp 下载
-        local_candidate = None
-        if "/upload/" in text or text.startswith("upload/"):
-            try:
-                candidate = resolve_upload_url_to_local_path(text)
-                if candidate and os.path.isfile(candidate):
-                    local_candidate = candidate
-            except ValueError:
-                local_candidate = None
         if local_candidate:
             ext = _guess_extension(text) or Path(local_candidate).suffix or ".png"
             file_size = await _copy_to_file(Path(local_candidate), tmp_path)
@@ -272,7 +290,12 @@ async def add_asset(
 
         # 2) 配额预留（原子条件 UPDATE；quota=0 不限）
         if not AssetLibraryQuotaModel.try_reserve(user_id, file_size):
-            quota = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+            # 配额详情仅用于错误文案，查询失败不改变 quota_exceeded 语义
+            quota: Dict[str, Any] = {}
+            try:
+                quota = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+            except Exception as detail_error:  # noqa: BLE001
+                logger.warning(f"Failed to read quota detail for user {user_id}: {detail_error}")
             raise AssetLibraryError(
                 "资产库容量不足，请联系管理员调整配额"
                 f"（已用 {quota.get('used_bytes', 0)}/{quota.get('quota_bytes', 0)} 字节）",
@@ -299,9 +322,10 @@ async def add_asset(
             edit_permission=edit_permission,
         )
 
-        # 4) 指定成员（perm=specified 才有意义，但统一存以便切换权限时保留）
-        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_VIEW, view_ids)
-        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_EDIT, edit_ids)
+        # 4) 指定成员（perm=specified 才有意义，但统一存以便切换权限时保留；
+        #    属主自身无意义，统一剔除）
+        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_VIEW, view_ids, exclude_user_id=user_id)
+        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_EDIT, edit_ids, exclude_user_id=user_id)
 
         asset = AssetLibraryModel.get_by_id(asset_id)
         logger.info(f"Asset {asset_id} added to library by user {user_id}: {file_size} bytes, group={group_id}")
@@ -459,9 +483,11 @@ def update_asset(
     if fields:
         AssetLibraryModel.update(asset.id, **fields)
     if view_members is not None:
-        AssetPermissionMemberModel.replace_for_asset(asset.id, ALC.PERM_TYPE_VIEW, _normalize_members(view_members))
+        AssetPermissionMemberModel.replace_for_asset(
+            asset.id, ALC.PERM_TYPE_VIEW, _normalize_members(view_members), exclude_user_id=asset.user_id)
     if edit_members is not None:
-        AssetPermissionMemberModel.replace_for_asset(asset.id, ALC.PERM_TYPE_EDIT, _normalize_members(edit_members))
+        AssetPermissionMemberModel.replace_for_asset(
+            asset.id, ALC.PERM_TYPE_EDIT, _normalize_members(edit_members), exclude_user_id=asset.user_id)
     return get_asset_detail(user_id, asset_id)
 
 
