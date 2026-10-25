@@ -402,12 +402,13 @@
   height: auto;
 }
 
-/* 选中信息浮层 */
+/* 选中信息浮层：位于底部对话条上方，避免与输入框/发送按钮重叠 */
 .ds-selection-tip {
   position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: 52px;
+  left: 12px;
+  transform: none;
+  max-width: min(58%, 500px);
   padding: 6px 16px;
   border-radius: 8px;
   background: rgba(29, 40, 57, 0.92);
@@ -418,6 +419,8 @@
   pointer-events: none;
   display: none;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .ds-selection-tip.show {
@@ -1174,7 +1177,7 @@ html.theme-dark .ds-node-preview {
 .ds-chat-note {
   position: absolute;
   left: 12px;
-  bottom: 52px;
+  bottom: 92px;
   max-width: min(58%, 500px);
   padding: 6px 10px;
   font-size: 12px;

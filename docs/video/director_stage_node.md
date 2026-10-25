@@ -28,6 +28,8 @@
 |------|------|
 | 悬停对象 | 光标变化（人偶=抓手、相机/焦点=移动箭头）+ 跟随鼠标的气泡提示，说明该对象可做什么 |
 | 左键点击人偶 | 选中，右栏显示人偶属性与关节滑块，人偶处出现 RGB 轴 |
+| 方向键（选中后） | 按当前观察方向平移选中的人偶（0.05m/次，Shift 加速 0.25m/次），范围限制在地面边界内；播放中会先暂停时间轴；输入框/下拉框聚焦时不响应；每次移动都会标脏（可撤销）并自动保存。回归见 `web/tests/director_stage_keyboard_move.test.js` |
+| 底部浮层 | 自下而上依次为对话条（bottom 12px）、选中提示（52px）、对话反馈（92px）；长提示限宽并省略，避免与输入框/发送按钮重叠。布局回归见 `web/tests/director_stage_layout.test.js` |
 | 左键拖拽人偶 | 拖身体：地面平面移动（XZ）；拖红/绿/蓝轴：只沿 X / 高度 / Z 移动 |
 | 点击黄色关节球 | 选中该关节，右栏定位到对应滑块 |
 | 左键点击/拖拽相机图标 | 选中后出现 RGB 轴（红 X / 绿 Y 高度 / 蓝 Z）和琥珀色焦距轴；拖机身仍是水平移动，拖绿轴改高度，拖焦距轴改 FOV |
@@ -134,6 +136,9 @@
 | 文件 | 说明 |
 |------|------|
 | `web/assets/vendor/three.min.js` | three.js r128（UMD 本地化，MIT） |
+| `web/assets/vendor/three-examples/` | 与核心同版本的 EffectComposer/SSAO/RoomEnvironment/RoundedBoxGeometry 等本地 UMD 组件（含 LICENSE） |
+| `web/assets/puppet/` | 分部位 normal/AO 贴图，由 `scripts/generate_puppet_textures.py` 确定性生成 |
+| `web/js/director_stage_rendering.js` | 渲染架构：PBR 材质、PMREM、三点布光、SSAO、双 composer、几何工具和资源生命周期；详见 [director_stage_rendering.md](./director_stage_rendering.md) |
 | `web/js/director_stage_editor.js` | 3D 编辑器核心：人偶骨骼构建、姿态预设、镜头控制、raycast 交互、快照渲染导出、撤销栈 |
 | `web/js/director_stage_timeline.js` | 时间轴模块：关键帧记录/拖动、插值驱动（角色走位 + 运镜）、播放控制与行走步态摆动；通过 `DirectorStageTimelineModule.attach` 挂载编辑器原型方法 |
 | `web/js/director_stage_node.js` | 节点壳：菜单注册、缩略图/统计显示（人偶数/FOV/环境/关键帧数）、生成图片节点 |
@@ -142,8 +147,8 @@
 ## 实现要点
 
 - **节点注册**：与 camera_control 相同，走 `registerNodeType('director_stage', {createFn, createWithDataFn})`；重载画布时由 `restoreNodeByRegistry` 复原，再由 `updateDirectorStageNodeShell` 回填缩略图与统计。
-- **人偶骨骼**：`buildPuppetRig` 按体型拼装（`BODY_TYPES`）。每个体型用一条躯干侧轮廓控制点列 `profile: [y, rx, rz, zOffset]`（y 相对髋节，zOffset 为该高度截面前移量）描述身体曲线，经 Catmull-Rom 插值成密集轮廓后，由髋/腰/胸三段 `LatheGeometry` 旋转曲面拼成一体成型躯干（苹果形胖子/沙漏女人/圆肚小孩等只靠改 profile）；三段分别挂 hipsY/spine/chest 关节，弯腰转胸时联动。四肢也是 lathe 肌肉轮廓曲面（上臂肱二头、小腿腓肠肌鼓起），两端收进体色加深的关节球；头部有下颌/鼻梁/眼睛，胖子带双下巴。体型 `man/woman/child/fat/thin` 共用同一关节层级。旧工作流缺 `bodyType` 时按男人复原。右栏可换体型。实现细节三条红线：① 轮廓插值必须用 Catmull-Rom，smoothstep 在控制点导数为零会留下环状棱线；② 躯干分段延伸段要从分界处连续收细（内段收细伸入外段），平行重叠会 z-fighting 出条纹；③ lathe 环绕接缝处的重复顶点要用 `weldLatheSeam` 焊平法线，否则正面留竖直接缝。
-- **双渲染器**：主 renderer 渲染编辑视角；PiP renderer 以快照分辨率渲染虚拟相机画面，导出快照直接 `toDataURL`（隐藏网格/关节球/相机图标/名牌后渲染）。
+- **人偶骨骼**：`buildPuppetRig` 按体型拼装（`BODY_TYPES`）。每个体型用一条躯干侧轮廓控制点列 `profile: [y, rx, rz, zOffset]`（y 相对髋节，zOffset 为该高度截面前移量）描述身体曲线，经 Catmull-Rom 插值成密集轮廓后，由髋/腰/胸三段 `LatheGeometry` 旋转曲面拼成连续深色内芯（苹果形胖子/沙漏女人/圆肚小孩等只靠改 profile）；三段内芯分别挂 hipsY/spine/chest 关节，弯腰转胸时联动。内芯外侧按骨盆/腹/胸分件覆盖独立外甲：胸甲上宽下窄且下缘弧形、腹甲椭圆收边、骨盆甲向下收窄且前侧护裆，分件窄缝露出内芯；肩甲使用覆盖肩部上外侧的半球壳，肩胸之间带随肩关节转动的柔性连接芯（默认站姿同时嵌入胸甲与肩甲），肘/膝带独立前侧护甲。四肢也是 lathe 肌肉轮廓曲面（上臂肱二头、小腿腓肠肌鼓起），两端收进体色加深的关节球；头部采用连续无五官曲面（无眉/眼/鼻/唇附加网格），+Z 面部平缓并带圆润下巴、-Z 枕部饱满，无五官也能区分面部朝向和后脑勺；保留下颌宽窄差异与两只贴合头侧的小耳。脚部采用单一连续曲面（后跟窄/前掌宽/脚背起伏/底面压平），脚尖与身体同向朝 +Z，默认站姿脚底落在 y=0，不再叠加鞋底/鞋身/踝领椭球。躯干不附加腰线/胸线/腹肌线/锁骨等装饰网格，避免椭球凸出表面形成怪异线条。头部/脚部/躯干几何回归测试见 `web/tests/director_stage_puppet_head.test.js`、`web/tests/director_stage_puppet_foot.test.js` 与 `web/tests/director_stage_puppet_torso.test.js`。体型 `man/woman/child/fat/thin` 共用同一关节层级。旧工作流缺 `bodyType` 时按男人复原。右栏可换体型。实现细节三条红线：① 轮廓插值必须用 Catmull-Rom，smoothstep 在控制点导数为零会留下环状棱线；② 躯干分段延伸段要从分界处连续收细（内段收细伸入外段），平行重叠会 z-fighting 出条纹；③ lathe 环绕接缝处的重复顶点要用 `weldLatheSeam` 焊平法线，否则正面留竖直接缝。
+- **渲染管线与双 composer**：主视口和 PiP 各自使用 `RenderPass → SSAOPass → GammaCorrectionShader`；材质按 body/torso/head/seam 分部位升级为 `MeshPhysicalMaterial`，normal/AO 异步加载并有中性 fallback。PMREM + RoomEnvironment 提供反射，Key/Fill/Rim 三点布光中只有 Key 投影，SSAO 强化关节和甲片窄缝。主视口采样率跟随 `renderer.getPixelRatio()`，PiP 预览质量固定 1，主视口/PiP/快照全分辨率渲染；WebGL2 下把 SSAOPass 内部的 beauty target 替换为 `WebGLMultisampleRenderTarget`（samples=4）并同步 `tDiffuse` uniform，否则 SSAO 自渲染的 beauty 会绕开 composer 的抗锯齿，画面发糊、锯齿明显；快照仅在 `finally` 恢复 helper；缺组件或深度纹理时回退原始 renderer。Windows 上若检测到风险 ANGLE 后端（非 Direct3D11，如 Vulkan/OpenGL），从第一帧起自动关闭实时阴影以规避驱动编译崩溃，PBR 材质与 SSAO 保留。`close()` 统一释放 composer、灯光、环境、纹理与 renderer。完整架构见 [director_stage_rendering.md](./director_stage_rendering.md)，回归测试见 `web/tests/director_stage_rendering.test.js`。
 - **相机/焦点/人偶拾取**：射线拾取的线段容差（`raycaster.params.Line.threshold`）必须收窄（设 0.05）。选中机位、对焦中心或人偶后显示世界坐标 RGB 轴（红 X / 绿 Y / 蓝 Z）；机位额外显示沿视线的琥珀色「焦距」轴。人偶绿轴改 `rootYOffset`（离地高度；鼠标世界位移除以人偶世界缩放，避免轴慢物快），红/蓝轴改地面 XZ。轴拖拽用「包含该轴、尽量朝向观察相机」的平面求交。快照渲染时隐藏轴向把手。
 - **对焦标记与视线**：焦点为对焦十字 Sprite（Canvas 圆环+准线，自动面向渲染相机，带呼吸脉冲动画），相机到焦点画 LineDashedMaterial 虚线；选中焦点时标记与虚线变青色。这些 helper 在快照渲染时自动隐藏。
 - **快照上传与图片节点**：dataURL → Blob → `uploadFile()`（`/api/video-workflow/upload`），URL 存入 `node.data.snapshotUrl`；随后调用 `createDirectorStageImageNode()` 在导演台节点右侧创建图片节点（`createImageNode` + 回填 `.image-preview` 预览与比例 + `state.connections` 连线），与 camera_control 生成图片节点的流程一致。

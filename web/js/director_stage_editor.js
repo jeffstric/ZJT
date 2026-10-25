@@ -74,7 +74,7 @@
     },
     fat: {
       label: '胖子', hipH: 0.86, labelY: 1.88, jointR: 0.042,
-      headR: 0.118, headScale: [1.08, 1.02, 1.06], jaw: 0.86, doubleChin: true,
+      headR: 0.118, headScale: [1.08, 1.02, 1.06], jaw: 0.86,
       neckR: 0.050, neckH: 0.055, neckY: 0.215,
       spineY: 0.13, chestJointY: 0.145,
       profile: [
@@ -298,20 +298,28 @@
 
   // ============ 人偶骨骼构建 ============
 
-  function buildPuppetRig(colorHex, bodyTypeKey) {
+  function buildPuppetRig(colorHex, bodyTypeKey, renderer) {
     var t = getBodyType(bodyTypeKey);
-    // 哑光木偶材质（接近参考图质感）；关节球用体色加深，模拟人偶关节接缝
-    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.0 });
-    var seamMat = new THREE.MeshStandardMaterial({
+    // 分部位 PBR 树脂材质；无渲染模块时保留 StandardMaterial 回退。
+    var materialBundle = null;
+    if (typeof window !== 'undefined' && window.DirectorStageRendering) {
+      materialBundle = window.DirectorStageRendering.createResinMaterials(colorHex, renderer);
+    }
+    var mat = materialBundle ? materialBundle.body : new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.0 });
+    var torsoMat = materialBundle ? materialBundle.torso : mat;
+    var headMat = materialBundle ? materialBundle.head : mat;
+    var seamMat = materialBundle ? materialBundle.seam : new THREE.MeshStandardMaterial({
       color: new THREE.Color(colorHex).multiplyScalar(0.8), roughness: 0.55, metalness: 0.0
     });
     var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
-    var darkMat = new THREE.MeshStandardMaterial({ color: 0x11151d, roughness: 0.5, metalness: 0.0 });
 
     var rig = {
-      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat, darkMat],
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
+      materialBundle: materialBundle,
       hipH: t.hipH, labelY: t.labelY, bodyType: normalizeBodyType(bodyTypeKey)
     };
+    if (torsoMat !== mat) rig.materials.push(torsoMat);
+    if (headMat !== mat && headMat !== torsoMat) rig.materials.push(headMat);
 
     // 人偶网格几乎都是缩放球体，rig 内共享同一个单位球几何体
     var unitSphere = new THREE.SphereGeometry(1, 24, 18);
@@ -327,6 +335,13 @@
       m.scale.set(rx, ry, rz);
       rig.bodyMeshes.push(m);
       return m;
+    }
+    function armorPlate(rx, ry, rz, radius, m2) {
+      var geo = materialBundle ? window.DirectorStageRendering.roundedJoint(rx * 2, ry * 2, rz * 2, radius) : null;
+      if (!geo) return ellip(rx, ry, rz, m2);
+      var mesh = new THREE.Mesh(geo, m2 || mat);
+      rig.bodyMeshes.push(mesh);
+      return mesh;
     }
     function joint(key, parent, x, y, z) {
       var g = new THREE.Group();
@@ -413,8 +428,8 @@
     var spine = joint('spine', hipsY, 0, t.spineY, 0);
     var chest = joint('chest', spine, 0, t.chestJointY, 0);
 
-    // 躯干：按 profile 轮廓（[y, rx, rz, zOffset]，y 相对髋节）生成 3 段 lathe 平滑曲面，
-    // 分别挂 hipsY/spine/chest 关节，分段处互相嵌入，弯腰/转胸时分段联动不脱节。
+    // 躯干：按 profile 轮廓（[y, rx, rz, zOffset]，y 相对髋节）生成三段连续内芯与对应外甲。
+    // 内芯挂 hipsY/spine/chest 并互相嵌入；外甲按骨盆/腹/胸分件，弯腰/转胸时随各自关节联动。
     var spineAbs = t.spineY;
     var chestAbs = t.spineY + t.chestJointY;
     var prof = t.profile;
@@ -431,10 +446,10 @@
       return { rx: a[1] + (b[1] - a[1]) * f, rz: a[2] + (b[2] - a[2]) * f, z: a[3] + (b[3] - a[3]) * f };
     }
 
-    // 生成躯干段：owned 区 [y0,y1]（相对 hipsY）内为完整轮廓半径，
-    // 两端延伸段（extDown/extUp）从分界处开始连续收细到轴心并伸入相邻段内部——
-    // 重叠区始终是"外段全径 / 内段收细"的包含关系，只在分界线留下一圈接缝，不会平行重叠产生条纹。
-    function torsoPart(y0, y1, extDown, extUp, parent, baseY) {
+    // 躯干段同时用于深色内芯与外侧装甲。内芯的延伸段互相嵌入，保证弯腰/转胸时不断裂；
+    // 装甲不设延伸段，以真实窄缝分件。armor 模式压平前后面并略向外抬，形成硬壳而非肌肉轮廓。
+    function torsoPart(y0, y1, extDown, extUp, parent, baseY, shellScale, shellMat, armor) {
+      var radialScale = shellScale || 1;
       function taper(y) {
         var f = 1;
         if (y < y0 && extDown > 0) f = (y - (y0 - extDown)) / extDown;
@@ -447,63 +462,60 @@
       var N = 40;
       for (var k = 0; k <= N; k++) {
         var y = ya + (yb - ya) * k / N;
-        pts.push(new THREE.Vector2(Math.max(0.0035, profileAt(y).rz * taper(y)), y - baseY));
+        pts.push(new THREE.Vector2(Math.max(0.0035, profileAt(y).rz * taper(y) * radialScale), y - baseY));
       }
       var geo = new THREE.LatheGeometry(pts, 28);
       var pos = geo.attributes.position;
       for (var v = 0; v < pos.count; v++) {
-        var pr = profileAt(pos.getY(v) + baseY);
+        var yAbs = pos.getY(v) + baseY;
+        var pr = profileAt(yAbs);
         var ratio = pr.rz > 0.0001 ? pr.rx / pr.rz : 1;
         pos.setX(v, pos.getX(v) * ratio);
-        pos.setZ(v, pos.getZ(v) + pr.z);
+        var localZ = pos.getZ(v);
+        if (armor) {
+          var plateV = clamp((yAbs - y0) / Math.max(0.001, y1 - y0), 0, 1);
+          var front = clamp(localZ / Math.max(0.001, pr.rz * radialScale), -1, 1);
+          var curve = Math.abs(front);
+          var xScale = 1, yShift = 0;
+          if (armor === 'chest') {
+            // 胸甲上宽下窄，底缘向前/后下方弯成弧面；最小宽度也必须大于内芯。
+            yShift = -0.042 * curve * Math.pow(1 - plateV, 3);
+            xScale = (0.94 + 0.18 * plateV) * (1 - 0.02 * Math.pow(1 - plateV, 2));
+          } else if (armor === 'abdomen') {
+            // 腹甲两端随胸甲/骨盆甲弯曲，中间宽、上下窄，形成独立椭圆甲片。
+            yShift = -0.012 * curve * Math.pow(1 - plateV, 3) - 0.035 * curve * Math.pow(plateV, 3);
+            xScale = 1 - 0.08 * Math.pow(Math.abs(plateV - 0.5) * 2, 2);
+          } else if (armor === 'pelvis') {
+            // 骨盆甲上宽下窄，前侧向下延伸成护裆，顶部弧线与腹甲保持窄缝。
+            yShift = -0.040 * Math.max(0, front) * Math.pow(1 - plateV, 3) - 0.006 * curve * Math.pow(plateV, 3);
+            xScale = 1.06 - 0.12 * (1 - plateV);
+          }
+          pos.setX(v, pos.getX(v) * xScale);
+          pos.setY(v, pos.getY(v) + yShift);
+          localZ = localZ * 0.86 + (localZ >= 0 ? 0.012 : -0.012);
+        }
+        pos.setZ(v, localZ + pr.z);
       }
+      if (armor && materialBundle) window.DirectorStageRendering.ensureUv2(geo);
       geo.computeVertexNormals();
       weldLatheSeam(geo, 28);
-      var mesh = new THREE.Mesh(geo, mat);
+      var mesh = new THREE.Mesh(geo, shellMat || mat);
       rig.bodyMeshes.push(mesh);
       parent.add(mesh);
       return mesh;
     }
 
-    // 骨盆 v9：短裤腰线接缝（LibTV 标志性的髋部深色环带）
-    var waistBandY = 0.02;
-    var waistPr = profileAt(waistBandY);
-    var waistBand = ellip(waistPr.rx * 1.015, 0.026, waistPr.rz * 1.015, seamMat);
-    waistBand.position.set(0, waistBandY, waistPr.z);
-    hipsY.add(waistBand);
-
     var waistSplit = spineAbs * 0.55;                 // 髋/腰分段高度
     var chestSplit = spineAbs + t.chestJointY * 0.55; // 腰/胸分段高度
-    torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0);
-    torsoPart(waistSplit, chestSplit, 0.07, 0.11, spine, spineAbs);
-    torsoPart(chestSplit, prof[prof.length - 1][0], 0.07, 0.045, chest, chestAbs);
-    // 肩线：横跨两肩的圆顶，与手臂三角肌衔接
-    var shoulderBar = ellip(t.shoulderX * 0.92, t.upperArmR * 1.25, t.upperArmR * 1.1);
-    shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
-    chest.add(shoulderBar);
-    // 躯干保持光滑一体（lathe 轮廓自带胸腰起伏）——凸起块在曲面上会呈"包子"感，已移除
-    // 解剖线条 v5：胸中缝/腹肌沟/锁骨——深色细条贴面=凹线视觉（非凸块）
-    var pecLineY = chestAbs + 0.085;
-    var pecLine = ellip(0.013, 0.082, 0.013, seamMat);
-    pecLine.position.set(0, pecLineY, profileAt(pecLineY).rz + 0.001);
-    chest.add(pecLine);
-    var absLineY = spineAbs - 0.03;
-    var absLine = ellip(0.011, 0.088, 0.011, seamMat);
-    absLine.position.set(0, absLineY, profileAt(absLineY).rz + 0.001);
-    hipsY.add(absLine);
-    var absCrossY = spineAbs * 0.60;
-    var absCross = ellip(0.058, 0.009, 0.011, seamMat);
-    absCross.position.set(0, absCrossY, profileAt(absCrossY).rz + 0.001);
-    hipsY.add(absCross);
-    var clavY = chestAbs + 0.165;
-    var clavL = ellip(0.082, 0.011, 0.013, seamMat);
-    clavL.position.set(0.098, clavY, profileAt(clavY).rz * 0.70);
-    clavL.rotation.z = -0.40;
-    chest.add(clavL);
-    var clavR = ellip(0.082, 0.011, 0.013, seamMat);
-    clavR.position.set(-0.098, clavY, profileAt(clavY).rz * 0.70);
-    clavR.rotation.z = 0.40;
-    chest.add(clavR);
+    // 深色内芯保持关节活动时的连续性，只在装甲窄缝中露出。
+    torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0, 0.90, seamMat);
+    torsoPart(waistSplit, chestSplit, 0.07, 0.11, spine, spineAbs, 0.90, seamMat);
+    torsoPart(chestSplit, prof[prof.length - 1][0], 0.07, 0.045, chest, chestAbs, 0.90, seamMat);
+    // 骨盆甲 / 腹甲 / 胸甲：分件之间留 16mm 窄缝，前后壳面压平形成盔甲硬壳。
+    torsoPart(prof[0][0] + 0.006, waistSplit - 0.008, 0, 0, hipsY, 0, 1.025, torsoMat, 'pelvis');
+    torsoPart(waistSplit + 0.008, chestSplit - 0.008, 0, 0, spine, spineAbs, 1.025, torsoMat, 'abdomen');
+    torsoPart(chestSplit + 0.008, prof[prof.length - 1][0] - 0.004, 0, 0, chest, chestAbs, 1.025, torsoMat, 'chest');
+    // 只保留上述结构分件，不再叠加腰线/胸线/腹肌线/锁骨等装饰椭球。
 
     var neck = joint('neck', chest, 0, t.neckY, 0);
     var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);
@@ -511,61 +523,87 @@
     neck.add(neckMesh);
 
     var head = joint('head', neck, 0, t.neckH * 0.8, 0);
-    var headSY = t.headScale ? t.headScale[1] : 1;
-    var headCY = t.headR * headSY * 0.82;
-    var headMesh = ball(t.headR);
-    if (t.headScale) headMesh.scale.set(t.headR * t.headScale[0], t.headR * t.headScale[1], t.headR * t.headScale[2]);
-    headMesh.position.y = headCY;
-    head.add(headMesh);
-    // 下颌/脸部：下半张脸略收窄，与颅球融合出脸型（jaw 越小脸越尖）
-    var jawF = t.jaw || 0.7;
-    var jaw = ellip(t.headR * 0.88 * jawF, t.headR * 0.62 * jawF, t.headR * 0.80 * jawF);
-    jaw.position.set(0, headCY - t.headR * 0.40, t.headR * 0.16);
-    head.add(jaw);
-    if (t.doubleChin) {
-      var chin = ellip(t.headR * 0.50, t.headR * 0.24, t.headR * 0.38);
-      chin.position.set(0, headCY - t.headR * 0.55, t.headR * 0.18);
-      head.add(chin);
+    var headScale = t.headScale || [1, 1, 1];
+    var headCY = t.headR * headScale[1] * 0.82;
+    // 无五官人脸：头顶、太阳穴、下颌由一条连续轮廓成型，不叠加任何五官网格。
+    // +Z 面部压平并保留圆润下巴，-Z 后脑勺饱满，即使无眼鼻也能辨认头部朝向。
+    var jawWidth = 0.82 + (t.jaw || 0.74) * 0.18;
+    var headProfile = [
+      [-1.02, 0.004], [-0.98, 0.26 * jawWidth], [-0.86, 0.58 * jawWidth],
+      [-0.62, 0.80 * jawWidth], [-0.30, 0.93 * jawWidth], [0.05, 0.99],
+      [0.38, 1.00], [0.66, 0.91], [0.85, 0.70], [0.97, 0.36], [1.02, 0.004]
+    ];
+    var headPoints = smoothProfile(headProfile, 48).map(function (p) {
+      return new THREE.Vector2(Math.max(0.003, p[1]), p[0]);
+    });
+    var headGeo = new THREE.LatheGeometry(headPoints, 32);
+    var headPos = headGeo.attributes.position;
+    for (var hi = 0; hi < headPos.count; hi++) {
+      var hx = headPos.getX(hi), hy = headPos.getY(hi), hz = headPos.getZ(hi);
+      if (hz >= 0) {
+        // 面部是平缓曲面而非球面；下巴仅由本体微微前送，不添加鼻/唇等凸起。
+        var facePlane = 0.74 + 0.06 * (hy + 0.1);
+        var faceZone = clamp((0.95 - hy) / 0.25, 0, 1) * clamp((hy + 0.92) / 0.25, 0, 1);
+        if (hz > facePlane) hz = facePlane + (hz - facePlane) * (1 - 0.80 * faceZone);
+        var chinWeight = Math.exp(-Math.pow((hy + 0.68) / 0.22, 2));
+        hz += 0.10 * chinWeight * Math.max(0, 1 - Math.abs(hx));
+      } else {
+        // 枕部向后鼓起、下脑后收，侧面形成明确的后脑勺轮廓。
+        var occiput = Math.exp(-Math.pow((hy - 0.18) / 0.62, 2));
+        hz *= 1 + 0.18 * occiput;
+      }
+      headPos.setXYZ(hi, hx, hy, hz);
     }
-    // 头部雕塑 v1（LibTV 参考是"无眼球但有五官浮雕"的头雕）：
-    // 眉弓 / 鼻梁 / 唇 / 耳，全部同体色浅浮雕，眼区保持平滑
-    var brow = ellip(t.headR * 0.54, t.headR * 0.09, t.headR * 0.18);
-    brow.position.set(0, headCY + t.headR * 0.26, t.headR * 0.74);
-    head.add(brow);
-    var noseV1 = ellip(t.headR * 0.15, t.headR * 0.24, t.headR * 0.22);
-    noseV1.position.set(0, headCY - t.headR * 0.06, t.headR * 0.88);
-    head.add(noseV1);
-    var lipUp = ellip(t.headR * 0.23, t.headR * 0.045, t.headR * 0.09);
-    lipUp.position.set(0, headCY - t.headR * 0.36, t.headR * 0.76);
-    head.add(lipUp);
-    var lipDn = ellip(t.headR * 0.19, t.headR * 0.055, t.headR * 0.09);
-    lipDn.position.set(0, headCY - t.headR * 0.46, t.headR * 0.74);
-    head.add(lipDn);
-    var earV1 = ellip(t.headR * 0.09, t.headR * 0.19, t.headR * 0.11);
-    earV1.position.set(t.headR * 0.92, headCY - t.headR * 0.02, -t.headR * 0.04);
-    head.add(earV1);
-    var earV1R = ellip(t.headR * 0.09, t.headR * 0.19, t.headR * 0.11);
-    earV1R.position.set(-t.headR * 0.92, headCY - t.headR * 0.02, -t.headR * 0.04);
-    head.add(earV1R);
+    if (materialBundle) window.DirectorStageRendering.ensureUv2(headGeo);
+    headGeo.computeVertexNormals();
+    weldLatheSeam(headGeo, 32);
+    var headMesh = new THREE.Mesh(headGeo, headMat);
+    headMesh.scale.set(t.headR * headScale[0], t.headR * headScale[1], t.headR * headScale[2]);
+    headMesh.position.y = headCY;
+    rig.bodyMeshes.push(headMesh);
+    head.add(headMesh);
+    // 小巧人耳贴近头侧并略靠后；不旋转、不外伸，避免牛角般的横向轮廓。
+    [-1, 1].forEach(function (side) {
+      var ear = ellip(t.headR * 0.085, t.headR * 0.20, t.headR * 0.105, headMat);
+      ear.position.set(
+        side * t.headR * headScale[0] * 0.98,
+        headCY - t.headR * 0.08,
+        -t.headR * headScale[2] * 0.06
+      );
+      head.add(ear);
+    });
 
+    // 肩甲只覆盖肩部上外侧，不再用完整球体充当三角肌。
+    var pauldronGeo = new THREE.SphereGeometry(1, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.64);
     function buildArm(side) {
       var s = side === 'L' ? 1 : -1;
-      var sh = joint('shoulder' + side, chest, s * t.shoulderX, t.shoulderY, 0);
-      // 三角肌圆头，与肩线衔接
-      var delt = ellip(t.upperArmR * 1.5, t.upperArmR * 1.75, t.upperArmR * 1.4);
-      delt.position.set(s * t.upperArmR * 0.2, -t.upperArmR * 0.5, 0);
-      sh.add(delt);
       var uaH = t.upperArmH, uaR = t.upperArmR;
+      var sh = joint('shoulder' + side, chest, s * t.shoulderX * 0.90, t.shoulderY, 0);
+      // 肩胸柔性连接芯：从胸甲内部伸到肩关节，随肩部一起转动，外露部分尽量短。
+      var shoulderLink = new THREE.Mesh(
+        new THREE.CylinderGeometry(uaR * 0.72, uaR * 0.82, t.shoulderX * 0.42, 16),
+        seamMat
+      );
+      shoulderLink.rotation.z = Math.PI / 2;
+      shoulderLink.position.set(-s * t.shoulderX * 0.21, 0, 0);
+      rig.bodyMeshes.push(shoulderLink);
+      sh.add(shoulderLink);
+      var pauldron = new THREE.Mesh(pauldronGeo, mat);
+      pauldron.scale.set(uaR * 1.70, uaR * 1.55, uaR * 1.50);
+      pauldron.position.set(s * uaR * 0.10, -uaR * 0.22, 0);
+      pauldron.rotation.z = -s * 0.20;
+      rig.bodyMeshes.push(pauldron);
+      sh.add(pauldron);
       limbSeg(sh, [
         [0.015, uaR * 1.0], [-uaH * 0.12, uaR * 1.26], [-uaH * 0.38, uaR * 1.16],
         [-uaH * 0.72, uaR * 0.92], [-uaH + 0.012, uaR * 0.82], [-uaH - 0.01, uaR * 0.5]
       ]);
       var elbow = joint('elbow' + side, sh, 0, -uaH, 0);
-      // 肘前浅壳板 v5（关节板件感，seamMat 深一档）
-      var elbowCap = ellip(uaR * 0.66, uaR * 0.8, uaR * 0.36, seamMat);
+      var laH = t.lowerArmH, laR = t.lowerArmR;
+      // 肘甲使用带倒角的硬壳，与关节球/咬合环组成清晰的护甲结构。
+      var elbowCap = armorPlate(uaR * 0.70, uaR * 0.82, uaR * 0.30, uaR * 0.22, mat);
       elbowCap.position.set(0, -uaR * 0.05, laR * 0.95);
       elbow.add(elbowCap);
-      var laH = t.lowerArmH, laR = t.lowerArmR;
       limbSeg(elbow, [
         [0.012, laR * 0.9], [-laH * 0.18, laR * 1.22], [-laH * 0.5, laR * 0.98],
         [-laH + 0.012, laR * 0.72], [-laH - 0.01, laR * 0.5]
@@ -596,6 +634,32 @@
     buildArm('L');
     buildArm('R');
 
+    // 脚型与身体同向（脚尖 +Z）：后跟窄、前掌宽、脚背有起伏、底面压平。
+    // 不再用鞋底/鞋身/踝领等多个椭球叠罗汉，避免圆饼脚和前后不分。
+    var footProfile = [
+      [-1.00, 0.04], [-0.96, 0.34], [-0.82, 0.66], [-0.52, 0.82],
+      [-0.12, 0.90], [0.30, 0.98], [0.66, 1.00], [0.88, 0.88],
+      [1.00, 0.56], [1.06, 0.04]
+    ];
+    var footPoints = smoothProfile(footProfile, 32).map(function (p) {
+      return new THREE.Vector2(Math.max(0.003, p[1]), p[0]);
+    });
+    var footGeo = new THREE.LatheGeometry(footPoints, 28);
+    footGeo.rotateX(Math.PI / 2); // 原 Y 轴轮廓转为 Z 轴，正端为脚尖
+    var footPos = footGeo.attributes.position;
+    for (var fi = 0; fi < footPos.count; fi++) {
+      var fy = footPos.getY(fi), fz = footPos.getZ(fi);
+      if (fy < -0.55) fy = -0.55 + (fy + 0.55) * 0.15;
+      if (fy > 0) {
+        fy *= 1 - 0.18 * clamp((fz - 0.25) / 0.65, 0, 1); // 前掌低于脚踝脚背
+        fy *= 1 + 0.10 * Math.exp(-Math.pow((fz + 0.15) / 0.45, 2));
+      }
+      footPos.setY(fi, fy);
+    }
+    footGeo.computeVertexNormals();
+    weldLatheSeam(footGeo, 28);
+    footGeo.computeBoundingBox();
+
     function buildLeg(side) {
       var s = side === 'L' ? 1 : -1;
       var hip = joint('hip' + side, hipsY, s * t.hipX, t.hipJointY, 0);
@@ -605,39 +669,34 @@
         [-ulH + 0.012, ulR * 0.76], [-ulH - 0.01, ulR * 0.5]
       ]);
       var knee = joint('knee' + side, hip, 0, -ulH, 0);
-      // 髌骨板 v5：膝盖前侧浅壳
-      var kneeCap = ellip(ulR * 0.80, ulR * 0.92, ulR * 0.42, seamMat);
-      kneeCap.position.set(0, -ulR * 0.12, llR * 0.92);
-      knee.add(kneeCap);
       var llH = t.lowerLegH, llR = t.lowerLegR;
+      // 膝甲为前侧独立倒角硬壳，关节球只负责咬合与转动。
+      var kneeCap = armorPlate(ulR * 0.82, ulR * 0.95, ulR * 0.34, ulR * 0.26, mat);
+      kneeCap.position.set(0, -ulR * 0.12, llR * 0.96);
+      knee.add(kneeCap);
       limbSeg(knee, [
         [0.012, llR * 0.92], [-llH * 0.22, llR * 1.14], [-llH * 0.55, llR * 0.86],
         [-llH + 0.010, llR * 0.60], [-llH - 0.008, llR * 0.42]
       ]);
       var ankle = joint('ankle' + side, knee, 0, -t.lowerLegH, 0);
-      // 未来感靴 v4：厚鞋底 + 鞋身/鞋头盖 + 鞋带孔三粒 + 踝领
-      var sole = ellip(t.foot[0] * 1.08, t.foot[1] * 0.62, t.foot[2] * 1.08, seamMat);
-      sole.position.set(0, -t.foot[1] * 0.55, t.foot[2] * 0.12);
-      ankle.add(sole);
-      var upper = ellip(t.foot[0] * 0.94, t.foot[1] * 0.72, t.foot[2] * 0.64);
-      upper.position.set(0, -t.foot[1] * 0.05, t.foot[2] * 0.16);
-      ankle.add(upper);
-      var heelCap = ellip(t.foot[0] * 0.84, t.foot[1] * 0.58, t.foot[2] * 0.40);
-      heelCap.position.set(0, -t.foot[1] * 0.26, -t.foot[2] * 0.32);
-      ankle.add(heelCap);
-      for (var li = 0; li < 3; li++) {
-        var lace = ball(t.foot[1] * 0.14, darkMat);
-        lace.position.set(0, t.foot[1] * (0.10 + li * 0.22), t.foot[2] * (0.42 - li * 0.15));
-        ankle.add(lace);
-      }
-      var collar = ellip(llR * 1.22, t.foot[1] * 0.55, llR * 1.22, seamMat);
-      collar.position.set(0, t.foot[1] * 1.15, 0);
-      ankle.add(collar);
+      var ankleH = t.hipH + t.hipJointY - t.upperLegH - t.lowerLegH;
+      var foot = new THREE.Mesh(footGeo, mat);
+      foot.scale.set(t.foot[0], t.foot[1], t.foot[2] * 1.02);
+      foot.position.set(
+        0,
+        -ankleH - footGeo.boundingBox.min.y * t.foot[1],
+        t.foot[2] * 0.18
+      );
+      rig.bodyMeshes.push(foot);
+      ankle.add(foot);
     }
     buildLeg('L');
     buildLeg('R');
 
-    rig.bodyMeshes.forEach(function (m) { m.castShadow = false; m.receiveShadow = false; });
+    rig.bodyMeshes.forEach(function (m) {
+      m.castShadow = m.material !== seamMat;
+      m.receiveShadow = true;
+    });
     return rig;
   }
   // ==== PUPPET_GEOMETRY_END ====
@@ -925,28 +984,54 @@
   // ---------- 场景初始化 ----------
 
   DirectorEditor.prototype.initScene = function () {
+    var R = window.DirectorStageRendering || null;
+    this.rendering = R;
+    this.mainPipeline = null;
+    this.pipPipeline = null;
+    this.studioEnvironment = null;
+    this.studioLights = null;
+    // 预览与快照固定完整分辨率；优化 SSAO 不得降低 Beauty 清晰度。
+    this.pipPreviewQuality = 1;
+
     var canvas = this.$('dsCanvas');
     this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.outputEncoding = THREE.sRGBEncoding;
+    if (R) R.configureRenderer(this.renderer, { pixelRatio: Math.min(window.devicePixelRatio || 1, 2) });
+    else {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.outputEncoding = THREE.sRGBEncoding;
+    }
+
+    // 驱动级规避：部分显卡驱动的 ANGLE 非 D3D11 后端编译 阴影+带贴图材质 的组合即整进程
+    // 崩溃且不可恢复；风险环境从第一帧起关闭阴影（PBR 材质/SSAO/环境光全部保留）。
+    this._driverShadowDisabled = false;
+    if (R && R.detectDriverShaderRisk && R.detectDriverShaderRisk(this.renderer)) {
+      this._driverShadowDisabled = true;
+      this.renderer.shadowMap.enabled = false;
+      console.warn('导演台：当前显卡 ANGLE 后端无法安全编译阴影着色器，已自动关闭实时阴影（PBR 材质与环境光不受影响）。');
+    }
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x14161d);
 
-    // 光照（PBR 感：主光 + 冷补光 + 双边缘光勾轮廓）
-    this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 0.95));
-    var key = new THREE.DirectionalLight(0xffffff, 0.9);
-    key.position.set(4, 7, 5);
-    this.scene.add(key);
-    var fill = new THREE.DirectionalLight(0x88aaff, 0.30);
-    fill.position.set(-5, 3, -4);
-    this.scene.add(fill);
-    var rim = new THREE.DirectionalLight(0xc5d4ff, 0.6);
-    rim.position.set(-3, 5, -7);
-    this.scene.add(rim);
-    var rim2 = new THREE.DirectionalLight(0xffffff, 0.35);
-    rim2.position.set(6, 3, -6);
-    this.scene.add(rim2);
+    if (R) {
+      this.studioEnvironment = R.createStudioEnvironment(this.renderer, this.scene);
+      this.studioLights = R.createThreePointLights(this.scene);
+    } else {
+      // 无渲染模块时保留旧灯光和原始渲染路径。
+      this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 0.95));
+      var key = new THREE.DirectionalLight(0xffffff, 0.9);
+      key.position.set(4, 7, 5);
+      this.scene.add(key);
+      var fill = new THREE.DirectionalLight(0x88aaff, 0.30);
+      fill.position.set(-5, 3, -4);
+      this.scene.add(fill);
+      var rim = new THREE.DirectionalLight(0xc5d4ff, 0.6);
+      rim.position.set(-3, 5, -7);
+      this.scene.add(rim);
+      var rim2 = new THREE.DirectionalLight(0xffffff, 0.35);
+      rim2.position.set(6, 3, -6);
+      this.scene.add(rim2);
+    }
 
     // 地面
     var ground = new THREE.Mesh(
@@ -955,6 +1040,7 @@
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.005;
+    ground.receiveShadow = true;
     this.scene.add(ground);
     this.groundPlane = ground;
 
@@ -965,6 +1051,7 @@
     );
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = 0.001;
+    disc.receiveShadow = true;
     this.scene.add(disc);
     this.groundDisc = disc;
 
@@ -992,7 +1079,10 @@
     var res = SNAPSHOT_RES[ratio];
     this.pipRenderer = new THREE.WebGLRenderer({ canvas: this.$('dsPipCanvas'), antialias: true, preserveDrawingBuffer: true });
     this.pipRenderer.setSize(res[0], res[1], false);
-    this.pipRenderer.outputEncoding = THREE.sRGBEncoding;
+    if (R) R.configureRenderer(this.pipRenderer, { pixelRatio: 1 });
+    else this.pipRenderer.outputEncoding = THREE.sRGBEncoding;
+    // configureRenderer 会打开阴影；风险后端必须与主渲染器一致关闭，避免编译阴影程序
+    if (this._driverShadowDisabled) this.pipRenderer.shadowMap.enabled = false;
     this.virtualCam = new THREE.PerspectiveCamera(this.virtualCamCfg.fov, res[0] / res[1], 0.1, 100);
     this.$('dsRatioText').textContent = '画幅 ' + ratio;
 
@@ -1005,6 +1095,25 @@
     // （焦点标记就在这个范围内，导致无法选中）。收窄到 5cm。
     this.raycaster.params.Line.threshold = 0.05;
     this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+    function makePipeline(renderer, camera, quality) {
+      if (R) return R.createComposer(renderer, self.scene, camera, { pixelRatio: quality });
+      return {
+        supported: false,
+        render: function () { renderer.render(self.scene, camera); },
+        setSize: function () {},
+        setQuality: function () {},
+        dispose: function () {}
+      };
+    }
+    var self = this;
+    if (R) R.prepareSceneColors(this.scene);
+    var wrap = this.$('dsViewportWrap');
+    this.renderer.setSize(wrap.clientWidth || 800, wrap.clientHeight || 600, false);
+    this.viewCam.aspect = (wrap.clientWidth || 800) / (wrap.clientHeight || 600);
+    this.viewCam.updateProjectionMatrix();
+    this.mainPipeline = makePipeline(this.renderer, this.viewCam, this.renderer.getPixelRatio());
+    this.pipPipeline = makePipeline(this.pipRenderer, this.virtualCam, this.pipPreviewQuality);
   };
 
   DirectorEditor.prototype.layoutPip = function (ratio) {
@@ -1295,7 +1404,10 @@
     rig.root.traverse(function (obj) {
       if (obj.geometry) obj.geometry.dispose();
     });
-    rig.materials.forEach(function (m) { m.dispose(); });
+    if (rig.materialBundle) rig.materialBundle.dispose();
+    rig.materials.forEach(function (m) {
+      if (!rig.materialBundle || rig.materialBundle.materials.indexOf(m) === -1) m.dispose();
+    });
   }
 
   DirectorEditor.prototype.setStatus = function (text) {
@@ -1813,7 +1925,7 @@
     this.colorIndex++;
     var bodyType = normalizeBodyType(pd.bodyType || this._pendingBodyType || 'man');
 
-    var rig = buildPuppetRig(color, bodyType);
+    var rig = buildPuppetRig(color, bodyType, this.renderer);
     var puppet = {
       id: pd.id || ('p' + Date.now().toString(36) + Math.floor(Math.random() * 1000)),
       name: pd.name || ('人偶 ' + this.puppetSeq),
@@ -1918,7 +2030,7 @@
     disposeRig(p.rig);
     if (p.label && p.label.userData._texture) p.label.userData._texture.dispose();
     p.bodyType = bodyType;
-    p.rig = buildPuppetRig(p.color, bodyType);
+    p.rig = buildPuppetRig(p.color, bodyType, this.renderer);
     var self = this;
     p.rig.bodyMeshes.forEach(function (m) { m.userData.puppetId = p.id; });
     p.label = makeLabelSprite(p.name);
@@ -1939,6 +2051,33 @@
     p.rig.root.rotation.y = deg2rad(p.rotY);
     p.rig.root.scale.setScalar(p.scale * this.getEnvSceneScale());
     p.rig.hipsY.position.y = ((p.rig.hipH || HIP_H) + p.rootYOffset);
+  };
+
+  // 选中人偶后，方向键按当前观察方向在地面平移；Shift 加速。
+  DirectorEditor.prototype.nudgeSelectedPuppet = function (key, fast) {
+    var p = this.getPuppet(this.selectedPuppetId);
+    if (!p) return false;
+    var direction = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1]
+    }[key];
+    if (!direction) return false;
+    if (this.tl && this.tl.playing && typeof this.pauseTimeline === 'function') this.pauseTimeline();
+
+    var theta = this.orbit && isFinite(this.orbit.theta) ? this.orbit.theta : 0;
+    var forwardX = -Math.sin(theta), forwardZ = -Math.cos(theta);
+    var rightX = Math.cos(theta), rightZ = -Math.sin(theta);
+    var step = fast ? 0.25 : 0.05;
+    var moveX = (direction[0] * rightX + direction[1] * forwardX) * step;
+    var moveZ = (direction[0] * rightZ + direction[1] * forwardZ) * step;
+    p.x = clamp(p.x + moveX, -GROUND_LIMIT, GROUND_LIMIT);
+    p.z = clamp(p.z + moveZ, -GROUND_LIMIT, GROUND_LIMIT);
+
+    this.applyPuppetTransform(p);
+    this.updateAxisGizmo();
+    this.syncPuppetAxisSliders(p);
+    this.markDirty();
+    this.setStatus('已平移「' + p.name + '」' + (fast ? '（加速）' : ''));
+    return true;
   };
 
   DirectorEditor.prototype.getPuppetWorldScale = function (p) {
@@ -3231,6 +3370,7 @@
         self.renderer.setSize(w, h, false);
         self.viewCam.aspect = w / h;
         self.viewCam.updateProjectionMatrix();
+        if (self.mainPipeline) self.mainPipeline.setSize(w, h);
       }
     });
     this.roObserver.observe(wrap);
@@ -3370,10 +3510,15 @@
 
   DirectorEditor.prototype.renderSnapshotDataUrl = function () {
     this.setHelpersVisible(false);
-    this.pipRenderer.render(this.scene, this.virtualCam);
-    var dataUrl = this.pipRenderer.domElement.toDataURL('image/jpeg', 0.92);
-    this.setHelpersVisible(true);
-    return dataUrl;
+    try {
+      // 预览和快照都使用完整采样率，避免 SSAO 后处理造成画面模糊。
+      if (this.pipPipeline.supported) this.pipPipeline.setQuality(1);
+      this.pipPipeline.render();
+      return this.pipRenderer.domElement.toDataURL('image/jpeg', 0.92);
+    } finally {
+      if (this.pipPipeline.supported) this.pipPipeline.setQuality(this.pipPreviewQuality);
+      this.setHelpersVisible(true);
+    }
   };
 
   DirectorEditor.prototype.setHelpersVisible = function (visible) {
@@ -3596,12 +3741,12 @@
       }
       self.updateAxisGizmo();
 
-      self.renderer.render(self.scene, self.viewCam);
+      self.mainPipeline.render();
 
       // PiP（隐藏 helper 再渲染；环境球改跟虚拟相机，保证快照里脚也贴地）
       self.setHelpersVisible(false);
       self.syncEnvToCamera(self.virtualCam);
-      self.pipRenderer.render(self.scene, self.virtualCam);
+      self.pipPipeline.render();
       self.setHelpersVisible(true);
     }
     this.rafId = requestAnimationFrame(frame);
@@ -3668,7 +3813,7 @@
     this.on(document, 'keydown', function (e) {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
       var tag = document.activeElement && document.activeElement.tagName;
-      var inField = tag === 'INPUT' || tag === 'TEXTAREA' ||
+      var inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
         (document.activeElement && document.activeElement.isContentEditable);
       if (e.key === 'Escape') {
         // 输入框聚焦时 Esc 仅退出聚焦（对话输入条内不应关闭整个导演台）
@@ -3686,6 +3831,16 @@
         e.preventDefault();
         e.stopPropagation();
         self.undo();
+        return;
+      }
+      if (e.key.indexOf('Arrow') === 0) {
+        if (inField) return;
+        // 方向键平移选中的人偶：按当前观察方向移动，Shift 加速。
+        // 仅在确实移动成功时阻止默认行为，未选中人偶时不拦截画布等其它监听。
+        if (self.nudgeSelectedPuppet(e.key, e.shiftKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -3725,7 +3880,11 @@
     this.bound = [];
     this.clearPuppets();
 
-    // dispose renderer
+    // 先释放后处理、灯光与环境，再释放两个 renderer，避免反复打开导演台累积 GPU 资源。
+    if (this.mainPipeline) this.mainPipeline.dispose();
+    if (this.pipPipeline) this.pipPipeline.dispose();
+    if (this.studioLights) this.studioLights.dispose();
+    if (this.studioEnvironment) this.studioEnvironment.dispose();
     try { this.renderer.dispose(); } catch (e) { /* noop */ }
     try { this.pipRenderer.dispose(); } catch (e) { /* noop */ }
     if (this.camSelectRing && this.camSelectRing.parent) this.camSelectRing.parent.remove(this.camSelectRing);
