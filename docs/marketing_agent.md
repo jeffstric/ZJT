@@ -103,6 +103,14 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 
 Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可自主调用图片/视频生成工具。图片/视频模式为直接生成模式，前端直接调用生成 API 并轮询状态。
 
+#### 生成次数（批量生成）
+
+图片/视频直连模式与 Agent 模式在输入栏提供「生成次数」选择器（×1 ~ ×4），选中值持久化在 `localStorage`（key：`marketing_generation_count`），与其他下拉（类型/模型/比例/时长）互斥弹出，点击面板外部自动关闭。
+
+- **直连模式**：单次提交向后端 `/api/text-to-image`、`/api/image-edit`、`/api/ai-app-run`、`/api/ai-app-run-image` 的 `count` 字段传入选定值，后端按次数循环创建多个生成任务并逐个扣费（算力按数量累计），前端轮询与结果渲染天然支持多任务/多结果。
+- **Agent 模式**：count 随 `image_preferences` / `video_preferences` 下发，后端持久化到世界偏好（图片侧经 `sync_agent_image_preferences` 的 STORABLE_PREFS，视频侧随 `/api/video-model` 整包存储），并在用户消息偏好摘要中注入「生成数量」提示。MCP 生成工具（`generate_text_to_image` / `edit_image` / `generate_text_to_video` / `image_to_video`）执行时按「已由系统注入」语义读取偏好 count 覆盖 LLM 传参（`_resolve_generation_count_from_prefs`，合法范围 1-4），不依赖 LLM 遵从提示；工具 schema 的 count 描述已同步改为系统注入语义。4 宫格生图（`is_grid=True`）跳过注入，保持固定 1 组。
+- 隔离性：count 不在 `MediaGenerationPreferenceService.PROFILE_FIELDS` 白名单内，不进入 generation snapshot 槽位快照；故事板等其他 surface 的快照链路不受营销页偏好影响。
+
 #### Agent 视频意图路由（企业版）
 
 Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
