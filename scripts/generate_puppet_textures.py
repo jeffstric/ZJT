@@ -148,10 +148,9 @@ def _torso_height(u: float, v: float) -> float:
 
 
 def _head_height(u: float, v: float) -> float:
-    # 只保留宽而浅的下巴与细长鼻梁；没有眼、眉、鼻孔或嘴唇项。
+    # 只保留宽而浅的下巴；无五官人台不需要眼窝/唇缝/鼻孔等面部项。
     chin = 0.0032 * _front_bump(u, 0.29) * _gaussian(v, 0.24, 0.085)
-    nose_bridge = 0.0028 * _front_bump(u, 0.105) * _gaussian(v, 0.58, 0.12)
-    return chin + nose_bridge
+    return chin
 
 
 def _torso_occlusion(u: float, v: float) -> float:
@@ -160,7 +159,7 @@ def _torso_occlusion(u: float, v: float) -> float:
 
 
 def _head_occlusion(u: float, v: float) -> float:
-    # 下颌/颈部接触阴影位于头部 UV 下部，避免画成面部五官。
+    # 下颌/颈部接触阴影位于头部 UV 下部。
     return 14.0 * _front_bump(u, 0.36) * _gaussian(v, 0.085, 0.048)
 
 

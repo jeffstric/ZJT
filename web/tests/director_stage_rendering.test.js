@@ -219,6 +219,31 @@ describe('导演台渲染：驱动兼容性规避', () => {
     expect(riskWith(MAC, 'ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unmasked Renderer: Apple M1)')).toBe(false);
   });
 
+  it('编辑器接线：GLB 人台替换（骨骼映射/材质蒙皮/脚本挂载）', () => {
+    const src = fs.readFileSync(path.join(root, 'web/js/director_stage_editor.js'), 'utf8');
+    // 预载与状态机
+    expect(src).toContain("var MALE_BASE_MESH_URL = '/assets/puppet/male_base_mesh.glb';");
+    expect(src).toContain('preloadMaleBaseMesh();');
+    // 男人体型走 GLB，其余体型保留程序化
+    expect(src).toContain("label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036, useGlb: true,");
+    expect(src).toContain("t.useGlb === true && MALE_BASE_MESH_STATE === 'ready'");
+    // GLTFLoader 会去掉节点名中的 "."，映射表必须使用加载后的骨骼名
+    expect(src).toContain("spine: 'spine001', chest: 'spine003', neck: 'spine005'");
+    expect(src).toContain("shoulderL: 'upper_armL', elbowL: 'forearmL', wristL: 'handL'");
+    expect(src).toContain("hipL: 'thighL', kneeL: 'shinL', ankleL: 'footL'");
+    // r128 蒙皮由 material.skinning 开关控制，自定义材质必须显式打开
+    expect(src).toContain('mat.skinning = true;');
+    // 头骨增权手术：新 Bone + 转移 spine005 头侧权重
+    expect(src).toContain("findBone('spine005')");
+    expect(src).toContain("headBone.name = 'head.glb'");
+    // 骨骼重挂载：attach 保持世界变换，关节组局部坐标 = 骨骼头世界坐标 - 父组世界坐标
+    expect(src).toContain('var local = headW.clone().sub(parentW);');
+    expect(src).toContain('rig.joints[attachPlan[i][0]].attach(attachPlan[i][1]);');
+    const html = fs.readFileSync(path.join(root, 'web/video_workflow.html'), 'utf8');
+    expect(html).toContain('/assets/vendor/three-examples/loaders/GLTFLoader.js');
+    expect(html).toContain('/assets/vendor/three-examples/utils/SkeletonUtils.js');
+  });
+
   it('编辑器接线：风险后端预关阴影并同步 PiP 渲染器', () => {
     const src = fs.readFileSync(path.join(root, 'web/js/director_stage_editor.js'), 'utf8');
     expect(src).toContain('detectDriverShaderRisk');

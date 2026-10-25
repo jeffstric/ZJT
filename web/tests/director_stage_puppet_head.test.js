@@ -1,8 +1,9 @@
 /**
  * 导演台人偶头部几何回归测试。
  *
- * 头部契约：一个连续的无五官头型 + 两只贴近头侧的小人耳。
- * 不再叠加眉弓、鼻梁、嘴唇、独立下颌或双下巴，避免出现角状耳朵和胡须状凸起。
+ * 头部契约（无五官连续头型）：一个连续 LatheGeometry 头型 + 两只贴近头侧的小人耳。
+ * 不叠加眉/眼/鼻/唇等任何五官网格（五官方向已放弃，男人体型使用 GLB 人台，
+ * 见 buildGlbPuppetRig 与 web/tests/director_stage_rendering.test.js 的 GLB 接线断言）。
  */
 
 import fs from 'node:fs';
@@ -18,7 +19,9 @@ const src = fs.readFileSync(path.join(root, 'web/js/director_stage_editor.js'), 
 function loadPuppetGeometry() {
   const match = src.match(/\/\/ ==== PUPPET_GEOMETRY_BEGIN ====([\s\S]*?)\/\/ ==== PUPPET_GEOMETRY_END ====/);
   expect(match).not.toBeNull();
-  return new Function('THREE', `${match[1]}\nreturn { BODY_TYPES, buildPuppetRig };`)(THREE);
+  // GLB 相关变量声明在提取块外，作为参数注入；node 无 GLB 缓存，'idle' 使构建走程序化人偶路径
+  return new Function('THREE', 'MALE_BASE_MESH_STATE', 'maleBaseMeshGltf', 'GLB_JOINT_BONES', 'GLB_JOINT_PARENTS',
+    `${match[1]}\nreturn { BODY_TYPES, buildPuppetRig };`)(THREE, 'idle', null, undefined, undefined);
 }
 
 const { BODY_TYPES, buildPuppetRig } = loadPuppetGeometry();

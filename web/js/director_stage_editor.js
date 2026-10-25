@@ -20,13 +20,61 @@
 
   var PUPPET_COLORS = ['#4f8ef7', '#f76f5e', '#34c38f', '#b57de8', '#e8b34d', '#4dc3e8', '#f07ab6', '#8d9aa8'];
 
+  // ============ male_base_mesh.glb（男性高精度人台）预载 ============
+  // 男人体型优先使用外部蒙皮骨骼人台替换程序化人偶；其余体型保留程序化实现。
+  // 预载在模块加载即开始，GLB 只有 93KB；未就绪或失败时 buildPuppetRig 自动回退程序化人偶。
+  var MALE_BASE_MESH_URL = '/assets/puppet/male_base_mesh.glb';
+  var MALE_BASE_MESH_STATE = 'idle';
+  var maleBaseMeshGltf = null;
+  // 注意：不要在常量区自动调用 preloadMaleBaseMesh()——提取几何块的测试/预览 harness
+  // 会重复执行该定义；真正的预载统一在模块底部（IIFE 末尾）发起一次。
+  function preloadMaleBaseMesh() {
+    if (MALE_BASE_MESH_STATE !== 'idle') return;
+    if (typeof window === 'undefined' || !window.THREE || !THREE.GLTFLoader) {
+      MALE_BASE_MESH_STATE = 'unsupported';
+      return;
+    }
+    MALE_BASE_MESH_STATE = 'loading';
+    try {
+      new THREE.GLTFLoader().load(MALE_BASE_MESH_URL, function (gltf) {
+        maleBaseMeshGltf = gltf;
+        MALE_BASE_MESH_STATE = 'ready';
+        if (typeof window !== 'undefined') window.__maleBaseMeshState = 'ready';
+      }, undefined, function () {
+        MALE_BASE_MESH_STATE = 'failed';
+        if (typeof window !== 'undefined') window.__maleBaseMeshState = 'failed';
+      });
+    } catch (e) {
+      MALE_BASE_MESH_STATE = 'failed';
+    }
+  }
+
+  // 人偶关节键 → GLB 骨骼名。注意 GLTFLoader 会按 PropertyBinding 规则去掉节点名中的
+  // "."（spine.005 → spine005），映射表必须使用加载后的名字。只列出每段骨骼链的顶骨，
+  // 子骨（spine002/004、手指、脚趾等）保持原父子关系跟随顶骨，无需逐个挂载。
+  var GLB_JOINT_BONES = {
+    spine: 'spine001', chest: 'spine003', neck: 'spine005',
+    shoulderL: 'upper_armL', elbowL: 'forearmL', wristL: 'handL',
+    shoulderR: 'upper_armR', elbowR: 'forearmR', wristR: 'handR',
+    hipL: 'thighL', kneeL: 'shinL', ankleL: 'footL',
+    hipR: 'thighR', kneeR: 'shinR', ankleR: 'footR'
+  };
+  // 关节组父子关系（与 JOINT_GROUPS 的层级一致）
+  var GLB_JOINT_PARENTS = {
+    spine: 'hipsY', chest: 'spine', neck: 'chest', head: 'neck',
+    shoulderL: 'chest', elbowL: 'shoulderL', wristL: 'elbowL',
+    shoulderR: 'chest', elbowR: 'shoulderR', wristR: 'elbowR',
+    hipL: 'hipsY', kneeL: 'hipL', ankleL: 'kneeL',
+    hipR: 'hipsY', kneeR: 'hipR', ankleR: 'kneeR'
+  };
+
   // ==== PUPPET_GEOMETRY_BEGIN ====
   // 人偶体型：关节层级相同。躯干用一条侧轮廓控制点列 profile 描述（[y, rx, rz, zOffset]，
   // y 为相对髋节高度，zOffset 为该高度截面的前移量），构建时沿轮廓密排椭球切片平滑混合成
   // 一体成型身体曲线（苹果/沙漏等），不再用大椭球穿插或另贴胸球/肚球。
   var BODY_TYPES = {
     man: {
-      label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036,
+      label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036, useGlb: true,
       headR: 0.116, headScale: [1, 1.04, 0.98], jaw: 0.74,
       neckR: 0.040, neckH: 0.085, neckY: 0.235,
       spineY: 0.12, chestJointY: 0.13,
@@ -109,6 +157,7 @@
     shoulderL: 1, shoulderR: 1, elbowL: 1, elbowR: 1, wristL: 1, wristR: 1,
     hipL: 1, hipR: 1, kneeL: 1, kneeR: 1, ankleL: 1, ankleR: 1
   };
+
   var BODY_TYPE_ORDER = ['man', 'woman', 'child', 'fat', 'thin'];
 
   function getBodyType(key) {
@@ -298,7 +347,179 @@
 
   // ============ 人偶骨骼构建 ============
 
+  // 用 male_base_mesh.glb 构建男人体型人偶：克隆蒙皮模型 → 归一化（面向 +Z、
+  // 身高 1.75m、脚底 y=0）→ 新增"头骨"并转移 spine.005 的头侧权重（原模型无头骨，
+  // 不补头骨则头部无法跟随"头部"关节）→ 按 GLB_JOINT_BONES 把各段骨骼链的顶骨
+  // 用 attach() 重挂到镜像关节组下（attach 保持世界变换，关节滑块的欧拉角语义与
+  // 程序化人偶完全一致，姿态预设/时间轴/关节球选中等全部复用）。
+  function buildGlbPuppetRig(colorHex, t) {
+    var R = (typeof window !== 'undefined') ? window.DirectorStageRendering : null;
+    var materialBundle = R ? R.createResinMaterials(colorHex, null) : null;
+    var mat = materialBundle ? materialBundle.body
+      : new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0 });
+    var seamMat = materialBundle ? materialBundle.seam : mat;
+    var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
+
+    var rig = {
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
+      materialBundle: materialBundle,
+      bodyType: normalizeBodyType('man'), rootYOffset: 0
+    };
+
+    var model = THREE.SkeletonUtils.clone(maleBaseMeshGltf.scene);
+    model.updateMatrixWorld(true); // 此刻 matrixWorld == 原始 metarig 空间 == 几何局部空间
+
+    var skinned = null;
+    model.traverse(function (o) { if (o.isSkinnedMesh) skinned = o; });
+    if (!skinned) throw new Error('male_base_mesh.glb 缺少 SkinnedMesh');
+    // r128 的蒙皮由 material.skinning 开关控制（程序参数 skinning: material.skinning，
+    // 非自动检测），自定义材质必须显式打开，否则渲染为绑定姿态（T-pose 不动）。
+    mat.skinning = true;
+    // skinIndex 要做头骨增权手术，几何必须独立副本，避免污染共享缓存
+    skinned.geometry = skinned.geometry.clone();
+    skinned.frustumCulled = false;
+    skinned.material = mat;
+    rig.bodyMeshes.push(skinned);
+
+    function findBone(name) {
+      var found = null;
+      model.traverse(function (o) { if (o.isBone && o.name === name) found = o; });
+      return found;
+    }
+
+    // —— 头骨手术：原模型脊柱链终止于 spine005，头颈权重全在它身上 ——
+    var spine5 = findBone('spine005');
+    if (!spine5) throw new Error('male_base_mesh.glb 缺少 spine005 骨骼');
+    var skeleton = skinned.skeleton;
+    var s5Idx = -1;
+    skeleton.bones.forEach(function (b, i) { if (b === spine5) s5Idx = i; });
+    var posAttr = skinned.geometry.attributes.position;
+    var headTop = -Infinity;
+    for (var vi = 0; vi < posAttr.count; vi++) headTop = Math.max(headTop, posAttr.getY(vi));
+    var neckBase = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).y;
+    var cut = neckBase + (headTop - neckBase) * 0.30; // 切分点：颈根向上 30% 头颈区
+    var headBone = new THREE.Bone();
+    headBone.name = 'head.glb';
+    headBone.position.set(
+      new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).x,
+      cut + (headTop - cut) * 0.25,
+      new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).z
+    );
+    // skeleton.init() 按 bones.length 分配 boneMatrices/boneTexture；新增骨骼后必须重建，
+    // 否则头骨矩阵写越界（静默丢弃）且纹理槽位不足；boneInverses 数组与缓存共享，
+    // 追加前必须复制，否则会把缓存骨架变成 bones/inverses 数量不匹配。
+    model.add(headBone);
+    headBone.updateMatrixWorld(true);
+    skeleton.boneInverses = skeleton.boneInverses.slice();
+    skeleton.bones.push(headBone);
+    skeleton.boneInverses.push(headBone.matrixWorld.clone().invert());
+    skeleton.init();
+    var headIdx = skeleton.bones.length - 1;
+    var si = skinned.geometry.attributes.skinIndex;
+    for (var wi = 0; wi < si.count; wi++) {
+      if (posAttr.getY(wi) <= cut) continue;
+      var i0 = si.getX(wi), i1 = si.getY(wi), i2 = si.getZ(wi), i3 = si.getW(wi);
+      if (i0 !== s5Idx && i1 !== s5Idx && i2 !== s5Idx && i3 !== s5Idx) continue;
+      si.setXYZW(wi,
+        i0 === s5Idx ? headIdx : i0,
+        i1 === s5Idx ? headIdx : i1,
+        i2 === s5Idx ? headIdx : i2,
+        i3 === s5Idx ? headIdx : i3
+      );
+    }
+    si.needsUpdate = true;
+
+    // —— 归一化：面向 +Z、身高 1.75m、脚底贴地、水平居中 ——
+    var container = new THREE.Group();
+    container.add(model);
+    container.rotation.y = -Math.PI / 2; // 模型原面向 +X
+    var b1 = new THREE.Box3().setFromObject(container);
+    var rawH = b1.max.y - b1.min.y;
+    var s = 1.75 / rawH;
+    container.scale.set(s, s, s);
+    container.updateMatrixWorld(true);
+    var b2 = new THREE.Box3().setFromObject(container);
+    container.position.set(-(b2.min.x + b2.max.x) / 2, -b2.min.y, -(b2.min.z + b2.max.z) / 2);
+
+    var root = new THREE.Group();
+    rig.root = root;
+    root.add(container);
+    root.updateMatrixWorld(true);
+
+    var bonePos = function (b) { return new THREE.Vector3().setFromMatrixPosition(b.matrixWorld); };
+
+    // hipsY 挂在骨盆（spine 骨骼头）高度
+    var spineBone = findBone('spine');
+    var hipH = bonePos(spineBone).y;
+    rig.hipH = hipH;
+    var hipsY = new THREE.Group();
+    hipsY.position.set(0, hipH, 0);
+    root.add(hipsY);
+    rig.hipsY = hipsY;
+    rig.labelY = 1.75 + 0.12;
+
+    function glbJoint(key, parentKey, pos) {
+      var parent = parentKey === 'hipsY' ? hipsY : rig.joints[parentKey];
+      var g = new THREE.Group();
+      g.position.copy(pos);
+      parent.add(g);
+      rig.joints[key] = g;
+      var markerMat = markerBaseMat.clone();
+      rig.materials.push(markerMat);
+      var marker = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.032, (t.jointR || 0.036) * 0.9), 10, 8), markerMat);
+      marker.visible = false;
+      marker.userData.jointKey = key;
+      g.add(marker);
+      rig.markers[key] = marker;
+      return g;
+    }
+
+    // 先创建全部关节组（位置=对应骨骼头的"相对父组的局部偏移"），再统一重挂骨骼链顶骨。
+    // 注意组是嵌套的：bonePos 是世界坐标，必须减去父组世界位置（静止时旋转均为 0，直接相减）。
+    var attachPlan = [];
+    var order = ['spine', 'chest', 'neck', 'head',
+      'shoulderL', 'elbowL', 'wristL', 'shoulderR', 'elbowR', 'wristR',
+      'hipL', 'kneeL', 'ankleL', 'hipR', 'kneeR', 'ankleR'];
+    var boneOf = {
+      spine: 'spine001', chest: 'spine003', neck: 'spine005'
+    };
+    var groupWorld = { hipsY: new THREE.Vector3(0, hipH, 0) };
+    var i, key;
+    for (i = 0; i < order.length; i++) {
+      key = order[i];
+      var targetBone;
+      if (key === 'head') {
+        targetBone = headBone;
+      } else {
+        targetBone = findBone(boneOf[key] || GLB_JOINT_BONES[key]);
+      }
+      if (!targetBone) throw new Error('male_base_mesh.glb 缺少骨骼: ' + (boneOf[key] || GLB_JOINT_BONES[key]));
+      var headW = bonePos(targetBone);
+      var parentKey = GLB_JOINT_PARENTS[key];
+      var parentW = groupWorld[parentKey];
+      var local = headW.clone().sub(parentW);
+      glbJoint(key, parentKey, local);
+      groupWorld[key] = headW;
+      attachPlan.push([key, targetBone]);
+    }
+    root.updateMatrixWorld(true);
+    for (i = 0; i < attachPlan.length; i++) {
+      rig.joints[attachPlan[i][0]].attach(attachPlan[i][1]);
+    }
+    root.updateMatrixWorld(true);
+    return rig;
+  }
+
   function buildPuppetRig(colorHex, bodyTypeKey, renderer) {
+    var t = getBodyType(bodyTypeKey);
+    // 男人体型优先使用 GLB 人台；未就绪/构建失败自动回退程序化人偶
+    if (t.useGlb === true && MALE_BASE_MESH_STATE === 'ready' && maleBaseMeshGltf && maleBaseMeshGltf.scene) {
+      try {
+        return buildGlbPuppetRig(colorHex, t);
+      } catch (e) {
+        console.warn('导演台：GLB 人偶构建失败，已回退程序化人偶。', e);
+      }
+    }
     var t = getBodyType(bodyTypeKey);
     // 分部位 PBR 树脂材质；无渲染模块时保留 StandardMaterial 回退。
     var materialBundle = null;
@@ -525,8 +746,9 @@
     var head = joint('head', neck, 0, t.neckH * 0.8, 0);
     var headScale = t.headScale || [1, 1, 1];
     var headCY = t.headR * headScale[1] * 0.82;
-    // 无五官人脸：头顶、太阳穴、下颌由一条连续轮廓成型，不叠加任何五官网格。
-    // +Z 面部压平并保留圆润下巴，-Z 后脑勺饱满，即使无眼鼻也能辨认头部朝向。
+    // 无五官连续头型：头顶、太阳穴、下颌由一条连续轮廓成型，面部/后脑由下方
+    // 同一网格的顶点处理区分朝向，不叠加任何五官小件。男人体型默认改用 GLB 人台
+    //（见 buildGlbPuppetRig），本程序化头型服务于其余体型与 GLB 未就绪时的回退。
     var jawWidth = 0.82 + (t.jaw || 0.74) * 0.18;
     var headProfile = [
       [-1.02, 0.004], [-0.98, 0.26 * jawWidth], [-0.86, 0.58 * jawWidth],
@@ -541,7 +763,7 @@
     for (var hi = 0; hi < headPos.count; hi++) {
       var hx = headPos.getX(hi), hy = headPos.getY(hi), hz = headPos.getZ(hi);
       if (hz >= 0) {
-        // 面部是平缓曲面而非球面；下巴仅由本体微微前送，不添加鼻/唇等凸起。
+        // 面部是平缓硬平面；五官全部由下方独立硬表面小件拼出，绝不用噪声位移软化轮廓。
         var facePlane = 0.74 + 0.06 * (hy + 0.1);
         var faceZone = clamp((0.95 - hy) / 0.25, 0, 1) * clamp((hy + 0.92) / 0.25, 0, 1);
         if (hz > facePlane) hz = facePlane + (hz - facePlane) * (1 - 0.80 * faceZone);
@@ -3955,6 +4177,10 @@
     if (env && env.url) ed.setupEnvironment(env);
     else ed.removeEnvironment();
   }
+
+  // GLTFLoader 在 video_workflow.html 中先于本模块加载，此处预载男性人台，
+  // 用户打开导演台时通常已就绪；未就绪/失败时 buildPuppetRig 自动回退程序化人偶。
+  preloadMaleBaseMesh();
 
   window.DirectorStageEditor = {
     open: openDirectorStageEditor,
