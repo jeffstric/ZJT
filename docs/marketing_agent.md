@@ -103,6 +103,14 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 
 Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可自主调用图片/视频生成工具。图片/视频模式为直接生成模式，前端直接调用生成 API 并轮询状态。
 
+#### 生成次数（图片/视频直连模式批量生成）
+
+图片/视频直连模式在输入栏提供「生成次数」选择器（×1 ~ ×4），选择后单次提交会向后端 `/api/text-to-image`、`/api/image-edit`、`/api/ai-app-run`、`/api/ai-app-run-image` 的 `count` 字段传入选定值，后端按次数循环创建多个生成任务并逐个扣费（算力按数量累计），前端轮询与结果渲染天然支持多任务/多结果。
+
+- 选中值持久化在 `localStorage`（key：`marketing_generation_count`），跨会话保留；
+- 与其他下拉（类型/模型/比例/时长）互斥弹出，点击面板外部自动关闭；
+- Agent 模式不展示该选择器：Agent 链路的生成数量由 LLM Agent 自主决定（MCP 工具自带 `count` 参数），不受此设置影响。
+
 #### Agent 视频意图路由（企业版）
 
 Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。

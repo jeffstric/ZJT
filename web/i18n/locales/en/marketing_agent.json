@@ -77,6 +77,8 @@
   "first_last_frame_desc": "First image as start frame, second as end frame (optional)",
   "multi_reference_desc": "All images as style references",
   "video_duration": "Video Duration",
+  "generation_count": "Count",
+  "generation_count_hint": "Each submission generates the selected number of images/videos; power cost scales with count",
   "duration_auto": "Auto",
   "duration_seconds": "{dur}s",
   "duration_unit": "s",
