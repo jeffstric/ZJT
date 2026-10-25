@@ -195,6 +195,30 @@ class StoryboardSceneModel:
             raise
 
     @staticmethod
+    def list_prompt_json_by_world(world_id: int, prompt_key: str) -> List[Dict]:
+        """按 world_id 查 prompt_json 含指定 key 的场景（id + prompt_json）。
+
+        剧本拆分角色变体回填扫描用：先用 LIKE 预过滤（key 为固定 ASCII 子串），
+        精确匹配由调用方解析 JSON 后完成。
+        """
+        sql = """
+            SELECT sc.id, sc.prompt_json
+            FROM storyboard_scene sc
+            JOIN storyboard sb ON sb.id = sc.storyboard_id
+            WHERE sb.world_id = %s
+              AND sc.prompt_json LIKE %s
+        """
+        try:
+            rows = execute_query(
+                sql, (world_id, f'%"{prompt_key}"%'), fetch_all=True)
+            return list(rows or [])
+        except Exception as e:
+            logger.error(
+                f"Failed to list scenes by prompt key '{prompt_key}' "
+                f"for world {world_id}: {e}")
+            raise
+
+    @staticmethod
     def update(record_id: int, **kwargs) -> int:
         allowed_fields = [
             'sort_order', 'title', 'duration', 'prompt_json', 'video_prompt',

@@ -891,12 +891,42 @@ def _build_reference_selections(
     return {'schema_version': 1, 'characters': selections}
 
 
+def _build_pending_reference_selections(
+    shot: dict,
+    character_db_map: Dict[str, Optional[int]],
+    pending_character_variants: Optional[Dict[str, set]],
+) -> Optional[dict]:
+    """把 shot 的有效形象变化中「尚未终态」的变体解析为 pending_reference_selections。
+
+    结构与 reference_selections 对齐（label 待回填，无 URL）。命中已就绪变体
+    （写入 reference_selections）的条目不会出现在 pending 映射中，两块互补。
+    生图不读该字段：待回填镜头自动用主参考图；grid_image_task item_type=7
+    终态后按 (db_id, label) 回填并清除。
+    """
+    if not pending_character_variants:
+        return None
+    pending: Dict[str, dict] = {}
+    for change in shot.get('_effective_appearance_changes') or []:
+        if not isinstance(change, dict):
+            continue
+        db_id = character_db_map.get(str(change.get('character_id')))
+        if db_id is None:
+            continue
+        label = str(change.get('label') or '').strip()
+        if label in (pending_character_variants.get(str(db_id)) or set()):
+            pending[str(db_id)] = {'label': label}
+    if not pending:
+        return None
+    return {'schema_version': 1, 'characters': pending}
+
+
 def build_storyboard_scenes_from_parsed_script(
     parsed_data: dict,
     style: str = '',
     character_variants: Optional[Dict[str, Dict[str, str]]] = None,
     video_gen_mode: Optional[str] = None,
     max_shot_duration: Optional[float] = None,
+    pending_character_variants: Optional[Dict[str, set]] = None,
 ) -> List[dict]:
     """
     Convert llm.script_parser output into StoryboardModel.create_scenes payload.
@@ -908,6 +938,9 @@ def build_storyboard_scenes_from_parsed_script(
     （见 services/script_split_character_variant_service.py）。shot 携带
     ``_effective_appearance_changes`` 且对应变体已生成时，写入
     ``prompt_json.reference_selections``，使分镜生图直接使用新形象。
+    pending_character_variants: 仍未终态的变体映射 ``{str(character_db_id): {label, ...}}``，
+    命中时写入 ``prompt_json.pending_reference_selections`` 待回填标记（发布不
+    等待变体图，宫格任务完成后回填或清除）。
     """
     character_db_map = _build_character_db_map(parsed_data)
     character_name_map = _build_character_name_map(parsed_data)
@@ -1039,11 +1072,16 @@ def build_storyboard_scenes_from_parsed_script(
             three_scene_code = normalize_three_scene_code(shot.get('three_scene_code'))
             if three_scene_code:
                 prompt_payload['three_scene_code'] = three_scene_code
-            # 角色形象变化：已生成的变体直接作为分镜生图参考选择
+            # 角色形象变化：已生成的变体直接作为分镜生图参考选择；
+            # 未终态的记 pending_reference_selections，由宫格任务终态回填
             reference_selections = _build_reference_selections(
                 shot, character_db_map, character_variants)
             if reference_selections:
                 prompt_payload['reference_selections'] = reference_selections
+            pending_selections = _build_pending_reference_selections(
+                shot, character_db_map, pending_character_variants)
+            if pending_selections:
+                prompt_payload['pending_reference_selections'] = pending_selections
 
             scenes.append({
                 'title': f"分镜{scene_index}",

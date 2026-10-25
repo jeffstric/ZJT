@@ -767,7 +767,20 @@ class TaskManager:
                 task_key=task_key,
                 status=GridImageTaskStatus.CANCELLED
             )
-            
+
+            # 角色变体图(item_type=7)：取消后分镜 pending 清除（镜头降级主图），
+            # 见 services/script_split_character_variant_service.py
+            if item_type == 7:
+                try:
+                    from services.script_split_character_variant_service import (
+                        settle_pending_character_variant_references,
+                    )
+                    settle_pending_character_variant_references(
+                        world_id=task.world_id, item_name=item_name, url="",
+                    )
+                except Exception as settle_err:
+                    logger.error(f"取消角色变体任务后清理 pending 失败(非阻塞): {settle_err}")
+
             # 同步取消状态到文件
             self._update_task_status_file(item_type, item_name, 'cancelled', user_id, task.world_id)
             

@@ -54,6 +54,7 @@ def _terminate_task_for_auth_failure(task: Any) -> None:
     _update_task_status_file(task.item_type, task.item_name, 'failed',
                              task.user_id, task.world_id)
     _mark_storyboard_grid_batch_items_failed(task, f"宫格生图失败: {error_message}")
+    _settle_pending_character_variants(task)
     _auth_failure_streaks.pop(task.task_key, None)
 
 
@@ -163,6 +164,38 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _settle_pending_character_variants(task: Any, url: str = "") -> None:
+    """item_type=7 角色变体图终态时回填/清除分镜 pending_reference_selections。
+
+    ``url`` 非空（成功且已写回角色 reference_images）：按 (db_id, label) 回填
+    ``{url, label}`` 并删除匹配 pending；``url`` 为空（FAILED/TIMEOUT/CANCELLED/
+    DOWNLOAD_FAILED 或写回失败）：只删 pending，镜头降级用主参考图。
+    本模块运行在 scheduler 进程，内部同步 DB 访问与该进程既有行为一致，
+    不进 web 事件循环。
+    """
+    if getattr(task, "item_type", None) != ItemType.CHARACTER_VARIANT:
+        return
+    try:
+        from services.script_split_character_variant_service import (
+            settle_pending_character_variant_references,
+        )
+        result = settle_pending_character_variant_references(
+            world_id=task.world_id,
+            item_name=task.item_name,
+            url=url,
+        )
+        if result.get("filled") or result.get("cleared"):
+            logger.info(
+                "角色变体 pending 回填完成: task_key=%s url=%s filled=%s cleared=%s",
+                task.task_key, bool(url), result.get("filled"), result.get("cleared"),
+            )
+    except Exception as exc:
+        logger.error(
+            "角色变体 pending 回填失败(非阻塞): task_key=%s err=%s",
+            getattr(task, "task_key", None), exc, exc_info=True,
+        )
 
 
 def _mark_storyboard_grid_batch_items_failed(task: Any, error_message: str) -> None:
@@ -676,6 +709,9 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                         char_name, task.user_id, task.world_id
                     )
                     char_data = file_manager.get_character_json(char_name, task.user_id, task.world_id)
+                    # 变体已写回角色 DB reference_images 才回填分镜；否则 URL 不属于
+                    # 角色参考图列表，生图会自动回退主图，按失败清理 pending
+                    variant_written = False
                     if char_data:
                         existing_variants = char_data.get('reference_images', []) or []
                         if not isinstance(existing_variants, list):
@@ -705,6 +741,7 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                                 if db_char:
                                     CharacterModel.update(db_char.id, reference_images=existing_variants)
                                     logger.info(f"已同步角色 {char_name} 的变体图到数据库 (id={db_char.id})")
+                                    variant_written = True
                                 else:
                                     logger.warning(
                                         f"数据库中未找到角色 {char_name} (world_id={task.world_id})，跳过同步"
@@ -722,6 +759,10 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
                             f"(user_id={task.user_id}, world_id={task.world_id}, "
                             f"item_name={task.item_name}, resolved={resolved_path})"
                         )
+                    # 分镜 pending_reference_selections 回填（item_type=7 专属，
+                    # 未写回成功只清 pending）
+                    _settle_pending_character_variants(
+                        task, url=local_image_url if variant_written else "")
         except Exception as e:
             logger.error(f"更新item失败: {str(e)}")
             update_success = False
@@ -749,6 +790,8 @@ def _handle_task_success(task: Any, comfyui_task_data: Dict):
             error_message=str(e)
         )
         _update_task_status_file(task.item_type, task.item_name, 'failed', task.user_id, task.world_id)
+        # 角色变体图：下载/处理失败也需清除分镜 pending（镜头降级主图）
+        _settle_pending_character_variants(task)
         # 同步终止绑定的 pipeline step（DOWNLOAD_FAILED 也是失败终态，否则 step 会永久卡 PENDING）
         _fail_pending_grid_split_step_for_task(task, f"宫格生图下载/处理失败: {e}")
 
@@ -844,6 +887,7 @@ def process_grid_image_tasks(app=None):
                     _update_task_status_file(task.item_type, task.item_name, 'timeout',
                                            task.user_id, task.world_id)
                     _mark_storyboard_grid_batch_items_failed(task, f"宫格生图超时: {timeout_msg}")
+                    _settle_pending_character_variants(task)
                     continue
                 
                 # 更新为处理中状态（仅在第一次尝试时）
@@ -925,6 +969,7 @@ def process_grid_image_tasks(app=None):
                     _update_task_status_file(task.item_type, task.item_name, 'failed',
                                            task.user_id, task.world_id)
                     _mark_storyboard_grid_batch_items_failed(task, f"宫格生图失败: {failure_reason}")
+                    _settle_pending_character_variants(task)
                 
             except requests.RequestException as e:
                 if _is_auth_failure(e):
@@ -953,6 +998,7 @@ def process_grid_image_tasks(app=None):
                 _update_task_status_file(task.item_type, task.item_name, 'failed',
                                        task.user_id, task.world_id)
                 _mark_storyboard_grid_batch_items_failed(task, f"宫格生图异常: {e}")
+                _settle_pending_character_variants(task)
         
         # 清理旧任务（7天前的已完成/失败任务）
         try:

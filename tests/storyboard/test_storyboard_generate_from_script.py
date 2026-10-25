@@ -441,6 +441,53 @@ def test_build_scenes_without_variants_keeps_prompt_unchanged():
     assert all("reference_selections" not in scene["prompt"] for scene in scenes)
 
 
+def test_build_scenes_records_pending_character_variants():
+    """未终态变体记入 pending_reference_selections（无 URL），与 ready 注入互补。"""
+    variants = {"17": {"晚礼服": "http://img/evening.png"}}
+    pending = {"28": {"战斗形态"}}
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        character_variants=variants,
+        pending_character_variants=pending,
+    )
+
+    # s001：小林 ready → reference_selections；阿珍未终态 → pending（同一镜头可共存）
+    assert scenes[0]["prompt"]["reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"17": {"url": "http://img/evening.png", "label": "晚礼服"}},
+    }
+    assert scenes[0]["prompt"]["pending_reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"28": {"label": "战斗形态"}},
+    }
+    # s002：无形象变化 → 两块都不写
+    assert "reference_selections" not in scenes[1]["prompt"]
+    assert "pending_reference_selections" not in scenes[1]["prompt"]
+
+
+def test_build_scenes_only_pending_map_writes_pending_block_only():
+    """只有未终态变体时：只写 pending，不写 reference_selections（生图用主图）。"""
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        pending_character_variants={"28": {"战斗形态"}},
+    )
+
+    assert "reference_selections" not in scenes[0]["prompt"]
+    assert scenes[0]["prompt"]["pending_reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"28": {"label": "战斗形态"}},
+    }
+
+
+def test_build_scenes_without_pending_map_writes_no_pending_block():
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        character_variants={"17": {"晚礼服": "http://img/evening.png"}},
+    )
+    assert all(
+        "pending_reference_selections" not in scene["prompt"] for scene in scenes)
+
+
 def test_build_scenes_packs_shots_in_reference_mode():
     parsed = {
         "shot_groups": [
