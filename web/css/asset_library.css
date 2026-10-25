@@ -525,3 +525,158 @@
     border-radius: 4px;
     flex: none;
 }
+
+/* ============ 暗色主题适配（html.theme-dark，video_workflow 主题切换） ============ */
+html.theme-dark .al-overlay {
+    background: rgba(0, 0, 0, 0.65);
+}
+
+html.theme-dark .al-modal {
+    background: #1e1e1e;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+html.theme-dark .al-title {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-header,
+html.theme-dark .al-footer {
+    border-color: #333;
+}
+
+html.theme-dark .al-close {
+    color: #9ca3af;
+}
+
+html.theme-dark .al-close:hover {
+    background: #2f2f2f;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-btn {
+    background: #2a2a2a;
+    border-color: #444;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-btn:hover {
+    border-color: #4c8bf5;
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-btn--primary {
+    background: #2f5fe0;
+    border-color: #2f5fe0;
+    color: #fff;
+}
+
+html.theme-dark .al-btn--primary:hover {
+    background: #3a6ceb;
+}
+
+html.theme-dark .al-btn--primary:disabled {
+    background: #24406e;
+    border-color: #24406e;
+}
+
+html.theme-dark .al-input,
+html.theme-dark .al-select {
+    background: #262626;
+    border-color: #444;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-label {
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-hint {
+    color: #8a8a8a;
+}
+
+html.theme-dark .al-error {
+    color: #f87171;
+}
+
+html.theme-dark .al-perm-opt {
+    background: #262626;
+    border-color: #444;
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-perm-opt.is-active {
+    border-color: #4c8bf5;
+    color: #7aa8ff;
+    background: rgba(76, 139, 245, 0.12);
+}
+
+html.theme-dark .al-member-box {
+    border-color: #3a3a3a;
+}
+
+html.theme-dark .al-member-tag {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-member-candidate:hover {
+    background: #2f2f2f;
+}
+
+html.theme-dark .al-browse-side {
+    border-color: #333;
+}
+
+html.theme-dark .al-toolbar {
+    border-color: #333;
+}
+
+html.theme-dark .al-scope-tab {
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-scope-tab.is-active {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-group-item {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-group-item:hover {
+    background: #2a2a2a;
+}
+
+html.theme-dark .al-group-item.is-active {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-card {
+    background: #232323;
+    border-color: #3a3a3a;
+}
+
+html.theme-dark .al-card-name {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-card-thumb {
+    background-color: #2a2a2a;
+}
+
+html.theme-dark .al-pager {
+    border-color: #333;
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-new-group {
+    border-color: #444;
+    color: #8a8a8a;
+}
+
+html.theme-dark .al-toast {
+    background: rgba(50, 50, 52, 0.95);
+}

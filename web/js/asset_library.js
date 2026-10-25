@@ -89,9 +89,21 @@
 
     // ============ 弹窗骨架 ============
 
-    function buildModal(className, title, bodyHtml, footerHtml) {
+    /**
+     * 弹窗层级互斥：
+     * - kind='main'（浏览/入库）：顶级弹窗，打开前清除全部已有资产库弹窗
+     *   （防止入口连点叠加多层 overlay）
+     * - kind='sub'（编辑）：由浏览弹窗内触发，只清理同类，允许叠在浏览之上
+     */
+    function buildModal(className, title, bodyHtml, footerHtml, kind) {
+        if (kind !== 'sub') {
+            document.querySelectorAll('.al-overlay').forEach(function (el) { el.remove(); });
+        } else {
+            document.querySelectorAll('.al-overlay[data-al-kind="sub"]').forEach(function (el) { el.remove(); });
+        }
         var overlay = document.createElement('div');
         overlay.className = 'al-overlay';
+        if (kind) overlay.setAttribute('data-al-kind', kind);
         overlay.innerHTML =
             '<div class="al-modal ' + (className || '') + '" role="dialog" aria-label="' + esc(title) + '">' +
             '<div class="al-header"><h3 class="al-title">' + esc(title) + '</h3>' +
@@ -246,7 +258,7 @@
         var footer =
             '<button type="button" class="al-btn" data-al-close>取消</button>' +
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>加入资产库</button>';
-        var overlay = buildModal('al-modal--compact', '加入资产库', body, footer);
+        var overlay = buildModal('al-modal--compact', '加入资产库', body, footer, 'main');
 
         // 分组下拉（异步填充）
         var groupRow = overlay.querySelector('[data-al-group-row]');
@@ -325,7 +337,7 @@
         var footer =
             '<button type="button" class="al-btn" data-al-close>取消</button>' +
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>保存</button>';
-        var overlay = buildModal('al-modal--compact', '编辑资产', body, footer);
+        var overlay = buildModal('al-modal--compact', '编辑资产', body, footer, 'sub');
 
         api('/groups').then(function (res) {
             var groups = (res.data && res.data.groups) || [];
@@ -408,7 +420,7 @@
             '<div class="al-grid-wrap"><div class="al-grid" data-al-grid></div></div>' +
             '<div class="al-pager" data-al-pager></div>' +
             '</div></div>';
-        var overlay = buildModal('al-modal--wide', opts.title || '资产库', body, '');
+        var overlay = buildModal('al-modal--wide', opts.title || '资产库', body, '', 'main');
 
         var els = {
             side: overlay.querySelector('[data-al-side]'),

@@ -70,7 +70,7 @@
 **统一 token 格式**：`@资产:{asset_library.id}`（常量 `AssetLibraryConstants.MENTION_TOKEN_PREFIX`）。
 
 - **marketing_agent**：@ 下拉合并资产条目（`mentionableItems`），选择插入 token；`handleSend` 提交前 `resolveMentionTokens` 还原为 `![名称](绝对URL)` markdown 图片。
-- **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`）与图生视频节点独立 @（`image_to_video_node.js`）均含资产条目；图片生成（`image_node.js`）、分镜视频（`shot_frame_video_generator.js`）、图生视频提交前同样还原。
+- **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`，含提示词放大编辑窗口）与图生视频节点独立 @（`image_to_video_node.js`）均含资产条目；提交前还原覆盖四个通道：图片生成（`image_node.js`）、分镜图生成（`shot_frame_generator.js`，放大窗口可插 token 的对应消费点）、分镜视频（`shot_frame_video_generator.js`）、图生视频（`image_to_video_node.js`）。
 - **storyboard**：@ 提及弹窗新增「资产库」tab（`renderMentionPopup`）；胶囊镜像层（`chat_mention_chips.js` + `frame_mention.js scanFrameMentionTokenRanges`）把 token 渲染为「缩略图+名称」胶囊（原子删除、悬停大图，与 @首帧图 同一套机制）；Agent 对话/直连生图/直连视频提交前还原。
 
 还原语义：`resolveMentionTokens(text)` 把 token 替换为 `![name](绝对URL)`，使资产图片以 URL 形式进入生成上下文（文生图参考图提取、LLM、VL 均可消费）；alt 中的 markdown 语法字符（`[]()`）会被清洗，资产名含括号不破坏图片语法；无权访问/已清除的 token 保留原文不阻断提交。storyboard 的 agent 消息面板为纯文本渲染，`![..](..)` 由渲染层折叠为 `[图片:名]` 占位（renderAgentMessages），本地会话显示保留原始 token。
@@ -88,6 +88,7 @@
 ## 7. 相关常量与文档
 
 - 常量：`config/constant.py` `AssetLibraryConstants`（权限枚举/类型/默认配额 2GB/单文件 50MB/下载超时/分页/token 前缀）、`UploadPathConstants.ASSET_LIBRARY_DIR`。
+- 弹窗层级：`buildModal` 按 kind 互斥（浏览/入库=main 打开前清全部，编辑=sub 可叠于浏览之上），入口连点不会叠加多层 overlay；`asset_library.css` 尾部含 `html.theme-dark` 暗色主题适配（video_workflow 暗色模式）。
 - admin 前端：用户管理操作列「资产库容量」弹窗（`web/js/admin.js assetQuotaModal`）：设置上限、查看用量/资产数，并内嵌该用户最近 50 条资产列表与「清除」操作（二次确认，走 `DELETE /api/asset-library/assets/{id}`，清除后自动刷新用量）。
 - i18n：`marketing_agent.json`（`nav_shared_asset_library`/`add_to_asset_library`/`type_asset`）、`video_workflow.json`（`image_node_add_asset_btn`/`asset_library_entry`）、`admin.json`（`btn_asset_quota` 等）；storyboard 侧 `i18nT(key, fallback)` 自带中文 fallback。
 
