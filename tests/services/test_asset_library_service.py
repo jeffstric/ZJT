@@ -16,7 +16,7 @@ from services.asset_library_service import (
     can_edit,
     can_view,
 )
-from model.asset_library import AssetItem
+from model.asset_library import AssetItem, AssetLibraryModel
 
 
 def make_asset(**kw):
@@ -303,3 +303,36 @@ def test_count_by_group_sql_has_group_by(monkeypatch):
     monkeypatch.setattr(asset_model, 'execute_query', staticmethod(fake_query))
     assert asset_model.AssetLibraryModel.count_by_group([7]) == {}
     assert 'GROUP BY group_id' in captured['sql']
+
+
+def test_update_group_id_null_reaches_sql(monkeypatch):
+    # 回归（5轮测试抓到）：group_id 显式 None = 移回未分组，必须进 SET 子句；
+    # 旧实现 is not None 过滤把它静默丢弃。其余字段 None 仍跳过。
+    from model import asset_library as asset_model
+    captured = {}
+
+    def fake_update(sql, params):
+        captured['sql'] = sql
+        captured['params'] = params
+        return 1
+
+    monkeypatch.setattr(asset_model, 'execute_update', staticmethod(fake_update))
+    AssetLibraryModel.update(5, group_id=None, name=None)
+    assert 'group_id = %s' in captured['sql']
+    assert 'name = %s' not in captured['sql']
+    assert captured['params'][0] is None
+
+    AssetLibraryModel.update(5, name='新名')
+    assert 'name = %s' in captured['sql']
+    assert 'group_id' not in captured['sql']
+
+
+def test_http_error_group_not_found_maps_404():
+    # 回归：分组不存在应 404（与资产 not_found 一致），旧实现落 400
+    from api.asset_library import _http_error
+    e = AssetLibraryError("分组不存在", "group_not_found")
+    assert _http_error(e).status_code == 404
+    e2 = AssetLibraryError("资产不存在或无权访问", "not_found")
+    assert _http_error(e2).status_code == 404
+    e3 = AssetLibraryError("没有该资产的编辑权限", "forbidden")
+    assert _http_error(e3).status_code == 403

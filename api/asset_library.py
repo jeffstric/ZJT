@@ -43,7 +43,8 @@ async def _is_admin(user_id: int) -> bool:
 
 
 def _http_error(e: AssetLibraryError) -> HTTPException:
-    status = 404 if e.code == "not_found" else (403 if e.code in ("forbidden", "quota_exceeded") else 400)
+    # not_found / group_not_found 均为"资源不存在"→ 统一 404（防枚举语义一致）
+    status = 404 if e.code in ("not_found", "group_not_found") else (403 if e.code in ("forbidden", "quota_exceeded") else 400)
     return HTTPException(status_code=status, detail=e.message)
 
 

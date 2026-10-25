@@ -95,13 +95,21 @@ class AssetLibraryModel:
 
     @staticmethod
     def update(asset_id: int, **fields: Any) -> int:
-        """更新资产字段（白名单：名称/分组/权限设置）"""
+        """更新资产字段（白名单：名称/分组/权限设置）。
+
+        group_id 允许显式传 None（移回未分组，SQL 写 NULL）；其余字段
+        None 视为"未提供"跳过。
+        """
         allowed = ('name', 'group_id', 'view_permission', 'edit_permission')
         sets, params = [], []
         for key in allowed:
-            if key in fields and fields[key] is not None:
-                sets.append(f"{key} = %s")
-                params.append(fields[key])
+            if key not in fields:
+                continue
+            value = fields[key]
+            if value is None and key != 'group_id':
+                continue
+            sets.append(f"{key} = %s")
+            params.append(value)
         if not sets:
             return 0
         params.append(asset_id)
