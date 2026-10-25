@@ -79,6 +79,7 @@
   "video_duration": "Video Duration",
   "generation_count": "Count",
   "generation_count_hint": "Each submission generates the selected number of images/videos; power cost scales with count",
+  "generation_count_agent_hint": "The agent will submit this many tasks per generation; power cost scales with count",
   "duration_auto": "Auto",
   "duration_seconds": "{dur}s",
   "duration_unit": "s",

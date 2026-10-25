@@ -615,6 +615,24 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- 生成次数选择（Agent 模式：随偏好下发，系统自动按数量提交生成任务） -->
+                                <div class="marketing-dropdown mobile-foldable" style="position: relative;">
+                                    <button class="marketing-bar-btn" @click.stop="toggleCountPanel" :title="$t('generation_count')">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="3" y="3" width="18" height="18" rx="2"/>
+                                            <path d="M8 12h8M12 8v8"/>
+                                        </svg>
+                                        <span>{{ $t('generation_count') }} ×{{ generationCount }}</span>
+                                    </button>
+                                    <div v-if="showCountPanel" class="marketing-panel" @click.stop style="position: absolute; bottom: 100%; left: 0; margin-bottom: 8px; background: #fff; border: 1px solid #e8e8e8; border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 8px; min-width: 150px; z-index: 100;">
+                                        <div v-for="n in generationCountOptions" :key="n" @click.stop="selectGenerationCount(n)" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s;" :style="{ background: generationCount === n ? '#e6f7ff' : 'transparent' }">
+                                            <span style="font-size: 13px; font-weight: 500; color: #1a1a1a;">×{{ n }}</span>
+                                            <span v-if="generationCount === n" style="color: #00a8e6; font-weight: bold;">✓</span>
+                                        </div>
+                                        <div style="padding: 6px 12px 4px; font-size: 11px; color: #999;">{{ $t('generation_count_agent_hint') }}</div>
+                                    </div>
+                                </div>
                             </template>
 
                             <!-- 非 Agent 模式：独立模型 + 比例选择 -->

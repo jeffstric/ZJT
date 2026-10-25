@@ -79,6 +79,7 @@
   "video_duration": "视频时长",
   "generation_count": "生成次数",
   "generation_count_hint": "单次提交将批量生成所选数量的图片/视频，算力按数量累计",
+  "generation_count_agent_hint": "智能体将按此数量提交生成任务，算力按数量累计",
   "duration_auto": "自动",
   "duration_seconds": "{dur}秒",
   "duration_unit": "秒",

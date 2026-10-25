@@ -3311,6 +3311,7 @@
                     image_mode: videoImageMode.value,
                     model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
                     task_id: taskId || undefined,
+                    count: generationCount.value,
                     // 是否处理人脸（仅图生视频 + seedance2.0 商业版生效）
                     enable_face_mask: useImageToVideo && processFace.value === true
                 };
@@ -3417,7 +3418,8 @@
                     // 构建图片偏好（auto 分辨率不传）
                     const imagePreferences = {
                         ratio: selectedRatio.value,
-                        model_name: selectedImageModel.value
+                        model_name: selectedImageModel.value,
+                        count: generationCount.value
                     };
                     const imageCategory = validImageUrls.length > 0 ? 'image_edit' : 'text_to_image';
                     const imageTaskId = window.TaskConfig?.getTaskIdByKey
