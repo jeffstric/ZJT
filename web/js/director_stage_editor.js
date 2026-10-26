@@ -394,17 +394,15 @@
     var s5Idx = -1;
     skeleton.bones.forEach(function (b, i) { if (b === spine5) s5Idx = i; });
     var posAttr = skinned.geometry.attributes.position;
-    var headTop = -Infinity;
-    for (var vi = 0; vi < posAttr.count; vi++) headTop = Math.max(headTop, posAttr.getY(vi));
-    var neckBase = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).y;
-    var cut = neckBase + (headTop - neckBase) * 0.30; // 切分点：颈根向上 30% 头颈区
+    var headTopRaw = -Infinity;
+    for (var vi = 0; vi < posAttr.count; vi++) headTopRaw = Math.max(headTopRaw, posAttr.getY(vi));
+    // 权重切分点用原始几何空间（geometry 未被归一化动过）
+    var neckBaseRaw = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).y;
+    var cut = neckBaseRaw + (headTopRaw - neckBaseRaw) * 0.30; // 颈根向上 30% 头颈区
+    // 注意：headBone 的世界位置在下方"注册"时按最终坐标系计算——此刻模型还没进
+    // 归一化容器，raw 空间的坐标不能直接用。
     var headBone = new THREE.Bone();
     headBone.name = 'head.glb';
-    headBone.position.set(
-      new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).x,
-      cut + (headTop - cut) * 0.25,
-      new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).z
-    );
     // —— 立正重绑（位置标记①）：绑定逆矩阵必须在"归一化+关节组挂载"之后的最终
     // 坐标系里重算——渲染循环活在该坐标系；在原始坐标系重算会让 boneMatrix
     // 混入容器变换，渲染态与重绑态相差约 90°（实测 dev≈4.8）。此处只做头骨增权。
@@ -534,10 +532,19 @@
       rig.joints[attachPlan[i][0]].attach(attachPlan[i][1]);
     }
 
-    // —— 头骨注册：headBone 需要自己的绑定逆矩阵；boneInverses 与缓存共享且
-    // init() 按 bones.length 分配矩阵槽位，先拷贝追加再重建。
+    // —— 头骨注册：headBone 的世界位置必须按最终坐标系计算（此刻已进归一化容器），
+    // 早前在 raw 空间算好再 add 会带上容器旋转/缩放，把头拽飞（用户看到"头不见了"）。
+    // boneInverses 与缓存共享且 init() 按 bones.length 分配矩阵槽位，先拷贝追加再重建。
     // 不做全量 calculateInverses（保留 GLB 原始绑定，立正靠骨骼物理姿态而非重绑）。
+    var spine5World = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld);
+    var headTopWorld = new THREE.Vector3(0, headTopRaw, 0).applyMatrix4(container.matrixWorld).y;
+    var cutWorld = spine5World.y + (headTopWorld - spine5World.y) * 0.30;
     model.add(headBone);
+    headBone.position.copy(model.worldToLocal(new THREE.Vector3(
+      spine5World.x,
+      cutWorld + (headTopWorld - cutWorld) * 0.25,
+      spine5World.z
+    )));
     skeleton.bones.push(headBone);
     root.updateMatrixWorld(true);
     skeleton.boneInverses = skeleton.boneInverses.slice();
@@ -2345,7 +2352,13 @@
   };
 
   DirectorEditor.prototype.getPuppetGizmoOrigin = function (p) {
-    // hipsY 在已缩放的 root 下，世界高度 = 地面 + (髋高+离地) * scale
+    // 有胸部关节时把轴向指示器锚在胸口（比髋部/裆部高，避免停在敏感位置），
+    // 拖拽轴向的数学同样以该点为基准；旧人偶无 chest 关节时回退髋部。
+    if (p.rig && p.rig.joints && p.rig.joints.chest) {
+      var chestPos = new THREE.Vector3();
+      p.rig.joints.chest.getWorldPosition(chestPos);
+      return chestPos;
+    }
     var s = this.getPuppetWorldScale(p);
     var localH = ((p.rig && p.rig.hipH) ? p.rig.hipH : HIP_H) + (p.rootYOffset || 0);
     return new THREE.Vector3(p.x, this.getEnvGroundY() + localH * s, p.z);
