@@ -24,7 +24,10 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
     # - deepseek-v4-pro-ga-260813：pro GA 版
     _MODEL_NAME_MAP = {
         'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
-        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',
+        # lite-260215 已被方舟下线（2026-10-24 前后停服，调用返回
+        # InvalidEndpoint.ClosedEndpoint），260428 为生产 key 实测 200 的
+        # 最新 2.0-lite 快照（2026-10-26）
+        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260428',
         'deepseek-v4-flash': 'deepseek-v4-flash-ga-260731',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-ga-260731',
         'deepseek-v4-pro': 'deepseek-v4-pro-ga-260813',
@@ -74,12 +77,22 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
         super()._apply_thinking_params(kwargs, enable_thinking, thinking_effort)
 
     def _humanize_api_error(self, e, model=None):
-        """把方舟「模型/接入点不存在」404 翻译成可操作的中文错误。
+        """把方舟「模型/接入点不存在」「快照已停服」错误翻译成可操作的中文错误。
 
         InvalidEndpointOrModel.NotFound 表示当前 api_key 所属账号没有开通
-        该模型名/接入点，重试必然复现；不翻译的话上层只见英文 404，用户
-        无从知道该换供应商还是去方舟控制台开通。
+        该模型名/接入点，重试必然复现；InvalidEndpoint.ClosedEndpoint 表示
+        映射指向的版本快照已被方舟下线停服（写死的快照号会随官方下线失效，
+        需更新 _MODEL_NAME_MAP）。不翻译的话上层只见英文 400/404，用户
+        无从知道该换供应商还是去方舟控制台处理。
         """
+        if 'InvalidEndpoint.ClosedEndpoint' in str(e):
+            target = model or '未知模型'
+            return (
+                f"火山方舟模型「{target}」的版本快照已被官方下线停服"
+                f"（InvalidEndpoint.ClosedEndpoint），请更新"
+                f" llm/volcengine_openai_client.py 的 _MODEL_NAME_MAP 映射"
+                f"或改用其他供应商；原始错误: {e}"
+            )
         if 'InvalidEndpointOrModel.NotFound' not in str(e):
             return None
         target = model or '未知模型'
