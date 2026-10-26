@@ -26,9 +26,9 @@
 
   "nav_inspiration": "Inspiration",
   "nav_generate": "Generate",
-  "nav_assets": "Assets",
+  "nav_assets": "Generated",
   "nav_shared_asset_library": "Asset Library",
-  "asset_library_title": "Asset Library",
+  "asset_library_title": "Generated",
   "asset_library_desc": "View every image and video result you have generated with AI tools.",
   "asset_empty_title": "No generated assets yet",
   "asset_empty_desc": "Completed image and video generations will appear here automatically.",
@@ -192,6 +192,7 @@
 
   "type_image": "Image",
   "type_asset": "Asset",
+  "add_to_asset_library": "Save",
   "type_video": "Video",
   "type_audio": "Audio",
 
