@@ -69,6 +69,31 @@ LLM shot.three_scene_code
     → prompt_json.three_scene_code（规范化 markdown 围栏后落库）
 ```
 
+### 2.4 「生成 3D 导演台」开关（`enable_director_stage`，默认关闭）
+
+three_scene_code 是故事板「3D」预览与视频工作流「导演台」节点的唯一数据源。
+产品层新增独立开关控制是否生成该数据（2026-10-26，用户决策：默认关闭、
+关闭时连预览入口一并隐藏；仅效果模式消费，速度/均衡模式天然无此产物）：
+
+- **入口**：故事板「生成分镜」弹窗内嵌效果模式卡片（「生成3D空间」，勾选即选中
+  效果模式；社区版随卡片锁定禁用）与视频工作流剧本节点配置（分镜拆分模式旁，
+  存 `node.data.enableDirectorStage`）。
+- **后端链路**：两个入口透传 `enable_director_stage` → `create_split_task`
+  的 `request_config`（`_normalize_request_config` 归一为 bool，缺省取
+  `ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT=False`，避免 active_key
+  漂移）→ `_build_segment_context` 下发 `enable_three_scene_code=False`（同时
+  不再注入上一镜代码）→ `llm/script_parser.py` 跳过
+  `THREE_SCENE_CODE_REQUIREMENTS` 注入 → 企业版 `materialize_segment`
+  （`audit_three_scene_codes=False`）跳过代码链校验（否则缺码判 error 触发
+  质检重拆）→ 合并阶段 `_strip_three_scene_code` 确定性兜底剥离 LLM 偶发
+  产出。spatial_layout 空间一致性约束不受影响，效果模式照常工作。
+- **故事板侧展示门控**：生成接口把 `directorStageGenerated` 写入故事板
+  `config_json`；前端分镜卡「3D」按钮渲染条件为
+  `state.directorStageGenerated !== false && hasSpatialLayout(scene)`
+  ——旧故事板无该字段时保持展示（向后兼容）。
+- **工作流侧**：分镜帧「创建导演台」按钮只认 `shotJson.three_scene_code`，
+  不生成即不显示；「+」菜单手动新建空白导演台节点不受此开关影响。
+
 ## 3. 校验（`services/storyboard_spatial/three_code.py`，社区/企业通用）
 
 字符串级确定性校验（无 IO、无许可证门禁）：

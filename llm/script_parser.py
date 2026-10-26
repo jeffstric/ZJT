@@ -2245,8 +2245,10 @@ async def parse_script_to_shots(
 """
 
             # three.js 空间代码硬约束（v2/v3 共用）：每镜必须输出 three_scene_code。
+            # 「生成 3D 导演台」关闭（enable_three_scene_code=False）时不注入要求，
+            # 效果模式照常保留 spatial_layout 一致性约束。
             three_code_block = ""
-            if quality_mode:
+            if quality_mode and segment_context.get("enable_three_scene_code", True):
                 previous_three_code = str(
                     segment_context.get("previous_three_scene_code") or ""
                 ).strip()

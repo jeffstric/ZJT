@@ -2149,3 +2149,57 @@ class TestEnsureMetadataDict:
         result = script_split_engine._ensure_metadata_dict(holder)
         assert result == {}
         assert holder["metadata"] == {}
+
+
+class TestDirectorStageSwitch:
+    """「生成 3D 导演台」开关（enable_director_stage，效果模式 three_scene_code）。"""
+
+    def test_director_stage_enabled_parsing(self):
+        assert script_split_engine._director_stage_enabled({}) is False
+        assert script_split_engine._director_stage_enabled({"enable_director_stage": True}) is True
+        assert script_split_engine._director_stage_enabled({"enable_director_stage": False}) is False
+        assert script_split_engine._director_stage_enabled({"enable_director_stage": "true"}) is True
+        assert script_split_engine._director_stage_enabled({"enable_director_stage": "0"}) is False
+
+    def test_strip_three_scene_code_removes_code_and_seq_start(self):
+        parsed = {
+            "shot_groups": [{
+                "shots": [
+                    {"shot_id": "s1", "three_scene_code": "setCamera(0,1,2,0,1,0,50);", "three_scene_seq_start": True},
+                    {"shot_id": "s2", "three_scene_code": ""},
+                    {"shot_id": "s3"},
+                ],
+            }],
+        }
+        stripped = script_split_engine._strip_three_scene_code(parsed)
+        assert stripped == 2
+        shots = parsed["shot_groups"][0]["shots"]
+        assert "three_scene_code" not in shots[0]
+        assert "three_scene_seq_start" not in shots[0]
+        assert "three_scene_code" not in shots[1]
+        assert shots[2] == {"shot_id": "s3"}
+
+    def _context(self, monkeypatch, request_config):
+        monkeypatch.setattr(
+            script_split_engine.ScriptSplitSegmentModel,
+            "get_completed",
+            lambda task_id: [],
+        )
+        task = _planning_task(request_config=request_config)
+        seg = SimpleNamespace(
+            segment_id="seg_0001",
+            segment_index=0,
+            get_block_ids=lambda: ["block_0001"],
+        )
+        registry = SimpleNamespace(to_context=lambda: {}, id_reservations=lambda: {})
+        return script_split_engine._build_segment_context(task, seg, registry)
+
+    def test_segment_context_flags_three_code_disabled(self, monkeypatch):
+        ctx = self._context(monkeypatch, {"enable_director_stage": False})
+        assert ctx.get("enable_three_scene_code") is False
+        assert "previous_three_scene_code" not in ctx
+
+    def test_segment_context_omits_flag_when_enabled(self, monkeypatch):
+        """开启时不下发 enable_three_scene_code（下游默认按生成处理）。"""
+        ctx = self._context(monkeypatch, {"enable_director_stage": True})
+        assert "enable_three_scene_code" not in ctx

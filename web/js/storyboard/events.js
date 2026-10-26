@@ -1871,6 +1871,7 @@ async function handleAction(action, target) {
                 enable_script_split_qc: state.enableScriptSplitQc === true,
                 script_split_qc_max_rounds: Number(state.scriptSplitQcMaxRounds) || 2,
                 enable_character_variant: state.enableCharacterVariant !== false,
+                enable_director_stage: state.enableDirectorStage === true,
                 sequence_mode: state.autoImageSequenceMode,
             });
             // 后端返回 202 + { data: { task_id, status, status_url } }
@@ -2171,6 +2172,7 @@ async function handleAction(action, target) {
         || action === 'toggle-split-multi-dialogue'
         || action === 'toggle-enable-character-variant'
         || action === 'toggle-enable-script-split-qc'
+        || action === 'toggle-enable-director-stage'
     ) {
         if (state.isGeneratingFromScript) return;
         if (action === 'toggle-force-medium-shot') {
@@ -2181,6 +2183,14 @@ async function handleAction(action, target) {
             state.splitMultiDialogue = nextCheckboxState(target, state.splitMultiDialogue);
         } else if (action === 'toggle-enable-character-variant') {
             state.enableCharacterVariant = nextCheckboxState(target, state.enableCharacterVariant);
+        } else if (action === 'toggle-enable-director-stage') {
+            // 选项内嵌效果模式卡片：社区版渲染期已禁用（兜底再拦），勾选即选中效果模式
+            if (state.editionInfo?.mode !== 'enterprise') return;
+            state.enableDirectorStage = nextCheckboxState(target, state.enableDirectorStage);
+            if (state.enableDirectorStage && state.autoImageSequenceMode !== 'quality') {
+                state.autoImageSequenceMode = 'quality';
+                syncSequenceModeIntroCards();
+            }
         } else {
             state.enableScriptSplitQc = nextCheckboxState(target, state.enableScriptSplitQc);
         }

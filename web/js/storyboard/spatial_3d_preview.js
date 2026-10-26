@@ -120,11 +120,11 @@ function loadThree() {
         script.src = THREE_SRC;
         script.onload = () => {
             if (window.THREE) resolve(window.THREE);
-            else reject(new Error('three.js 加载异常'));
+            else reject(new Error('3D 引擎加载异常'));
         };
         script.onerror = () => {
             threeLoading = null;
-            reject(new Error('three.js 加载失败，请刷新页面重试'));
+            reject(new Error('3D 引擎加载失败，请刷新页面重试'));
         };
         document.head.appendChild(script);
     });
@@ -785,7 +785,7 @@ function codeHtml(preview, chainStart, chainLength, total) {
         ? '本镜为空间序列首镜（startScene 完整构建）'
         : `空间关系保持：基于第 ${chainStart + 1} 镜场景，累计重放 ${chainLength} 段代码（人物运动等增量调整）`;
     return `
-        <h4>本镜 three.js 代码</h4>
+        <h4>本镜空间代码</h4>
         <p class="spatial3d-chain-note">${escapeHtml(chainNote)}</p>
         <pre class="spatial3d-code">${escapeHtml(code)}</pre>`;
 }

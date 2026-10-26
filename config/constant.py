@@ -1720,6 +1720,14 @@ class ScriptSplitConstants:
     CHARACTER_VARIANT_ASPECT_RATIO = "16:9"
     # 发布阶段变体生成的子阶段 phase（前端进度步骤归入「发布分镜」）
     PHASE_CHARACTER_VARIANT = "character_variant"
+
+    # ---- 3D 导演台（three.js 空间代码）----
+    # 请求参数 enable_director_stage 的服务端默认值：效果模式拆分时是否为每镜
+    # 生成 three_scene_code（three.js 空间代码）。该数据是故事板「3D 空间预览」
+    # 与视频工作流「导演台」节点的唯一数据源；关闭后拆分仍保留 spatial_layout
+    # 空间一致性约束（画面构图用），但不产出任何 3D 导演台数据。
+    # 注意：仅效果模式（quality）会生成 three_scene_code，速度/均衡模式天然无此产物。
+    ENABLE_DIRECTOR_STAGE_DEFAULT = False
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）

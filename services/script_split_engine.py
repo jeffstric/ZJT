@@ -1616,6 +1616,16 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged = sanitize_parsed_location_references(merged, db_locations)
         merged = repair_spatial_layout_continuity(merged)
 
+    # 「生成 3D 导演台」关闭：确定性剥离 three.js 空间代码（LLM 偶发产出兜底），
+    # 保证故事板 / 视频工作流两侧均不出现 3D 导演台数据。
+    if not _director_stage_enabled(cfg):
+        stripped = _strip_three_scene_code(merged)
+        if stripped:
+            logger.info(
+                "task %s 3D 导演台已关闭，合并阶段剥离 %d 个镜头的 three_scene_code",
+                task.id, stripped,
+            )
+
     # 合并前再检规划 registry（生成中途可能被用户删除世界场景）
     plan = task.get_segment_plan() or {}
     if plan.get("compiled_registry"):
@@ -2122,8 +2132,44 @@ def _load_registry(task: ScriptSplitTask) -> AcceptedRegistry:
     return reg
 
 
+def _director_stage_enabled(cfg: Dict[str, Any]) -> bool:
+    """「生成 3D 导演台」开关：效果模式 three.js 空间代码（three_scene_code）。
+
+    显式 False 时关闭（拆分不产出任何 3D 导演台数据）。缺省回退服务端常量
+    （config/constant.py ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT），
+    覆盖任务恢复等未走 _normalize_request_config 的路径。
+    注意：仅效果模式（quality）会生成 three_scene_code，速度/均衡模式天然无此产物。
+    """
+    value = (cfg or {}).get("enable_director_stage")
+    if value is None:
+        return bool(ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _strip_three_scene_code(parsed: Dict[str, Any]) -> int:
+    """剥离分镜中的 three.js 空间代码（three_scene_code / three_scene_seq_start）。
+
+    「生成 3D 导演台」关闭时的兜底：即使 LLM 偶发产出相关字段也不落库，
+    保证故事板 / 视频工作流两侧均不出现 3D 导演台数据。
+    """
+    stripped = 0
+    for group in (parsed.get("shot_groups") or []):
+        if not isinstance(group, dict):
+            continue
+        for shot in (group.get("shots") or []):
+            if not isinstance(shot, dict):
+                continue
+            if shot.pop("three_scene_code", None) is not None:
+                stripped += 1
+            shot.pop("three_scene_seq_start", None)
+    return stripped
+
+
 def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistry) -> Dict[str, Any]:
     """构建传给 parse_script_to_shots 的 segment_context。"""
+    cfg = task.get_request_config() or {}
     # 上一段尾部镜头摘要
     tail = []
     previous_three_code = ""
@@ -2134,8 +2180,9 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
         groups = last_parsed.get("shot_groups", []) or []
         shots = [s for g in groups for s in (g.get("shots", []) or [])]
         tail = shots[-ScriptSplitConstants.HISTORY_TAIL_SHOTS:] if shots else []
-        # 上一镜 three.js 空间代码：本段首镜基于它增量调整（效果模式代码链）
-        if shots:
+        # 上一镜 three.js 空间代码：本段首镜基于它增量调整（效果模式代码链）。
+        # 「生成 3D 导演台」关闭时不注入，避免链上残留代码诱导 LLM 继续产出。
+        if shots and _director_stage_enabled(cfg):
             previous_three_code = str(shots[-1].get("three_scene_code") or "").strip()
 
     context = {
@@ -2151,6 +2198,11 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
     }
     if previous_three_code:
         context["previous_three_scene_code"] = previous_three_code
+    if not _director_stage_enabled(cfg):
+        # 「生成 3D 导演台」关闭：段上下文显式置 False，效果模式据此跳过
+        # three.js 空间代码的 prompt 要求与物化校验（见 llm/script_parser.py
+        # 与企业版 spatial_materializer）；spatial_layout 一致性约束不受影响。
+        context["enable_three_scene_code"] = False
     return context
 
 

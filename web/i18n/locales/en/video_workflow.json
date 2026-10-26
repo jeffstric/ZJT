@@ -1025,5 +1025,9 @@
   "toast_create_success": "Created successfully",
   "toast_workflow_name_required": "Please enter a workflow name",
   "toast_ratio_required": "Please select an aspect ratio",
-  "toast_operation_failed": "Operation failed, please try again later"
+  "toast_operation_failed": "Operation failed, please try again later",
+  "script_enable_director_stage": "Generate 3D director stage",
+  "script_enable_director_stage_hint": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
+  "script_director_stage_hint_quality": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
+  "script_director_stage_hint_need_quality": "Quality mode only"
 }

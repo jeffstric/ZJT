@@ -4021,7 +4021,7 @@
 
   DirectorEditor.prototype.open = function () {
     if (!window.THREE) {
-      if (typeof showToast === 'function') showToast('导演台组件(three.js)加载失败，请刷新页面重试', 'error');
+      if (typeof showToast === 'function') showToast('导演台 3D 组件加载失败，请刷新页面重试', 'error');
       return false;
     }
     this.injectDom();

@@ -3666,6 +3666,10 @@ async def generate_storyboard_from_script(
             status_code=403,
             content={'error': 'enterprise_only', 'message': '效果模式仅商业版支持'},
         )
+    # 「生成 3D 导演台」：效果模式下为每镜生成 three_scene_code（three.js
+    # 空间代码，故事板 3D 预览 / 工作流导演台的数据源）。默认关闭，仅显式
+    # 开启才生成；速度/均衡模式不产出 three_scene_code，该开关对其无影响。
+    enable_director_stage = _json_bool(data.get('enable_director_stage'), False)
 
     # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
     # 数字串直接转 int；"vendor:模型名" 复合串还原为数值库 ID，与 /api/parse-script
@@ -3747,6 +3751,8 @@ async def generate_storyboard_from_script(
             data.get('enable_character_variant'),
             ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
         ),
+        # 3D 导演台（three.js 空间代码）生成开关（默认关闭）
+        'enable_director_stage': enable_director_stage,
     }
     try:
         await asyncio.to_thread(
@@ -3755,6 +3761,9 @@ async def generate_storyboard_from_script(
             {
                 'videoImageMode': video_gen_mode,
                 'maxGroupDuration': max_shot_duration,
+                # 记录本次生成的 3D 导演台开关值：前端据此隐藏/展示分镜上的
+                # 「3D」空间预览入口（旧故事板无该字段时保持展示，向后兼容）。
+                'directorStageGenerated': enable_director_stage,
             },
         )
     except Exception as e:
