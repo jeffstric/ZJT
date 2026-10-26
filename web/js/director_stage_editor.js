@@ -405,15 +405,32 @@
       cut + (headTop - cut) * 0.25,
       new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).z
     );
-    // skeleton.init() 按 bones.length 分配 boneMatrices/boneTexture；新增骨骼后必须重建，
-    // 否则头骨矩阵写越界（静默丢弃）且纹理槽位不足；boneInverses 数组与缓存共享，
-    // 追加前必须复制，否则会把缓存骨架变成 bones/inverses 数量不匹配。
+    // —— 立正重绑：模型绑定姿态是 T-pose（横举），先在上臂骨骼处把手臂旋到体侧下垂 ——
+    // —— 再以该姿态重算全部 boneInverses，让"零关节角 = 立正"，T-Pose 预设仍可举回。——
+    // 注意：boneInverses 数组与 GLB 缓存共享，且 r128 calculateInverses() 会原地清空
+    // 数组（length=0 会连累缓存骨架），必须先换成全新数组再重算。
+    skeleton.boneInverses = [];
+    var ARM_DOWN_DEG = 85; // 接近垂直、微外张，避免与大腿穿插
+    ['L', 'R'].forEach(function (suffix) {
+      var ua = findBone('upper_arm' + suffix);
+      if (!ua) return;
+      var sign = suffix === 'L' ? -1 : 1; // 原始空间左臂沿 -Z、右臂沿 +Z（归一化旋转后才是 ±X）
+      ua.updateWorldMatrix(true, false);
+      var pivot = new THREE.Vector3().setFromMatrixPosition(ua.matrixWorld);
+      var rot = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), sign * ARM_DOWN_DEG * Math.PI / 180);
+      var world = new THREE.Matrix4()
+        .makeTranslation(pivot.x, pivot.y, pivot.z)
+        .multiply(rot)
+        .multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z))
+        .multiply(ua.matrixWorld);
+      var local = new THREE.Matrix4().copy(ua.parent.matrixWorld).invert().multiply(world);
+      local.decompose(ua.position, ua.quaternion, ua.scale);
+    });
     model.add(headBone);
-    headBone.updateMatrixWorld(true);
-    skeleton.boneInverses = skeleton.boneInverses.slice();
     skeleton.bones.push(headBone);
-    skeleton.boneInverses.push(headBone.matrixWorld.clone().invert());
-    skeleton.init();
+    model.updateMatrixWorld(true);
+    skeleton.calculateInverses(); // 以手臂下垂+头骨就位后的姿态作为新绑定姿态
+    skeleton.init();              // 按 bones.length 重建 boneMatrices/boneTexture 槽位
     var headIdx = skeleton.bones.length - 1;
     var si = skinned.geometry.attributes.skinIndex;
     for (var wi = 0; wi < si.count; wi++) {
