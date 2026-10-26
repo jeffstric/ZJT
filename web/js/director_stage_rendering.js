@@ -272,6 +272,8 @@
     var skinnedNormalMat = ssao.normalMaterial;
     if (skinnedNormalMat) skinnedNormalMat.skinning = true;
     if (skinnedNormalMat && typeof ssao.renderOverride === 'function') {
+      // 激活标记：用户可在控制台确认蒙皮预渲染补丁已生效（出现旧缓存 JS 时此日志缺失）
+      console.info('[导演台] SSAO 蒙皮预渲染补丁已激活');
       var origRenderOverride = ssao.renderOverride;
       ssao.renderOverride = function (renderer, overrideMaterial, renderTarget, clearColor, clearAlpha) {
         if (overrideMaterial !== skinnedNormalMat || !scene || !scene.traverse) {
