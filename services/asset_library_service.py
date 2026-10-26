@@ -218,6 +218,74 @@ def _remove_file_quietly(path: Path) -> None:
         logger.warning(f"Failed to remove asset temp file {path}: {e}")
 
 
+# ============ 功能开关 / 全局容量 ============
+
+def _bool_config(value: Any, default: bool = False) -> bool:
+    if value is None or value == '':
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def get_feature_config() -> Dict[str, Any]:
+    """读取资产库功能配置（system_config，缓存 + YAML 兜底）。
+
+    enabled：总开关（默认关）；total_quota_gb：全站总磁盘上限 GB（0=不限）；
+    allow_all_users：全员可用（关闭时按 quota.enabled 逐用户放行）。
+    """
+    from config.config_util import get_dynamic_config_value
+    enabled = _bool_config(get_dynamic_config_value(ALC.CONFIG_NAMESPACE, ALC.CONFIG_KEY_ENABLED, default=False))
+    allow_all = _bool_config(get_dynamic_config_value(ALC.CONFIG_NAMESPACE, ALC.CONFIG_KEY_ALLOW_ALL_USERS, default=False))
+    try:
+        total_gb = float(get_dynamic_config_value(ALC.CONFIG_NAMESPACE, ALC.CONFIG_KEY_TOTAL_QUOTA_GB, default=0) or 0)
+    except (TypeError, ValueError):
+        total_gb = 0.0
+    return {
+        'enabled': enabled,
+        'allow_all_users': allow_all,
+        'total_quota_bytes': max(0, int(total_gb * 1024 * 1024 * 1024)),
+    }
+
+
+def total_used_bytes() -> int:
+    """全站资产总占用（全局容量展示与校验用）。"""
+    row = execute_query(
+        "SELECT COALESCE(SUM(file_size), 0) AS total FROM asset_library",
+        (), fetch_one=True,
+    )
+    return int(row['total']) if row else 0
+
+
+def ensure_user_allowed(user_id: int, is_admin: bool = False) -> None:
+    """功能开关 + 用户级权限校验，不通过抛 AssetLibraryError（403 语义）。
+
+    管理员恒通过（管理通道不受功能开关限制的接口不调用本函数）。
+    """
+    cfg = get_feature_config()
+    if not cfg['enabled']:
+        raise AssetLibraryError('资产库功能未开启，请联系管理员', 'feature_disabled')
+    if is_admin or cfg['allow_all_users']:
+        return
+    if not AssetLibraryQuotaModel.is_enabled(user_id):
+        raise AssetLibraryError('您还没有资产库使用权限，请联系管理员开启', 'user_not_allowed')
+
+
+def check_global_capacity(new_size: int) -> None:
+    """全站总磁盘上限校验（total_quota_gb=0 不限）。
+
+    SUM 与 INSERT 之间存在并发窗口，属软限制：入库低频 + 用户/全局双层
+    限制，少量并发超卖可接受（避免为严丝合缝引入全局计数行的锁竞争）。
+    """
+    cfg = get_feature_config()
+    total_limit = cfg['total_quota_bytes']
+    if total_limit <= 0:
+        return
+    used = total_used_bytes()
+    if used + new_size > total_limit:
+        raise AssetLibraryError(ALC.GLOBAL_QUOTA_EXCEEDED_MSG, 'global_quota_exceeded')
+
+
 # ============ 加入资产库 ============
 
 async def add_asset(
@@ -230,11 +298,14 @@ async def add_asset(
     edit_permission: str = ALC.PERMISSION_PRIVATE,
     view_members: Optional[Sequence[int]] = None,
     edit_members: Optional[Sequence[int]] = None,
+    is_admin: bool = False,
 ) -> AssetItem:
     """把生成产物加入资产库：校验 → 下载/复制 → 配额预留 → 落库。
 
     失败路径统一 try/finally 清理临时文件并释放预留（AGENTS.md 第 10 条）。
     """
+    # 功能开关 + 用户级权限（总开关关闭时管理员同样不可入库）
+    ensure_user_allowed(user_id, is_admin=is_admin)
     text = (source_url or "").strip()
     if not text:
         raise AssetLibraryError("源文件地址不能为空", "invalid_source_url")
@@ -288,6 +359,9 @@ async def add_asset(
             file_size = await _download_to_file(text, tmp_path)
         if file_size <= 0:
             raise AssetLibraryError("源文件为空", "empty_file")
+
+        # 1.5) 全站总磁盘上限（total_quota_gb=0 不限）；失败会走 finally 清理
+        check_global_capacity(file_size)
 
         # 2) 配额预留（原子条件 UPDATE；quota=0 不限）
         if not AssetLibraryQuotaModel.try_reserve(user_id, file_size):

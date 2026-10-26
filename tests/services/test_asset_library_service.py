@@ -170,8 +170,10 @@ def _prepare_local_source(monkeypatch, content: bytes):
     return f'/upload/{rel}'
 
 
-def _mock_models(monkeypatch, reserve_ok=True):
+def _mock_models(monkeypatch, reserve_ok=True, feature=None):
     calls = {'create': None, 'reserve': [], 'release': [], 'members': []}
+    monkeypatch.setattr(svc, 'get_feature_config', lambda: feature or {
+        'enabled': True, 'allow_all_users': True, 'total_quota_bytes': 0})
     monkeypatch.setattr(svc.AssetGroupModel, 'get_by_id',
                         staticmethod(lambda gid: SimpleNamespace(id=gid)))
     monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'ensure_for_user',
@@ -239,6 +241,7 @@ def test_add_asset_quota_exceeded_rolls_back_file(monkeypatch):
 
 def test_add_asset_rejects_relative_upload_path_when_missing(monkeypatch):
     # /upload/ 路径但本地文件不存在 → 明确 source_missing，而非走 aiohttp 下载相对路径
+    _mock_models(monkeypatch)  # 放行功能开关（该用例只关注 source_missing 语义）
     with pytest.raises(AssetLibraryError) as ei:
         asyncio.run(svc.add_asset(user_id=1, source_url='/upload/temp/al_test/not_exist.png', name='x'))
     assert ei.value.code == 'source_missing'
@@ -337,3 +340,71 @@ def test_http_error_group_not_found_maps_404():
     assert _http_error(e2).status_code == 404
     e3 = AssetLibraryError("没有该资产的编辑权限", "forbidden")
     assert _http_error(e3).status_code == 403
+
+
+# ============ 功能开关 / 全局容量（R：admin 资产管理需求） ============
+
+def test_add_asset_blocked_when_feature_disabled(monkeypatch):
+    # 总开关关闭：入库直接拒绝（管理员也一样）
+    url = _prepare_local_source(monkeypatch, b'disabled')
+    calls = _mock_models(monkeypatch, feature={'enabled': False, 'allow_all_users': True, 'total_quota_bytes': 0})
+    with pytest.raises(AssetLibraryError) as ei:
+        asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x', is_admin=True))
+    assert ei.value.code == 'feature_disabled'
+    assert calls['create'] is None
+
+
+def test_add_asset_blocked_without_user_permission(monkeypatch):
+    # 全员模式关闭 + 用户未开启 → 拒绝；开启 → 放行
+    url = _prepare_local_source(monkeypatch, b'perm')
+    calls = _mock_models(monkeypatch, feature={'enabled': True, 'allow_all_users': False, 'total_quota_bytes': 0})
+    monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'is_enabled', staticmethod(lambda uid: False))
+    with pytest.raises(AssetLibraryError) as ei:
+        asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+    assert ei.value.code == 'user_not_allowed'
+
+    monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'is_enabled', staticmethod(lambda uid: True))
+    try:
+        asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+        assert asset.file_size == len(b'perm')
+    finally:
+        _cleanup_asset_dir()
+
+
+def test_add_asset_blocked_by_global_capacity(monkeypatch):
+    # 全站总容量：已用+新增超限 → global_quota_exceeded，文件不落库
+    url = _prepare_local_source(monkeypatch, b'G' * 50)
+    calls = _mock_models(monkeypatch, feature={'enabled': True, 'allow_all_users': True, 'total_quota_bytes': 100})
+    monkeypatch.setattr(svc, 'total_used_bytes', lambda: 80)  # 80+50 > 100
+    with pytest.raises(AssetLibraryError) as ei:
+        asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+    assert ei.value.code == 'global_quota_exceeded'
+    assert calls['create'] is None
+
+    monkeypatch.setattr(svc, 'total_used_bytes', lambda: 40)  # 40+50 <= 100
+    try:
+        asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='ok'))
+        assert asset.file_size == 50
+    finally:
+        _cleanup_asset_dir()
+
+
+def test_ensure_user_allowed_matrix(monkeypatch):
+    cfg_off = {'enabled': False, 'allow_all_users': True, 'total_quota_bytes': 0}
+    monkeypatch.setattr(svc, 'get_feature_config', lambda: cfg_off)
+    with pytest.raises(AssetLibraryError) as ei:
+        svc.ensure_user_allowed(1, is_admin=True)
+    assert ei.value.code == 'feature_disabled'  # 开关关闭连管理员也拦
+
+    cfg_on_all = {'enabled': True, 'allow_all_users': True, 'total_quota_bytes': 0}
+    monkeypatch.setattr(svc, 'get_feature_config', lambda: cfg_on_all)
+    svc.ensure_user_allowed(1)  # 全员模式：普通用户放行
+
+    cfg_on_sel = {'enabled': True, 'allow_all_users': False, 'total_quota_bytes': 0}
+    monkeypatch.setattr(svc, 'get_feature_config', lambda: cfg_on_sel)
+    monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'is_enabled', staticmethod(lambda uid: uid == 7))
+    svc.ensure_user_allowed(7)      # 白名单内
+    svc.ensure_user_allowed(1, is_admin=True)  # 管理员放行
+    with pytest.raises(AssetLibraryError) as ei:
+        svc.ensure_user_allowed(1)
+    assert ei.value.code == 'user_not_allowed'

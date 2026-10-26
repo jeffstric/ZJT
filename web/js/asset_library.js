@@ -237,6 +237,76 @@
         });
     }
 
+    // ============ 功能开关前置拦截 ============
+
+    var featureStatusCache = null; // {enabled, allowed} | null
+
+    /**
+     * 入口前置检查：功能未开启/无权限时 toast 并返回 false（缓存一次探测）。
+     */
+    function ensureEnabled(done) {
+        if (featureStatusCache) {
+            if (!featureStatusCache.allowed) toast(featureStatusCache.message || '资产库功能未开启', true);
+            done(!!featureStatusCache.allowed);
+            return;
+        }
+        api('/status').then(function (res) {
+            var d = res.data || {};
+            var allowed = !!d.allowed;
+            featureStatusCache = {
+                enabled: !!d.enabled,
+                allowed: allowed,
+                message: !d.enabled ? '资产库功能未开启，请联系管理员' : '您还没有资产库使用权限，请联系管理员开启'
+            };
+            if (!allowed) toast(featureStatusCache.message, true);
+            done(allowed);
+        }).catch(function () {
+            // 状态探测失败：放行（后端接口仍有强校验，不至于误伤可用功能）
+            done(true);
+        });
+    }
+
+    // ============ 分组下拉（含「新建分组」） ============
+
+    /**
+     * 填充分组下拉：未分组 + 已有分组 + 「＋ 新建分组…」。
+     * 选中新建项时 prompt 输入组名 → 创建 → 重建下拉并选中新组。
+     */
+    function fillGroupSelect(groupRow, selectedId, onReady) {
+        api('/groups').then(function (res) {
+            var groups = (res.data && res.data.groups) || [];
+            var html = '<select class="al-select" data-al-group style="max-width:100%">' +
+                '<option value="">未分组</option>';
+            groups.forEach(function (g) {
+                html += '<option value="' + esc(String(g.id)) + '"' +
+                    (selectedId != null && g.id === selectedId ? ' selected' : '') + '>' + esc(g.name) + '</option>';
+            });
+            html += '<option value="__new__">＋ 新建分组…</option>';
+            html += '</select>';
+            groupRow.innerHTML = html;
+            var sel = groupRow.querySelector('[data-al-group]');
+            sel.addEventListener('change', function () {
+                if (sel.value !== '__new__') return;
+                var name = prompt('分组名称（全局共享，所有人可见）');
+                if (!name || !name.trim()) { fillGroupSelect(groupRow, selectedId, onReady); return; }
+                api('/groups', { method: 'POST', body: { name: name.trim() } })
+                    .then(function (created) {
+                        toast('分组已创建');
+                        var newId = created.data && created.data.id;
+                        fillGroupSelect(groupRow, newId != null ? newId : selectedId, onReady);
+                    })
+                    .catch(function (e) {
+                        toast(e.message || '创建失败', true);
+                        fillGroupSelect(groupRow, selectedId, onReady);
+                    });
+            });
+            if (typeof onReady === 'function') onReady();
+        }).catch(function () {
+            groupRow.innerHTML = '<span class="al-hint">分组加载失败，将保存为未分组</span>';
+            if (typeof onReady === 'function') onReady();
+        });
+    }
+
     // ============ 加入资产库弹窗 ============
 
     /**
@@ -247,6 +317,13 @@
         opts = opts || {};
         var sourceUrl = opts.sourceUrl || '';
         if (!sourceUrl) { toast('缺少源文件地址', true); return; }
+        ensureEnabled(function (allowed) {
+            if (!allowed) return;
+            openPromptAdd(opts, sourceUrl);
+        });
+    }
+
+    function openPromptAdd(opts, sourceUrl) {
         var state = {
             view: { permission: 'private', members: [] },
             edit: { permission: 'private', members: [] }
@@ -267,21 +344,8 @@
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>加入资产库</button>';
         var overlay = buildModal('al-modal--form', '加入资产库', body, footer, 'main');
 
-        // 分组下拉（异步填充）
-        var groupRow = overlay.querySelector('[data-al-group-row]');
-        var groups = [];
-        api('/groups').then(function (res) {
-            groups = (res.data && res.data.groups) || [];
-            var html = '<select class="al-select" data-al-group style="max-width:100%">' +
-                '<option value="">未分组</option>';
-            groups.forEach(function (g) {
-                html += '<option value="' + esc(String(g.id)) + '">' + esc(g.name) + '</option>';
-            });
-            html += '</select>';
-            groupRow.innerHTML = html;
-        }).catch(function () {
-            groupRow.innerHTML = '<span class="al-hint">分组加载失败，将保存为未分组</span>';
-        });
+        // 分组下拉（异步填充，含「＋ 新建分组…」）
+        fillGroupSelect(overlay.querySelector('[data-al-group-row]'), null);
 
         renderPermSection(overlay, 'view', state, { title: '谁可以看', hint: '被指定的成员可以查看该资产' });
         renderPermSection(overlay, 'edit', state, { title: '谁可以编辑', hint: '被指定的成员可以编辑该资产的名称/分组/权限' });
@@ -346,17 +410,7 @@
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>保存</button>';
         var overlay = buildModal('al-modal--form', '编辑资产', body, footer, 'sub');
 
-        api('/groups').then(function (res) {
-            var groups = (res.data && res.data.groups) || [];
-            var html = '<select class="al-select" data-al-group>' + '<option value="">未分组</option>';
-            groups.forEach(function (g) {
-                html += '<option value="' + esc(String(g.id)) + '"' + (g.id === asset.group_id ? ' selected' : '') + '>' + esc(g.name) + '</option>';
-            });
-            html += '</select>';
-            overlay.querySelector('[data-al-group-row]').innerHTML = html;
-        }).catch(function () {
-            overlay.querySelector('[data-al-group-row]').innerHTML = '<span class="al-hint">分组加载失败</span>';
-        });
+        fillGroupSelect(overlay.querySelector('[data-al-group-row]'), asset.group_id || null);
 
         // 成员名兜底：借助搜索接口不可批量，直接用「用户{id}」占位
         fillMembers('view');
@@ -401,6 +455,13 @@
      */
     function openModal(opts) {
         opts = opts || {};
+        ensureEnabled(function (allowed) {
+            if (!allowed) return;
+            openBrowseModal(opts);
+        });
+    }
+
+    function openBrowseModal(opts) {
         var view = {
             groupId: null,          // null=全部; 'ungrouped'=未分组; number=分组
             scope: 'all',

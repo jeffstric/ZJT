@@ -129,16 +129,24 @@ describe('入库/浏览弹窗 XSS 转义', () => {
       if (String(url).includes('/quota')) {
         return jsonResponse({ code: 0, data: { quota_bytes: 0, used_bytes: 0 } });
       }
+      if (String(url).includes('/status')) {
+        return jsonResponse({ code: 0, data: { enabled: true, allowed: true } });
+      }
       return jsonResponse({ code: 0, data: {} });
     });
-    const overlay = window.AssetLibrary.openModal();
-    // 等待两轮异步渲染（分组/资产列表加载）
-    await new Promise(r => setTimeout(r, 0));
-    await new Promise(r => setTimeout(r, 0));
+    window.AssetLibrary.openModal();
+    // openModal 经 ensureEnabled 异步打开：轮询等 overlay 出现再等渲染
+    let overlay = null;
+    for (let i = 0; i < 20 && !overlay; i++) {
+      await new Promise(r => setTimeout(r, 10));
+      overlay = document.querySelector('.al-overlay');
+    }
+    expect(overlay).toBeTruthy();
     // DOM 语义断言：无 script 元素、无以恶意 src=x 逃逸出的 img、文本节点为字面转义文本
     // （innerHTML 序列化时属性值内的 < 不转义属合法行为，只要未形成真实元素即安全）
     expect(overlay.querySelectorAll('script').length).toBe(0);
     expect(overlay.querySelectorAll('img[src="x"]').length).toBe(0);
+    await new Promise(r => setTimeout(r, 0));
     const nameEl = overlay.querySelector('.al-card-name');
     expect(nameEl).toBeTruthy();
     expect(nameEl.textContent).toBe('<img src=x onerror=alert(1)>');

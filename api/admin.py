@@ -802,6 +802,106 @@ class AssetQuotaRequest(BaseModel):
     quota_bytes: int = -1
 
 
+@router.get("/asset-library/config")
+async def admin_get_asset_library_config(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员读取资产库功能配置（开关/总容量GB/全员可用）与全站用量"""
+    await require_admin(auth_token)
+    try:
+        from services import asset_library_service as asset_svc
+        cfg = asset_svc.get_feature_config()
+        used = asset_svc.total_used_bytes()
+        return {
+            "code": 0,
+            "data": {
+                "enabled": cfg["enabled"],
+                "allow_all_users": cfg["allow_all_users"],
+                "total_quota_gb": round(cfg["total_quota_bytes"] / (1024 ** 3), 2),
+                "used_bytes": used,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Failed to get asset library config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AssetLibraryConfigRequest(BaseModel):
+    enabled: bool
+    allow_all_users: bool
+    total_quota_gb: float = 0  # 0=不限
+
+
+@router.put("/asset-library/config")
+async def admin_set_asset_library_config(
+    request: AssetLibraryConfigRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员设置资产库功能配置（写入 system_config，热生效）"""
+    admin = await require_admin(auth_token)
+    if not request:
+        raise HTTPException(status_code=400, detail="请求体不能为空")
+    if request.total_quota_gb < 0:
+        raise HTTPException(status_code=400, detail="总容量必须是非负数（0=不限）")
+    try:
+        from model.system_config import SystemConfigModel
+        from config.config_util import get_current_env, invalidate_dynamic_cache
+        from config.constant import AssetLibraryConstants as ALC
+
+        env = get_current_env()
+        items = [
+            (ALC.CONFIG_KEY_ENABLED, 'bool', '1' if request.enabled else '0', '资产库功能开关'),
+            (ALC.CONFIG_KEY_ALLOW_ALL_USERS, 'bool', '1' if request.allow_all_users else '0', '所有用户可用资产库（关闭则逐用户开启）'),
+            # system_config.value_type 枚举为 string/int/float/bool/json，无 'number'
+            (ALC.CONFIG_KEY_TOTAL_QUOTA_GB, 'float', str(request.total_quota_gb), '资产库总磁盘上限（GB，0=不限）'),
+        ]
+        for key, vtype, value, desc in items:
+            SystemConfigModel.upsert(
+                env=env,
+                config_key=f"{ALC.CONFIG_NAMESPACE}.{key}",
+                config_value=value,
+                value_type=vtype,
+                description=desc,
+                editable=1,
+                updated_by=admin.id,
+            )
+            invalidate_dynamic_cache(f"{ALC.CONFIG_NAMESPACE}.{key}")
+        return {"code": 0, "message": "资产库配置已保存"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set asset library config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AssetPermissionRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/users/{user_id}/asset-permission")
+async def admin_set_user_asset_permission(
+    user_id: int = Path(...),
+    request: AssetPermissionRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员逐用户开启/关闭资产库使用权限（allow_all_users 关闭时生效）"""
+    await require_admin(auth_token)
+    if not request:
+        raise HTTPException(status_code=400, detail="请求体不能为空")
+    try:
+        from model.asset_library_quota import AssetLibraryQuotaModel
+        user = UsersModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        AssetLibraryQuotaModel.set_enabled(user_id, request.enabled)
+        return {"code": 0, "message": "已更新", "data": {"user_id": user_id, "enabled": request.enabled}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set asset permission for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/users/{user_id}/asset-quota")
 async def admin_get_user_asset_quota(
     user_id: int = Path(...),
@@ -811,6 +911,7 @@ async def admin_get_user_asset_quota(
     await require_admin(auth_token)
     try:
         from services import asset_library_service as asset_svc
+        from model.asset_library_quota import AssetLibraryQuotaModel
         user = UsersModel.get_by_id(user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
@@ -823,6 +924,7 @@ async def admin_get_user_asset_quota(
                 "quota_bytes": quota["quota_bytes"],
                 "used_bytes": quota["used_bytes"],
                 "asset_count": asset_total,
+                "enabled": AssetLibraryQuotaModel.is_enabled(user_id),
             }
         }
     except HTTPException:

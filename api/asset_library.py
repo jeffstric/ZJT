@@ -13,7 +13,7 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from config.constant import AssetLibraryConstants as ALC
@@ -44,8 +44,34 @@ async def _is_admin(user_id: int) -> bool:
 
 def _http_error(e: AssetLibraryError) -> HTTPException:
     # not_found / group_not_found 均为"资源不存在"→ 统一 404（防枚举语义一致）
-    status = 404 if e.code in ("not_found", "group_not_found") else (403 if e.code in ("forbidden", "quota_exceeded") else 400)
+    status = 404 if e.code in ("not_found", "group_not_found") else (
+        403 if e.code in ("forbidden", "quota_exceeded", "global_quota_exceeded",
+                          "feature_disabled", "user_not_allowed") else 400)
     return HTTPException(status_code=status, detail=e.message)
+
+
+async def _feature_guard(request: Request) -> None:
+    """用户侧端点统一守卫：功能开关 + 逐用户权限（管理员放行）。
+
+    Depends 依赖先于 require_permission（endpoint 本体）执行，此处
+    request.state.user_id 尚未注入，须自行从 Authorization 解析身份
+    （与 require_permission 同源：header 优先，兼容 ?auth_token= 回退）。
+    """
+    from perseids_server.utils.auth_identity import normalize_authorization_token, resolve_authorization_user_id
+    auth_value = request.headers.get("authorization")
+    if not normalize_authorization_token(auth_value):
+        query_token = (request.query_params.get("auth_token") or "").strip()
+        if query_token:
+            auth_value = query_token
+    user_id, error_response = await resolve_authorization_user_id(auth_value)
+    if error_response is not None:
+        raise HTTPException(status_code=401, detail="登录状态失效，请重新登录")
+    is_admin = await _is_admin(user_id)
+    try:
+        await asyncio.to_thread(svc.ensure_user_allowed, user_id, is_admin)
+    except AssetLibraryError as e:
+        # Depends 内抛业务异常不会走端点的 _http_error 转换，须在此转 HTTP
+        raise _http_error(e)
 
 
 # ============ 请求模型 ============
@@ -78,12 +104,38 @@ class GroupRenameRequest(BaseModel):
     name: str = Field(..., max_length=ALC.GROUP_NAME_MAX_LENGTH)
 
 
+# ============ 功能状态 ============
+
+@router.get("/status")
+@require_permission("asset_library:view")
+async def get_status(request: Request):
+    """资产库功能状态（前端入口拦截用）：enabled=总开关，allowed=当前用户是否可用。"""
+    user_id = _current_user_id(request)
+    is_admin = await _is_admin(user_id)
+    cfg = await asyncio.to_thread(svc.get_feature_config)
+    allowed = cfg["enabled"] and (is_admin or cfg["allow_all_users"]
+                                  or await asyncio.to_thread(
+                                      svc.AssetLibraryQuotaModel.is_enabled, user_id))
+    used = await asyncio.to_thread(svc.total_used_bytes) if cfg["enabled"] else 0
+    return {
+        "code": 0,
+        "data": {
+            "enabled": cfg["enabled"],
+            "allowed": bool(allowed),
+            "allow_all_users": cfg["allow_all_users"],
+            "total_quota_bytes": cfg["total_quota_bytes"],
+            "used_bytes": used,
+        },
+    }
+
+
 # ============ 资产 ============
 
 @router.get("/assets")
 @require_permission("asset_library:view")
 async def list_assets(
     request: Request,
+    _guard: None = Depends(_feature_guard),
     page: int = Query(1, ge=1),
     page_size: int = Query(ALC.DEFAULT_PAGE_SIZE, ge=1, le=ALC.MAX_PAGE_SIZE),
     group_id: Optional[int] = Query(None, description="分组筛选；配合 group_scope=ungrouped 查未分组"),
@@ -109,6 +161,7 @@ async def list_assets(
 async def add_asset(request: Request, body: AssetAddRequest):
     """加入资产库：下载/复制源文件到永久目录 + 配额预留。"""
     user_id = _current_user_id(request)
+    is_admin = await _is_admin(user_id)
     try:
         asset = await svc.add_asset(
             user_id=user_id,
@@ -120,6 +173,7 @@ async def add_asset(request: Request, body: AssetAddRequest):
             edit_permission=body.edit_permission,
             view_members=body.view_members,
             edit_members=body.edit_members,
+            is_admin=is_admin,
         )
         detail = await asyncio.to_thread(svc.get_asset_detail, user_id, asset.id)
         return {"code": 0, "data": detail}
@@ -129,7 +183,7 @@ async def add_asset(request: Request, body: AssetAddRequest):
 
 @router.get("/assets/{asset_id}")
 @require_permission("asset_library:view")
-async def get_asset(request: Request, asset_id: int):
+async def get_asset(request: Request, asset_id: int, _guard: None = Depends(_feature_guard)):
     """资产详情（需查看权限；管理员可查看任意资产）。"""
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
@@ -142,7 +196,7 @@ async def get_asset(request: Request, asset_id: int):
 
 @router.put("/assets/{asset_id}")
 @require_permission("asset_library:edit")
-async def update_asset(request: Request, asset_id: int, body: AssetUpdateRequest):
+async def update_asset(request: Request, asset_id: int, body: AssetUpdateRequest, _guard: None = Depends(_feature_guard)):
     """编辑资产元信息（名称/分组/权限设置，需编辑权限）。"""
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
@@ -175,7 +229,7 @@ async def purge_asset(request: Request, asset_id: int):
 
 @router.get("/groups")
 @require_permission("asset_library:view")
-async def list_groups(request: Request):
+async def list_groups(request: Request, _guard: None = Depends(_feature_guard)):
     """共享分组目录（含每组可见资产计数与未分组计数）。"""
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
@@ -194,7 +248,7 @@ async def list_groups(request: Request):
 
 @router.post("/groups")
 @require_permission("asset_library:create")
-async def create_group(request: Request, body: GroupCreateRequest):
+async def create_group(request: Request, body: GroupCreateRequest, _guard: None = Depends(_feature_guard)):
     """创建分组（共享目录，任何登录用户可建）。"""
     user_id = _current_user_id(request)
     try:
@@ -206,7 +260,7 @@ async def create_group(request: Request, body: GroupCreateRequest):
 
 @router.put("/groups/{group_id}")
 @require_permission("asset_library:edit")
-async def rename_group(request: Request, group_id: int, body: GroupRenameRequest):
+async def rename_group(request: Request, group_id: int, body: GroupRenameRequest, _guard: None = Depends(_feature_guard)):
     """重命名分组（创建者或管理员）。"""
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
@@ -219,7 +273,7 @@ async def rename_group(request: Request, group_id: int, body: GroupRenameRequest
 
 @router.delete("/groups/{group_id}")
 @require_permission("asset_library:edit")
-async def delete_group(request: Request, group_id: int):
+async def delete_group(request: Request, group_id: int, _guard: None = Depends(_feature_guard)):
     """删除分组（创建者或管理员；组内有资产时拒绝）。"""
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
@@ -234,7 +288,7 @@ async def delete_group(request: Request, group_id: int):
 
 @router.get("/quota")
 @require_permission("asset_library:view")
-async def get_quota(request: Request):
+async def get_quota(request: Request, _guard: None = Depends(_feature_guard)):
     """当前用户资产库容量使用情况。"""
     user_id = _current_user_id(request)
     quota = await asyncio.to_thread(svc.get_quota, user_id)
@@ -245,6 +299,7 @@ async def get_quota(request: Request):
 @require_permission("asset_library:view")
 async def search_users(
     request: Request,
+    _guard: None = Depends(_feature_guard),
     account: str = Query("", max_length=100),
 ):
     """按完整账号精确查找用户（指定成员添加）。

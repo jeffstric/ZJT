@@ -2504,6 +2504,15 @@ class AssetLibraryConstants:
     # 用户搜索（指定成员选择）返回上限
     MEMBER_SEARCH_LIMIT = 20
 
+    # ===== 功能开关（system_config，管理员在 admin「资产管理」配置）=====
+    # get_dynamic_config_value('asset_library', <key>) 读取；写入走
+    # SystemConfigModel.upsert + invalidate_dynamic_cache
+    CONFIG_KEY_ENABLED = 'enabled'              # bool，默认 False：总开关
+    CONFIG_KEY_TOTAL_QUOTA_GB = 'total_quota_gb'  # number，默认 0=不限：全站总磁盘上限
+    CONFIG_KEY_ALLOW_ALL_USERS = 'allow_all_users'  # bool，默认 False：全员可用（关闭则逐用户 quota.enabled）
+    CONFIG_NAMESPACE = 'asset_library'
+    GLOBAL_QUOTA_EXCEEDED_MSG = '资产库总容量已满，请联系管理员调整'
+
 
 class MediaConstants:
     """媒体处理相关常量"""

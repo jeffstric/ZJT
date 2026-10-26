@@ -46,9 +46,32 @@ class AssetLibraryQuotaModel:
                 'user_id': int(row['user_id']),
                 'quota_bytes': int(row['quota_bytes'] or 0),
                 'used_bytes': int(row['used_bytes'] or 0),
+                'enabled': bool(row.get('enabled', 0)) if isinstance(row, dict) else False,
             }
         except pymysql.MySQLError as e:
             logger.error(f"Failed to get quota for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def is_enabled(user_id: int) -> bool:
+        """读取逐用户使用权限开关（allow_all_users 关闭时生效）。"""
+        sql = "SELECT enabled FROM asset_library_quota WHERE user_id = %s"
+        try:
+            row = execute_query(sql, (user_id,), fetch_one=True)
+            return bool(row and row.get('enabled', 0))
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to read asset permission for user {user_id}: {e}")
+            raise
+
+    @staticmethod
+    def set_enabled(user_id: int, enabled: bool) -> None:
+        """管理员设置逐用户使用权限开关（行不存在时先建）。"""
+        AssetLibraryQuotaModel.ensure_for_user(user_id)
+        sql = "UPDATE asset_library_quota SET enabled = %s WHERE user_id = %s"
+        try:
+            execute_update(sql, (1 if enabled else 0, user_id))
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to set asset permission for user {user_id}: {e}")
             raise
 
     @staticmethod
@@ -113,6 +136,7 @@ CREATE TABLE IF NOT EXISTS `asset_library_quota` (
   `user_id` int NOT NULL COMMENT '用户 ID',
   `quota_bytes` bigint NOT NULL DEFAULT 2147483648 COMMENT '资产库容量上限（字节，0=不限制，默认 2GB）',
   `used_bytes` bigint NOT NULL DEFAULT 0 COMMENT '已用资产库容量（字节，随加入/清除增减）',
+  `enabled` tinyint NOT NULL DEFAULT 0 COMMENT '是否允许使用资产库（allow_all_users 关闭时逐用户生效）',
   `create_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),

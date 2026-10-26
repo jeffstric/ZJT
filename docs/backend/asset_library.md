@@ -6,9 +6,11 @@
 
 资产库让用户把 **marketing_agent / video_workflow / storyboard** 三个页面中生成的图片（首期仅图片，表结构已预留 video/audio）收藏为可复用资产：
 
+> **功能开关**（system_config，admin「资产管理」配置，默认关闭）：`asset_library.enabled` 总开关（关闭时所有用户侧接口 403）、`asset_library.allow_all_users` 全员可用（关闭时按 `asset_library_quota.enabled` 逐用户放行，用户管理「资产库容量」弹窗内开关）、`asset_library.total_quota_gb` 全站总磁盘上限（0=不限，超限新资产拒绝加入；入库时 SUM(file_size) 校验，软限制）。前端 `window.AssetLibrary` 的 promptAdd/openModal 经 `GET /api/asset-library/status` 前置拦截（缓存探测）。
+
 - **入库**：各页面生成图片卡片上的「入库」按钮 → 弹窗设置名称/分组/权限 → 服务端把源文件**复制/下载到本地永久目录**（`upload/asset_library/<user_id>/`），资产文件不受媒体缓存清理策略影响（`utils/media_cache.py` 不扫描该目录）、普通用户不可删除。
 - **权限**：每个资产独立的「查看」与「编辑」权限，各自支持 `private`（仅自己）/ `specified`（指定成员）/ `public`（所有人）；编辑权限隐含查看权限。
-- **分组**：`asset_group` 分组目录**全局共享**（所有登录用户可见同一套目录、均可创建；重命名/删除限创建者或管理员，组内有资产时拒绝删除）。
+- **分组**：入库/编辑弹窗分组下拉含「＋ 新建分组…」（选中后输入组名即时创建并选中）；`asset_group` 分组目录**全局共享**（所有登录用户可见同一套目录、均可创建；重命名/删除限创建者或管理员，组内有资产时拒绝删除）。
 - **@ 引用**：三个页面通过 @ 提及引用资产库内容（见 §5）。
 - **容量**：资产文件不受存储容量限制，但按用户记录已用容量（`asset_library_quota`），管理员逐人设置上限（admin 用户管理 →「资产库容量」，`0=不限`，默认 2GB）；管理员清除资产文件后自动扣减该用户容量记录。
 
@@ -54,11 +56,14 @@
 | GET | `/api/admin/users/{id}/asset-quota` | 查询配额与用量、资产数 |
 | PUT | `/api/admin/users/{id}/asset-quota` | 设置 `quota_bytes`（0=不限） |
 | GET | `/api/admin/asset-library/assets?user_id=` | 按用户列资产（清除入口数据源） |
+| GET/PUT | `/api/admin/asset-library/config` | 读取/保存功能配置（enabled / allow_all_users / total_quota_gb，写 system_config 热生效，value_type 用 float——枚举无 number） |
+| PUT | `/api/admin/users/{id}/asset-permission` | 逐用户开启/关闭使用权限（quota.enabled；allow_all_users 关闭时生效） |
 
 ### 入库流程与配额并发安全（`svc.add_asset`）
 
-1. 校验参数（类型/权限枚举/分组存在/成员数 ≤50）；
+1. 校验参数（类型/权限枚举/分组存在/成员数 ≤50）；随后 `ensure_user_allowed`（开关+逐用户权限，管理员跳过 allow_all 但不跳过总开关）；
 2. 源文件持久化：`/upload/` 本站路径直接复制，外链走 aiohttp 下载（超时常量 `AssetLibraryConstants.DOWNLOAD_*`；写盘丢 `utils/download_io_pool` 长寿线程池）；
+2.5. **全站总容量校验**：`check_global_capacity`（total_quota_gb>0 时 SUM+size≤limit，SUM 与 INSERT 间有并发窗口属软限制）；
 3. **原子预留**：`quota.try_reserve` 用条件 UPDATE（`used_bytes + size <= quota_bytes OR quota_bytes = 0`）无锁防超卖；失败返回 `quota_exceeded`；
 4. `os.replace` 转正文件名 → 插入 `asset_library` → 写指定成员；
 5. `finally` 兜底：失败路径清理临时/已转正文件并 `quota.release`（AGENTS.md 第 10 条 try/finally 清理红线）。

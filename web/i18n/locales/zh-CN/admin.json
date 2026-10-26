@@ -1143,5 +1143,19 @@
   "field_xhs_provider_label": "小红书抓取通道",
   "field_xhs_provider_help": "默认关闭；开启后营销智能体可抓取小红书笔记（需上方 API Key）",
   "option_xhs_provider_off": "关闭（默认）",
-  "option_xhs_provider_tikhub": "启用（TikHub）"
+  "option_xhs_provider_tikhub": "启用（TikHub）",
+  "nav_asset_lib": "资产管理",
+  "asset_lib_title": "资产管理",
+  "asset_lib_enabled": "开启资产库",
+  "asset_lib_enabled_hint": "总开关：关闭后所有用户（含管理员）均无法入库/浏览，默认关闭",
+  "asset_lib_allow_all": "所有用户可用",
+  "asset_lib_allow_all_hint": "开启后全部登录用户可使用；关闭时需在「用户管理 → 资产库容量」中逐用户开启",
+  "asset_lib_total_quota": "资产库总磁盘上限（GB）",
+  "asset_lib_total_quota_hint": "全站资产总占用超过该值后新资产无法加入；0 表示不限制",
+  "asset_lib_used": "当前全站占用",
+  "asset_lib_user_perm_hint": "逐用户权限与单人容量：用户管理 → 操作列「资产库容量」",
+  "asset_lib_user_enabled": "允许使用资产库",
+  "asset_lib_user_enabled_hint": "「所有用户可用」关闭时，勾选后该用户才能入库/浏览",
+  "toast_asset_lib_saved": "资产库配置已保存",
+  "btn_save_config": "保存配置"
 }
