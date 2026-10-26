@@ -201,7 +201,7 @@ ssao.output = THREE.SSAOPass.OUTPUT.Default;
 - WebGL2 且 `THREE.WebGLMultisampleRenderTarget` 可用时，把 `ssao.beautyRenderTarget` 替换为 `WebGLMultisampleRenderTarget`（`samples=4`）并同步 `ssaoMaterial.uniforms.tDiffuse.value`、释放旧 target；否则 SSAO 自己渲染的 beauty 会绕开 composer 的抗锯齿，画面发糊、锯齿明显。
 - `renderSnapshotDataUrl()` 不再临时切质量，仅在 `finally` 中恢复 helper。
 - FOV 变化只调用 `syncComposerCamera` 更新 projection/inverse uniforms，不每帧重建 render target。
-- ResizeObserver 同步主 composer 尺寸。
+- ResizeObserver 同步主 composer 尺寸（`setSize`/`setQuality` 均为**整链重建**而非热调整：r128 的 `RenderTarget.setSize`/热调 pixelRatio 会损坏 SSAOPass 的 DepthTexture 附件，深度采样恒为 0，SSAO 输出噪声斑块/"尾影"；导演台 resize 低频，重建开销可忽略）。
 - 缺组件或深度纹理时回退原始 `renderer.render(scene, camera)`，仅警告一次。
 
 渲染路径：

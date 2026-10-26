@@ -253,103 +253,138 @@
       return fallback;
     }
 
-    var composer = new THREE.EffectComposer(renderer);
-    var pixelRatio = options.pixelRatio || renderer.getPixelRatio();
-    composer.setPixelRatio(pixelRatio);
-    var renderPass = new THREE.RenderPass(scene, camera);
-    composer.addPass(renderPass);
-    var size = renderer.getSize(new THREE.Vector2());
-    var ssao = new THREE.SSAOPass(scene, camera, Math.max(1, size.x * pixelRatio), Math.max(1, size.y * pixelRatio));
-    ssao.kernelRadius = options.kernelRadius == null ? 0.18 : options.kernelRadius;
-    ssao.minDistance = options.minDistance == null ? 0.0008 : options.minDistance;
-    ssao.maxDistance = options.maxDistance == null ? 0.025 : options.maxDistance;
-    ssao.output = THREE.SSAOPass.OUTPUT.Default;
-    // 蒙皮人偶的 SSAO 残影修复：法线/深度预渲染默认走 scene.overrideMaterial，
-    // r128 该路径不会给蒙皮网格上传骨骼纹理——预渲染结果冻结在某一固定姿态，
-    // 摆姿后与 beauty 不一致，乘法合成出深色"残影"。skinning 标志必须保留
-    // （逐对象渲染时走正常蒙皮路径要用），同时把 overrideMaterial 渲染改为
-    // 逐网格临时换材质，与 beauty 完全同一条渲染路径。
-    var skinnedNormalMat = ssao.normalMaterial;
-    if (skinnedNormalMat) skinnedNormalMat.skinning = true;
-    if (skinnedNormalMat && typeof ssao.renderOverride === 'function') {
-      // 激活标记：用户可在控制台确认蒙皮预渲染补丁已生效（出现旧缓存 JS 时此日志缺失）
-      console.info('[导演台] SSAO 蒙皮预渲染补丁已激活');
-      var origRenderOverride = ssao.renderOverride;
-      ssao.renderOverride = function (renderer, overrideMaterial, renderTarget, clearColor, clearAlpha) {
-        if (overrideMaterial !== skinnedNormalMat || !scene || !scene.traverse) {
-          return origRenderOverride.call(ssao, renderer, overrideMaterial, renderTarget, clearColor, clearAlpha);
-        }
-        var swapped = [];
-        scene.traverse(function (o) {
-          if ((o.isMesh || o.isLine || o.isPoints) && o.visible && o.material !== skinnedNormalMat) {
-            swapped.push([o, o.material]);
-            o.material = skinnedNormalMat;
+    // r128 的 EffectComposer/SSAOPass 热插拔尺寸同步存在底层缺陷（RenderTarget.setSize 后
+    // 深度纹理附件损坏，采样恒为 0=近处，SSAO 输出噪声斑块/"尾影"），JS 层重挂深度纹理
+    // 也无法修复。导演台仅在打开/窗口调整时 resize（低频），故 setSize 采用整链重建：
+    // GL 程序与材质缓存由 three 复用，开销可忽略，且能彻底绕开该类缺陷。
+    var pipeline = { supported: true, composer: null, ssao: null };
+    var parts = null;
+    // setQuality 与初始构造共用：rebuild 后保持用户设定过的采样率
+    var currentPixelRatio = options.pixelRatio || renderer.getPixelRatio();
+
+    function buildParts(optW, optH) {
+      var composer = new THREE.EffectComposer(renderer);
+      var pixelRatio = currentPixelRatio;
+      composer.setPixelRatio(pixelRatio);
+      var renderPass = new THREE.RenderPass(scene, camera);
+      composer.addPass(renderPass);
+      var size = renderer.getSize(new THREE.Vector2());
+      // SSAOPass 必须直接以最终尺寸构造：其 normalRenderTarget 带 DepthTexture 附件，
+      // 走 r128 热 setSize 会触发深度纹理缺陷；构造后同尺寸 setSize 是 no-op，安全。
+      var pw = Math.max(1, Math.round((optW || size.x) * pixelRatio));
+      var ph = Math.max(1, Math.round((optH || size.y) * pixelRatio));
+      var ssao = new THREE.SSAOPass(scene, camera, pw, ph);
+      if (optW && optH) composer.setSize(optW, optH);
+      ssao.kernelRadius = options.kernelRadius == null ? 0.18 : options.kernelRadius;
+      ssao.minDistance = options.minDistance == null ? 0.0008 : options.minDistance;
+      ssao.maxDistance = options.maxDistance == null ? 0.025 : options.maxDistance;
+      ssao.output = THREE.SSAOPass.OUTPUT.Default;
+      // 蒙皮人偶的 SSAO 残影修复：法线/深度预渲染默认走 scene.overrideMaterial，
+      // r128 该路径不会给蒙皮网格上传骨骼纹理——预渲染结果冻结在某一固定姿态，
+      // 摆姿后与 beauty 不一致，乘法合成出深色"残影"。skinning 标志必须保留
+      // （逐对象渲染时走正常蒙皮路径要用），同时把 overrideMaterial 渲染改为
+      // 逐网格临时换材质，与 beauty 完全同一条渲染路径。
+      var skinnedNormalMat = ssao.normalMaterial;
+      if (skinnedNormalMat) skinnedNormalMat.skinning = true;
+      if (skinnedNormalMat && typeof ssao.renderOverride === 'function') {
+        // 激活标记：用户可在控制台确认蒙皮预渲染补丁已生效（出现旧缓存 JS 时此日志缺失）
+        console.info('[导演台] SSAO 蒙皮预渲染补丁已激活');
+        var origRenderOverride = ssao.renderOverride;
+        ssao.renderOverride = function (renderer, overrideMaterial, renderTarget, clearColor, clearAlpha) {
+          if (overrideMaterial !== skinnedNormalMat || !scene || !scene.traverse) {
+            return origRenderOverride.call(ssao, renderer, overrideMaterial, renderTarget, clearColor, clearAlpha);
           }
+          var swapped = [];
+          scene.traverse(function (o) {
+            if ((o.isMesh || o.isLine || o.isPoints) && o.visible && o.material !== skinnedNormalMat) {
+              swapped.push([o, o.material]);
+              o.material = skinnedNormalMat;
+            }
+          });
+          renderer.getClearColor(ssao.originalClearColor);
+          var originalClearAlpha = renderer.getClearAlpha();
+          var originalAutoClear = renderer.autoClear;
+          renderer.setRenderTarget(renderTarget);
+          renderer.autoClear = false;
+          clearColor = overrideMaterial.clearColor || clearColor;
+          clearAlpha = overrideMaterial.clearAlpha || clearAlpha;
+          if (clearColor !== undefined && clearColor !== null) {
+            renderer.setClearColor(clearColor);
+            renderer.setClearAlpha(clearAlpha || 0.0);
+            renderer.clear();
+          }
+          try {
+            renderer.render(scene, ssao.camera);
+          } finally {
+            for (var i = 0; i < swapped.length; i++) swapped[i][0].material = swapped[i][1];
+            renderer.autoClear = originalAutoClear;
+            renderer.setClearColor(ssao.originalClearColor);
+            renderer.setClearAlpha(originalClearAlpha);
+          }
+        };
+      }
+      // SSAOPass 自己渲染 beauty；只给 composer 开 MSAA 无法覆盖这里，必须替换它的 target。
+      if (options.msaa !== false && renderer.capabilities.isWebGL2 && THREE.WebGLMultisampleRenderTarget) {
+        var originalBeauty = ssao.beautyRenderTarget;
+        var beautyMsaa = new THREE.WebGLMultisampleRenderTarget(ssao.width, ssao.height, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat
         });
-        renderer.getClearColor(ssao.originalClearColor);
-        var originalClearAlpha = renderer.getClearAlpha();
-        var originalAutoClear = renderer.autoClear;
-        renderer.setRenderTarget(renderTarget);
-        renderer.autoClear = false;
-        clearColor = overrideMaterial.clearColor || clearColor;
-        clearAlpha = overrideMaterial.clearAlpha || clearAlpha;
-        if (clearColor !== undefined && clearColor !== null) {
-          renderer.setClearColor(clearColor);
-          renderer.setClearAlpha(clearAlpha || 0.0);
-          renderer.clear();
-        }
-        try {
-          renderer.render(scene, ssao.camera);
-        } finally {
-          for (var i = 0; i < swapped.length; i++) swapped[i][0].material = swapped[i][1];
-          renderer.autoClear = originalAutoClear;
-          renderer.setClearColor(ssao.originalClearColor);
-          renderer.setClearAlpha(originalClearAlpha);
+        beautyMsaa.samples = options.msaaSamples || 4;
+        beautyMsaa.texture.name = 'DirectorStage.SSAOBeauty.MSAA';
+        ssao.beautyRenderTarget = beautyMsaa;
+        ssao.ssaoMaterial.uniforms.tDiffuse.value = beautyMsaa.texture;
+        originalBeauty.dispose();
+      }
+      composer.addPass(ssao);
+      var gamma = new THREE.ShaderPass(THREE.GammaCorrectionShader);
+      composer.addPass(gamma);
+
+      return {
+        composer: composer,
+        ssao: ssao,
+        dispose: function () {
+          if (ssao.ssaoMaterial) ssao.ssaoMaterial.dispose();
+          if (ssao.noiseTexture) ssao.noiseTexture.dispose();
+          if (ssao.normalRenderTarget && ssao.normalRenderTarget.depthTexture) {
+            ssao.normalRenderTarget.depthTexture.dispose();
+          }
+          [renderPass, ssao, gamma, composer.copyPass].forEach(function (pass) {
+            if (pass && pass.dispose) pass.dispose();
+            else if (pass && pass.material) pass.material.dispose();
+          });
+          composer.renderTarget1.dispose();
+          composer.renderTarget2.dispose();
         }
       };
     }
-    // SSAOPass 自己渲染 beauty；只给 composer 开 MSAA 无法覆盖这里，必须替换它的 target。
-    if (options.msaa !== false && renderer.capabilities.isWebGL2 && THREE.WebGLMultisampleRenderTarget) {
-      var originalBeauty = ssao.beautyRenderTarget;
-      var beautyMsaa = new THREE.WebGLMultisampleRenderTarget(ssao.width, ssao.height, {
-        minFilter: THREE.LinearFilter,
-        magFilter: THREE.LinearFilter,
-        format: THREE.RGBAFormat
-      });
-      beautyMsaa.samples = options.msaaSamples || 4;
-      beautyMsaa.texture.name = 'DirectorStage.SSAOBeauty.MSAA';
-      ssao.beautyRenderTarget = beautyMsaa;
-      ssao.ssaoMaterial.uniforms.tDiffuse.value = beautyMsaa.texture;
-      originalBeauty.dispose();
-    }
-    composer.addPass(ssao);
-    var gamma = new THREE.ShaderPass(THREE.GammaCorrectionShader);
-    composer.addPass(gamma);
 
-    return {
-      composer: composer,
-      ssao: ssao,
-      supported: true,
-      render: function () {
-        syncComposerCamera(ssao, camera);
-        composer.render();
-      },
-      setSize: function (width, height) { composer.setSize(width, height); },
-      setQuality: function (ratio) { composer.setPixelRatio(ratio); },
-      dispose: function () {
-        if (ssao.ssaoMaterial) ssao.ssaoMaterial.dispose();
-        if (ssao.noiseTexture) ssao.noiseTexture.dispose();
-        if (ssao.normalRenderTarget && ssao.normalRenderTarget.depthTexture) {
-          ssao.normalRenderTarget.depthTexture.dispose();
-        }
-        [renderPass, ssao, gamma, composer.copyPass].forEach(function (pass) {
-          if (pass && pass.dispose) pass.dispose();
-          else if (pass && pass.material) pass.material.dispose();
-        });
-        composer.renderTarget1.dispose();
-        composer.renderTarget2.dispose();
-      }
+    parts = buildParts();
+    pipeline.composer = parts.composer;
+    pipeline.ssao = parts.ssao;
+    pipeline.render = function () {
+      syncComposerCamera(pipeline.ssao, camera);
+      pipeline.composer.render();
     };
+    pipeline.setSize = function (width, height) {
+      var old = parts;
+      parts = buildParts(width, height);
+      pipeline.composer = parts.composer;
+      pipeline.ssao = parts.ssao;
+      try { old.dispose(); } catch (e) { /* noop */ }
+    };
+    pipeline.setQuality = function (ratio) {
+      currentPixelRatio = ratio;
+      // 同 setSize：r128 热调 pixelRatio 会走 ssao.setSize 触发深度纹理缺陷，整链重建
+      var old = parts;
+      parts = buildParts();
+      pipeline.composer = parts.composer;
+      pipeline.ssao = parts.ssao;
+      try { old.dispose(); } catch (e) { /* noop */ }
+    };
+    pipeline.dispose = function () { parts.dispose(); };
+    return pipeline;
   }
 
   // 仅合并同一刚体内、同材质且 attribute 布局一致的网格；调用方保留关节层级和原始网格生命周期。
