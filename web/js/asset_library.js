@@ -127,14 +127,17 @@
     ];
 
     /**
-     * 渲染一套权限设置（radio 式按钮 + 成员选择器）。
+     * 渲染一套权限设置（标题 + radio 式按钮 + 成员选择器）。
      * state: { view: {permission, members:[]}, edit: {...} }
+     * labels: {title, hint}——标题由这里输出（section.innerHTML 是整体覆盖，
+     * 静态写在容器里的 label 会被冲掉）
      */
     function renderPermSection(container, kind, state, labels) {
         var section = container.querySelector('[data-al-perm="' + kind + '"]');
         if (!section) return;
         var conf = state[kind];
-        var html = '<div class="al-perm-row" role="group">';
+        var html = '<label class="al-label">' + esc(labels.title || '') + '</label>';
+        html += '<div class="al-perm-row" role="group">';
         PERM_OPTIONS.forEach(function (opt) {
             html += '<button type="button" class="al-perm-opt' + (conf.permission === opt.value ? ' is-active' : '') +
                 '" data-al-perm-opt="' + kind + '" data-value="' + opt.value + '">' + esc(opt.label) + '</button>';
@@ -248,17 +251,20 @@
             edit: { permission: 'private', members: [] }
         };
         var body =
+            '<div class="al-add-layout">' +
             '<div class="al-add-preview"><img src="' + esc(absoluteUrl(sourceUrl)) + '" alt="预览" onerror="this.style.display=\'none\'"></div>' +
+            '<div class="al-add-form">' +
             '<div class="al-field"><label class="al-label">资产名称</label>' +
             '<input type="text" class="al-input" data-al-name maxlength="200" value="' + esc(opts.name || '') + '" placeholder="给资产起个名字"></div>' +
             '<div class="al-field"><label class="al-label">分组（共享目录，所有人可见）</label><div class="al-perm-row" data-al-group-row></div></div>' +
-            '<div class="al-field" data-al-perm="view"><label class="al-label">谁可以看</label></div>' +
-            '<div class="al-field" data-al-perm="edit"><label class="al-label">谁可以编辑</label></div>' +
-            '<div class="al-error" data-al-error></div>';
+            '<div class="al-field" data-al-perm="view"></div>' +
+            '<div class="al-field" data-al-perm="edit"></div>' +
+            '<div class="al-error" data-al-error></div>' +
+            '</div></div>';
         var footer =
             '<button type="button" class="al-btn" data-al-close>取消</button>' +
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>加入资产库</button>';
-        var overlay = buildModal('al-modal--compact', '加入资产库', body, footer, 'main');
+        var overlay = buildModal('al-modal--form', '加入资产库', body, footer, 'main');
 
         // 分组下拉（异步填充）
         var groupRow = overlay.querySelector('[data-al-group-row]');
@@ -276,8 +282,8 @@
             groupRow.innerHTML = '<span class="al-hint">分组加载失败，将保存为未分组</span>';
         });
 
-        renderPermSection(overlay, 'view', state, { hint: '被指定的成员可以查看该资产' });
-        renderPermSection(overlay, 'edit', state, { hint: '被指定的成员可以编辑该资产的名称/分组/权限' });
+        renderPermSection(overlay, 'view', state, { title: '谁可以看', hint: '被指定的成员可以查看该资产' });
+        renderPermSection(overlay, 'edit', state, { title: '谁可以编辑', hint: '被指定的成员可以编辑该资产的名称/分组/权限' });
 
         var submitBtn = overlay.querySelector('[data-al-submit]');
         var errBox = overlay.querySelector('[data-al-error]');
@@ -331,13 +337,13 @@
             '<div class="al-field"><label class="al-label">资产名称</label>' +
             '<input type="text" class="al-input" data-al-name maxlength="200" value="' + esc(asset.name || '') + '"></div>' +
             '<div class="al-field"><label class="al-label">分组</label><div class="al-perm-row" data-al-group-row></div></div>' +
-            '<div class="al-field" data-al-perm="view"><label class="al-label">谁可以看</label></div>' +
-            '<div class="al-field" data-al-perm="edit"><label class="al-label">谁可以编辑</label></div>' +
+            '<div class="al-field" data-al-perm="view"></div>' +
+            '<div class="al-field" data-al-perm="edit"></div>' +
             '<div class="al-error" data-al-error></div>';
         var footer =
             '<button type="button" class="al-btn" data-al-close>取消</button>' +
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>保存</button>';
-        var overlay = buildModal('al-modal--compact', '编辑资产', body, footer, 'sub');
+        var overlay = buildModal('al-modal--form', '编辑资产', body, footer, 'sub');
 
         api('/groups').then(function (res) {
             var groups = (res.data && res.data.groups) || [];
@@ -354,8 +360,8 @@
         // 成员名兜底：借助搜索接口不可批量，直接用「用户{id}」占位
         fillMembers('view');
         fillMembers('edit');
-        renderPermSection(overlay, 'view', state, { hint: '被指定的成员可以查看该资产' });
-        renderPermSection(overlay, 'edit', state, { hint: '被指定的成员可以编辑该资产的名称/分组/权限' });
+        renderPermSection(overlay, 'view', state, { title: '谁可以看', hint: '被指定的成员可以查看该资产' });
+        renderPermSection(overlay, 'edit', state, { title: '谁可以编辑', hint: '被指定的成员可以编辑该资产的名称/分组/权限' });
 
         overlay.querySelector('[data-al-submit]').addEventListener('click', function () {
             var btn = overlay.querySelector('[data-al-submit]');

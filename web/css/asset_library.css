@@ -162,19 +162,55 @@
     margin-top: 4px;
 }
 
-/* ============ 加入资产弹窗 ============ */
-.al-add-preview {
+/* ============ 加入/编辑资产弹窗（表单型，两栏） ============ */
+.al-modal--form {
+    width: min(760px, calc(100vw - 48px));
+}
+
+.al-add-layout {
     display: flex;
+    gap: 20px;
+    align-items: flex-start;
+}
+
+.al-add-preview {
+    flex: none;
+    width: 300px;
+    display: flex;
+    align-items: center;
     justify-content: center;
-    margin-bottom: 14px;
+    background: #f5f6f8;
+    border-radius: 10px;
+    padding: 10px;
+    min-height: 220px;
 }
 
 .al-add-preview img {
     max-width: 100%;
-    max-height: 180px;
-    border-radius: 8px;
-    border: 1px solid #eee;
+    max-height: 300px;
+    border-radius: 6px;
     object-fit: contain;
+}
+
+.al-add-form {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 窄屏回退单栏 */
+@media (max-width: 720px) {
+    .al-add-layout {
+        flex-direction: column;
+    }
+
+    .al-add-preview {
+        width: 100%;
+        min-height: 140px;
+    }
+
+    .al-add-preview img {
+        max-height: 200px;
+    }
 }
 
 /* ============ 权限设置 ============ */
@@ -679,4 +715,8 @@ html.theme-dark .al-new-group {
 
 html.theme-dark .al-toast {
     background: rgba(50, 50, 52, 0.95);
+}
+
+html.theme-dark .al-add-preview {
+    background: #262626;
 }
