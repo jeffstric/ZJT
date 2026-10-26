@@ -4,7 +4,8 @@ SeedanceTopenrouterV1 驱动单元测试
 纯单元测试，不依赖数据库，使用 mock 替代所有外部依赖
 
 覆盖：初始化（模型别名/配置覆盖）、任务路径、扩展状态（expired/cancelled）、
-真人素材 asset:// 引用（human_review 门控与兜底）、素材上传失败降级为 SYSTEM 错误
+真人素材三模式分派（human_asset_mode × enable_face_mask 勾选，human_review
+残留重算）、素材上传失败降级为 SYSTEM 错误、终态素材回收
 """
 import os
 import sys
@@ -206,11 +207,11 @@ class TestTaskPathAndStatus(unittest.TestCase):
 
 
 class TestAssetLibraryIntegration(unittest.TestCase):
-    """真人素材 asset:// 引用（human_review 门控）"""
+    """真人素材三模式分派（human_asset_mode + enable_face_mask 勾选）"""
 
     def setUp(self):
         self.driver = _create_driver()
-        # mock 素材客户端（驱动 __init__ 已构造真实客户端，测试中替换）
+        # mock 素材客户端（懒建缓存实例，测试中替换）
         self.asset_client = MagicMock()
         self.asset_client.create_asset.return_value = {
             "Id": "asset-001", "Status": "Processing"
@@ -218,7 +219,12 @@ class TestAssetLibraryIntegration(unittest.TestCase):
         self.asset_client.wait_asset_active.return_value = {
             "Id": "asset-001", "Status": "Active"
         }
-        self.driver._asset_client = self.asset_client
+        self.driver._asset_client_instance = self.asset_client
+        # 默认 asset_library 模式（等价生产 topenrouter 默认；单测配置缓存无该键）
+        patcher = patch.object(self.driver, '_resolve_human_asset_mode',
+                               return_value='asset_library')
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _build(self, extra_config):
         ai_tool = _make_ai_tool(extra_config=extra_config)
@@ -226,9 +232,9 @@ class TestAssetLibraryIntegration(unittest.TestCase):
                    return_value=(True, 'https://cdn.example.com/first.jpg', None)):
             return self.driver.build_create_request(ai_tool)
 
-    def test_human_review_true_uploads_asset(self):
-        """human_review=true：素材上传素材库并替换为 asset://"""
-        result = self._build({'image_mode': 'first_last_frame', 'human_review': True})
+    def test_enable_face_mask_uploads_asset(self):
+        """asset_library 模式 + 勾选处理人脸：素材上传素材库并替换为 asset://"""
+        result = self._build({'image_mode': 'first_last_frame', 'enable_face_mask': True})
         self.assertTrue(result.get('success') is not False)
         self.asset_client.create_asset.assert_called_once_with(
             url='https://cdn.example.com/first.jpg', asset_type='Image'
@@ -238,19 +244,21 @@ class TestAssetLibraryIntegration(unittest.TestCase):
         self.assertEqual(len(image_items), 1)
         self.assertEqual(image_items[0]['image_url']['url'], 'asset://asset-001')
 
-    def test_human_review_missing_enable_face_mask_fallback(self):
-        """human_review 未声明但 enable_face_mask=true：兜底走素材库（跨实现方重试场景）"""
-        result = self._build({'image_mode': 'first_last_frame', 'enable_face_mask': True})
-        self.asset_client.create_asset.assert_called_once()
-        image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
-        self.assertEqual(image_items[0]['image_url']['url'], 'asset://asset-001')
-
-    def test_human_review_explicit_false_skips_asset(self):
-        """human_review 显式 false：不走素材库，URL 原样"""
-        result = self._build({'image_mode': 'first_last_frame', 'human_review': False})
+    def test_stale_human_review_without_flag_skips_asset(self):
+        """残留的 human_review=true（跨实现方重试 extra_config 固化）不再生效：
+        未勾选 enable_face_mask 时不走素材库——每次提交按当前实现方模式现场重算"""
+        result = self._build({'image_mode': 'first_last_frame', 'human_review': True})
         self.asset_client.create_asset.assert_not_called()
         image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
         self.assertEqual(image_items[0]['image_url']['url'], 'https://cdn.example.com/first.jpg')
+
+    def test_stale_human_review_false_with_flag_uploads_asset(self):
+        """残留 human_review=false 同样被无视：勾选 enable_face_mask 即按模式处理"""
+        result = self._build({'image_mode': 'first_last_frame',
+                              'human_review': False, 'enable_face_mask': True})
+        self.asset_client.create_asset.assert_called_once()
+        image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
+        self.assertEqual(image_items[0]['image_url']['url'], 'asset://asset-001')
 
     def test_no_flags_skips_asset(self):
         """无任何标志：普通任务直传 CDN URL"""
@@ -259,24 +267,117 @@ class TestAssetLibraryIntegration(unittest.TestCase):
         image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
         self.assertEqual(image_items[0]['image_url']['url'], 'https://cdn.example.com/first.jpg')
 
+    def test_face_mask_mode_skips_asset(self):
+        """face_mask 模式（本地遮盖）：驱动不介入，URL 原样"""
+        with patch.object(self.driver, '_resolve_human_asset_mode', return_value='face_mask'):
+            result = self._build({'image_mode': 'first_last_frame', 'enable_face_mask': True})
+        self.asset_client.create_asset.assert_not_called()
+        image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
+        self.assertEqual(image_items[0]['image_url']['url'], 'https://cdn.example.com/first.jpg')
+
+    def test_param_pass_mode_injects_human_review(self):
+        """param_pass 模式 + 勾选：json 顶层注入 human_review=true，不动素材"""
+        with patch.object(self.driver, '_resolve_human_asset_mode', return_value='param_pass'):
+            result = self._build({'image_mode': 'first_last_frame', 'enable_face_mask': True})
+        self.asset_client.create_asset.assert_not_called()
+        self.assertIs(result['json'].get('human_review'), True)
+
     def test_asset_upload_failure_returns_system_error(self):
         """素材上传失败：SYSTEM 错误且可重试（不静默降级直传）"""
         from utils.seedance_asset_client import SeedanceAssetError
         self.asset_client.create_asset.side_effect = SeedanceAssetError("素材接口网络异常")
-        result = self._build({'image_mode': 'first_last_frame', 'human_review': True})
+        result = self._build({'image_mode': 'first_last_frame', 'enable_face_mask': True})
         self.assertFalse(result['success'])
         self.assertEqual(result['error_type'], 'SYSTEM')
         self.assertTrue(result['retry'])
 
     def test_asset_url_not_reuploaded(self):
         """已是 asset:// 的引用不重复上传（幂等）"""
-        ai_tool = _make_ai_tool(extra_config={'image_mode': 'first_last_frame', 'human_review': True})
+        ai_tool = _make_ai_tool(extra_config={'image_mode': 'first_last_frame', 'enable_face_mask': True})
         with patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync',
                    return_value=(True, 'asset://asset-exist', None)):
             result = self.driver.build_create_request(ai_tool)
         self.asset_client.create_asset.assert_not_called()
         image_items = [c for c in result['json']['content'] if c['type'] == 'image_url']
         self.assertEqual(image_items[0]['image_url']['url'], 'asset://asset-exist')
+
+    def test_terminal_status_cleans_created_assets(self):
+        """任务到达终态后回收本次创建的素材（生命周期不堆积）"""
+        self.driver._record_created_asset('asset-001')
+        # 非终态不清理
+        self.driver._cleanup_assets_if_terminal('RUNNING')
+        self.asset_client.delete_asset.assert_not_called()
+        # 各家终态形态（volcengine 小写 / huimengi 大写）均触发清理
+        for status in ('succeeded', 'failed', 'SUCCESS', 'FAILED', 'COMPLETED'):
+            self.driver._record_created_asset(f'asset-{status}')
+            self.driver._cleanup_assets_if_terminal(status)
+        self.assertEqual(self.asset_client.delete_asset.call_count, 6)
+        # 清理幂等：无待清理素材时再调不报错不重复
+        self.driver._cleanup_assets_if_terminal('SUCCESS')
+        self.assertEqual(self.asset_client.delete_asset.call_count, 6)
+
+
+class TestHumanAssetModeResolution(unittest.TestCase):
+    """模式解析：read_human_asset_mode 回落语义与工厂 resolver"""
+
+    def test_no_group_defaults_to_face_mask(self):
+        """未声明组（volcengine 直连/kkidc 等未接入者）恒为 face_mask"""
+        from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
+        self.assertEqual(read_human_asset_mode(None), 'face_mask')
+        self.assertEqual(read_human_asset_mode(''), 'face_mask')
+
+    def test_unconfigured_group_defaults_to_face_mask(self):
+        """组未配置 human_asset_mode：回落 face_mask（kkidc 等新网关默认本地遮盖）"""
+        import task.visual_drivers.seedance_human_asset_mixin as mixin_mod
+        with patch.object(mixin_mod, 'get_dynamic_config_value',
+                          side_effect=lambda *keys, default=None: default):
+            from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
+            self.assertEqual(read_human_asset_mode('kkidc'), 'face_mask')
+
+    def test_invalid_mode_falls_back_to_face_mask(self):
+        """非法配置值：警告并回落 face_mask"""
+        import task.visual_drivers.seedance_human_asset_mixin as mixin_mod
+        with patch.object(mixin_mod, 'get_dynamic_config_value',
+                          return_value='yolo_mode'):
+            from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
+            self.assertEqual(read_human_asset_mode('topenrouter'), 'face_mask')
+
+    def test_valid_modes_pass_through(self):
+        """三种合法值原样返回"""
+        import task.visual_drivers.seedance_human_asset_mixin as mixin_mod
+        from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
+        for mode in ('face_mask', 'asset_library', 'param_pass'):
+            with patch.object(mixin_mod, 'get_dynamic_config_value', return_value=mode):
+                self.assertEqual(read_human_asset_mode('topenrouter'), mode)
+
+    def test_factory_resolver_by_impl_name(self):
+        """工厂 resolver：按实现方名查驱动类声明的组（grok 覆盖回 None 恒 face_mask）"""
+        from task.visual_drivers.driver_factory import VideoDriverFactory, register_all_drivers
+        register_all_drivers()
+        from task.visual_drivers.seedance_topenrouter_v1_driver import SeedanceTopenrouterV1Driver
+        from task.visual_drivers.seedance_huimengi_v1_driver import SeedanceHuimengiV1Driver
+        from task.visual_drivers.grok_huimengi_v1_driver import GrokHuimengiV1Driver
+
+        self.assertEqual(SeedanceTopenrouterV1Driver._human_asset_config_group, 'topenrouter')
+        self.assertEqual(SeedanceHuimengiV1Driver._human_asset_config_group, 'huimengi')
+        self.assertIsNone(GrokHuimengiV1Driver._human_asset_config_group)
+
+        import task.visual_drivers.seedance_human_asset_mixin as mixin_mod
+        with patch.object(mixin_mod, 'get_dynamic_config_value',
+                          side_effect=lambda *keys, default=None: 'param_pass'):
+            self.assertEqual(
+                VideoDriverFactory.resolve_human_asset_mode('seedance_2_0_huimengi_v1'),
+                'param_pass',
+            )
+            # grok 未挂组：不读配置，恒 face_mask
+            self.assertEqual(
+                VideoDriverFactory.resolve_human_asset_mode('grok_huimengi_v1'),
+                'face_mask',
+            )
+        self.assertEqual(
+            VideoDriverFactory.resolve_human_asset_mode('nonexistent_impl'),
+            'face_mask',
+        )
 
 
 class TestSubclassInstantiation(unittest.TestCase):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-SeedanceAssetClient 单元测试（TopenRouter 素材 Action 接口）
+SeedanceAssetClient 单元测试（Seedance 素材 Action 接口，供应商无关协议 + 按组工厂）
 纯单元测试，不依赖数据库，mock requests.post 与动态配置
 """
 import unittest
@@ -10,17 +10,16 @@ import utils.seedance_asset_client as asset_client_mod
 from utils.seedance_asset_client import (
     SeedanceAssetClient,
     SeedanceAssetError,
+    create_seedance_asset_client,
     ASSET_STATUS_ACTIVE,
     ASSET_STATUS_FAILED,
     ASSET_STATUS_PROCESSING,
 )
 
 
-def _make_client(api_key='test_platform_token', base_url=None):
-    """创建客户端实例（mock 动态配置）"""
-    with patch.object(asset_client_mod, 'get_dynamic_config_value') as mock_config:
-        mock_config.side_effect = lambda *keys, default=None: default
-        return SeedanceAssetClient(api_key=api_key, base_url=base_url)
+def _make_client(api_key='test_platform_token', base_url='https://asset.example.com'):
+    """创建客户端实例（显式传参的纯协议构造）"""
+    return SeedanceAssetClient(api_key=api_key, base_url=base_url)
 
 
 def _mock_response(status_code=200, json_data=None, raise_json=False):
@@ -34,47 +33,70 @@ def _mock_response(status_code=200, json_data=None, raise_json=False):
 
 
 class TestClientInit(unittest.TestCase):
-    """初始化与 Token 回落逻辑"""
+    """纯协议构造与工厂按组解析"""
 
-    def test_default_base_url(self):
+    def test_explicit_params(self):
         client = _make_client()
-        self.assertEqual(client.base_url, 'https://tp-api.chinadatapay.com:8000')
+        self.assertEqual(client.base_url, 'https://asset.example.com')
         self.assertEqual(client.api_key, 'test_platform_token')
 
     def test_base_url_trailing_slash_stripped(self):
         client = _make_client(base_url='https://example.com/')
         self.assertEqual(client.base_url, 'https://example.com')
 
-    @patch.object(asset_client_mod, 'get_dynamic_config_value')
-    def test_asset_api_key_fallback_to_api_key(self, mock_config):
-        """asset_api_key 未配置时回落 topenrouter.api_key"""
-        def side_effect(*keys, default=None):
-            if keys == ('topenrouter', 'asset_api_key'):
-                return ''
-            if keys == ('topenrouter', 'api_key'):
-                return 'sk-shared-key'
-            return default
-        mock_config.side_effect = side_effect
-        client = SeedanceAssetClient()
-        self.assertEqual(client.api_key, 'sk-shared-key')
-
-    @patch.object(asset_client_mod, 'get_dynamic_config_value')
-    def test_asset_api_key_takes_priority(self, mock_config):
-        def side_effect(*keys, default=None):
-            if keys == ('topenrouter', 'asset_api_key'):
-                return 'dedicated-asset-token'
-            if keys == ('topenrouter', 'api_key'):
-                return 'sk-video-key'
-            return default
-        mock_config.side_effect = side_effect
-        client = SeedanceAssetClient()
-        self.assertEqual(client.api_key, 'dedicated-asset-token')
-
-    @patch.object(asset_client_mod, 'get_dynamic_config_value')
-    def test_missing_token_raises(self, mock_config):
-        mock_config.side_effect = lambda *keys, default=None: default
+    def test_missing_params_raise(self):
         with self.assertRaises(SeedanceAssetError):
-            SeedanceAssetClient()
+            SeedanceAssetClient(api_key='', base_url='https://x')
+        with self.assertRaises(SeedanceAssetError):
+            SeedanceAssetClient(api_key='k', base_url='')
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_group_config_resolution(self, mock_config):
+        """工厂按组解析：asset_base_url / asset_api_key 优先"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('gateway_a', 'asset_base_url'): 'https://asset.gateway-a.com',
+                ('gateway_a', 'asset_api_key'): 'asset-token',
+                ('gateway_a', 'base_url'): 'https://video.gateway-a.com',
+                ('gateway_a', 'api_key'): 'video-token',
+            }
+            return key_map.get(keys, default)
+        mock_config.side_effect = side_effect
+        client = create_seedance_asset_client('gateway_a')
+        self.assertEqual(client.base_url, 'https://asset.gateway-a.com')
+        self.assertEqual(client.api_key, 'asset-token')
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_fallback_to_video_base_url_and_api_key(self, mock_config):
+        """同址网关免配：未配 asset_* 时回落 base_url / api_key"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('gateway_b', 'base_url'): 'https://same-host.gateway-b.com',
+                ('gateway_b', 'api_key'): 'sk-shared',
+            }
+            return key_map.get(keys, default)
+        mock_config.side_effect = side_effect
+        client = create_seedance_asset_client('gateway_b')
+        self.assertEqual(client.base_url, 'https://same-host.gateway-b.com')
+        self.assertEqual(client.api_key, 'sk-shared')
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_missing_base_url_raises(self, mock_config):
+        mock_config.side_effect = lambda *keys, default=None: default
+        with self.assertRaises(SeedanceAssetError) as ctx:
+            create_seedance_asset_client('gateway_c')
+        self.assertIn('asset_base_url', str(ctx.exception))
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_missing_api_key_raises(self, mock_config):
+        def side_effect(*keys, default=None):
+            if keys == ('gateway_d', 'base_url'):
+                return 'https://gateway-d.com'
+            return default
+        mock_config.side_effect = side_effect
+        with self.assertRaises(SeedanceAssetError) as ctx:
+            create_seedance_asset_client('gateway_d')
+        self.assertIn('Token', str(ctx.exception))
 
 
 class TestCallAction(unittest.TestCase):
@@ -94,7 +116,7 @@ class TestCallAction(unittest.TestCase):
             url='https://example.com/cat.png', asset_type='Image', name='cat'
         )
         args, kwargs = mock_post.call_args
-        self.assertEqual(args[0], 'https://tp-api.chinadatapay.com:8000/v1/api/assets/')
+        self.assertEqual(args[0], 'https://asset.example.com/v1/api/assets/')
         self.assertEqual(kwargs['params'], {'Action': 'CreateAsset', 'Version': '2024-01-01'})
         self.assertEqual(kwargs['headers']['Authorization'], 'Bearer test_platform_token')
         self.assertEqual(

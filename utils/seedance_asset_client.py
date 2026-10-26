@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Seedance 素材 Action 接口客户端（火山方舟真人库标准接口的 TopenRouter 平台形态）
+Seedance 素材 Action 接口客户端（火山方舟真人库标准协议，供应商无关）
 
 对接《对外接口文档-Seedance素材Action接口.md》：
 - POST {base_url}/v1/api/assets/?Action=<Action>&Version=2024-01-01
-- 鉴权：Authorization: Bearer <平台 Token>（替代火山 AK/SK 签名）
+- 鉴权：Authorization: Bearer <平台 Token>（火山方舟同构网关形态；官方 AK/SK 签名
+  形态待真实直连客户出现时再支持）
 - 请求体/响应体与火山方舟官方一致（大驼峰字段，响应为 ResponseMetadata + Result）
+
+本客户端为纯协议实现（Bearer 形态），不感知具体供应商；按供应商组解析地址/Token
+请用工厂 create_seedance_asset_client(config_group)，配置键约定：
+- 地址：<group>.asset_base_url（素材专用，优先）> <group>.base_url（素材与视频同址的网关免配）
+- Token：<group>.asset_api_key > <group>.api_key
 
 本客户端为同步实现（requests），供视频驱动在同步任务执行器内调用，
 与 BaseVideoDriver._request 同一运行环境，不进入 web 事件循环。
@@ -19,10 +25,9 @@ import requests
 
 from config.config_util import get_dynamic_config_value
 from config.constant import (
-    TOPENROUTER_ASSET_BASE_URL,
-    TOPENROUTER_ASSET_POLL_INTERVAL_SECONDS,
-    TOPENROUTER_ASSET_REQUEST_TIMEOUT_SECONDS,
-    TOPENROUTER_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS,
+    SEEDANCE_ASSET_POLL_INTERVAL_SECONDS,
+    SEEDANCE_ASSET_REQUEST_TIMEOUT_SECONDS,
+    SEEDANCE_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,33 +48,44 @@ class SeedanceAssetError(Exception):
         super().__init__(message)
 
 
+def create_seedance_asset_client(config_group: str) -> "SeedanceAssetClient":
+    """
+    按供应商组构建素材客户端（地址/Token 动态配置解析）
+
+    地址：<group>.asset_base_url > <group>.base_url（素材与视频同址的网关免配），均未配置时报错；
+    Token：<group>.asset_api_key > <group>.api_key，均未配置时报错。
+    """
+    base_url = (
+        get_dynamic_config_value(config_group, "asset_base_url", default="")
+        or get_dynamic_config_value(config_group, "base_url", default="")
+    )
+    if not base_url:
+        raise SeedanceAssetError(
+            f"素材库地址未配置（{config_group}.asset_base_url，"
+            f"素材与视频接口同址时可只配 {config_group}.base_url）"
+        )
+    api_key = (
+        get_dynamic_config_value(config_group, "asset_api_key", default="")
+        or get_dynamic_config_value(config_group, "api_key", default="")
+    )
+    if not api_key:
+        raise SeedanceAssetError(
+            f"素材接口 Token 未配置（{config_group}.asset_api_key / {config_group}.api_key）"
+        )
+    return SeedanceAssetClient(api_key=api_key, base_url=base_url)
+
+
 class SeedanceAssetClient:
     """
-    Seedance 素材 Action 接口客户端
-
-    配置优先级：构造参数 > 动态配置（DB system_config 优先 + YAML 兜底）> 模块常量默认值。
-    Token 读取 topenrouter.asset_api_key，缺省回落 topenrouter.api_key
-    （素材接口与视频 API 是否共用同一 Token 由后台配置决定，无需改代码）。
+    Seedance 素材 Action 接口客户端（纯协议实现，地址/Token 由调用方显式注入）
     """
 
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        timeout: Optional[float] = None,
-    ):
-        if api_key is None:
-            api_key = get_dynamic_config_value("topenrouter", "asset_api_key", default="") \
-                or get_dynamic_config_value("topenrouter", "api_key", default="")
+    def __init__(self, api_key: str, base_url: str, timeout: Optional[float] = None):
+        if not api_key or not base_url:
+            raise SeedanceAssetError("素材客户端构造需显式提供 api_key 与 base_url")
         self.api_key = api_key
-        self.base_url = (base_url or get_dynamic_config_value(
-            "topenrouter", "base_url", default=""
-        ) or TOPENROUTER_ASSET_BASE_URL).rstrip("/")
-        self.timeout = timeout or TOPENROUTER_ASSET_REQUEST_TIMEOUT_SECONDS
-        if not self.api_key:
-            raise SeedanceAssetError(
-                "TopenRouter 素材接口 Token 未配置（topenrouter.api_key / topenrouter.asset_api_key）"
-            )
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout or SEEDANCE_ASSET_REQUEST_TIMEOUT_SECONDS
 
     # ---------- 基础调用 ----------
 
@@ -306,8 +322,8 @@ class SeedanceAssetClient:
         Raises:
             SeedanceAssetError: 素材 Failed 或等待超时
         """
-        deadline = time.time() + (timeout or TOPENROUTER_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS)
-        interval = poll_interval or TOPENROUTER_ASSET_POLL_INTERVAL_SECONDS
+        deadline = time.time() + (timeout or SEEDANCE_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS)
+        interval = poll_interval or SEEDANCE_ASSET_POLL_INTERVAL_SECONDS
         while True:
             asset = self.get_asset(asset_id)
             status = asset.get("Status")

@@ -196,15 +196,32 @@ SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
 
-# ===== TopenRouter Seedance 素材 Action 接口（/v1/api/assets/?Action=...）=====
+# ===== Seedance 真人素材处理三模式（中转站级策略，配置在供应商组 <group>.human_asset_mode）=====
+# face_mask：本地人脸遮盖预处理（默认。直连火山/无真人库网关，遮盖规避真人审核）
+# asset_library：官方真人库透传（素材 Action 接口上传 + asset:// 引用，需配 <group>.asset_base_url）
+# param_pass：human_review 参数直传（如 huimengi 网关，由网关服务端真人审核加白）
+SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK = "face_mask"
+SEEDANCE_HUMAN_ASSET_MODE_ASSET_LIBRARY = "asset_library"
+SEEDANCE_HUMAN_ASSET_MODE_PARAM_PASS = "param_pass"
+SEEDANCE_HUMAN_ASSET_MODES = (
+    SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK,
+    SEEDANCE_HUMAN_ASSET_MODE_ASSET_LIBRARY,
+    SEEDANCE_HUMAN_ASSET_MODE_PARAM_PASS,
+)
+SEEDANCE_HUMAN_ASSET_MODE_DEFAULT = SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK
+
+# ===== Seedance 素材 Action 接口（/v1/api/assets/?Action=...，火山方舟真人库标准协议）=====
 # 素材上传后 Processing → Active 需轮询等待（官方建议间隔 ≥1s）；
 # 单素材最长等待与轮询间隔（秒），驱动提交任务前同步等待，跑在同步执行器内不阻塞事件循环。
-TOPENROUTER_ASSET_BASE_URL = "https://tp-api.chinadatapay.com:8000"
-TOPENROUTER_ASSET_POLL_INTERVAL_SECONDS = 1.5
-TOPENROUTER_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS = 120
-TOPENROUTER_ASSET_REQUEST_TIMEOUT_SECONDS = 30
+# 协议级参数对所有同构网关通用；素材库地址无协议级默认值，按供应商组配置 asset_base_url。
+SEEDANCE_ASSET_POLL_INTERVAL_SECONDS = 1.5
+SEEDANCE_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS = 120
+SEEDANCE_ASSET_REQUEST_TIMEOUT_SECONDS = 30
 # 素材在视频生成 content 中的引用协议前缀（真人素材加白，服务端按 asset id 命中素材库）
 SEEDANCE_ASSET_URL_SCHEME = "asset://"
+# TopenRouter 网关视频 API 兜底地址（topenrouter.base_url 未配置时使用；
+# 该网关视频与素材接口同址，素材地址另有 asset_base_url 回落链）
+TOPENROUTER_API_BASE_URL = "https://tp-api.chinadatapay.com:8000"
 # TopenRouter Seedance 模型名默认映射（火山原生名 → TopenRouter 名）。
 # 平台文档仅明确 doubao-seedance-2.0，fast/mini/2.5 为命名惯例推测，
 # 可通过动态配置 topenrouter.model_aliases（JSON）热修正，配置优先于本默认表。

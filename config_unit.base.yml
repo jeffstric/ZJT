@@ -135,6 +135,15 @@ kkidc:
 huimengi:
   api_key: "unittest"
   base_url: "https://api.huimengi.com"
+  # 真人素材处理模式（与生产一致：human_review 参数直传）
+  human_asset_mode: "param_pass"
+
+topenrouter:
+  api_key: "unittest"
+  base_url: "https://tp-api.chinadatapay.com:8000"
+  asset_api_key: "unittest"
+  # 真人素材处理模式（与生产一致：官方真人库透传）
+  human_asset_mode: "asset_library"
 
 # API Aggregator configuration
 api_aggregator:

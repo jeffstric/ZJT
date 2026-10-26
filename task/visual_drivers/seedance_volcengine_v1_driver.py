@@ -13,6 +13,7 @@ import traceback
 import json
 import uuid
 from .base_video_driver import BaseVideoDriver, ImageMode
+from .seedance_human_asset_mixin import SeedanceHumanAssetMixin
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
@@ -49,12 +50,14 @@ def _cleanup_seedance_reference_video_temps(paths):
             pass
 
 
-class SeedanceVolcengineV1Driver(BaseVideoDriver):
+class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
     """
     Seedance 火山引擎供应商 v1 版本驱动（基类）
     异步 API - 图生视频 / 文生视频
 
     子类通过不同的 driver_type 和 model_name 区分模型。
+    混入 SeedanceHumanAssetMixin：火山直连未接入真人素材配置组（默认
+    face_mask 本地遮盖），网关子类声明 _human_asset_config_group 后按组配置分派。
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
@@ -536,13 +539,13 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             "Authorization": f"Bearer {self._api_key}"
         }
 
-        return {
+        return self._apply_human_asset_pipeline({
             "url": f"{self._base_url}{self._create_task_path}",
             "method": "POST",
             "json": payload,
             "headers": headers,
             "timeout": self._timeout
-        }
+        }, ai_tool)
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
@@ -715,6 +718,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
 
             # 3. 映射状态
             status = self._map_task_status(result.get("status"))
+            self._cleanup_assets_if_terminal(status)
 
             if status == "succeeded":
                 video_url = result.get("content", {}).get("video_url")

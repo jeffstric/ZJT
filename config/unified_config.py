@@ -455,7 +455,6 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
-    supports_auto_face: bool = False  # 是否支持自动处理人脸（网关内置真人审核，开启后跳过 RunningHub 遮盖预处理）
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
@@ -557,7 +556,6 @@ class ImplementationConfig:
             'description': self.description,
             'driver_params': self.driver_params,
             'sync_mode': self.sync_mode,
-            'supports_auto_face': self.supports_auto_face,
             'supported_video_resolutions': self.supported_video_resolutions,
             'default_video_resolution': self.default_video_resolution,
         }
@@ -4397,8 +4395,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
     ),
 
     # ==================== huimengi 网关供应商（慧梦，Seedance 2.0 系列二次封装） ====================
-    # supports_auto_face=True：huimengi 网关内置 human_review 真人审核，用户勾选"处理人脸"
-    # 时由网关自动处理，跳过 RunningHub 遮盖预处理（server.py 闸门据此分流）
+    # 真人素材模式挂 huimengi 组（默认 param_pass：网关内置 human_review 真人审核，
+    # 用户勾选"处理人脸"时由网关处理并跳过本地遮盖；见 seedance_human_asset_mixin）
     ImplementationConfig(
         name='seedance_2_0_fast_huimengi_v1',
         display_name='huimengi',
@@ -4408,7 +4406,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='huimengi 网关 Seedance 2.0 Fast 图生视频接口',
         sort_order=11010.0,
         required_config_keys=['huimengi.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4421,7 +4418,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='huimengi 网关 Seedance 2.0 图生视频接口',
         sort_order=11020.0,
         required_config_keys=['huimengi.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4434,7 +4430,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='huimengi 网关 Seedance 2.0 Mini 图生视频接口',
         sort_order=11030.0,
         required_config_keys=['huimengi.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4447,14 +4442,13 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='huimengi 网关 Seedance 2.5 图生视频接口',
         sort_order=11040.0,
         required_config_keys=['huimengi.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
 
     # ==================== TopenRouter 供应商（火山方舟同构协议网关） ====================
-    # supports_auto_face=True：用户勾选"处理人脸"时由驱动上传素材到平台素材库
-    # （Action 接口）加白并以 asset:// 引用，跳过 RunningHub 遮盖预处理（server.py 闸门据此分流）
+    # 真人素材模式挂 topenrouter 组（默认 asset_library：勾选"处理人脸"时素材上传
+    # 真人库加白并以 asset:// 引用，跳过本地遮盖；见 seedance_human_asset_mixin）
     ImplementationConfig(
         name='seedance_2_0_fast_topenrouter_v1',
         display_name='TopenRouter',
@@ -4464,7 +4458,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='TopenRouter Seedance 2.0 Fast 图生视频接口（火山方舟同构协议）',
         sort_order=11050.0,
         required_config_keys=['topenrouter.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4477,7 +4470,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='TopenRouter Seedance 2.0 图生视频接口（火山方舟同构协议）',
         sort_order=11060.0,
         required_config_keys=['topenrouter.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_2_0_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4490,7 +4482,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='TopenRouter Seedance 2.0 Mini 图生视频接口（火山方舟同构协议）',
         sort_order=11070.0,
         required_config_keys=['topenrouter.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),
@@ -4503,7 +4494,6 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         description='TopenRouter Seedance 2.5 图生视频接口（火山方舟同构协议）',
         sort_order=11080.0,
         required_config_keys=['topenrouter.api_key'],
-        supports_auto_face=True,
         supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
         default_video_resolution=VideoResolution.P720
     ),

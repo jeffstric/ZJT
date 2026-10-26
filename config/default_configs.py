@@ -515,6 +515,14 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False,
         'quick_config': True
     },
+    {
+        'key': 'huimengi.human_asset_mode',
+        'value_type': 'string',
+        'description': 'huimengi 真人素材处理模式：face_mask=本地人脸遮盖 / asset_library=官方真人库透传（需另配 asset_base_url） / param_pass=human_review 参数直传（默认，网关内置真人审核）；非法值回落 face_mask。注意：Grok 视频走 huimengi 网关但不支持 human_review，恒为本地遮盖',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
 
     # ==================== TopenRouter 网关配置（火山方舟同构协议） ====================
     {
@@ -548,6 +556,22 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'description': 'TopenRouter 素材 Action 接口 Token（缺省回落 topenrouter.api_key，两者相同时无需配置）',
         'editable': True,
         'is_sensitive': True,
+        'quick_config': False
+    },
+    {
+        'key': 'topenrouter.human_asset_mode',
+        'value_type': 'string',
+        'description': 'TopenRouter 真人素材处理模式：face_mask=本地人脸遮盖 / asset_library=官方真人库透传（默认，素材上传后 asset:// 引用） / param_pass=human_review 参数直传；非法值回落 face_mask',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'topenrouter.asset_base_url',
+        'value_type': 'string',
+        'description': 'TopenRouter 真人库素材 Action 接口地址（asset_library 模式使用；缺省回落 topenrouter.base_url，两者同址时无需配置）',
+        'editable': True,
+        'is_sensitive': False,
         'quick_config': False
     },
 

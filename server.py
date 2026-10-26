@@ -183,6 +183,7 @@ from config.constant import (
     MediaGenerationType, MediaGenerationMode, PERSEIDS_ERR_INVALID_AUTH_TOKEN,
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
+    SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK,
 )
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -2959,12 +2960,13 @@ async def ai_app_run_image(
         # 若走 determine_mode，有 audio 会被判成 reference_to_video，进而被
         # validate_model 以「模型不支持 reference_to_video」拒绝（MODEL_MODE_UNSUPPORTED）。
 
-        # 判断实际命中的实现方是否支持自动处理人脸（网关内置真人审核，如 huimengi human_review）。
-        # 支持 + 用户勾选处理人脸时：跳过 RunningHub 遮盖预处理，并注入 human_review=true
-        # 让网关自动处理，替代本地遮盖。此判断在 base_extra_config 构建前完成，以便注入参数。
-        _impl_config_for_face = UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
-        impl_supports_auto_face = bool(_impl_config_for_face and _impl_config_for_face.supports_auto_face)
-        user_wants_face_process = bool(enable_face_mask) and impl_supports_auto_face
+        # 解析实际命中实现方的真人素材处理模式（中转站级三选一配置）：
+        # face_mask=本地遮盖预处理；asset_library=真人库 asset:// 引用；
+        # param_pass=human_review 参数直传（网关服务端审核）。face_mask 之外的
+        # 模式勾选人脸处理时跳过本地遮盖预处理，由驱动侧按模式分派，不再注入
+        # human_review 标记（重试切换实现方后按新实现方模式现场重算，无残留）。
+        impl_human_asset_mode = VideoDriverFactory.resolve_human_asset_mode(actual_impl)
+        impl_uses_local_face_mask = impl_human_asset_mode == SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK
 
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
         # 人脸遮盖白名单：参考生视频的参考图混合角色/场景/道具，人脸遮盖只对
@@ -2976,10 +2978,6 @@ async def ai_app_run_image(
                 base_extra_config[FaceMaskPromptConstants.REFERENCE_URLS_WHITELIST_EXTRA_CONFIG_KEY] = whitelist_urls
         if resolution:
             base_extra_config[VIDEO_RESOLUTION_EXTRA_CONFIG_KEY] = resolution
-        # 支持自动处理人脸的网关：用户勾选处理人脸时注入 human_review=true，
-        # 驱动（huimengi）会透传给网关，由网关服务端审核加白，无需本地遮盖。
-        if user_wants_face_process:
-            base_extra_config['human_review'] = True
         # 视频编辑任务（Seedance 2.5 + 参考视频）：计费时长改按参考视频总时长吸附档位。
         # 输出时长由参考视频决定（驱动下发 duration=-1），用户输入时长不参与计费；
         # 探测失败回退用户输入。同步探测（URL 下载 + ffprobe），to_thread 包装
@@ -3140,7 +3138,7 @@ async def ai_app_run_image(
                             (
                                 is_seedance_face_mask
                                 and enable_face_mask
-                                and not impl_supports_auto_face
+                                and impl_uses_local_face_mask
                                 and not Edition.is_community()
                                 and runninghub_api_key
                                 and has_any_param_prepare_input
@@ -3152,7 +3150,7 @@ async def ai_app_run_image(
                             f"is_seedance_face_mask={is_seedance_face_mask}, "
                             f"needs_h3_optimize={needs_h3_optimize}, "
                             f"enable_face_mask={enable_face_mask}, is_community={Edition.is_community()}, "
-                            f"impl_supports_auto_face={impl_supports_auto_face}, actual_impl={actual_impl}, "
+                            f"impl_human_asset_mode={impl_human_asset_mode}, actual_impl={actual_impl}, "
                             f"has_api_key={bool(runninghub_api_key)}, has_video={bool(video_path)}, "
                             f"face_mask_enabled={bool(seedance_face_mask_enabled)}, "
                             f"has_image_input={has_image_input}, need_pipeline_steps={need_pipeline_steps}"

@@ -54,6 +54,19 @@ class VideoDriverFactory:
         """注销驱动类（仅用于用户模块动态实现方的重载卸载）"""
         cls._registered_drivers.pop(driver_name, None)
 
+    @classmethod
+    def resolve_human_asset_mode(cls, implementation_name: Optional[str]) -> str:
+        """
+        解析实现方的真人素材处理模式（face_mask / asset_library / param_pass）。
+
+        server/storyboard 提交闸门与驱动侧分派共用本入口：组名取驱动类声明的
+        _human_asset_config_group（唯一事实源），未注册驱动/未声明组一律 face_mask。
+        """
+        driver_class = cls._registered_drivers.get(implementation_name or "")
+        config_group = getattr(driver_class, '_human_asset_config_group', None)
+        from .seedance_human_asset_mixin import read_human_asset_mode
+        return read_human_asset_mode(config_group)
+
     # 存储最近一次创建驱动失败的原因（用于返回更友好的错误信息）
     _last_create_error: Optional[Dict[str, Any]] = None
 

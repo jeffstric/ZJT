@@ -73,12 +73,20 @@ kkidc:
 huimengi:
   api_key: ""
   base_url: "https://api.huimengi.com"
+  # 真人素材处理模式：param_pass=human_review 参数直传（网关内置真人审核，默认）；
+  # face_mask=本地人脸遮盖；asset_library=官方真人库透传（需另配 asset_base_url）
+  human_asset_mode: "param_pass"
 
 topenrouter:
   api_key: ""
   base_url: "https://tp-api.chinadatapay.com:8000"
   # 素材 Action 接口 Token（缺省回落 api_key，两者相同时无需配置）
   asset_api_key: ""
+  # 真人素材处理模式：asset_library=官方真人库透传（素材上传后 asset:// 引用，默认）；
+  # face_mask=本地人脸遮盖；param_pass=human_review 参数直传
+  human_asset_mode: "asset_library"
+  # 真人库素材 Action 接口地址（缺省回落 base_url，本网关两者同址可不配）
+  asset_base_url: ""
   # 模型名映射 JSON（火山原生名 → 平台名），覆盖默认映射；平台仅明确 doubao-seedance-2.0，
   # fast/mini/2.5 为惯例推测，404 时在此修正，例：
   # {"doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast"}
