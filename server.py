@@ -12010,53 +12010,44 @@ async def export_timeline_assets(
                 logger.warning(f"清理素材包临时目录失败: {e}")
 
 
-
-def _html_response(file_path: str) -> Response:
-    """HTML 页面响应：强制 no-cache，防止浏览器启发式缓存使旧 JS 引用长期存活。
-
-    不带 Cache-Control 时浏览器按 Last-Modified 启发式缓存（可能长达数天），
-    普通刷新不重验证 → 旧 HTML 里的 ?v=旧版本 脚本 URL 持续命中浏览器缓存，
-    前端更新永远到不了用户（导演台 SSAO 补丁曾因此反复"修复无效"）。
-    no-cache 表示每次协商（304/200），HTML 始终拿到最新版本引用。
-    """
-    content = _get_processed_html(file_path)
-    return Response(content=content, media_type="text/html",
-                    headers={"Cache-Control": "no-cache"})
-
-
 @app.get("/video-workflow-list")
 async def serve_video_workflow_list():
     file_path = os.path.join(static_dir, "video_workflow_list.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Video workflow list page not found")
 
 @app.get("/video-workflow")
 async def serve_video_workflow():
     file_path = os.path.join(static_dir, "video_workflow.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Video workflow page not found")
 
 @app.get("/image-style-guide")
 async def serve_image_style_guide():
     file_path = os.path.join(static_dir, "image_style_guide.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Image style guide page not found")
 
 @app.get("/script-writer")
 async def serve_script_writer():
     file_path = os.path.join(static_dir, "script_writer.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Script writer page not found")
 
 @app.get("/marketing-agent")
 async def serve_marketing_agent():
     file_path = os.path.join(static_dir, "marketing_agent.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Marketing agent page not found")
 
 
@@ -12064,21 +12055,24 @@ async def serve_marketing_agent():
 async def serve_marketing_inspiration():
     file_path = os.path.join(static_dir, "marketing_inspiration.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Marketing inspiration page not found")
 
 @app.get("/storyboard")
 async def serve_storyboard():
     file_path = os.path.join(static_dir, "storyboard.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Storyboard page not found")
 
 @app.get("/storyboard-list")
 async def serve_storyboard_list():
     file_path = os.path.join(static_dir, "storyboard_list.html")
     if os.path.isfile(file_path):
-        return _html_response(file_path)
+        content = _get_processed_html(file_path)
+        return Response(content=content, media_type="text/html")
     raise HTTPException(status_code=404, detail="Storyboard list page not found")
 
 @app.get(f"{MP_VERIFY_ROUTE}")
