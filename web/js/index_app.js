@@ -3413,8 +3413,20 @@
         window.open('/auto_renewal_agreement.html', '_blank');
       },
 
+      // 勾选《自动续费服务协议》即自动生成二维码，无需再点「微信支付」；
+      // 微信内 JSAPI 无二维码且需用户手势调起支付，仍走按钮点击
+      onSubAgreeChange() {
+        this.subAgreementError = false;
+        if (!this.subAgreed) return;
+        if (!this.selectedSubPlan || this.subPaymentLoading) return;
+        if (this.subQrCode || this.subOrderId) return;
+        if (this.isWechatBrowser()) return;
+        this.createSubscriptionOrder();
+      },
+
       async createSubscriptionOrder() {
         if (!this.selectedSubPlan) return;
+        if (this.subQrCode || this.subOrderId) return; // 已有二维码/订单，防止勾选+点击重复下单
         if (!this.authToken || !this.userId) {
           alert('请先登录');
           this.showRechargePowerModal = false;
