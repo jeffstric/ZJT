@@ -87,6 +87,9 @@
 | marketing_agent | 生成图片卡 `.generated-result-actions`「入库」（`data-asset-add-src` 委托） | 左侧 nav「资产库」 | @ 下拉（含资产 tab 数据源） |
 | video_workflow | 图片节点「上传图片」行「入库」（`image-add-asset-lib-btn`） | 顶栏 `#assetLibraryBtn` | 提示词下拉 + 图生视频节点 @ |
 | storyboard | 主预览 hover 工具条「入库」（`data-action="add-scene-image-to-asset-library"`） | 顶栏 nav（`data-action="open-asset-library"`） | @ 弹窗「资产库」tab + 胶囊 |
+| script_writer | 角色/道具编辑表单参考图行「🗂 资产库」（`pickImageFromAssetLibrary`，选择器模式回填 `#char-image`/`#prop-image` + 预览，保存链路复用原有 `reference_image` 字段） | —（仅选择器，不设独立入口） | —（仅图片参考图引用） |
+
+**引用权限红线**：所有引用入口（@ 数据源、选择器）共用 `GET /assets` 列表，服务端 `_visible_where` 只返回「自己的 ∪ public ∪ 被指派 view/edit 的」资产——需求要求的三类可见性在数据源层强制，前端拿不到不可见资产。
 
 公共模块 `window.AssetLibrary`：`promptAdd`（入库弹窗）、`openModal`（浏览/分组/搜索/分页/权限编辑）、`fetchMentionItems`、`buildMentionToken`、`resolveMentionTokens`、`toast`。所有动态 HTML 经 `window.escapeHtml` 转义（XSS 红线）；历史消息回放的新增 `data-asset-add-src` 已加入 `web/js/security.js` 白名单。
 

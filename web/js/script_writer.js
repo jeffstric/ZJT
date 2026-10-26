@@ -6770,6 +6770,27 @@
             }
         }
 
+        /**
+         * 从共享资产库选择图片，回填参考图输入框（角色/道具编辑表单通用）。
+         * 资产库列表仅返回当前用户可见的图片资产（自己的/公开的/被指派的，
+         * 见 services/asset_library_service.py _visible_where），满足引用权限要求。
+         */
+        function pickImageFromAssetLibrary(inputId) {
+            if (!window.AssetLibrary) return;
+            window.AssetLibrary.openModal({
+                title: '从资产库选择图片',
+                onPick: function (asset) {
+                    if (!asset || !asset.file_url) return;
+                    const inputEl = document.getElementById(inputId);
+                    if (inputEl) inputEl.value = asset.file_url;
+                    showImagePreview(inputId, window.AssetLibrary.absoluteUrl(asset.file_url));
+                }
+            });
+        }
+
+        // 暴露给内联 onclick（IIFE 内函数默认全局可见，显式挂 window 保险）
+        window.pickImageFromAssetLibrary = pickImageFromAssetLibrary;
+
         function removeImagePreview(inputId) {
             const inputEl = document.getElementById(inputId);
             if (inputEl) inputEl.value = '';
