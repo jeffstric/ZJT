@@ -547,8 +547,13 @@
     )));
     skeleton.bones.push(headBone);
     root.updateMatrixWorld(true);
+    // 逆矩阵必须与 GLB 其余骨骼的原始绑定空间一致（GLTFLoader 的 IBM 以 raw 模型
+    // 空间为基准，蒙皮时 meshWorld⁻¹ 会约掉容器变换）。若用最终坐标系的世界逆矩阵，
+    // 头部顶点会被二次容器变换拽飞（头消失+飞出几何在地面投下"手影"）。
+    // headBone 此刻无旋转/缩放，raw 空间绑定矩阵即模型局部平移。
     skeleton.boneInverses = skeleton.boneInverses.slice();
-    skeleton.boneInverses.push(headBone.matrixWorld.clone().invert());
+    var headBindRaw = new THREE.Matrix4().compose(headBone.position, headBone.quaternion, headBone.scale);
+    skeleton.boneInverses.push(headBindRaw.invert());
     skeleton.init();
     root.updateMatrixWorld(true);
     return rig;
