@@ -113,6 +113,18 @@ describe('导演台渲染：灯光、环境与后处理', () => {
     expect(scene.children).toHaveLength(0);
   });
 
+  it('SSAO 预渲染走逐对象材质（蒙皮残影修复）', () => {
+    const { R, THREE } = loadRendering();
+    const renderer = fakeRenderer(THREE);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(35, 4 / 3, 0.1, 100);
+    const pipeline = R.createComposer(renderer, scene, camera, { pixelRatio: 1 });
+    // 法线材质必须开 skinning，且 renderOverride 必须被补丁成逐网格换材质
+    expect(pipeline.ssao.normalMaterial.skinning).toBe(true);
+    expect(pipeline.ssao.renderOverride).not.toBe(THREE.SSAOPass.prototype.renderOverride);
+    expect(pipeline.dispose).not.toThrow();
+  });
+
   it('composer 使用 RenderPass → SSAOPass → GammaCorrection，并支持质量/FOV/尺寸同步', () => {
     const { R, THREE } = loadRendering();
     const renderer = fakeRenderer(THREE);

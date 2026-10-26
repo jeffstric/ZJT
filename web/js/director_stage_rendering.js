@@ -264,6 +264,48 @@
     ssao.minDistance = options.minDistance == null ? 0.0008 : options.minDistance;
     ssao.maxDistance = options.maxDistance == null ? 0.025 : options.maxDistance;
     ssao.output = THREE.SSAOPass.OUTPUT.Default;
+    // 蒙皮人偶的 SSAO 残影修复：法线/深度预渲染默认走 scene.overrideMaterial，
+    // r128 该路径不会给蒙皮网格上传骨骼纹理——预渲染结果冻结在某一固定姿态，
+    // 摆姿后与 beauty 不一致，乘法合成出深色"残影"。skinning 标志必须保留
+    // （逐对象渲染时走正常蒙皮路径要用），同时把 overrideMaterial 渲染改为
+    // 逐网格临时换材质，与 beauty 完全同一条渲染路径。
+    var skinnedNormalMat = ssao.normalMaterial;
+    if (skinnedNormalMat) skinnedNormalMat.skinning = true;
+    if (skinnedNormalMat && typeof ssao.renderOverride === 'function') {
+      var origRenderOverride = ssao.renderOverride;
+      ssao.renderOverride = function (renderer, overrideMaterial, renderTarget, clearColor, clearAlpha) {
+        if (overrideMaterial !== skinnedNormalMat || !scene || !scene.traverse) {
+          return origRenderOverride.call(ssao, renderer, overrideMaterial, renderTarget, clearColor, clearAlpha);
+        }
+        var swapped = [];
+        scene.traverse(function (o) {
+          if ((o.isMesh || o.isLine || o.isPoints) && o.visible && o.material !== skinnedNormalMat) {
+            swapped.push([o, o.material]);
+            o.material = skinnedNormalMat;
+          }
+        });
+        renderer.getClearColor(ssao.originalClearColor);
+        var originalClearAlpha = renderer.getClearAlpha();
+        var originalAutoClear = renderer.autoClear;
+        renderer.setRenderTarget(renderTarget);
+        renderer.autoClear = false;
+        clearColor = overrideMaterial.clearColor || clearColor;
+        clearAlpha = overrideMaterial.clearAlpha || clearAlpha;
+        if (clearColor !== undefined && clearColor !== null) {
+          renderer.setClearColor(clearColor);
+          renderer.setClearAlpha(clearAlpha || 0.0);
+          renderer.clear();
+        }
+        try {
+          renderer.render(scene, ssao.camera);
+        } finally {
+          for (var i = 0; i < swapped.length; i++) swapped[i][0].material = swapped[i][1];
+          renderer.autoClear = originalAutoClear;
+          renderer.setClearColor(ssao.originalClearColor);
+          renderer.setClearAlpha(originalClearAlpha);
+        }
+      };
+    }
     // SSAOPass 自己渲染 beauty；只给 composer 开 MSAA 无法覆盖这里，必须替换它的 target。
     if (options.msaa !== false && renderer.capabilities.isWebGL2 && THREE.WebGLMultisampleRenderTarget) {
       var originalBeauty = ssao.beautyRenderTarget;
