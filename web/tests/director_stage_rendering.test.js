@@ -18,8 +18,7 @@ const vendorFiles = [
   'postprocessing/SSAOPass.js',
   'shaders/GammaCorrectionShader.js',
   'environments/RoomEnvironment.js',
-  'geometries/RoundedBoxGeometry.js',
-  'utils/BufferGeometryUtils.js'
+  'geometries/RoundedBoxGeometry.js'
 ];
 
 function loadRendering() {
@@ -70,27 +69,11 @@ describe('导演台渲染：PBR 材质与几何工具', () => {
     expect(bundle.dispose).not.toThrow();
   });
 
-  it('RoundedBox / Lathe 胶囊 / 刚体合并保持正确结构', () => {
+  it('RoundedBox 关节补齐 uv2', () => {
     const { R, THREE } = loadRendering();
     const rounded = R.roundedJoint(0.1, 0.2, 0.05, 0.02);
     expect(rounded instanceof THREE.RoundedBoxGeometry).toBe(true);
     expect(rounded.attributes.uv2).toBeDefined();
-
-    const capsule = R.createCapsuleLathe(0.05, 0.2, 12);
-    capsule.computeBoundingBox();
-    expect(capsule.boundingBox.max.y - capsule.boundingBox.min.y).toBeCloseTo(0.3, 5);
-    expect(capsule.attributes.uv2).toBeDefined();
-
-    const material = new THREE.MeshStandardMaterial();
-    const a = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
-    const b = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
-    b.position.x = 2;
-    const merged = R.mergeRigidMeshes([a, b]);
-    expect(merged).not.toBeNull();
-    expect(merged.material).toBe(material);
-    expect(merged.geometry.attributes.position.count).toBe(
-      a.geometry.attributes.position.count + b.geometry.attributes.position.count
-    );
   });
 });
 
@@ -136,9 +119,18 @@ describe('导演台渲染：灯光、环境与后处理', () => {
     expect(pipeline.composer.passes[0] instanceof THREE.RenderPass).toBe(true);
     expect(pipeline.composer.passes[1] instanceof THREE.SSAOPass).toBe(true);
     expect(pipeline.composer.passes[2] instanceof THREE.ShaderPass).toBe(true);
-    expect(pipeline.ssao.kernelRadius).toBe(0.18);
+    expect(pipeline.ssao.kernelRadius).toBe(0.05);
     expect(pipeline.ssao.minDistance).toBe(0.0008);
     expect(pipeline.ssao.maxDistance).toBe(0.025);
+    expect(THREE.SSAOShader.fragmentShader).toContain('surfaceViewZ - samplePoint.z');
+    expect(THREE.SSAOShader.fragmentShader).toContain('depth > 0.999');
+    expect(THREE.SSAOShader.fragmentShader).toContain('smoothstep( 0.40, 0.58, ndotv )');
+    expect(THREE.SSAOShader.fragmentShader).not.toContain('viewZToOrthographicDepth( samplePoint.z');
+    expect(pipeline.ssao.ssaoMaterial.fragmentShader).toContain('surfaceViewZ - samplePoint.z');
+    expect(pipeline.ssao.ssaoMaterial.fragmentShader).toContain('depth > 0.999');
+    expect(pipeline.ssao.ssaoMaterial.fragmentShader).toContain('smoothstep( 0.40, 0.58, ndotv )');
+    expect(pipeline.ssao.blurMaterial.fragmentShader).toContain('tDepth');
+    expect(pipeline.ssao.blurMaterial.uniforms.tDepth.value).toBe(pipeline.ssao.normalRenderTarget.depthTexture);
     expect(pipeline.ssao.beautyRenderTarget instanceof THREE.WebGLMultisampleRenderTarget).toBe(true);
     expect(pipeline.ssao.beautyRenderTarget.samples).toBe(4);
     expect(pipeline.ssao.ssaoMaterial.uniforms.tDiffuse.value).toBe(pipeline.ssao.beautyRenderTarget.texture);

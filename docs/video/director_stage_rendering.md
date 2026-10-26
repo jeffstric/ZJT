@@ -5,7 +5,7 @@
 核心边界：
 
 - 不合并整只人偶，不破坏关节父子层级、raycast 拾取、姿态和时间轴。
-- 不做每帧 Subdivision，不把 `mergeBufferGeometries` 误当成 CSG 布尔融合。
+- 不做 subdivision。轮廓靠 Lathe 分段和 RoundedBox 倒角。
 - normal/AO 只改变受光，**不会改变模型轮廓**；下巴、鼻尖和肩甲外形仍需要合适的基础几何。
 - 主视口、PiP 和快照必须走同一套后处理，否则导出会“货不对板”。
 
@@ -20,7 +20,7 @@ video_workflow.html
   SimplexNoise / SSAOShader / SSAOPass
   GammaCorrectionShader
   RoomEnvironment
-  RoundedBoxGeometry / BufferGeometryUtils
+  RoundedBoxGeometry
   director_stage_rendering.js
   director_stage_editor.js
 ```
@@ -33,49 +33,17 @@ video_workflow.html
 - `createStudioEnvironment`：PMREM + RoomEnvironment。
 - `createThreePointLights`：Key / Fill / Rim。
 - `createComposer` / `syncComposerCamera`：SSAO、FOV、尺寸和质量管理。
-- 几何工具：`mergeRigidMeshes`、`smoothStaticGeometry`、`roundedJoint`、`createCapsuleLathe`、`createLatheTorso`。
+- 几何工具：`roundedJoint`、`ensureUv2`。程序化躯干和四肢的 Lathe 在 `director_stage_editor.js` 的 `buildPuppetRig` 里直接生成。
 
 所有 example 文件来自官方 **r128** 包，位于 `web/assets/vendor/three-examples/`，不依赖 CDN，也不混用新版模块。
 
-## 2. Geometry Smoothing：平滑、合并与倒角
+## 2. 程序化人偶几何
 
-### 2.1 合并的正确粒度
+男人体型优先使用 `male_base_mesh.glb`。女人、小孩、胖子、瘦子，以及 GLB 未就绪或构建失败时，由 `buildPuppetRig` 按体型 profile 拼装。关节 Group 保持独立，不把整只人偶合并成一个网格，否则姿态旋转轴会失效。
 
-`BufferGeometryUtils.mergeBufferGeometries` 只是几何数据合批，不会消除相交面，也不会把多个球变成一张连续皮肤。因此只合并且满足以下条件的网格：
+躯干、四肢、头、脚使用 `LatheGeometry`。Lathe 在 phi 接缝处顶点是两份，`weldLatheSeam` 把两侧法线焊平。肘甲和膝甲走 `roundedJoint()`。
 
-- 同一个刚体关节内；
-- 同一个材质；
-- index 与 position/normal/uv 等 attribute 布局一致；
-- 不需要再独立拾取或独立运动。
-
-`mergeRigidMeshes(meshes)` 的实际流程：
-
-```js
-meshes[i].updateMatrix();
-const geometry = meshes[i].geometry.clone().applyMatrix4(meshes[i].matrix);
-// 收集后 mergeBufferGeometries(geometries, false)，最后仍使用原材质。
-```
-
-肩、肘、髋、膝等 Group 不合并，否则姿态旋转轴会失效。合并只在初始化执行，原网格和 clone 的 dispose 由调用方明确管理。
-
-### 2.2 法线和平滑
-
-```js
-geometry = THREE.BufferGeometryUtils.mergeVertices(geometry);
-geometry.computeVertexNormals();
-```
-
-重复顶点未焊接时，单纯 `computeVertexNormals()` 不能消除接缝。Lathe 接缝仍使用项目现有 `weldLatheSeam`。平滑不能修复低分段轮廓，球体/圆柱的径向分段仍需足够。
-
-官方 r128 包中已没有 `SubdivisionModifier.js`，所以本项目不使用其他版本顶替。`smoothStaticGeometry` 仅在有兼容实现时接受可选 subdivision；默认执行 mergeVertices + normals。若未来明确 backport，正确用法也只能是构建期一次：
-
-```js
-const modifier = new THREE.SubdivisionModifier(1);
-geometry = modifier.modify(geometry); // 初始化一次，禁止每帧执行
-geometry.computeVertexNormals();
-```
-
-### 2.3 真正的几何倒角
+### 2.1 倒角关节
 
 肘/膝甲使用 r128 `RoundedBoxGeometry`，而不是靠法线假装倒角：
 
@@ -182,16 +150,22 @@ composer.addPass(new THREE.ShaderPass(THREE.GammaCorrectionShader));
 
 r128 没有新版 `OutputPass`，所以使用 `GammaCorrectionShader`，不要照搬新版示例。
 
-SSAO 初始参数以 1.7m 人台为尺度：
+SSAO 初始参数以 1.7m 人台为尺度，单位是米：
 
 ```js
-ssao.kernelRadius = 0.18;
+ssao.kernelRadius = 0.05;
 ssao.minDistance = 0.0008;
 ssao.maxDistance = 0.025;
 ssao.output = THREE.SSAOPass.OUTPUT.Default;
 ```
 
-不能把默认 8m 的 kernelRadius 直接用于厘米级关节，否则会出现大面积脏黑。
+不能把默认 8m 的 kernelRadius 直接用于厘米级关节，否则会出现大面积脏黑。采样半径取 5cm，只覆盖关节缝和脚底接触。
+
+r128 自带的 `SSAOShader` 把 `minDistance` / `maxDistance` 拿去和 0–1 正交深度比较。导演台相机 `near=0.1`、`far=100` 时，`0.0008` / `0.025` 会放大成大约 8cm / 2.5m。采样球因此在手臂外侧的地面上留下一圈脱离身体的手形暗斑。`patchSsaoDistanceToViewMeters` 在创建 `SSAOPass` 之前把遮挡判断改成视空间米：`delta = surfaceViewZ - samplePoint.z`，表面比采样点更近且距离落在 0.8mm–2.5cm 之间才计遮挡。
+
+远平面清空值（原始深度 > 0.999）直接输出「无遮挡」。透视深度在 far 附近的量化噪声有几厘米到几米，会把整片空背景随机记成遮挡。
+
+距离改成米之后，掠射地面仍会误遮挡：视线几乎贴着地板时，几厘米的深度差落进 `minDistance`–`maxDistance`，地平线一整条变暗。人体挡住这些采样的像素不再变暗，肩膀和手臂两侧就露出更亮的扇形残影。补丁在遮挡累加后乘上 `smoothstep(0.40, 0.58, ndotv)`，`ndotv` 是表面法线与“指向相机”方向的夹角余弦。掠射地面权重降到 0，正对镜头的身体和近处脚底接触仍然保留。`patchSsaoBlurDepthAware` 让 5×5 模糊只混合原始深度差不超过 0.02 的邻域，避免把人体边缘的遮挡抹进背景。
 
 ### 5.2 双 composer
 
@@ -226,21 +200,9 @@ PiP：scene + virtualCam     → pipComposer  → PiP canvas
 
 `findFailedPrograms(renderers)` 收集 `renderer.info.programs` 中带 `diagnostics` 的链接失败程序，是上述诊断与回归测试的底层工具。编辑器接线见 `web/js/director_stage_editor.js` 的 `_driverShadowDisabled`。
 
-## 6. 纯代码拓扑的妥协方案
+## 6. 性能与验收清单
 
-### 6.1 胶囊四肢
-
-r128 没有 `CapsuleGeometry`，使用 `createCapsuleLathe(radius, length, radialSegments)`：两端各 10 段半球，中间为圆柱段，最后统一 `computeVertexNormals()` 和 `uv2`。
-
-如果需要放在两点之间，应创建 Mesh 后用中点定位，并用 quaternion 将局部 +Y 对齐到目标方向；不要把旋转烘进骨架层级。
-
-### 6.2 Lathe 躯干
-
-`createLatheTorso(profile, radialSegments)` 接受 `[y, radius]` 控制点，生成连续旋转曲面。躯干轮廓由 profile 决定，不需要逐顶点雕刻；胸甲、腹甲、骨盆甲则使用独立硬壳和窄缝，而不是添加凸起的装饰线。
-
-## 7. 性能与验收清单
-
-- 不合并整只 rig，不做每帧 subdivision，不为每盏灯开启阴影。
+- 不合并整只 rig，不为每盏灯开启阴影。
 - 不以降低 Beauty 分辨率换性能：主视口/PiP/快照全分辨率；只允许 DPR 上限、单主光阴影、MSAA 或 SSAO 降级/关闭。
 - 贴图异步加载，不在 Web 接口或事件循环中同步等待。
 - 检查正/侧/背、3/4、T-Pose、胸/头/关节近景。

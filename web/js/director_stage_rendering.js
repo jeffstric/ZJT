@@ -220,6 +220,60 @@
     };
   }
 
+  // r128 SSAOShader 把 min/maxDistance 和 0–1 正交深度比较。导演台相机 near=0.1、far=100 时，
+  // 0.0008 / 0.025 会变成约 8cm / 2.5m，再叠加 kernelRadius，手臂外侧地面会出现脱离身体的手形暗斑。
+  // 改为视空间米：表面比采样点更近、且距离落在 min/max（米）之间才计遮挡。
+  // 远平面清空值的透视深度量化噪声有几厘米到几米，会把整片空背景随机记成遮挡。
+  // 即便距离已改成米，掠射地面（视线几乎贴着地板）仍会把几厘米的深度差记成遮挡，
+  // 地平线一整条变暗；人体挡住这些采样后，肩膀两侧留下更亮的扇形残影。
+  // 法线越贴着视线，遮挡权重越降到 0；正对镜头的表面和近处脚底接触仍保留。
+  function patchSsaoDistanceToViewMeters() {
+    var shader = THREE.SSAOShader;
+    if (!shader || typeof shader.fragmentShader !== 'string') return;
+    if (shader.fragmentShader.indexOf('surfaceViewZ - samplePoint.z') === -1) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        /float realDepth = getLinearDepth\( samplePointUv \);[\s\S]*?float delta = sampleDepth - realDepth;/,
+        'float surfaceViewZ = getViewZ( getDepth( samplePointUv ) );\n\t\t\t\tfloat delta = surfaceViewZ - samplePoint.z;'
+      );
+    }
+    if (shader.fragmentShader.indexOf('depth > 0.999') === -1) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        'float depth = getDepth( vUv );',
+        'float depth = getDepth( vUv );\n\t\t\tif ( depth > 0.999 ) {\n\t\t\t\tgl_FragColor = vec4( 1.0 );\n\t\t\t\treturn;\n\t\t\t}'
+      );
+    }
+    if (shader.fragmentShader.indexOf('smoothstep( 0.40, 0.58, ndotv )') === -1) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        /occlusion = clamp\( occlusion \/ float\( KERNEL_SIZE \), 0\.0, 1\.0 \);\s*gl_FragColor = vec4\( vec3\( 1\.0 - occlusion \), 1\.0 \);/,
+        'occlusion = clamp( occlusion / float( KERNEL_SIZE ), 0.0, 1.0 );\n' +
+        '\t\t\tfloat ndotv = 1.0;\n' +
+        '\t\t\tfloat nLen = length( viewNormal );\n' +
+        '\t\t\tfloat pLen = length( viewPosition );\n' +
+        '\t\t\tif ( nLen > 1e-4 && pLen > 1e-4 ) ndotv = abs( dot( viewNormal / nLen, -viewPosition / pLen ) );\n' +
+        '\t\t\tocclusion *= smoothstep( 0.40, 0.58, ndotv );\n' +
+        '\t\t\tgl_FragColor = vec4( vec3( 1.0 - occlusion ), 1.0 );'
+      );
+    }
+  }
+
+  // 5×5 模糊没有深度判断，会把人体边缘的遮挡抹到背景上，留下一圈细边。
+  function patchSsaoBlurDepthAware() {
+    var shader = THREE.SSAOBlurShader;
+    if (!shader || typeof shader.fragmentShader !== 'string') return;
+    if (shader.fragmentShader.indexOf('tDepth') !== -1) return;
+    shader.uniforms.tDepth = { value: null };
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'uniform sampler2D tDiffuse;',
+      'uniform sampler2D tDiffuse;\n\t\tuniform sampler2D tDepth;'
+    ).replace(
+      'float result = 0.0;',
+      'float centerDepth = texture2D( tDepth, vUv ).x;\n\t\t\tfloat result = 0.0;'
+    ).replace(
+      'result += texture2D( tDiffuse, vUv + offset ).r;',
+      'float sampleDepth = texture2D( tDepth, vUv + offset ).x;\n\t\t\t\t\tif ( abs( sampleDepth - centerDepth ) > 0.02 ) result += texture2D( tDiffuse, vUv ).r;\n\t\t\t\t\telse result += texture2D( tDiffuse, vUv + offset ).r;'
+    );
+  }
+
   function syncComposerCamera(ssao, camera) {
     if (!ssao || !ssao.ssaoMaterial) return;
     var uniforms = ssao.ssaoMaterial.uniforms;
@@ -273,9 +327,15 @@
       // 走 r128 热 setSize 会触发深度纹理缺陷；构造后同尺寸 setSize 是 no-op，安全。
       var pw = Math.max(1, Math.round((optW || size.x) * pixelRatio));
       var ph = Math.max(1, Math.round((optH || size.y) * pixelRatio));
+      patchSsaoDistanceToViewMeters();
+      patchSsaoBlurDepthAware();
       var ssao = new THREE.SSAOPass(scene, camera, pw, ph);
+      if (ssao.blurMaterial && ssao.blurMaterial.uniforms && ssao.blurMaterial.uniforms.tDepth) {
+        ssao.blurMaterial.uniforms.tDepth.value = ssao.normalRenderTarget.depthTexture;
+      }
       if (optW && optH) composer.setSize(optW, optH);
-      ssao.kernelRadius = options.kernelRadius == null ? 0.18 : options.kernelRadius;
+      // 采样半径 5cm：盖住关节缝和脚底接触，不再在手臂外侧扫出一手宽的暗斑。
+      ssao.kernelRadius = options.kernelRadius == null ? 0.05 : options.kernelRadius;
       ssao.minDistance = options.minDistance == null ? 0.0008 : options.minDistance;
       ssao.maxDistance = options.maxDistance == null ? 0.025 : options.maxDistance;
       ssao.output = THREE.SSAOPass.OUTPUT.Default;
@@ -387,72 +447,10 @@
     return pipeline;
   }
 
-  // 仅合并同一刚体内、同材质且 attribute 布局一致的网格；调用方保留关节层级和原始网格生命周期。
-  function mergeRigidMeshes(meshes) {
-    if (!meshes || meshes.length < 2 || !THREE.BufferGeometryUtils) return null;
-    var material = meshes[0].material;
-    var geometries = [];
-    for (var i = 0; i < meshes.length; i++) {
-      if (meshes[i].material !== material) return null;
-      meshes[i].updateMatrix();
-      var geometry = meshes[i].geometry.clone();
-      geometry.applyMatrix4(meshes[i].matrix);
-      geometries.push(geometry);
-    }
-    var merged = THREE.BufferGeometryUtils.mergeBufferGeometries(geometries, false);
-    geometries.forEach(function (geometry) { geometry.dispose(); });
-    if (!merged) return null;
-    var mesh = new THREE.Mesh(merged, material);
-    mesh.castShadow = meshes[0].castShadow;
-    mesh.receiveShadow = meshes[0].receiveShadow;
-    return mesh;
-  }
-
-  function smoothStaticGeometry(geometry, subdivisions) {
-    var result = geometry;
-    if (THREE.BufferGeometryUtils) result = THREE.BufferGeometryUtils.mergeVertices(result);
-    if (subdivisions > 0 && THREE.SubdivisionModifier) {
-      var modifier = new THREE.SubdivisionModifier(subdivisions);
-      var subdivided = modifier.modify(result);
-      if (result !== geometry) result.dispose();
-      result = subdivided;
-    }
-    result.computeVertexNormals();
-    ensureUv2(result);
-    return result;
-  }
-
+  // 肘/膝甲。组件缺失时返回 null，调用方退回椭球，避免导演台打不开。
   function roundedJoint(width, height, depth, radius) {
     if (!THREE.RoundedBoxGeometry) return null;
     return ensureUv2(new THREE.RoundedBoxGeometry(width, height, depth, 4, radius));
-  }
-
-  // r128 无 CapsuleGeometry 时的纯 Lathe 胶囊体；length 为中间圆柱段长度。
-  function createCapsuleLathe(radius, length, radialSegments) {
-    var points = [];
-    var capSegments = 10;
-    var i, theta;
-    for (i = 0; i <= capSegments; i++) {
-      theta = -Math.PI / 2 + (i / capSegments) * Math.PI / 2;
-      points.push(new THREE.Vector2(Math.max(0.0001, radius * Math.cos(theta)), -length / 2 + radius * Math.sin(theta)));
-    }
-    points.push(new THREE.Vector2(radius, length / 2));
-    for (i = 0; i <= capSegments; i++) {
-      theta = (i / capSegments) * Math.PI / 2;
-      points.push(new THREE.Vector2(Math.max(0.0001, radius * Math.cos(theta)), length / 2 + radius * Math.sin(theta)));
-    }
-    var geometry = new THREE.LatheGeometry(points, radialSegments || 24);
-    geometry.computeVertexNormals();
-    return ensureUv2(geometry);
-  }
-
-  function createLatheTorso(profile, radialSegments) {
-    var points = profile.map(function (point) {
-      return new THREE.Vector2(Math.max(0.0001, point[1]), point[0]);
-    });
-    var geometry = new THREE.LatheGeometry(points, radialSegments || 32);
-    geometry.computeVertexNormals();
-    return ensureUv2(geometry);
   }
 
   // 部分显卡驱动的 ANGLE 后端（如 NVIDIA Vulkan/OpenGL）编译某个高级着色器失败后会拖垮
@@ -498,12 +496,10 @@
     createStudioEnvironment: createStudioEnvironment,
     createThreePointLights: createThreePointLights,
     createComposer: createComposer,
+    patchSsaoDistanceToViewMeters: patchSsaoDistanceToViewMeters,
+    patchSsaoBlurDepthAware: patchSsaoBlurDepthAware,
     syncComposerCamera: syncComposerCamera,
-    mergeRigidMeshes: mergeRigidMeshes,
-    smoothStaticGeometry: smoothStaticGeometry,
     roundedJoint: roundedJoint,
-    createCapsuleLathe: createCapsuleLathe,
-    createLatheTorso: createLatheTorso,
     findFailedPrograms: findFailedPrograms,
     detectDriverShaderRisk: detectDriverShaderRisk
   };

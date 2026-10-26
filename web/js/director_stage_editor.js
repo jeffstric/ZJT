@@ -39,10 +39,8 @@
       new THREE.GLTFLoader().load(MALE_BASE_MESH_URL, function (gltf) {
         maleBaseMeshGltf = gltf;
         MALE_BASE_MESH_STATE = 'ready';
-        if (typeof window !== 'undefined') window.__maleBaseMeshState = 'ready';
       }, undefined, function () {
         MALE_BASE_MESH_STATE = 'failed';
-        if (typeof window !== 'undefined') window.__maleBaseMeshState = 'failed';
       });
     } catch (e) {
       MALE_BASE_MESH_STATE = 'failed';
@@ -325,7 +323,6 @@
   // ============ 工具 ============
 
   function deg2rad(d) { return d * Math.PI / 180; }
-  function rad2deg(r) { return r * 180 / Math.PI; }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   function fmt(n) { return (Math.round(n * 10) / 10).toFixed(1); }
   function esc(v) { return window.escapeHtml ? window.escapeHtml(String(v == null ? '' : v)) : String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -357,11 +354,10 @@
     var materialBundle = R ? R.createResinMaterials(colorHex, null) : null;
     var mat = materialBundle ? materialBundle.body
       : new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0 });
-    var seamMat = materialBundle ? materialBundle.seam : mat;
     var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
 
     var rig = {
-      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, markerBaseMat],
       materialBundle: materialBundle,
       bodyType: normalizeBodyType('man'), rootYOffset: 0
     };
@@ -405,9 +401,8 @@
     // 归一化容器，raw 空间的坐标不能直接用。
     var headBone = new THREE.Bone();
     headBone.name = 'head.glb';
-    // —— 立正重绑（位置标记①）：绑定逆矩阵必须在"归一化+关节组挂载"之后的最终
-    // 坐标系里重算——渲染循环活在该坐标系；在原始坐标系重算会让 boneMatrix
-    // 混入容器变换，渲染态与重绑态相差约 90°（实测 dev≈4.8）。此处只做头骨增权。
+    // 此处只做头骨增权。绑定逆矩阵不在 raw 空间重算：渲染循环活在归一化后的
+    // 坐标系，且 GLB 路径保持原始绑定逆矩阵，不做 calculateInverses。
     var headIdx = skeleton.bones.length; // headBone 将追加在末尾
     var si = skinned.geometry.attributes.skinIndex;
     for (var wi = 0; wi < si.count; wi++) {
@@ -507,20 +502,12 @@
     var order = ['spine', 'chest', 'neck', 'head',
       'shoulderL', 'elbowL', 'wristL', 'shoulderR', 'elbowR', 'wristR',
       'hipL', 'kneeL', 'ankleL', 'hipR', 'kneeR', 'ankleR'];
-    var boneOf = {
-      spine: 'spine001', chest: 'spine003', neck: 'spine005'
-    };
     var groupWorld = { hipsY: new THREE.Vector3(0, hipH, 0) };
     var i, key;
     for (i = 0; i < order.length; i++) {
       key = order[i];
-      var targetBone;
-      if (key === 'head') {
-        targetBone = headBone;
-      } else {
-        targetBone = findBone(boneOf[key] || GLB_JOINT_BONES[key]);
-      }
-      if (!targetBone) throw new Error('male_base_mesh.glb 缺少骨骼: ' + (boneOf[key] || GLB_JOINT_BONES[key]));
+      var targetBone = key === 'head' ? headBone : findBone(GLB_JOINT_BONES[key]);
+      if (!targetBone) throw new Error('male_base_mesh.glb 缺少骨骼: ' + GLB_JOINT_BONES[key]);
       var headW = bonePos(targetBone);
       var parentKey = GLB_JOINT_PARENTS[key];
       var parentW = groupWorld[parentKey];
@@ -571,7 +558,6 @@
         console.warn('导演台：GLB 人偶构建失败，已回退程序化人偶。', e);
       }
     }
-    var t = getBodyType(bodyTypeKey);
     // 分部位 PBR 树脂材质；无渲染模块时保留 StandardMaterial 回退。
     var materialBundle = null;
     if (typeof window !== 'undefined' && window.DirectorStageRendering) {
