@@ -158,8 +158,11 @@
 
     function renderMemberBox(kind, members, hint) {
         var html = '<div class="al-member-box" data-al-memberbox="' + kind + '">';
-        html += '<input type="text" class="al-input al-member-search" placeholder="搜索昵称添加成员" data-al-member-search>';
-        html += '<div class="al-member-candidates" data-al-member-candidates hidden></div>';
+        html += '<div class="al-member-inputrow">';
+        html += '<input type="text" class="al-input al-member-search" placeholder="输入完整账号（手机号 / 邮箱）后回车添加" data-al-member-search>';
+        html += '<button type="button" class="al-btn al-btn--small" data-al-member-add>添加</button>';
+        html += '</div>';
+        html += '<div class="al-member-msg" data-al-member-msg></div>';
         html += '<div class="al-member-tags" data-al-member-tags></div>';
         html += '<div class="al-hint">' + esc(hint) + '</div>';
         html += '</div>';
@@ -185,54 +188,52 @@
         });
     }
 
-    var memberSearchTimer = null;
-
+    /**
+     * 指定成员添加：完整账号精确查找（回车 / 添加按钮触发）。
+     * 命中 → 加入成员列表并提示「用户共享成功」；
+     * 未命中 → 提示「没有查找到这个用户」。
+     */
     function bindMemberBox(section, kind, conf) {
         var box = section.querySelector('[data-al-memberbox="' + kind + '"]');
         if (!box) return;
         renderMemberTags(section, conf);
         var input = box.querySelector('[data-al-member-search]');
-        var candidates = box.querySelector('[data-al-member-candidates]');
-        if (!input || !candidates) return;
-        input.addEventListener('input', function () {
-            if (memberSearchTimer) clearTimeout(memberSearchTimer);
-            var kw = input.value.trim();
-            if (!kw) { candidates.hidden = true; candidates.innerHTML = ''; return; }
-            memberSearchTimer = setTimeout(function () {
-                api('/users?keyword=' + encodeURIComponent(kw)).then(function (res) {
-                    var items = (res.data && res.data.items) || [];
-                    var existing = conf.members.map(function (m) { return m.user_id; });
-                    items = items.filter(function (u) { return existing.indexOf(u.user_id) < 0; });
-                    if (!items.length) {
-                        candidates.hidden = true;
-                        candidates.innerHTML = '';
-                        return;
-                    }
-                    var html = '';
-                    items.forEach(function (u) {
-                        html += '<button type="button" class="al-member-candidate" data-uid="' + esc(String(u.user_id)) +
-                            '" data-uname="' + esc(u.display_name) + '">' + esc(u.display_name) +
-                            ' <span class="al-hint">#' + esc(String(u.user_id)) + '</span></button>';
-                    });
-                    candidates.innerHTML = html;
-                    candidates.hidden = false;
-                    candidates.querySelectorAll('[data-uid]').forEach(function (btn) {
-                        btn.addEventListener('click', function () {
-                            conf.members.push({
-                                user_id: Number(btn.getAttribute('data-uid')),
-                                name: btn.getAttribute('data-uname')
-                            });
-                            input.value = '';
-                            candidates.hidden = true;
-                            candidates.innerHTML = '';
-                            renderMemberTags(section, conf);
-                        });
-                    });
-                }).catch(function () {
-                    candidates.hidden = true;
-                    candidates.innerHTML = '';
-                });
-            }, 250);
+        var addBtn = box.querySelector('[data-al-member-add]');
+        var msg = box.querySelector('[data-al-member-msg]');
+        if (!input || !addBtn || !msg) return;
+
+        function setMsg(text, isError) {
+            msg.textContent = text || '';
+            msg.className = 'al-member-msg' + (text ? (isError ? ' is-error' : ' is-ok') : '');
+        }
+
+        function addMember() {
+            var account = input.value.trim();
+            if (!account) { setMsg('请先输入完整账号（手机号 / 邮箱）', true); return; }
+            addBtn.disabled = true;
+            input.disabled = true;
+            setMsg('查找中…', false);
+            api('/users?account=' + encodeURIComponent(account)).then(function (res) {
+                var user = res.data && res.data.user;
+                if (!user) { setMsg('没有查找到这个用户', true); return; }
+                var exists = conf.members.some(function (m) { return m.user_id === user.user_id; });
+                if (exists) { setMsg('该用户已在列表中', true); return; }
+                conf.members.push({ user_id: user.user_id, name: user.display_name });
+                renderMemberTags(section, conf);
+                input.value = '';
+                setMsg('用户共享成功', false);
+            }).catch(function (e) {
+                setMsg(e.message || '查找失败，请稍后重试', true);
+            }).finally(function () {
+                addBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            });
+        }
+
+        addBtn.addEventListener('click', addMember);
+        input.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Enter') { ev.preventDefault(); addMember(); }
         });
     }
 

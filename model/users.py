@@ -256,6 +256,29 @@ class UsersModel:
             logger.error(f"Failed to find users by nickname like (nickname-only): {e}")
             raise
         return [int(row["id"]) for row in like_rows]
+
+    @staticmethod
+    def find_id_by_exact_account(account: str) -> Optional[int]:
+        """按完整账号精确查找唯一用户（手机号 / 邮箱 / 昵称全等，不做模糊联想）。
+
+        资产库指定成员场景：必须完整输入后查找，避免模糊联想误加/枚举。
+        昵称可重，理论上命中多条时返回 id 最小的一个。
+        """
+        text = (account or "").strip()
+        if not text:
+            return None
+        sql = """
+            SELECT id FROM users
+            WHERE phone = %s OR LOWER(email) = LOWER(%s) OR nickname = %s
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        try:
+            rows = execute_query(sql, (text, text, text), fetch_all=True) or []
+            return int(rows[0]["id"]) if rows else None
+        except Exception as e:
+            logger.error(f"Failed to find user by exact account: {e}")
+            raise
     
     @staticmethod
     def get_by_phone(phone: str) -> Optional[User]:

@@ -45,7 +45,7 @@
 | GET | `/groups` | 共享分组目录 + 每组可见资产计数 + 未分组计数 |
 | POST | `/groups` / PUT `/groups/{id}` / DELETE `/groups/{id}` | 分组管理（改名/删除限创建者或管理员） |
 | GET | `/quota` | 我的容量 `{quota_bytes, used_bytes}` |
-| GET | `/users?keyword=` | 用户搜索（指定成员选择器，仅返回 id+display_name；**只走昵称通道**——手机号/邮箱精确匹配可枚举注册用户，账号通道仅管理端 scope 查询可用） |
+| GET | `/users?account=` | **完整账号精确查找**（指定成员添加）：手机号 / 邮箱 / 昵称全等，不做模糊联想；命中返回 `data.user={user_id, display_name}`，未命中 `null`（前端提示「用户共享成功 / 没有查找到这个用户」） |
 
 管理员侧 `api/admin.py`：
 
@@ -91,6 +91,8 @@
 - 弹窗层级：`buildModal` 按 kind 互斥（浏览/入库=main 打开前清全部，编辑=sub 可叠于浏览之上），入口连点不会叠加多层 overlay；`asset_library.css` 尾部含 `html.theme-dark` 暗色主题适配（video_workflow 暗色模式）。
 - admin 前端：用户管理操作列「资产库容量」弹窗（`web/js/admin.js assetQuotaModal`）：设置上限、查看用量/资产数，并内嵌该用户最近 50 条资产列表与「清除」操作（二次确认，走 `DELETE /api/asset-library/assets/{id}`，清除后自动刷新用量）。
 - i18n：`marketing_agent.json`（`nav_shared_asset_library`/`add_to_asset_library`/`type_asset`）、`video_workflow.json`（`image_node_add_asset_btn`/`asset_library_entry`）、`admin.json`（`btn_asset_quota` 等）；storyboard 侧 `i18nT(key, fallback)` 自带中文 fallback。
+
+**指定成员交互**：完整账号精确查找（回车/添加按钮触发，无模糊下拉）——命中加入成员标签并提示「用户共享成功」（绿），未命中提示「没有查找到这个用户」（红），重复添加提示已在列表中。
 
 ## 8. 后续扩展（本期未做）
 

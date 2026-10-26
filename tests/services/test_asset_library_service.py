@@ -276,18 +276,19 @@ def test_purge_asset_tolerates_dirty_file_path(monkeypatch):
     assert releases == [(10, 100)]
 
 
-def test_search_users_uses_nickname_channel_only(monkeypatch):
-    # 成员搜索仅走昵称通道（手机号/邮箱精确匹配可枚举注册用户，禁用）
-    calls = {'nickname': [], 'account': []}
-    monkeypatch.setattr(svc.UsersModel, 'find_ids_by_nickname',
-                        staticmethod(lambda q, limit=20: (calls['nickname'].append(q), [3])[1]))
-    monkeypatch.setattr(svc.UsersModel, 'find_ids_by_nickname_or_account',
-                        staticmethod(lambda q, limit=20: (calls['account'].append(q), [])[1]))
+def test_search_user_exact_hit_and_miss(monkeypatch):
+    # 指定成员：完整账号精确查找，命中返回用户、未命中返回 None（前端据此提示）
+    calls = {'exact': []}
+    monkeypatch.setattr(svc.UsersModel, 'find_id_by_exact_account',
+                        staticmethod(lambda a: (calls['exact'].append(a), 3 if a == '13800000000' else None)[1]))
     monkeypatch.setattr(svc.UsersModel, 'get_display_names', staticmethod(lambda ids: {3: '张三'}))
-    result = svc.search_users('张')
-    assert result == [{'user_id': 3, 'display_name': '张三'}]
-    assert calls['nickname'] == ['张']
-    assert calls['account'] == []  # 账号通道未被触碰
+
+    hit = svc.search_user_exact('13800000000')
+    assert hit == {'user_id': 3, 'display_name': '张三'}
+    assert calls['exact'] == ['13800000000']
+
+    assert svc.search_user_exact('不存在账号') is None
+    assert svc.search_user_exact('   ') is None  # 空白不触发查找（模型层短路）
 
 
 def test_count_by_group_sql_has_group_by(monkeypatch):

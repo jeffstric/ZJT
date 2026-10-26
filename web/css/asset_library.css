@@ -242,9 +242,28 @@
     padding: 8px;
 }
 
-.al-member-search {
-    width: 100%;
-    margin-bottom: 6px;
+.al-member-inputrow {
+    display: flex;
+    gap: 6px;
+}
+
+.al-member-inputrow .al-member-search {
+    flex: 1;
+    min-width: 0;
+}
+
+.al-member-msg {
+    min-height: 18px;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.al-member-msg.is-ok {
+    color: #16a34a;
+}
+
+.al-member-msg.is-error {
+    color: #f54a45;
 }
 
 .al-member-tags {
@@ -273,29 +292,6 @@
     padding: 0;
     font-size: 13px;
     line-height: 1;
-}
-
-.al-member-candidates {
-    max-height: 120px;
-    overflow: auto;
-    border-top: 1px dashed #eee;
-}
-
-.al-member-candidate {
-    display: block;
-    width: 100%;
-    text-align: left;
-    border: none;
-    background: none;
-    padding: 6px 8px;
-    font-size: 12px;
-    color: #1f2329;
-    cursor: pointer;
-    border-radius: 4px;
-}
-
-.al-member-candidate:hover {
-    background: #f2f3f5;
 }
 
 /* ============ 浏览弹窗布局 ============ */
@@ -656,8 +652,12 @@ html.theme-dark .al-member-tag {
     color: #7aa8ff;
 }
 
-html.theme-dark .al-member-candidate:hover {
-    background: #2f2f2f;
+html.theme-dark .al-member-msg.is-ok {
+    color: #4ade80;
+}
+
+html.theme-dark .al-member-msg.is-error {
+    color: #f87171;
 }
 
 html.theme-dark .al-browse-side {

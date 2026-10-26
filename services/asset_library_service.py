@@ -588,18 +588,18 @@ def get_quota(user_id: int) -> Dict[str, Any]:
     return quota
 
 
-def search_users(keyword: str, limit: int = ALC.MEMBER_SEARCH_LIMIT) -> List[Dict[str, Any]]:
-    """按昵称搜索用户（指定成员选择器数据源）。
+def search_user_exact(account: str) -> Optional[Dict[str, Any]]:
+    """按完整账号精确查找用户（指定成员添加）。
 
-    仅昵称通道：手机号/邮箱精确匹配可被用于枚举注册用户，不走账号通道
-    （find_ids_by_nickname_or_account 仅供管理端 scope 查询使用）。
+    必须完整输入（手机号 / 邮箱 / 昵称全等），不做模糊联想：
+    找到返回 {user_id, display_name}，找不到返回 None（前端据此提示
+    「用户共享成功 / 没有查找到这个用户」）。
     """
-    text = (keyword or "").strip()
-    ids = UsersModel.find_ids_by_nickname(text, limit=limit)
-    if not ids:
-        return []
-    names = UsersModel.get_display_names(ids)
-    return [{"user_id": uid, "display_name": names.get(uid, f"用户{uid}")} for uid in ids]
+    uid = UsersModel.find_id_by_exact_account((account or "").strip())
+    if not uid:
+        return None
+    names = UsersModel.get_display_names([uid])
+    return {"user_id": uid, "display_name": names.get(uid, f"用户{uid}")}
 
 
 def list_user_assets_for_admin(user_id: int, limit: int = 100, offset: int = 0) -> Dict[str, Any]:

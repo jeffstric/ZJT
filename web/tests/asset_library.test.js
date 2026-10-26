@@ -159,3 +159,69 @@ describe('secureSanitize 入库按钮存活（历史消息回放）', () => {
     expect(html).not.toMatch(/onclick/i);
   });
 });
+
+describe('指定成员：完整账号精确添加', () => {
+  function mockUserApi(handler) {
+    return mockFetch((url) => {
+      const u = String(url);
+      if (u.includes('/users?account=')) return jsonResponse(handler(decodeURIComponent(u.split('account=')[1])));
+      if (u.includes('/assets/')) return jsonResponse({ code: 0, data: { id: 1, name: 'x', view_permission: 'private', edit_permission: 'private', view_members: [], edit_members: [], group_id: null, file_url: '/upload/a.png' } });
+      if (u.includes('/groups')) return jsonResponse({ code: 0, data: { groups: [], ungrouped_count: 0 } });
+      return jsonResponse({ code: 0, data: {} });
+    });
+  }
+
+  async function openEditAndGetBox() {
+    window.AssetLibrary.promptEdit({
+      id: 1, name: 'x', view_permission: 'specified', edit_permission: 'private',
+      view_members: [], edit_members: [],
+    });
+    await new Promise(r => setTimeout(r, 0));
+    return document.querySelector('.al-overlay');
+  }
+
+  test('账号存在：加入成员并提示「用户共享成功」', async () => {
+    mockUserApi((account) => account === '13800000000'
+      ? { code: 0, data: { user: { user_id: 7, display_name: '张三' } } }
+      : { code: 0, data: { user: null } });
+    const overlay = await openEditAndGetBox();
+    const box = overlay.querySelector('[data-al-memberbox="view"]');
+    const input = box.querySelector('[data-al-member-search]');
+    const msg = box.querySelector('[data-al-member-msg]');
+    input.value = '13800000000';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(msg.textContent).toBe('用户共享成功');
+    expect(msg.className).toContain('is-ok');
+    const tag = box.querySelector('[data-al-member-tags]');
+    expect(tag.textContent).toContain('张三');
+  });
+
+  test('账号不存在：提示「没有查找到这个用户」，不加入成员', async () => {
+    mockUserApi(() => ({ code: 0, data: { user: null } }));
+    const overlay = await openEditAndGetBox();
+    const box = overlay.querySelector('[data-al-memberbox="view"]');
+    const input = box.querySelector('[data-al-member-search]');
+    const msg = box.querySelector('[data-al-member-msg]');
+    input.value = 'nobody@x.com';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 0));
+    expect(msg.textContent).toBe('没有查找到这个用户');
+    expect(msg.className).toContain('is-error');
+    expect(box.querySelector('[data-al-member-tags]').children.length).toBe(0);
+  });
+
+  test('空输入不发起请求，直接提示补全', async () => {
+    const fetchMock = mockUserApi(() => ({ code: 0, data: { user: null } }));
+    const overlay = await openEditAndGetBox();
+    const box = overlay.querySelector('[data-al-memberbox="view"]');
+    const msg = box.querySelector('[data-al-member-msg]');
+    box.querySelector('[data-al-member-add]').click();
+    await new Promise(r => setTimeout(r, 0));
+    expect(msg.textContent).toContain('请先输入完整账号');
+    const calls = fetchMock.mock.calls.filter(c => String(c[0]).includes('/users?account='));
+    expect(calls.length).toBe(0);
+  });
+});

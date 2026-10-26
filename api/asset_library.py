@@ -245,10 +245,14 @@ async def get_quota(request: Request):
 @require_permission("asset_library:view")
 async def search_users(
     request: Request,
-    keyword: str = Query("", max_length=50),
-    limit: int = Query(ALC.MEMBER_SEARCH_LIMIT, ge=1, le=ALC.MEMBER_SEARCH_LIMIT),
+    account: str = Query("", max_length=100),
 ):
-    """按昵称/手机号/邮箱搜索用户（指定成员选择器数据源，仅返回 id + 展示名）。"""
+    """按完整账号精确查找用户（指定成员添加）。
+
+    account 必须完整输入（手机号 / 邮箱 / 昵称全等）；命中返回
+    data.user = {user_id, display_name}，未命中 data.user = null。
+    前端据此提示「用户共享成功 / 没有查找到这个用户」。
+    """
     _current_user_id(request)
-    users = await asyncio.to_thread(svc.search_users, keyword, limit)
-    return {"code": 0, "data": {"items": users}}
+    user = await asyncio.to_thread(svc.search_user_exact, account)
+    return {"code": 0, "data": {"user": user}}
