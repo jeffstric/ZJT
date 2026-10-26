@@ -34,14 +34,24 @@ MAX_THREE_CODE_CHARS = 8000
 
 
 def normalize_three_scene_code(raw: Any) -> str:
-    """LLM 可能把代码包进 markdown 围栏或带语言标注，剥壳后返回纯代码。"""
+    """LLM 可能把代码包进 markdown 围栏或带语言标注，剥壳后返回纯代码。
+
+    兼容多行围栏（```js\\ncode\\n```）与单行围栏（```js code ```）：
+    后者无换行，必须显式去掉开头 ``` 及语言标注，否则围栏残留会污染
+    落库数据并让前端沙箱执行报 SyntaxError。
+    """
     if not isinstance(raw, str):
         return ""
     code = raw.strip()
     if code.startswith("```"):
+        # 去开头围栏行：有换行直接截掉首行；无换行（单行围栏）按首个空格
+        # 切掉「```lang」头（``` 后无空格即空块，直接清空）。
         first_newline = code.find("\n")
         if first_newline != -1:
             code = code[first_newline + 1:]
+        else:
+            header_end = code.find(" ", 3)
+            code = code[header_end + 1:] if header_end != -1 else ""
         if code.rstrip().endswith("```"):
             code = code.rstrip()[: code.rstrip().rfind("```")]
     return code.strip()

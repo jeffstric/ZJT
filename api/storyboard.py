@@ -4380,7 +4380,9 @@ async def scene_camera_chat(
         model=model,
         vendor_id=vendor_id,
         model_id=numeric_model_id,
-        auth_token=auth_token,
+        # 剥掉 Bearer 前缀（与 server.py camera-chat、generate-from-script 同口径）：
+        # LLM 客户端会自行拼 Bearer 调内部用量/熔断端点，透传原始头会导致双重前缀。
+        auth_token=_auth_header_token(auth_token),
     )
     status = 200 if result.get('success') else 502
     return JSONResponse(result, status_code=status)

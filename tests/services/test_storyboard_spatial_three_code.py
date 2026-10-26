@@ -41,6 +41,32 @@ def test_normalize_strips_markdown_fences():
     assert normalize_three_scene_code("   \n  ") == ""
 
 
+def test_normalize_strips_single_line_fence():
+    """单行围栏（无换行，如 LLM 输出 ```js code ```）不得残留开头围栏/语言标注。"""
+    code = "setCamera(0, 1.2, 4.2, 0, 1.05, 0, 35);"
+    assert normalize_three_scene_code(f"```js {code} ```") == code
+    assert normalize_three_scene_code(f"```javascript {code}```") == code
+    # 无语言标注、围栏后紧跟空格
+    assert normalize_three_scene_code(f"``` {code} ```") == code
+    # 空围栏块
+    assert normalize_three_scene_code("```") == ""
+    assert normalize_three_scene_code("```js") == ""
+    # 未闭合围栏
+    assert normalize_three_scene_code("```js\n" + code) == code
+
+
+def test_normalize_single_line_fence_end_to_end_audit():
+    """回归：单行围栏剥壳后须能通过整段代码链校验（修复前 audit 会通过
+    但落库/前端执行被围栏污染）。"""
+    shots = [{
+        "shot_id": "s001",
+        "three_scene_code": "```js " + FIRST_SHOT_CODE.replace("\n", " ") + " ```",
+    }]
+    issues = audit_three_scene_codes_for_shots(shots, first_shot_starts_sequence=True)
+    assert issues == []
+    assert normalize_three_scene_code(shots[0]["three_scene_code"]).startswith("startScene(")
+
+
 def test_sequence_start_detection():
     assert is_sequence_start_code(FIRST_SHOT_CODE) is True
     assert is_sequence_start_code(INCREMENTAL_CODE) is False
