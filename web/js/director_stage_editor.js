@@ -405,33 +405,10 @@
       cut + (headTop - cut) * 0.25,
       new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).z
     );
-    // —— 立正重绑：模型绑定姿态是 T-pose（横举），先在上臂骨骼处把手臂旋到体侧下垂 ——
-    // —— 再以该姿态重算全部 boneInverses，让"零关节角 = 立正"，T-Pose 预设仍可举回。——
-    // 注意：boneInverses 数组与 GLB 缓存共享，且 r128 calculateInverses() 会原地清空
-    // 数组（length=0 会连累缓存骨架），必须先换成全新数组再重算。
-    skeleton.boneInverses = [];
-    var ARM_DOWN_DEG = 85; // 接近垂直、微外张，避免与大腿穿插
-    ['L', 'R'].forEach(function (suffix) {
-      var ua = findBone('upper_arm' + suffix);
-      if (!ua) return;
-      var sign = suffix === 'L' ? -1 : 1; // 原始空间左臂沿 -Z、右臂沿 +Z（归一化旋转后才是 ±X）
-      ua.updateWorldMatrix(true, false);
-      var pivot = new THREE.Vector3().setFromMatrixPosition(ua.matrixWorld);
-      var rot = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), sign * ARM_DOWN_DEG * Math.PI / 180);
-      var world = new THREE.Matrix4()
-        .makeTranslation(pivot.x, pivot.y, pivot.z)
-        .multiply(rot)
-        .multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z))
-        .multiply(ua.matrixWorld);
-      var local = new THREE.Matrix4().copy(ua.parent.matrixWorld).invert().multiply(world);
-      local.decompose(ua.position, ua.quaternion, ua.scale);
-    });
-    model.add(headBone);
-    skeleton.bones.push(headBone);
-    model.updateMatrixWorld(true);
-    skeleton.calculateInverses(); // 以手臂下垂+头骨就位后的姿态作为新绑定姿态
-    skeleton.init();              // 按 bones.length 重建 boneMatrices/boneTexture 槽位
-    var headIdx = skeleton.bones.length - 1;
+    // —— 立正重绑（位置标记①）：绑定逆矩阵必须在"归一化+关节组挂载"之后的最终
+    // 坐标系里重算——渲染循环活在该坐标系；在原始坐标系重算会让 boneMatrix
+    // 混入容器变换，渲染态与重绑态相差约 90°（实测 dev≈4.8）。此处只做头骨增权。
+    var headIdx = skeleton.bones.length; // headBone 将追加在末尾
     var si = skinned.geometry.attributes.skinIndex;
     for (var wi = 0; wi < si.count; wi++) {
       if (posAttr.getY(wi) <= cut) continue;
@@ -491,8 +468,41 @@
       return g;
     }
 
+    // —— 立正姿态（最终坐标系，创建关节组之前）：模型原始绑定是 T-pose（横举），
+    // 把上臂骨骼在肩点旋到体侧下垂（按实测方向算最小旋转，精确映射到 垂直微外张≈4°）。
+    // 关键：不做 calculateInverses 重绑——保持 GLB 原始绑定逆矩阵，让骨骼物理停在
+    // 立正位置（rest 时 boneMatrix≠I，蒙皮即渲染立正）；若重绑反而会让 rest 时
+    // boneMatrix=I，网格被渲染回原始 T-pose 几何。关节滑块从零位（立正）起算。
+    ['L', 'R'].forEach(function (suffix) {
+      var ua = findBone('upper_arm' + suffix);
+      if (!ua) return;
+      ua.updateWorldMatrix(true, false);
+      var pivot = new THREE.Vector3().setFromMatrixPosition(ua.matrixWorld);
+      var forearm = ua.children[0];
+      if (!forearm) return;
+      var dir = new THREE.Vector3().setFromMatrixPosition(forearm.matrixWorld).sub(pivot).normalize();
+      var outSign = suffix === 'L' ? 1 : -1; // 最终坐标系面向 +Z，左臂外侧 +X、右臂外侧 -X
+      var target = new THREE.Vector3(0, -1, 0.07 * outSign).normalize();
+      var axis = new THREE.Vector3().crossVectors(dir, target);
+      var axisLen = axis.length();
+      var angle = Math.atan2(axisLen, dir.dot(target));
+      if (axisLen > 1e-6 && angle > 1e-4) {
+        axis.normalize();
+        var rot = new THREE.Matrix4().makeRotationAxis(axis, angle);
+        var world = new THREE.Matrix4()
+          .makeTranslation(pivot.x, pivot.y, pivot.z)
+          .multiply(rot)
+          .multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z))
+          .multiply(ua.matrixWorld);
+        var local = new THREE.Matrix4().copy(ua.parent.matrixWorld).invert().multiply(world);
+        local.decompose(ua.position, ua.quaternion, ua.scale);
+      }
+    });
+    root.updateMatrixWorld(true);
+
     // 先创建全部关节组（位置=对应骨骼头的"相对父组的局部偏移"），再统一重挂骨骼链顶骨。
     // 注意组是嵌套的：bonePos 是世界坐标，必须减去父组世界位置（静止时旋转均为 0，直接相减）。
+    // 组位置取自上方立正姿态下的骨骼头，因此关节球/轴向指示器落在立正解剖位置。
     var attachPlan = [];
     var order = ['spine', 'chest', 'neck', 'head',
       'shoulderL', 'elbowL', 'wristL', 'shoulderR', 'elbowR', 'wristR',
@@ -523,6 +533,16 @@
     for (i = 0; i < attachPlan.length; i++) {
       rig.joints[attachPlan[i][0]].attach(attachPlan[i][1]);
     }
+
+    // —— 头骨注册：headBone 需要自己的绑定逆矩阵；boneInverses 与缓存共享且
+    // init() 按 bones.length 分配矩阵槽位，先拷贝追加再重建。
+    // 不做全量 calculateInverses（保留 GLB 原始绑定，立正靠骨骼物理姿态而非重绑）。
+    model.add(headBone);
+    skeleton.bones.push(headBone);
+    root.updateMatrixWorld(true);
+    skeleton.boneInverses = skeleton.boneInverses.slice();
+    skeleton.boneInverses.push(headBone.matrixWorld.clone().invert());
+    skeleton.init();
     root.updateMatrixWorld(true);
     return rig;
   }
