@@ -378,6 +378,8 @@
     // skinIndex 要做头骨增权手术，几何必须独立副本，避免污染共享缓存
     skinned.geometry = skinned.geometry.clone();
     skinned.frustumCulled = false;
+    skinned.castShadow = true;   // 与程序化人偶一致：实时投影（GLB 蒙皮阴影走 skinning 深度路径）
+    skinned.receiveShadow = true;
     skinned.material = mat;
     rig.bodyMeshes.push(skinned);
 
