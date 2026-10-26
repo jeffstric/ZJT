@@ -29,6 +29,30 @@ from config.constant import SubscriptionConstants
 
 logger = logging.getLogger(__name__)
 
+
+def _dev_callback_sign_bypass_enabled() -> bool:
+    """开发联调专用验签旁路（默认留空关闭，fail-closed 兜底）。
+
+    与 utils/wechat_pay_util.py 的 V3 旁路共用同一配置：
+    pay.wxpay.dev_skip_callback_sign 的值必须精确等于确认串
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE（'DEV-OK-I-KNOW-THE-RISK'）才生效：
+    显式声明式开关，填 true/1/随手字符串均不放行，防管理台误配置。
+    与 test_mode 挡板体系完全解耦（不牵连媒体生成 mock）。仅覆盖
+    "api_v2_key 未配置"分支。读取异常按未开启处理（安全失败）。
+    """
+    try:
+        from config.config_util import get_dynamic_config_value
+
+        value = str(
+            get_dynamic_config_value('pay', 'wxpay', 'dev_skip_callback_sign', default='')
+            or ''
+        )
+        # 严格精确匹配（不 trim）：粘贴带空白/大小写不符均不放行
+        return value == SubscriptionConstants.DEV_CALLBACK_SIGN_BYPASS_PHRASE
+    except Exception as e:
+        logger.warning(f"Failed to read dev callback sign bypass config: {e}")
+        return False
+
 # 微信支付 V2 XML 网关
 WX_API_BASE = "https://api.mch.weixin.qq.com"
 
@@ -73,7 +97,8 @@ class WxPapayUtil:
         Args:
             app_id: 公众号/小程序 AppID
             mch_id: 微信支付商户号
-            api_v2_key: V2 API 密钥（32位，XML 报文 MD5 签名用；为空时验签降级跳过）
+            api_v2_key: V2 API 密钥（32位，XML 报文 MD5 签名用；为空时回调验签 fail-closed 拒绝，
+                仅开发联调双开关旁路可放行，见 _dev_callback_sign_bypass_enabled）
             plan_template_id: 商户平台「委托代扣协议模板」ID（hardcode 配置）
             v3_authorization_builder: 可调用对象 (http_method, url_path, body) -> Authorization头，
                 由 WechatPayUtil.generate_v3_authorization 提供（预扣费通知 V3 接口用）
@@ -102,12 +127,25 @@ class WxPapayUtil:
         """
         验证 V2 回调签名
 
-        ⚠️ api_v2_key 未配置时跳过验签（返回 True 并告警），仅限开发联调；
-           生产环境必须配置 V2 密钥，否则攻击者可伪造回调。
+        api_v2_key 未配置时拒绝回调（fail-closed）：无法验签即无法确认通知
+        来源，接受回调等于接受任意伪造的支付/签约通知（审计
+        BUG-R2-S2-A1-H1：曾可伪造 SUCCESS 回调免费入账算力、伪造 ADD 回调
+        复活已解约合约，FAILURE→SUCCESS 循环可无限重复入账）。
         """
         if not self.api_v2_key:
-            logger.warning("api_v2_key 未配置，跳过 V2 回调验签（仅限开发环境！）")
-            return True
+            # 开发联调旁路：开发环境通常未配置 V2 密钥，fail-closed 会卡死
+            # 订阅支付的回调入账。与 V3 验签共用 pay.wxpay.dev_skip_callback_sign
+            # 确认串，填入 DEV-OK-I-KNOW-THE-RISK 时放行，每次跳过打 WARNING
+            # 便于审计；默认留空。
+            if _dev_callback_sign_bypass_enabled():
+                logger.warning(
+                    "DEV BYPASS: skipping V2 callback signature verification "
+                    "(pay.wxpay.dev_skip_callback_sign confirmed, api_v2_key missing) — "
+                    "NEVER configure in production"
+                )
+                return True
+            logger.error("api_v2_key 未配置，拒绝 V2 回调（fail-closed）")
+            return False
         received = params.get("sign")
         if not received:
             return False
