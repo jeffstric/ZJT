@@ -1851,42 +1851,29 @@ async def step_publish(task: ScriptSplitTask) -> None:
         )
 
     # 角色形象变化变体生成（幂等、分 tick 推进，见
-    # docs/storyboard/script_split_character_variant.md）。未全部终态时保存
-    # final_result（含 plan 检查点）并保持 publishing 让出 tick，下个 worker
-    # tick 从 plan 恢复继续轮询/提交；单变体失败/超时降级用主参考图。
-    if bool(cfg.get(
+    # docs/storyboard/script_split_character_variant.md）。发布不再等待变体图
+    # 终态：这里只负责提交尚未提交的变体并保存 plan 检查点；仍未终态的变体
+    # 落库时记入分镜 prompt_json.pending_reference_selections，由
+    # grid_image_task item_type=7 终态回填（成功写 {url,label}，失败/超时清除
+    # 后该镜头降级用主参考图）。
+    variant_enabled = bool(cfg.get(
         "enable_character_variant",
         ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
-    )):
+    ))
+    if variant_enabled:
         from services.script_split_character_variant_service import (
-            SUMMARY_METADATA_KEY,
-            build_character_variant_summary,
             ensure_character_variants,
         )
         variant_summary = await asyncio.to_thread(
             ensure_character_variants, task, final_result,
         )
         if not variant_summary.get("all_settled"):
-            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
-            ScriptSplitTaskModel.update_status(
-                task.id, ScriptSplitConstants.STATUS_PUBLISHING,
-                phase=ScriptSplitConstants.PHASE_CHARACTER_VARIANT,
-            )
-            logger.info(
-                "task %s 角色形象变体生成进行中: %s", task.id, variant_summary,
-            )
-            return
-        if int(variant_summary.get("total") or 0) > 0:
-            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
-                build_character_variant_summary(final_result)
-            )
+            # 只保存 plan 检查点（含已提交 task_key），不再 return：worker 崩溃
+            # 重入时不重复提交，发布照常继续。
             ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
             logger.info(
-                "task %s 角色形象变体生成完成: ready=%s failed=%s skipped=%s",
-                task.id,
-                variant_summary.get("ready"),
-                variant_summary.get("failed"),
-                variant_summary.get("skipped"),
+                "task %s 角色形象变体未全部终态，发布不等待（未就绪记为镜头待回填）: %s",
+                task.id, variant_summary,
             )
 
     # 发布前最后一道独立结构硬门禁。必须位于 bootstrap/create_scenes 之前，
@@ -1952,11 +1939,37 @@ async def step_publish(task: ScriptSplitTask) -> None:
             )
 
     # 2. 构造 scenes_payload（携带角色形象变化变体选择，使分镜生图直接
-    #     使用新形象：reference_selections → select_reference_variant_for_asset）
+    #     使用新形象：reference_selections → select_reference_variant_for_asset）。
+    #     已生成的变体写 reference_selections；仍未终态的记 pending_reference_
+    #     selections，由宫格任务终态回填（见文档 §5）。
     from api.storyboard import build_storyboard_scenes_from_parsed_script
     from services.script_split_character_variant_service import (
+        SUMMARY_METADATA_KEY,
+        build_character_variant_summary,
+        collect_pending_variant_map,
         collect_ready_variant_map,
     )
+    if variant_enabled:
+        # 落库前最后一次推进：把场景资产化期间已完成的变体直接写进分镜，
+        # 其余仍未终态的由 grid_image_task 回填，不再阻塞。
+        second_summary = await asyncio.to_thread(
+            ensure_character_variants, task, final_result,
+        )
+        if int(second_summary.get("total") or 0) > 0:
+            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
+                build_character_variant_summary(final_result)
+            )
+            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
+            logger.info(
+                "task %s 发布时角色形象变体状态: ready=%s pending=%s submitted=%s"
+                " failed=%s skipped=%s",
+                task.id,
+                second_summary.get("ready"),
+                second_summary.get("pending"),
+                second_summary.get("submitted"),
+                second_summary.get("failed"),
+                second_summary.get("skipped"),
+            )
     style = ""
     try:
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -1968,6 +1981,7 @@ async def step_publish(task: ScriptSplitTask) -> None:
         build_storyboard_scenes_from_parsed_script,
         final_result, style,
         character_variants=collect_ready_variant_map(final_result),
+        pending_character_variants=collect_pending_variant_map(final_result),
         video_gen_mode=str(cfg.get("video_gen_mode") or ""),
         max_shot_duration=cfg.get("max_shot_duration") or cfg.get("max_group_duration"),
     )

@@ -2060,6 +2060,134 @@ def test_step_publish_clears_final_result_before_short_name_can_reach_storyboard
     assert cleared == [17]
 
 
+def test_step_publish_does_not_wait_for_character_variants(monkeypatch):
+    """变体未全部终态也必须落库：不再提前 return，pending 记入分镜并继续配音对账。
+
+    见 docs/storyboard/script_split_character_variant.md §4/§5（发布不等待终态）。
+    """
+    from services.script_split_character_variant_service import PLAN_METADATA_KEY
+
+    final_result = {
+        "characters": [
+            {"id": "char_001", "name": "小林_Xiaolin", "character_db_id": 17},
+        ],
+        "locations": [{"id": "loc_001", "name": "宴会厅", "location_db_id": 23}],
+        "shot_groups": [{
+            "group_id": "grp_001",
+            "shots": [{
+                "shot_id": "s001", "shot_number": 1, "duration": 5,
+                "location_id": "loc_001", "description": "镜头",
+                "characters_present": ["char_001"],
+                "_effective_appearance_changes": [
+                    {"character_id": "char_001", "label": "晚礼服", "description": ""},
+                ],
+            }],
+        }],
+        "metadata": {},
+    }
+    task = ScriptSplitTask(
+        id=21,
+        user_id=7,
+        total_segment_count=1,
+        request_config={
+            "source": "storyboard",
+            "storyboard_id": 99,
+            "world_id": 3,
+            "enable_character_variant": True,
+        },
+        final_result_json=final_result,
+    )
+
+    async def _contract_noop(*_args, **_kwargs):
+        return {}
+
+    async def _locations_noop(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(
+        script_split_engine, "_ensure_task_character_contract", _contract_noop)
+    monkeypatch.setattr(
+        script_split_engine, "_load_current_db_locations", _locations_noop)
+    monkeypatch.setattr(
+        script_split_engine, "validate_segment_character_contract",
+        lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        script_split_engine, "validate_full_location_structure",
+        lambda *_args, **_kwargs: [])
+
+    status_updates = []
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel, "update_status",
+        lambda _task_id, status, **kwargs: status_updates.append((status, kwargs)))
+    monkeypatch.setattr(
+        script_split_engine.ScriptSplitTaskModel, "save_field",
+        lambda _task_id, **fields: None)
+    monkeypatch.setattr(
+        "model.storyboard.StoryboardModel.count_scenes_by_split_task",
+        staticmethod(lambda _task_id: 0))
+    monkeypatch.setattr(
+        "model.storyboard.StoryboardSceneModel.list_by_storyboard",
+        staticmethod(lambda _storyboard_id: []))
+    monkeypatch.setattr(
+        "model.storyboard.StoryboardModel.get_by_id",
+        staticmethod(lambda _storyboard_id: None))
+    created = {}
+    monkeypatch.setattr(
+        "model.storyboard.StoryboardModel.create_scenes",
+        staticmethod(lambda storyboard_id, user_id, payload, split_task_id:
+                     created.update(payload=payload) or len(payload)))
+
+    # 变体推进挡板：每轮都未终态（submitted），发布不得 return
+    ensure_calls = []
+
+    def _fake_ensure(_task, result):
+        ensure_calls.append(True)
+        result.setdefault("metadata", {})[PLAN_METADATA_KEY] = [{
+            "character_db_id": 17, "character_name": "小林_Xiaolin",
+            "label": "晚礼服", "description": "", "status": "submitted",
+            "task_key": "k1", "url": "", "error": "",
+            "submitted_at": "2026-10-26T00:00:00",
+        }]
+        return {"total": 1, "all_settled": False, "pending": 0, "submitted": 1,
+                "ready": 0, "failed": 0, "skipped": 0}
+
+    monkeypatch.setattr(
+        "services.script_split_character_variant_service.ensure_character_variants",
+        _fake_ensure)
+
+    monkeypatch.setattr(
+        "services.storyboard_character_bootstrap_service"
+        ".StoryboardCharacterBootstrapService.bootstrap",
+        lambda self, *_args, **_kwargs: {
+            "created_character_count": 0, "reused_character_count": 0,
+            "renamed": {}, "warnings": [],
+        })
+    monkeypatch.setattr(
+        "services.storyboard_location_bootstrap_service"
+        ".StoryboardLocationBootstrapService.bootstrap",
+        lambda self, *_args, **_kwargs: None)
+    reconciled = []
+
+    async def _fake_reconcile(_task, _result):
+        reconciled.append(True)
+
+    monkeypatch.setattr(
+        script_split_engine, "_reconcile_voiceover_and_finalize", _fake_reconcile)
+
+    asyncio.run(script_split_engine.step_publish(task))
+
+    # 两轮推进（提交 + 落库前）、落库发生、pending 记入分镜、继续到配音对账
+    assert len(ensure_calls) == 2
+    assert reconciled == [True]
+    assert created["payload"], "变体未终态也必须落库"
+    prompt = created["payload"][0]["prompt"]
+    assert prompt["pending_reference_selections"] == {
+        "schema_version": 1, "characters": {"17": {"label": "晚礼服"}}}
+    assert "reference_selections" not in prompt
+    # 不再进入 phase=character_variant 的 publishing 等待
+    assert status_updates == []
+
+
 def test_planned_location_hard_errors_writes_back_realigned_locations():
     """P2：L0 复检把按 DB 对齐后的 locations 回写 compiled_registry，并报告 changed。"""
     plan = {
