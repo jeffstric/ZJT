@@ -156,6 +156,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
     extract_first_frame,
@@ -6493,6 +6494,72 @@ async def fit_video_workflow_environment(
         horizon_y=body.horizon_y,
         scene_scale=body.scene_scale,
         ground_y=body.ground_y,
+    )
+
+
+class VideoWorkflowCameraChatRequest(BaseModel):
+    """导演台对话改机位请求：当前机位 + 场景人偶清单 + 自然语言指令。"""
+
+    class Config:
+        # eye/target 为数组或 {x,y,z} 对象均可，交给 parse_camera_instruction 兼容解析
+        extra = "allow"
+
+    message: str = ''
+    current_camera: Optional[Dict[str, Any]] = None
+    entities: Optional[List[Dict[str, Any]]] = None
+    model: str = ''
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/camera-chat')
+@require_permission("video_workflow:update")
+async def camera_chat_for_video_workflow(
+    request: Request,
+    body: VideoWorkflowCameraChatRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """导演台对话改机位：单轮 LLM 参数提取（不落库，前端应用后随工作流自动保存）。
+
+    与故事板 /scene/{id}/camera-chat 共用 services/storyboard_camera_chat.py，
+    本路由面向画布导演台（无分镜归属，鉴权走登录用户）。
+    """
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    message = str(body.message or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '指令不能为空'})
+    camera = body.current_camera or {}
+    eye, target = camera.get('eye'), camera.get('target')
+    if not isinstance(eye, (list, dict)) or not isinstance(target, (list, dict)):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '缺少当前机位数据'})
+    if not str(body.model or '').strip():
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+
+    # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        body.model_id,
+        body.vendor_id,
+    )
+
+    return await parse_camera_instruction(
+        message,
+        {'eye': eye, 'target': target, 'fov': camera.get('fov', 50)},
+        entities=body.entities or [],
+        model=str(body.model).strip(),
+        vendor_id=vendor_id,
+        model_id=numeric_model_id,
+        auth_token=normalize_authorization_token(auth_token),
     )
 
 

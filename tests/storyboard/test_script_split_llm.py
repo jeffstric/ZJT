@@ -211,3 +211,10 @@ class TestScriptParserPromptRules:
     def test_previous_parsed_result_param_exists(self):
         """parse_script_to_shots 支持 previous_parsed_result（上一轮完整 JSON）。"""
         assert "previous_parsed_result" in self._source
+
+    def test_director_stage_disabled_skips_three_code_block(self):
+        """「生成 3D 导演台」关闭（enable_three_scene_code=False）时不注入
+        three_scene_code 硬约束，效果模式仅保留 spatial_layout 一致性约束。"""
+        src = self._source
+        assert 'segment_context.get("enable_three_scene_code", True)' in src
+        assert "three_code_block" in src

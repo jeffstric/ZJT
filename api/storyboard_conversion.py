@@ -46,6 +46,7 @@ from model.video_workflow import VideoWorkflowModel
 from model.character import CharacterModel
 from model.world import WorldModel
 from model.script import ScriptModel
+from services.storyboard_spatial import is_sequence_start_code, normalize_three_scene_code
 from utils.resource_access import (
     ensure_resource_access,
     ensure_world_access,
@@ -625,6 +626,15 @@ def _scene_to_shot(scene: Dict, shot_number: int, characters: Dict[int, str]) ->
         'characters_present': [str(info['db_character_id']) for info in db_character_info],
         'db_character_info': db_character_info,
     }
+    # 3D 空间透传：效果模式分镜的 three.js 场景代码随 shotJson 进入工作流
+    # 分镜帧，供「打开导演台」按增量链重放还原该镜空间（体块/站位/机位）。
+    # 序列首镜标记与 spatial-previews 的 is_sequence_start 同一判定，
+    # 前端重放切段不猜语义；反向转换经 build_storyboard_scenes_from_parsed_script
+    # 原样回写 prompt_json.three_scene_code，往返稳定。
+    three_code = normalize_three_scene_code(prompt_json.get('three_scene_code'))
+    if three_code:
+        shot['three_scene_code'] = three_code
+        shot['three_scene_seq_start'] = is_sequence_start_code(three_code)
     return shot, script_props, db_character_info
 
 

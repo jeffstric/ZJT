@@ -256,6 +256,13 @@ const state = {
     scriptSplitQcMaxRounds: 2,
     /** 拆分时检测角色形象变化并自动生成角色变体参考图（换装/变身等） */
     enableCharacterVariant: true,
+    /** 「生成 3D 导演台」：效果模式拆分时为每镜生成 three_scene_code
+     * （three.js 空间代码，故事板 3D 预览 / 工作流导演台的数据源）。默认关闭。 */
+    enableDirectorStage: false,
+    /** 最近一次生成分镜时实际使用的「生成 3D 导演台」值（后端生成时写入
+     * config_json 的 directorStageGenerated）。缺省 true：旧故事板无该字段时
+     * 保持展示 3D 入口，向后兼容。 */
+    directorStageGenerated: true,
 
     // 生成分镜进度弹框
     showGenerateProgressDialog: false,
@@ -1567,6 +1574,7 @@ export function serializeUiConfig() {
         enableScriptSplitQc: state.enableScriptSplitQc === true,
         scriptSplitQcMaxRounds: state.scriptSplitQcMaxRounds,
         enableCharacterVariant: state.enableCharacterVariant !== false,
+        enableDirectorStage: state.enableDirectorStage === true,
     };
 }
 
@@ -1668,6 +1676,15 @@ export function restoreUiConfig(config = {}) {
     }
     if (typeof config.enableCharacterVariant === 'boolean') {
         state.enableCharacterVariant = config.enableCharacterVariant;
+    }
+    if (typeof config.enableDirectorStage === 'boolean') {
+        state.enableDirectorStage = config.enableDirectorStage;
+    }
+    // 后端在生成分镜时写入 directorStageGenerated：显式 false 表示最近一次
+    // 生成关闭了 3D 导演台，前端隐藏分镜「3D」预览入口；无该字段（旧故事板）
+    // 保持默认 true，向后兼容。
+    if (typeof config.directorStageGenerated === 'boolean') {
+        state.directorStageGenerated = config.directorStageGenerated;
     }
     if ([1, 2, 3, 4, 5].includes(Number(config.scriptSplitQcMaxRounds))) {
         state.scriptSplitQcMaxRounds = Number(config.scriptSplitQcMaxRounds);

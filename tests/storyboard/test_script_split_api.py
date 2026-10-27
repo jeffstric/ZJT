@@ -125,6 +125,19 @@ class TestNormalizeRequestConfig:
         with pytest.raises(ValueError):
             _normalize_request_config({"sequence_mode": "turbo"})
 
+    def test_enable_director_stage_defaults_false(self):
+        cfg = _normalize_request_config({})
+        assert cfg["enable_director_stage"] is False
+
+    def test_enable_director_stage_string_parsed(self):
+        assert _normalize_request_config({"enable_director_stage": "true"})["enable_director_stage"] is True
+        assert _normalize_request_config({"enable_director_stage": "on"})["enable_director_stage"] is True
+        assert _normalize_request_config({"enable_director_stage": "false"})["enable_director_stage"] is False
+
+    def test_enable_director_stage_bool_passthrough(self):
+        assert _normalize_request_config({"enable_director_stage": True})["enable_director_stage"] is True
+        assert _normalize_request_config({"enable_director_stage": False})["enable_director_stage"] is False
+
 
 # ---------------- _resume_target_state ----------------
 

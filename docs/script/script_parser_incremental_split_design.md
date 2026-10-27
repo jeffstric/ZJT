@@ -569,6 +569,12 @@ POST /api/storyboard/{storyboard_id}/generate-from-script
 
 同样返回 `202` 和任务 ID。相同故事板已有活跃任务时返回原任务，而不是重复生成。
 
+`enable_director_stage`（请求体，缺省 false）：「生成 3D 导演台」开关，透传进拆分任务
+`request_config`，仅效果模式（quality）消费——关闭时拆分不产出每镜 `three_scene_code`
+（故事板 3D 预览 / 工作流导演台的数据源），速度/均衡模式天然无此产物。归一化与引擎
+行为见 `docs/storyboard/spatial_3d_preview_design.md` §2.4。生成接口同时把
+`directorStageGenerated` 写入故事板 `config_json`，供前端隐藏分镜「3D」预览入口。
+
 ### 13.3 通用任务接口
 
 ```http

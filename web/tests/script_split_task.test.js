@@ -51,4 +51,19 @@ describe('ScriptSplitTask.buildSplitRequestBody', () => {
     expect(body.enable_script_split_qc).toBe(false);
     expect(body.script_split_qc_max_rounds).toBe(2);
   });
+
+  test('enable_director_stage 仅显式 true 才开启（默认关闭）', () => {
+    const on = buildSplitRequestBody(
+      { scriptContent: 'x', sequenceMode: 'quality', enableDirectorStage: true },
+      null
+    );
+    expect(on.enable_director_stage).toBe(true);
+    const off = buildSplitRequestBody(
+      { scriptContent: 'x', sequenceMode: 'quality', enableDirectorStage: false },
+      null
+    );
+    expect(off.enable_director_stage).toBe(false);
+    const legacy = buildSplitRequestBody({ scriptContent: 'x', sequenceMode: 'quality' }, null);
+    expect(legacy.enable_director_stage).toBe(false);
+  });
 });

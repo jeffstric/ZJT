@@ -85,7 +85,7 @@ describe('导演台：录制视频（接线层源码断言）', () => {
     expect(editorSrc).not.toContain("this.on(document, 'keydown.directorStage'");
     const idx = editorSrc.indexOf("this.on(document, 'keydown'");
     expect(idx).toBeGreaterThan(-1);
-    const block = editorSrc.slice(idx, idx + 1200);
+    const block = editorSrc.slice(idx, idx + 2200); // Esc/方向键分支插入后 Delete 分支继续后移，加宽切片
     expect(block).toContain("e.key === 'Delete' || e.key === 'Backspace'");
     expect(block).toContain('e.stopPropagation()');
     expect(block).toContain('e.preventDefault()');

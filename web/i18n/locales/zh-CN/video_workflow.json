@@ -740,6 +740,13 @@
   "director_stage_title": "导演台",
   "director_stage_empty_hint": "点击进入导演台，摆人偶、调姿态、设镜头",
   "director_stage_open": "🎬 打开导演台",
+  "shot_frame_open_director_btn": "🎬 打开导演台（3D 空间）",
+  "shot_frame_create_director_btn": "🎬 创建导演台（3D 空间）",
+  "director_stage_from_sb_no_data": "该分镜没有可用的 3D 空间数据",
+  "director_stage_from_sb_replay_warn": "部分空间代码执行异常，已按可用结果转换",
+  "director_stage_from_sb_create_fail": "导演台节点创建失败",
+  "director_stage_from_sb_skipped": "已迁移角色站位与机位（{n} 个体块/道具暂不支持展示）",
+  "director_stage_from_sb_empty_shot": "机位视野内无角色，镜头预览为空景；可拖拽机位方块或点预设机位调整",
   "director_stage_export_hint": "在导演台中「导出快照」会自动生成图片节点",
   "director_stage_puppets_zero": "人偶 ×0",
   "director_stage_puppets_count": "人偶 ×{count}",
@@ -1018,5 +1025,9 @@
   "toast_create_success": "创建成功",
   "toast_workflow_name_required": "请输入工作流名称",
   "toast_ratio_required": "请选择画幅比例",
-  "toast_operation_failed": "操作失败，请稍后重试"
+  "toast_operation_failed": "操作失败，请稍后重试",
+  "script_enable_director_stage": "生成 3D 导演台",
+  "script_enable_director_stage_hint": "效果模式下为每镜生成 3D 空间，用于 3D 空间预览与导演台",
+  "script_director_stage_hint_quality": "效果模式：为每镜生成 3D 空间，用于 3D 空间预览与导演台",
+  "script_director_stage_hint_need_quality": "仅效果模式下生效"
 }

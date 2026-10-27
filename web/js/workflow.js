@@ -2062,6 +2062,20 @@
             restoreNode(nodeData);
           }
         }
+
+        // 导演台按钮双状态文案：帧节点恢复先于导演台节点（创建顺序），
+        // 帧恢复时无法判定关联，全量恢复后统一按存活关联翻转为「打开导演台」
+        if(window.shotFrameDirectorLinked){
+          for(const node of state.nodes){
+            if(node.type !== 'shot_frame' || !node.data.directorStageNodeId) continue;
+            if(!window.shotFrameDirectorLinked(node)) continue;
+            const nodeEl = document.querySelector(`.node[data-node-id="${node.id}"] .shot-frame-open-director-btn`);
+            if(nodeEl){
+              const _t = window.t ? window.t('shot_frame_open_director_btn') : null;
+              nodeEl.textContent = (_t && _t !== 'shot_frame_open_director_btn') ? _t : '🎬 打开导演台（3D 空间）';
+            }
+          }
+        }
         
         // 恢复连接
         if(data.connections && Array.isArray(data.connections)){
