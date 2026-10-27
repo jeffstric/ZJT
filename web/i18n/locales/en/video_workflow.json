@@ -867,6 +867,8 @@
   "extract_frame_loaded": "Video loaded, click 'Extract Frame' button to extract",
   "extract_frame_failed": "Video processing failed",
   "extract_frame_no_video": "Please upload video or connect video node",
+  "extract_frame_source_uploading": "Source video is still uploading, please try again shortly",
+  "extract_frame_source_no_video": "Source video node has no video yet, please upload first",
   "extract_frame_extracting": "Extracting {type}...",
   "extract_frame_no_extractable": "No video to extract",
   "extract_frame_success": "{type} extracted successfully, image node created",

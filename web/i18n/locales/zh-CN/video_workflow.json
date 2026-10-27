@@ -867,6 +867,8 @@
   "extract_frame_loaded": "视频已加载，点击「提取帧」按钮提取",
   "extract_frame_failed": "视频处理失败",
   "extract_frame_no_video": "请先上传视频或连接视频节点",
+  "extract_frame_source_uploading": "源视频还在上传中，请稍候再试",
+  "extract_frame_source_no_video": "源视频节点还没有视频，请先上传",
   "extract_frame_extracting": "正在提取{type}...",
   "extract_frame_no_extractable": "没有可提取的视频",
   "extract_frame_success": "{type}提取成功，已创建图片节点",
