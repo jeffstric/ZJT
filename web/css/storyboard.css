@@ -4365,6 +4365,40 @@ img.card-char-avatar.is-missing {
     color: #8a5b05;
 }
 
+/* 「生成 3D 空间」内嵌效果模式卡片 meta 行（右侧，与「影院级一致性」标签同排） */
+.sequence-mode-director-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    padding: 5px 10px;
+    border: 1px solid #ead18f;
+    border-radius: 999px;
+    background: #fffdf7;
+    color: #8a5b05;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+}
+
+.sequence-mode-director-check input[type="checkbox"] {
+    width: 12px;
+    height: 12px;
+    margin: 0;
+    accent-color: #c58a16;
+    cursor: pointer;
+}
+
+.sequence-mode-director-check.is-disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.sequence-mode-director-check.is-disabled input[type="checkbox"] {
+    cursor: not-allowed;
+}
+
 .sequence-pro-badge {
     flex: 0 0 auto;
     margin-left: auto;

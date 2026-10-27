@@ -502,6 +502,18 @@ def _normalize_request_config(request_config: dict) -> dict:
         cfg["enable_character_variant"] = variant_value.strip().lower() in ("1", "true", "yes", "on")
     else:
         cfg["enable_character_variant"] = bool(variant_value)
+    # 「生成 3D 导演台」开关统一为 bool（缺省用服务端常量，默认关闭），
+    # 避免 active_key 因 "false"/False 漂移；仅效果模式消费该字段
+    # （速度/均衡模式不产出 three_scene_code，该开关对其无影响）。
+    director_stage_value = cfg.get("enable_director_stage")
+    if director_stage_value is None:
+        cfg["enable_director_stage"] = bool(
+            ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT
+        )
+    elif isinstance(director_stage_value, str):
+        cfg["enable_director_stage"] = director_stage_value.strip().lower() in ("1", "true", "yes", "on")
+    else:
+        cfg["enable_director_stage"] = bool(director_stage_value)
     # 总分镜时长倍率统一为 float（0=不限制），并夹紧到常量范围，
     # 避免 active_key 因 "2"/2/2.0 漂移（见 docs/script/script_split_total_duration_control.md）
     try:

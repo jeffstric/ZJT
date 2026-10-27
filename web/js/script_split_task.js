@@ -42,6 +42,9 @@
             thinking_effort: scriptNodeData.thinkingEffort || 'medium',
             // 与故事板 generate-from-script 对齐
             sequence_mode: normalizeSequenceMode(scriptNodeData.sequenceMode),
+            // 「生成 3D 导演台」：效果模式下为每镜生成 three_scene_code（three.js
+            // 空间代码，3D 预览/导演台数据源）。默认关闭，仅显式开启才生成。
+            enable_director_stage: scriptNodeData.enableDirectorStage === true,
             enable_script_split_qc: scriptNodeData.enableScriptSplitQc === true,
             script_split_qc_max_rounds: [1, 2, 3, 4, 5].includes(qcRounds) ? qcRounds : 2,
         };

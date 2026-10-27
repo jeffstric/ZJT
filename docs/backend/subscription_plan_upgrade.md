@@ -83,6 +83,20 @@
   缺失直接 503「微信支付商户密钥未配置，无法发起支付」——不允许展示二维码
   （缺失时签名降级为 `mock_signature`，微信必拒；同时杜绝验签旁路被伪造回调利用）。
 - `POST /api/subscription/wechat-sign-pay`：检查 `pay.wxpay.api_v2_key` 非空，缺失同样 503。
+- 验签 fail-closed（2026-10-23，审计 BUG-R2-S1-A3-H1/BUG-R2-S2-A1-H1 修复）：
+  `verify_callback_signature` 缺公钥文件、`verify_v2_sign` 缺 V2 密钥一律
+  `return False` 拒绝回调——密钥缺失即无法确认通知来源，接受回调等于接受
+  任意伪造的支付/签约通知（曾可伪造回调免费入账算力、复活已解约合约）。
+  微信侧收到 FAIL/4xx 后按 15s..6h 计划重试，补齐密钥后自动恢复，无需重启。
+  上线前请确认 `secret/wechat/` 下平台公钥（`pub_key.pem`，公钥模式）或
+  平台证书文件、以及 `pay.wxpay.api_v2_key` 均已配置，否则真实回调将被拒绝。
+  Docker 部署注意：容器重建会重新生成 in-container config，若
+  `pay.wxpay.api_v2_key` 只存在于容器内配置文件（非管理台/DB），重建后密钥
+  回归未配置状态——请通过管理台配置或持久化 secret 目录。
+  （`tests/utils/test_wx_papay_v2_sign.py`、`test_wechat_pay_callback_verify.py`
+  覆盖缺密钥拒绝/正确签名通过/伪造签名拒绝）
+- **开发环境联调旁路（V2/V3 共用，2026-10-23）**：开发环境通常没有微信
+  平台公钥文件/V2 密钥，fail-closed 会卡死真实支付的回调入账。专用配置
 
 ## 业务规则
 

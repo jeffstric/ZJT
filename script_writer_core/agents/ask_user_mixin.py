@@ -19,6 +19,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from config.unified_config import ASK_USER_MAX_CONSECUTIVE_FAILS
+from script_writer_core.agents.power_budget import PowerBudgetExhaustedError
 
 logger = logging.getLogger(__name__)
 
@@ -209,6 +210,20 @@ class AskUserMixin:
                          f"请立即停止工作，不要继续提问，等待用户主动发送消息后再继续。")
             logger.warning(f"{self.agent_id}: {error_msg}")
             return {"error": error_msg, "user_input": None, "ask_disabled": True}
+
+        # 单次任务算力预算：超限后立即返回，不创建提问、不进入 5 分钟等待，
+        # 掐断无人应答时「提问→超时→LLM 重试→再提问」的空转扣费循环
+        budget = getattr(self, 'power_budget', None)
+        if budget is not None:
+            try:
+                budget.check()
+            except PowerBudgetExhaustedError as e:
+                logger.warning(f"{self.agent_id}: {e.message}")
+                return {
+                    "error": f"{e.message}。请立即停止工作，不要继续提问或执行任何消耗算力的操作。",
+                    "user_input": None,
+                    "ask_disabled": True,
+                }
 
         # 检查必要依赖
         if not getattr(self, 'task_manager', None) or not getattr(self, 'task_id', None):

@@ -29,7 +29,13 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 
 ## 发表评论的令牌
 
-diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 MR 本体和评论，访问 `/merge_requests/:iid/diffs` 会返回 `404 Project Not Found`。作业检出仓库后用 `git diff $CI_MERGE_REQUEST_DIFF_BASE_SHA $CI_COMMIT_SHA`。`python:3.10-slim` 没有 git，`before_script` 会安装。
+diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 MR 本体和评论，访问 `/merge_requests/:iid/diffs` 会返回 `404 Project Not Found`。作业检出仓库后用 `git diff <base> $CI_COMMIT_SHA` 取变更，base 按以下顺序确定（`AI_REVIEW_DIFF_SOURCE=api` 可强制改走 API，此时需配置项目令牌）：
+
+1. `origin/<目标分支>` 与 HEAD 的 merge-base（失败自动 `git fetch` 补深度后重试）
+2. `CI_MERGE_REQUEST_DIFF_BASE_SHA`（新 MR 首条 pipeline 可能缺这个变量——脚本会用 job token 读 MR 本体的 `diff_refs.base_sha` 补全）
+3. `HEAD~1`
+
+本地 git 各层都失败时，fetch / diff 的原因会打印到 job 日志；只有显式配置 `AI_REVIEW_GITLAB_TOKEN` 后 API 兜底才可能成功。`python:3.10-slim` 没有 git，`before_script` 会安装。
 
 发表评论仍要令牌，按这个顺序取：
 

@@ -2,7 +2,7 @@
 月度订阅（微信委托代扣·周期扣费）单元测试
 
 覆盖：
-  - V2 MD5 签名/验签（含空值排除、密钥未配置降级）
+  - V2 MD5 签名/验签（含空值排除、密钥未配置 fail-closed 拒绝）
   - V2 XML 构造/解析往返
   - 单据号格式约束（微信 32 字符、协议号仅字母数字）
   - 预扣费通知等待期计算
@@ -66,10 +66,11 @@ class TestV2Sign:
         util = make_util()
         assert util.verify_v2_sign({"appid": "wx123"}) is False
 
-    def test_verify_v2_sign_empty_key_degrades(self):
+    def test_verify_v2_sign_empty_key_fails_closed(self):
         util = make_util(api_v2_key="")
-        # 密钥未配置：开发环境降级跳过（返回 True）
-        assert util.verify_v2_sign({"appid": "wx123"}) is True
+        # 密钥未配置：拒绝回调（fail-closed，BUG-R2-S2-A1-H1）；
+        # 开发联调放行需双开关旁路，见 tests/utils/test_wx_papay_v2_sign.py
+        assert util.verify_v2_sign({"appid": "wx123"}) is False
 
 
 # ==================== XML 构造/解析 ====================

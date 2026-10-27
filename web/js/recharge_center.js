@@ -307,8 +307,15 @@
         var input = event.target;
         if (!input || input.getAttribute('data-rc-action') !== 'toggle-agree') return;
         state.subAgreed = !!input.checked;
-        if (state.subAgreed) state.subAgreementError = false;
         render();
+        if (!state.subAgreed) return;
+        state.subAgreementError = false;
+        // 勾选协议即自动生成二维码，无需再点「微信支付」；
+        // 微信内 JSAPI 无二维码且需用户手势调起支付，仍走按钮
+        if (state.selectedPlan && !state.subPaymentLoading
+            && !state.subQr && !state.subOrderId && !isWechatBrowser()) {
+            createSubscriptionOrder();
+        }
     }
 
     function onRootClick(event) {
@@ -549,6 +556,7 @@
 
     async function createSubscriptionOrder() {
         if (!state.selectedPlan) return;
+        if (state.subQr || state.subOrderId) return; // 已有二维码/订单，防止勾选+点击重复下单
         if (!authToken() || !userId()) {
             window.alert('请先登录');
             close();
@@ -874,7 +882,7 @@
                 loading: state.subPaymentLoading,
                 qr: state.subQr,
                 error: state.subPaymentError,
-                emptyHtml: upgrade ? '勾选协议并点击右侧<br/>「升级并支付」生成二维码' : '勾选协议并点击右侧<br/>「微信支付」生成二维码',
+                emptyHtml: '勾选《自动续费服务协议》<br/>自动生成二维码',
                 head: renewGuide,
                 tip: renewGuide ? '' : (upgrade ? '请使用微信扫码<br/>支付完成套餐升级' : '请使用微信扫码<br/>支付并确认开通自动续费')
             })
@@ -886,7 +894,7 @@
             + (upgrade ? '<p class="sub-upgrade-note">升级支付成功后立即切换为新套餐并发放整期算力，新周期自支付成功起算 30 天；本期剩余天数不折算、不退差价，升级档位不重复享首期加赠。</p>' : '')
             + '<div class="sub-action-row">'
             + (state.subPaymentError ? '<button type="button" class="btn secondary" data-rc-action="back-sub">返回</button>' : '')
-            + '<button type="button" class="btn" data-rc-action="create-sub-order"' + ((!state.subAgreed || state.subPaymentLoading) ? ' disabled' : '') + '>' + actionLabel + '</button>'
+            + (state.subQr ? '' : '<button type="button" class="btn" data-rc-action="create-sub-order"' + ((!state.subAgreed || state.subPaymentLoading) ? ' disabled' : '') + '>' + actionLabel + '</button>')
             + '</div>'
             + (state.subQr && state.subOrderId ? '<div class="sub-order-info">订单号：' + esc(state.subOrderId) + '</div>' : '')
             + '</div></div>';

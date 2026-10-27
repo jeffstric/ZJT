@@ -1299,7 +1299,7 @@
                     <img v-else-if="subQrCode" :src="subQrCode" alt="微信支付二维码" />
                     <div v-else-if="subPaymentError" class="sub-error-text" style="padding: 0 12px; text-align: center;">{{ subPaymentError }}</div>
                     <div v-else style="color:#94a3b8; font-size:12px; text-align:center; padding: 0 20px;">
-                      勾选协议并点击右侧<br/>「升级并支付」生成二维码
+                      勾选《自动续费服务协议》<br/>自动生成二维码
                     </div>
                   </div>
                   <div v-if="subQrCode" class="sub-qr-tip">请使用微信扫码<br/>支付完成套餐升级</div>
@@ -1319,7 +1319,7 @@
                   </div>
 
                   <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
-                    <input type="checkbox" v-model="subAgreed" @change="subAgreementError = false" />
+                    <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                     <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除</span>
                   </label>
 
@@ -1327,7 +1327,7 @@
 
                   <div class="sub-action-row">
                     <button v-if="subPaymentError" class="btn secondary" @click="backToSubPlanSelection">返回</button>
-                    <button class="btn" :disabled="!subAgreed || subPaymentLoading" @click="createSubscriptionOrder">
+                    <button v-if="!subQrCode" class="btn" :disabled="!subAgreed || subPaymentLoading" @click="createSubscriptionOrder">
                       {{ subPaymentLoading ? '生成中...' : '升级并支付' }}
                     </button>
                   </div>
@@ -1404,7 +1404,7 @@
                   <img v-else-if="subQrCode" :src="subQrCode" alt="微信支付二维码" />
                   <div v-else-if="subPaymentError" class="sub-error-text" style="padding: 0 12px; text-align: center;">{{ subPaymentError }}</div>
                   <div v-else style="color:#94a3b8; font-size:12px; text-align:center; padding: 0 20px;">
-                    勾选协议并点击右侧<br/>「微信支付」生成二维码
+                    勾选《自动续费服务协议》<br/>自动生成二维码
                   </div>
                 </div>
                 <div v-if="subQrCode && !(selectedSubPlan.first_period_bonus && subFirstBonusEligible)" class="sub-qr-tip">请使用微信扫码<br/>支付并确认开通自动续费</div>
@@ -1424,13 +1424,13 @@
                 </div>
 
                 <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
-                  <input type="checkbox" v-model="subAgreed" @change="subAgreementError = false" />
+                  <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                   <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，到期自动扣费，可随时取消</span>
                 </label>
 
                 <div class="sub-action-row">
                   <button v-if="subPaymentError" class="btn secondary" @click="backToSubPlanSelection">返回</button>
-                  <button class="btn" :disabled="!subAgreed || subPaymentLoading" @click="createSubscriptionOrder">
+                  <button v-if="!subQrCode" class="btn" :disabled="!subAgreed || subPaymentLoading" @click="createSubscriptionOrder">
                     {{ subPaymentLoading ? '生成中...' : '微信支付' }}
                   </button>
                 </div>

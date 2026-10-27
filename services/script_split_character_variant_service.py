@@ -10,12 +10,17 @@
 2. ``ensure_character_variants``（同步函数，调用方须 asyncio.to_thread 包装）：
    发布阶段按 ``(character_db_id, label)`` 去重建计划，复用 item_type=7 角色变体
    图生图管线（基于主参考图保持五官一致，产物由 grid_image_task 后台任务写回
-   角色 ``reference_images[]``）。幂等、分 worker tick 推进（同配音对账模式）：
-   每 tick 提交一批 pending、轮询一批 submitted，未全部终态则保持 publishing。
-3. ``collect_ready_variant_map``：全部终态后输出 ``{str(db_id): {label: url}}``，
-   由 build_storyboard_scenes_from_parsed_script 写入每个分镜的
-   ``prompt_json.reference_selections.characters``，生图与前端变体选择弹层
-   自动消费新形象。
+   角色 ``reference_images[]``）。幂等、分批推进（每轮提交一批 pending、轮询一批
+   submitted）。发布**不等待**变体图终态。
+3. ``collect_ready_variant_map``：输出 ``{str(db_id): {label: url}}``，由
+   build_storyboard_scenes_from_parsed_script 写入每个分镜的
+   ``prompt_json.reference_selections``，生图与前端变体选择弹层自动消费新形象。
+4. ``collect_pending_variant_map``：输出仍未终态的 ``{str(db_id): {label, ...}}``,
+   落库时写入分镜 ``prompt_json.pending_reference_selections`` 作为待回填标记。
+5. ``settle_pending_character_variant_references`` /
+   ``backfill_variant_reference_selections``：grid_image_task item_type=7 终态
+   回调——成功写 ``{url, label}`` 并删除 pending；失败/超时/取消只删 pending，
+   镜头降级用主参考图。
 
 失败策略：单个变体生成失败/超时/角色缺主图均降级为继续使用主参考图
 （status=failed/skipped），不阻塞拆分任务。
@@ -25,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from config.constant import ScriptSplitConstants
 
@@ -37,6 +42,8 @@ EFFECTIVE_CHANGES_FIELD = "_effective_appearance_changes"
 PLAN_METADATA_KEY = "character_variant_plan"
 # final_result.metadata 中全部终态后写入的执行摘要 key
 SUMMARY_METADATA_KEY = "character_variant_summary"
+# 分镜 prompt_json 中「变体未就绪待回填」标记 key（宫格任务终态后消费）
+PENDING_SELECTIONS_PROMPT_KEY = "pending_reference_selections"
 
 # 恢复默认形象的标记约定（LLM 输出 revert=true 或 label 为这些值）
 _REVERT_LABELS = {"默认", "default", "恢复默认", "原状"}
@@ -488,6 +495,146 @@ def collect_ready_variant_map(final_result: Dict[str, Any]) -> Dict[str, Dict[st
     return result
 
 
+def collect_pending_variant_map(final_result: Dict[str, Any]) -> Dict[str, set]:
+    """输出未终态变体映射 ``{str(character_db_id): {label, ...}}``（发布记待回填）。
+
+    只收计划里状态为 pending / submitted 的 (character_db_id, label)；ready 已
+    直接写入 reference_selections，failed / skipped 降级用主参考图，均不记。
+    """
+    metadata = final_result.get("metadata")
+    plan = metadata.get(PLAN_METADATA_KEY) if isinstance(metadata, dict) else None
+    result: Dict[str, set] = {}
+    if not isinstance(plan, list):
+        return result
+    for entry in plan:
+        if not isinstance(entry, dict) or entry.get("status") not in _ACTIVE_STATUSES:
+            continue
+        label = _clean_label(entry.get("label"))
+        db_id = str(entry.get("character_db_id") or "").strip()
+        if not (label and db_id):
+            continue
+        result.setdefault(db_id, set()).add(label)
+    return result
+
+
+def _parse_json_dict(raw: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None
+    return raw if isinstance(raw, dict) else None
+
+
+def backfill_variant_reference_selections(
+    world_id: Any,
+    character_db_id: Any,
+    label: str,
+    url: str = "",
+) -> Dict[str, int]:
+    """变体图终态后回填/清除分镜 ``pending_reference_selections``（同步函数）。
+
+    由 task/grid_image_task.py（item_type=7）在 scheduler 进程调用，不进 web
+    事件循环。按 world_id 扫描场景 prompt_json，命中「角色 id 与 label 均匹配」
+    的 pending 条目：
+
+    - ``url`` 非空（成功）：该角色无人工 ``reference_selections`` 选择时写入
+      ``{url, label}``；已有人工选择只删 pending 不覆盖。
+    - ``url`` 为空（FAILED/TIMEOUT/CANCELLED/DOWNLOAD_FAILED）：只删 pending，
+      镜头降级用主参考图。
+
+    幂等：pending 不存在时 no-op（变体在落库前已完成、发布第二次轮询直接写成
+    reference_selections 的场景即如此）。返回 ``{"filled": n, "cleared": m}``。
+    """
+    from model.storyboard_scene import StoryboardSceneModel
+
+    label_clean = _clean_label(label)
+    db_id_key = str(character_db_id or "").strip()
+    if not (label_clean and db_id_key):
+        return {"filled": 0, "cleared": 0}
+
+    rows = StoryboardSceneModel.list_prompt_json_by_world(
+        int(world_id), PENDING_SELECTIONS_PROMPT_KEY,
+    )
+    filled = 0
+    cleared = 0
+    for row in rows:
+        prompt = _parse_json_dict(row.get("prompt_json"))
+        if not isinstance(prompt, dict):
+            continue
+        pending_block = _parse_json_dict(prompt.get(PENDING_SELECTIONS_PROMPT_KEY))
+        pending_chars = (
+            pending_block.get("characters") if isinstance(pending_block, dict) else None
+        )
+        if not isinstance(pending_chars, dict):
+            continue
+        entry = pending_chars.get(db_id_key)
+        entry_label = _clean_label(entry.get("label")) if isinstance(entry, dict) else ""
+        if entry_label != label_clean:
+            continue
+
+        # 命中：删除该 pending 条目（characters 清空则整块移除）
+        pending_chars.pop(db_id_key, None)
+        if pending_chars:
+            pending_block["characters"] = pending_chars
+        else:
+            prompt.pop(PENDING_SELECTIONS_PROMPT_KEY, None)
+
+        selections_block = _parse_json_dict(prompt.get("reference_selections"))
+        selections_chars = (
+            selections_block.get("characters")
+            if isinstance(selections_block, dict) else None
+        )
+        has_choice = (
+            isinstance(selections_chars, dict) and db_id_key in selections_chars
+        )
+        if url and not has_choice:
+            if not isinstance(selections_chars, dict):
+                selections_chars = {}
+                prompt["reference_selections"] = {
+                    "schema_version": 1,
+                    "characters": selections_chars,
+                }
+            selections_chars[db_id_key] = {"url": str(url), "label": label_clean}
+            filled += 1
+        cleared += 1
+        StoryboardSceneModel.update(int(row["id"]), prompt_json=prompt)
+
+    if filled or cleared:
+        logger.info(
+            "character variant backfill: world=%s character=%s label=%s ok=%s"
+            " filled=%s cleared=%s",
+            world_id, db_id_key, label_clean, bool(url), filled, cleared,
+        )
+    return {"filled": filled, "cleared": cleared}
+
+
+def settle_pending_character_variant_references(
+    world_id: Any,
+    item_name: Any,
+    url: str = "",
+) -> Dict[str, int]:
+    """item_type=7 宫格任务终态入口：按 ``item_name("角色名|变体标签")`` 定位角色。
+
+    成功（``url`` 非空）回填 ``{url, label}``；失败终态只清除匹配 pending。
+    角色按名查不到或 item_name 非法时 no-op（pending 按 db_id 匹配，查不到即
+    不可能命中）。
+    """
+    parts = str(item_name or "").split("|", 1)
+    character_name = parts[0].strip()
+    label = parts[1].strip() if len(parts) > 1 else ""
+    if not character_name:
+        return {"filled": 0, "cleared": 0}
+    from model.character import CharacterModel
+
+    character = CharacterModel.get_by_name(int(world_id), character_name)
+    if character is None:
+        return {"filled": 0, "cleared": 0}
+    return backfill_variant_reference_selections(
+        world_id, character.id, label, url=url,
+    )
+
+
 def build_character_variant_summary(final_result: Dict[str, Any]) -> Dict[str, Any]:
     """构造写入 final_result.metadata 的执行摘要（不含 URL，便于诊断）。"""
     metadata = final_result.get("metadata")
@@ -522,10 +669,14 @@ __all__ = [
     "EFFECTIVE_CHANGES_FIELD",
     "PLAN_METADATA_KEY",
     "SUMMARY_METADATA_KEY",
+    "PENDING_SELECTIONS_PROMPT_KEY",
     "sanitize_and_propagate_appearance_changes",
     "collect_appearance_change_specs",
     "build_variant_prompt",
     "ensure_character_variants",
     "collect_ready_variant_map",
+    "collect_pending_variant_map",
+    "backfill_variant_reference_selections",
+    "settle_pending_character_variant_references",
     "build_character_variant_summary",
 ]

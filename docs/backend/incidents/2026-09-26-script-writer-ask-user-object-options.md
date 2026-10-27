@@ -35,4 +35,4 @@
 
 ## 关联问题（同日同会话，另行处理）
 
-`ask_user` 超时不计入 `ASK_USER_MAX_CONSECUTIVE_FAILS`（`ask_user_mixin.py` 超时分支不累加），无人应答时「提问→300s 超时→LLM 重试→再提问」可无限循环，每轮 1–2 算力。该遗留风险已在 2026-09-01 算力确认门事故（`2026-09-01-script-writer-power-confirm-loop.md`）中记录。修复方向：为会话/任务引入单次算力消耗上限，达到上限自动停止任务（对齐 marketing 链路的算力上限机制）。
+`ask_user` 超时不计入 `ASK_USER_MAX_CONSECUTIVE_FAILS`（`ask_user_mixin.py` 超时分支不累加），无人应答时「提问→300s 超时→LLM 重试→再提问」可无限循环，每轮 1–2 算力。该遗留风险已在 2026-09-01 算力确认门事故（`2026-09-01-script-writer-power-confirm-loop.md`）中记录。已实现「单次任务算力消耗上限」机制：达到用户可配置的累加上限自动暂停任务，`ask_user` 超限后立即返回不再进入 5 分钟等待，详见 `docs/backend/script_writer_power_budget.md`。

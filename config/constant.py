@@ -24,6 +24,7 @@ from config.unified_config import (
     UnifiedTaskConfig,
     AGENT_POWER_CONFIRM_THRESHOLD,
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
+    AGENT_POWER_BUDGET_DEFAULT,
     USER_MODULE_RUNTIME_CONFIG,
 )
 
@@ -514,6 +515,9 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
+# 单次任务算力上限：优先读 user_preferences.power_budget，
+# 未设置时回退动态配置 agent.power_budget_default，再回退 AGENT_POWER_BUDGET_DEFAULT
+# （AGENT_POWER_BUDGET_DEFAULT 已在文件顶部从 unified_config 导入）。
 PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
 # ---------------------------------------------------------------------------
@@ -1720,6 +1724,14 @@ class ScriptSplitConstants:
     CHARACTER_VARIANT_ASPECT_RATIO = "16:9"
     # 发布阶段变体生成的子阶段 phase（前端进度步骤归入「发布分镜」）
     PHASE_CHARACTER_VARIANT = "character_variant"
+
+    # ---- 3D 导演台（three.js 空间代码）----
+    # 请求参数 enable_director_stage 的服务端默认值：效果模式拆分时是否为每镜
+    # 生成 three_scene_code（three.js 空间代码）。该数据是故事板「3D 空间预览」
+    # 与视频工作流「导演台」节点的唯一数据源；关闭后拆分仍保留 spatial_layout
+    # 空间一致性约束（画面构图用），但不产出任何 3D 导演台数据。
+    # 注意：仅效果模式（quality）会生成 three_scene_code，速度/均衡模式天然无此产物。
+    ENABLE_DIRECTOR_STAGE_DEFAULT = False
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -2803,6 +2815,10 @@ RECHARGE_PACKAGES = [
 # 商户产品参数（协议模板ID / V2密钥等）见 config/subscription_config.py（临时 hardcode）。
 class SubscriptionConstants:
     """月度订阅业务常量"""
+    # 开发联调验签旁路的显式确认串：pay.wxpay.dev_skip_callback_sign 的值
+    # 必须精确等于本串才生效（填 true/1/随手字符串均不放行），防止管理台
+    # 误配置绕过微信回调验签。生产环境严禁配置该键。
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE = 'DEV-OK-I-KNOW-THE-RISK'
     # HTTP 调用微信支付接口的超时（秒）
     HTTP_TIMEOUT_SECONDS = 30
     # 订阅周期长度（天）：每月=30天
@@ -3522,6 +3538,22 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
+
+# ── 故事板 3D 预览「对话改机位」（单轮 LLM 参数提取，仿导演台 env_fit 轻量模式）──
+# 机位参数模型与 spatial_3d_preview.js setCamera(ex,ey,ez,tx,ty,tz,fov) 一致：Y-up 米制，地面 y=0
+SB_CAMERA_CHAT_LLM_TIMEOUT = 60             # LLM 请求超时（秒），wait_for 整体兜底 = LLM_TIMEOUT + 15
+SB_CAMERA_CHAT_MAX_MESSAGE_CHARS = 300      # 用户指令最大长度
+SB_CAMERA_CHAT_MAX_ENTITIES = 40            # 注入 prompt 的空间对象清单上限
+SB_CAMERA_CHAT_POS_ABS_MAX = 30.0           # eye/target 任意分量绝对值上限（米）
+SB_CAMERA_CHAT_EYE_Y_MIN = 0.05
+SB_CAMERA_CHAT_EYE_Y_MAX = 12.0
+SB_CAMERA_CHAT_TARGET_Y_MIN = -2.0
+SB_CAMERA_CHAT_TARGET_Y_MAX = 12.0
+SB_CAMERA_CHAT_FOV_DEFAULT = 50
+SB_CAMERA_CHAT_FOV_MIN = 15
+SB_CAMERA_CHAT_FOV_MAX = 120
+SB_CAMERA_CHAT_TEMPERATURE = 0.2
+SB_CAMERA_CHAT_MAX_TOKENS = 400
 
 # ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
 # 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险

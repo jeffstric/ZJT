@@ -229,6 +229,30 @@ def _non_auto_pref(value: Any) -> Optional[str]:
     return text
 
 
+def _resolve_generation_count_from_prefs(
+    user_id: str,
+    world_id: str,
+    count: int,
+    user_prefs: Optional[Dict[str, Any]] = None,
+) -> int:
+    """
+    解析生成数量（实现工具 schema「已由系统注入」语义）。
+
+    用户在界面选择「生成次数」后随任务偏好下发（image_preferences /
+    video_preferences 的 count 字段），优先级高于 LLM 工具传参；
+    未设置或非法（非 1-4 整数）时保留调用方传入的 count。
+    """
+    prefs = user_prefs if user_prefs is not None else _get_image_preferences(user_id, world_id)
+    pref_count = (prefs or {}).get('count')
+    try:
+        parsed = int(pref_count)
+    except (TypeError, ValueError):
+        return count
+    if 1 <= parsed <= 4:
+        return parsed
+    return count
+
+
 def _resolve_image_ratio_and_size_from_prefs(
     *,
     user_id: str,
@@ -1282,6 +1306,8 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             image_size=image_size,
             generation_snapshot=generation_snapshot,
         )
+        # 生成数量同样按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参
+        count = _resolve_generation_count_from_prefs(user_id, world_id, count)
 
         # 确定 image_size
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
@@ -3921,7 +3947,7 @@ MCP_TOOLS = [
                 },
                 "count": {
                     "type": "integer",
-                    "description": "生成图片数量（可选，默认：1）"
+                    "description": "【已由系统注入，无需传入】生成图片数量。用户在界面上已选择，系统会自动应用。"
                 },
                 "image_size": {
                     "type": "string",
@@ -4068,7 +4094,7 @@ MCP_TOOLS = [
                 },
                 "count": {
                     "type": "integer",
-                    "description": "生成图片数量（可选，默认：1）"
+                    "description": "【已由系统注入，无需传入】生成图片数量。用户在界面上已选择，系统会自动应用。"
                 },
                 "image_size": {
                     "type": "string",
@@ -4098,7 +4124,7 @@ MCP_TOOLS = [
                 },
                 "count": {
                     "type": "integer",
-                    "description": "生成视频数量（可选，默认：1）"
+                    "description": "【已由系统注入，无需传入】生成视频数量。用户在界面上已选择，系统会自动应用。"
                 }
             },
             "required": ["prompt"]
@@ -4128,7 +4154,7 @@ MCP_TOOLS = [
                 },
                 "count": {
                     "type": "integer",
-                    "description": "生成视频数量（可选，默认：1）"
+                    "description": "【已由系统注入，无需传入】生成视频数量。用户在界面上已选择，系统会自动应用。"
                 },
                 "image_mode": {
                     "type": "string",
@@ -5236,6 +5262,8 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 image_size=image_size,
                 generation_snapshot=generation_snapshot,
             )
+            # 生成数量按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参（4宫格自身固定 1 组）
+            count = _resolve_generation_count_from_prefs(user_id, world_id, count)
         else:
             image_size_source = "argument" if image_size else "default"
 

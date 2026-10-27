@@ -498,6 +498,7 @@
             await loadTextToImageModels();
             await loadComputingPower();
             await loadCurrentUserRole();
+            loadPowerBudgetPreference();
             await loadUserWorlds();
             bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
@@ -2531,6 +2532,127 @@
                 if (powerValue) {
                     powerValue.textContent = '--';
                 }
+            }
+        }
+
+        // ===== 单次任务算力上限（PowerBudget） =====
+        let powerBudgetDefault = null;
+        let powerBudgetIsCustom = false;
+
+        function updatePowerBudgetResetVisibility() {
+            const resetBtn = document.getElementById('power-budget-reset');
+            if (resetBtn) resetBtn.style.display = powerBudgetIsCustom ? '' : 'none';
+        }
+
+        function applyPowerBudgetHint(defaultLimit) {
+            const icon = document.getElementById('power-budget-icon');
+            const input = document.getElementById('power-budget-input');
+            if (!icon && !input) return;
+            const hint = window.t
+                ? window.t('power_budget_hint', { value: defaultLimit ?? '--' })
+                : `单次任务累计消耗达到该上限时自动暂停，发送消息可继续。平台默认 ${defaultLimit ?? '--'}，0 表示不限制`;
+            if (icon) icon.title = hint;
+            if (input) input.title = hint;
+        }
+
+        async function loadPowerBudgetPreference() {
+            try {
+                const response = await fetch('/api/user/power-budget', {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                const payload = data?.data || {};
+                const input = document.getElementById('power-budget-input');
+                if (input && typeof payload.limit === 'number') {
+                    input.value = payload.limit;
+                }
+                powerBudgetDefault = typeof payload.default_limit === 'number' ? payload.default_limit : null;
+                powerBudgetIsCustom = !!payload.is_custom;
+                updatePowerBudgetResetVisibility();
+                applyPowerBudgetHint(powerBudgetDefault);
+            } catch (error) {
+                console.error('加载单次任务算力上限失败:', error);
+            }
+        }
+
+        async function savePowerBudgetLimit(limit) {
+            const response = await fetch('/api/user/power-budget', {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${AUTH_TOKEN}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ limit })
+            });
+            return await response.json();
+        }
+
+        async function onPowerBudgetChange() {
+            const input = document.getElementById('power-budget-input');
+            if (!input) return;
+            const raw = (input.value || '').trim();
+            // 清空输入框 = 删除自定义偏好，回退平台默认
+            if (raw === '') {
+                await resetPowerBudget();
+                return;
+            }
+            const limit = Number(raw);
+            if (!Number.isInteger(limit) || limit < 0) {
+                updateStatus('⚠ ' + (window.t ? window.t('power_budget_invalid') : '算力上限必须是非负整数（0 表示不限制）'));
+                loadPowerBudgetPreference();
+                return;
+            }
+            try {
+                const data = await savePowerBudgetLimit(limit);
+                if (checkTokenExpired(data)) {
+                    return;
+                }
+                if (data?.code === 0) {
+                    const payload = data.data || {};
+                    powerBudgetIsCustom = !!payload.is_custom;
+                    if (typeof payload.limit === 'number') input.value = payload.limit;
+                    updatePowerBudgetResetVisibility();
+                    updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
+                } else {
+                    updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                }
+            } catch (error) {
+                console.error('保存单次任务算力上限失败:', error);
+                updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+            }
+        }
+
+        async function resetPowerBudget() {
+            const input = document.getElementById('power-budget-input');
+            try {
+                const response = await fetch('/api/user/power-budget', {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (data?.code === 0) {
+                    const payload = data.data || {};
+                    powerBudgetIsCustom = false;
+                    if (input && typeof payload.limit === 'number') input.value = payload.limit;
+                    updatePowerBudgetResetVisibility();
+                    applyPowerBudgetHint(powerBudgetDefault);
+                    updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
+                } else {
+                    updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                }
+            } catch (error) {
+                console.error('恢复默认算力上限失败:', error);
+                updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
             }
         }
 

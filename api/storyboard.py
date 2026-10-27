@@ -120,7 +120,14 @@ from services.storyboard_voiceover_bootstrap_service import (
     StoryboardVoiceoverBootstrapService,
 )
 from services.storyboard_reference_prompt_service import build_reference_legend, reference_urls
-from services.storyboard_spatial import build_spatial_prompt_context
+from services.storyboard_spatial import (
+    build_spatial_prompt_context,
+    build_three_scene,
+    build_three_code_preview,
+    normalize_three_scene_code,
+)
+from services.storyboard_spatial.exceptions import StoryboardEnterpriseFeatureRequired
+from services.storyboard_camera_chat import parse_camera_instruction
 from services.media_generation_preference_service import (
     MediaGenerationErrorCode,
     MediaGenerationPreferenceError,
@@ -884,12 +891,42 @@ def _build_reference_selections(
     return {'schema_version': 1, 'characters': selections}
 
 
+def _build_pending_reference_selections(
+    shot: dict,
+    character_db_map: Dict[str, Optional[int]],
+    pending_character_variants: Optional[Dict[str, set]],
+) -> Optional[dict]:
+    """把 shot 的有效形象变化中「尚未终态」的变体解析为 pending_reference_selections。
+
+    结构与 reference_selections 对齐（label 待回填，无 URL）。命中已就绪变体
+    （写入 reference_selections）的条目不会出现在 pending 映射中，两块互补。
+    生图不读该字段：待回填镜头自动用主参考图；grid_image_task item_type=7
+    终态后按 (db_id, label) 回填并清除。
+    """
+    if not pending_character_variants:
+        return None
+    pending: Dict[str, dict] = {}
+    for change in shot.get('_effective_appearance_changes') or []:
+        if not isinstance(change, dict):
+            continue
+        db_id = character_db_map.get(str(change.get('character_id')))
+        if db_id is None:
+            continue
+        label = str(change.get('label') or '').strip()
+        if label in (pending_character_variants.get(str(db_id)) or set()):
+            pending[str(db_id)] = {'label': label}
+    if not pending:
+        return None
+    return {'schema_version': 1, 'characters': pending}
+
+
 def build_storyboard_scenes_from_parsed_script(
     parsed_data: dict,
     style: str = '',
     character_variants: Optional[Dict[str, Dict[str, str]]] = None,
     video_gen_mode: Optional[str] = None,
     max_shot_duration: Optional[float] = None,
+    pending_character_variants: Optional[Dict[str, set]] = None,
 ) -> List[dict]:
     """
     Convert llm.script_parser output into StoryboardModel.create_scenes payload.
@@ -901,6 +938,9 @@ def build_storyboard_scenes_from_parsed_script(
     （见 services/script_split_character_variant_service.py）。shot 携带
     ``_effective_appearance_changes`` 且对应变体已生成时，写入
     ``prompt_json.reference_selections``，使分镜生图直接使用新形象。
+    pending_character_variants: 仍未终态的变体映射 ``{str(character_db_id): {label, ...}}``，
+    命中时写入 ``prompt_json.pending_reference_selections`` 待回填标记（发布不
+    等待变体图，宫格任务完成后回填或清除）。
     """
     character_db_map = _build_character_db_map(parsed_data)
     character_name_map = _build_character_name_map(parsed_data)
@@ -1027,11 +1067,21 @@ def build_storyboard_scenes_from_parsed_script(
                 prompt_payload['spatial_world'] = spatial_world
             if isinstance(shot.get('spatial_layout'), dict):
                 prompt_payload['spatial_layout'] = shot.get('spatial_layout')
-            # 角色形象变化：已生成的变体直接作为分镜生图参考选择
+            # three.js 空间代码（效果模式 LLM 直出）：规范化围栏后透传，
+            # 3D 空间预览按序重放执行（见 docs/storyboard/spatial_3d_preview_design.md）
+            three_scene_code = normalize_three_scene_code(shot.get('three_scene_code'))
+            if three_scene_code:
+                prompt_payload['three_scene_code'] = three_scene_code
+            # 角色形象变化：已生成的变体直接作为分镜生图参考选择；
+            # 未终态的记 pending_reference_selections，由宫格任务终态回填
             reference_selections = _build_reference_selections(
                 shot, character_db_map, character_variants)
             if reference_selections:
                 prompt_payload['reference_selections'] = reference_selections
+            pending_selections = _build_pending_reference_selections(
+                shot, character_db_map, pending_character_variants)
+            if pending_selections:
+                prompt_payload['pending_reference_selections'] = pending_selections
 
             scenes.append({
                 'title': f"分镜{scene_index}",
@@ -3492,6 +3542,87 @@ async def get_storyboard(
     })
 
 
+def _build_spatial_scene_preview(scene: Dict) -> Optional[Dict]:
+    """单个分镜的 3D 空间预览载荷；无空间数据的分镜返回 None。
+
+    优先返回 LLM 直出的 three.js 场景代码（three_scene_code，新方案：首镜
+    startScene 构建、后续镜增量调整、每镜 setCamera）；存量分镜只有结构化
+    spatial_layout 时回退旧 JSON 转换（企业版空间引擎）。
+    """
+    prompt = scene.get('prompt_json') if isinstance(scene.get('prompt_json'), dict) else {}
+    three_code = build_three_code_preview(prompt.get('three_scene_code'))
+    if three_code is not None:
+        diagnostics = three_code.get('diagnostics') or []
+        error_count = sum(1 for d in diagnostics if d.get('severity') == 'error')
+        warning_count = sum(1 for d in diagnostics if d.get('severity') != 'error')
+        return {
+            'scene_id': scene.get('id'),
+            'title': scene.get('title') or '',
+            'sort_order': scene.get('sort_order'),
+            'perspective': (prompt.get('perspective') or ''),
+            'three_scene': three_code,
+            'diagnostic_summary': {'errors': error_count, 'warnings': warning_count},
+        }
+    spatial_layout = prompt.get('spatial_layout')
+    if not isinstance(spatial_layout, dict) or not spatial_layout:
+        return None
+    spatial_world = prompt.get('spatial_world') if isinstance(prompt.get('spatial_world'), dict) else None
+    three_scene = build_three_scene(spatial_layout, spatial_world)
+    error_count = sum(1 for d in three_scene.get('diagnostics') or [] if d.get('severity') == 'error')
+    warning_count = sum(1 for d in three_scene.get('diagnostics') or [] if d.get('severity') != 'error')
+    return {
+        'scene_id': scene.get('id'),
+        'title': scene.get('title') or '',
+        'sort_order': scene.get('sort_order'),
+        'perspective': (prompt.get('perspective') or ''),
+        'three_scene': three_scene,
+        'diagnostic_summary': {'errors': error_count, 'warnings': warning_count},
+    }
+
+
+@router.get('/{storyboard_id:int}/spatial-previews')
+@require_permission("storyboard:view")
+async def get_storyboard_spatial_previews(
+    request: Request,
+    storyboard_id: int,
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """按分镜顺序返回每个分镜的 3D 空间预览载荷与一致性诊断。
+
+    数据源优先为分镜 prompt_json 里的 three_scene_code（效果模式拆分时 LLM
+    直出的 three.js 场景代码：空间序列首镜 startScene 构建场景与角色站位，
+    后续镜增量调整，每镜 setCamera 确定机位），预览端按序重放执行；
+    存量分镜回退结构化 spatial_layout 的确定性场景 JSON。诊断（如缺相机、
+    代码缺失）为信息性信号展示，质检侧按 error 阻断。
+    """
+    user_id = get_user_id_from_header(user_id)
+    sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
+    if not sb:
+        return JSONResponse(status_code=404, content={'error': '故事板不存在'})
+
+    ensure_resource_access(sb, user_id, Action.VIEW, "故事板")
+
+    try:
+        scenes = await asyncio.to_thread(StoryboardSceneModel.list_by_storyboard, storyboard_id)
+    except Exception:
+        logger.exception("storyboard %s spatial previews: list scenes failed", storyboard_id)
+        return JSONResponse(status_code=500, content={'error': '读取分镜失败'})
+
+    previews = []
+    for scene in scenes:
+        try:
+            preview = await asyncio.to_thread(_build_spatial_scene_preview, scene)
+        except StoryboardEnterpriseFeatureRequired as exc:
+            return JSONResponse(
+                status_code=403,
+                content={'error': exc.message, 'code': exc.error_code},
+            )
+        if preview is not None:
+            previews.append(preview)
+
+    return JSONResponse({'success': True, 'previews': previews})
+
+
 @router.put('/{storyboard_id:int}')
 @require_permission("storyboard:update")
 async def update_storyboard(
@@ -3573,6 +3704,10 @@ async def generate_storyboard_from_script(
             status_code=403,
             content={'error': 'enterprise_only', 'message': '效果模式仅商业版支持'},
         )
+    # 「生成 3D 导演台」：效果模式下为每镜生成 three_scene_code（three.js
+    # 空间代码，故事板 3D 预览 / 工作流导演台的数据源）。默认关闭，仅显式
+    # 开启才生成；速度/均衡模式不产出 three_scene_code，该开关对其无影响。
+    enable_director_stage = _json_bool(data.get('enable_director_stage'), False)
 
     # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）：
     # 数字串直接转 int；"vendor:模型名" 复合串还原为数值库 ID，与 /api/parse-script
@@ -3654,6 +3789,8 @@ async def generate_storyboard_from_script(
             data.get('enable_character_variant'),
             ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
         ),
+        # 3D 导演台（three.js 空间代码）生成开关（默认关闭）
+        'enable_director_stage': enable_director_stage,
     }
     try:
         await asyncio.to_thread(
@@ -3662,6 +3799,9 @@ async def generate_storyboard_from_script(
             {
                 'videoImageMode': video_gen_mode,
                 'maxGroupDuration': max_shot_duration,
+                # 记录本次生成的 3D 导演台开关值：前端据此隐藏/展示分镜上的
+                # 「3D」空间预览入口（旧故事板无该字段时保持展示，向后兼容）。
+                'directorStageGenerated': enable_director_stage,
             },
         )
     except Exception as e:
@@ -4222,6 +4362,68 @@ async def update_scene_prompt(
         prompt_json=prompt_json, last_modified_user_id=user_id,
     )
     return JSONResponse({'success': True, 'affected': affected})
+
+
+@router.post('/scene/{scene_id}/camera-chat')
+@require_permission("storyboard:update")
+async def scene_camera_chat(
+    request: Request,
+    scene_id: int,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """对话改机位：单轮 LLM 参数提取（不落库，前端应用后写回 three_scene_code）。
+
+    输入当前机位（3D 预览重放得到的 cameraInfo）+ 空间对象坐标 + 自然语言指令，
+    返回新机位 {eye, target, fov}。three.js 代码是机位唯一真源，保存仍走
+    PUT /scene/{scene_id}/prompt，由前端统一 rewrite setCamera 后提交。
+    """
+    user_id = get_user_id_from_header(user_id)
+    scene, err = await _ensure_scene_access(scene_id, user_id, Action.EDIT)
+    if err:
+        return err
+
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    message = str(data.get('message') or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '指令不能为空'})
+
+    current_camera = data.get('current_camera') or {}
+    if not isinstance(current_camera.get('eye'), dict) or not isinstance(current_camera.get('target'), dict):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '缺少当前机位数据'})
+
+    entities = data.get('entities')
+    if not isinstance(entities, list):
+        entities = []
+
+    model = str(data.get('model') or '').strip()
+    model_id = data.get('model_id')
+    if not model or model_id in (None, ''):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        model_id,
+        data.get('vendor_id'),
+    )
+
+    result = await parse_camera_instruction(
+        message,
+        current_camera,
+        entities=entities,
+        model=model,
+        vendor_id=vendor_id,
+        model_id=numeric_model_id,
+        # 剥掉 Bearer 前缀（与 server.py camera-chat、generate-from-script 同口径）：
+        # LLM 客户端会自行拼 Bearer 调内部用量/熔断端点，透传原始头会导致双重前缀。
+        auth_token=_auth_header_token(auth_token),
+    )
+    status = 200 if result.get('success') else 502
+    return JSONResponse(result, status_code=status)
 
 
 @router.post('/scene/{scene_id}/generate-image')

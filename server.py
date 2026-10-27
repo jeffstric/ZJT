@@ -156,6 +156,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
     extract_first_frame,
@@ -2329,8 +2330,22 @@ async def runninghub_status(
                 status=AI_TOOL_STATUS_FAILED
             )
             if CHECK_AUTH_TOKEN and auth_token:
-                # 生成交易ID
-                transaction_id = str(uuid.uuid4())
+                # 幂等防重复退费：本端点可被任意次轮询（前端停止轮询不是服务端
+                # 控制），原实现每次轮询生成新 uuid，绕过 perseids 交易号去重，
+                # 可对同一失败任务重复退费（实测 N 次轮询 = N 倍退费）。对齐
+                # 后台退费路径（task/visual_task.py）的既有模式：已退费检查 +
+                # 由扣费流水号派生的退费流水号（refund-{原扣费流水号}）。
+                from utils.computing_power import (
+                    build_refund_transaction_id,
+                    is_already_refunded,
+                )
+                if is_already_refunded(task_record):
+                    logger.info(
+                        f"Task {project_id} already refunded (idempotent transaction), "
+                        f"skip repeated refund on status poll"
+                    )
+                    return JSONResponse({"status": status.value, "results": []})
+                transaction_id = build_refund_transaction_id(task_record) or str(uuid.uuid4())
                 headers = {'Authorization': f'Bearer {auth_token}'}
                 #发起请求，获取用户ID
                 success, message, response_data = await async_make_perseids_request(
@@ -6344,7 +6359,14 @@ async def wechat_payment_callback(request: Request):
 
             if not success:
                 logger.error(f"Failed to get auth token for user {user_id}: {message}")
-                return False
+                # 200/204 会被微信视为通知成功并停止全部重试；未入账必须应答
+                # 4xx/5xx，让微信按 15s..6h 的重试计划继续投递（如等用户重新
+                # 登录后再取到 token 自动补账）。裸 return False 会被 FastAPI
+                # 序列化为 200 body `false`，曾把已付款订单变成永不入账的吞单。
+                return JSONResponse(
+                    {"code": "FAIL", "message": "暂时无法处理订单，等待重试"},
+                    status_code=500,
+                )
                 
             auth_token = response_data['token']
             computing_power = order.computing_power
@@ -6362,9 +6384,6 @@ async def wechat_payment_callback(request: Request):
                 else:
                     # 更新用户首充状态
                     await _update_first_recharge_status(auth_token=auth_token)
-            
-            # 更新订单状态为已支付
-            PaymentOrdersModel.update_paid(order_id, transaction_id)
 
             # 邀请抽佣结算（商业版；返回被邀请人到账算力，已按佣金比例打折）。
             # 首充/社区版/无邀请人/未开启抽佣等情况下 service 内部返回全额 computing_power；
@@ -6400,7 +6419,22 @@ async def wechat_payment_callback(request: Request):
                     "transaction_id": transaction_id
                 }
             )
-            
+
+            # 校验入账结果：除幂等重放（"该交易已处理"=算力已发放过）外，
+            # 任何入账失败都必须应答 5xx 让微信重试，禁止静默应答 SUCCESS
+            #（否则已收款订单永远停留在 status=0 且不再有投递，只能手工修库）。
+            if not success and message != '该交易已处理':
+                logger.error(f"Crediting failed for order {order_id}: {message}")
+                return JSONResponse(
+                    {"code": "FAIL", "message": "算力入账失败，等待重试"},
+                    status_code=500,
+                )
+
+            # 入账成功（或幂等重放）后才标记订单已支付：避免 status=1 早退分支
+            # 把"已收款未入账"的订单变成吞掉微信重试修复机制的墓碑
+            #（订单账本与算力账本是两个存储，无法跨库事务，只能以入账为准收尾）。
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+
             logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={computing_power}")
         
         # 返回成功响应（V3 API使用JSON格式）
@@ -6482,6 +6516,72 @@ async def fit_video_workflow_environment(
         horizon_y=body.horizon_y,
         scene_scale=body.scene_scale,
         ground_y=body.ground_y,
+    )
+
+
+class VideoWorkflowCameraChatRequest(BaseModel):
+    """导演台对话改机位请求：当前机位 + 场景人偶清单 + 自然语言指令。"""
+
+    class Config:
+        # eye/target 为数组或 {x,y,z} 对象均可，交给 parse_camera_instruction 兼容解析
+        extra = "allow"
+
+    message: str = ''
+    current_camera: Optional[Dict[str, Any]] = None
+    entities: Optional[List[Dict[str, Any]]] = None
+    model: str = ''
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/camera-chat')
+@require_permission("video_workflow:update")
+async def camera_chat_for_video_workflow(
+    request: Request,
+    body: VideoWorkflowCameraChatRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """导演台对话改机位：单轮 LLM 参数提取（不落库，前端应用后随工作流自动保存）。
+
+    与故事板 /scene/{id}/camera-chat 共用 services/storyboard_camera_chat.py，
+    本路由面向画布导演台（无分镜归属，鉴权走登录用户）。
+    """
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    message = str(body.message or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '指令不能为空'})
+    camera = body.current_camera or {}
+    eye, target = camera.get('eye'), camera.get('target')
+    if not isinstance(eye, (list, dict)) or not isinstance(target, (list, dict)):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '缺少当前机位数据'})
+    if not str(body.model or '').strip():
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+
+    # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        body.model_id,
+        body.vendor_id,
+    )
+
+    return await parse_camera_instruction(
+        message,
+        {'eye': eye, 'target': target, 'fov': camera.get('fov', 50)},
+        entities=body.entities or [],
+        model=str(body.model).strip(),
+        vendor_id=vendor_id,
+        model_id=numeric_model_id,
+        auth_token=normalize_authorization_token(auth_token),
     )
 
 

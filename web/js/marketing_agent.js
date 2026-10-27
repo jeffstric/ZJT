@@ -57,6 +57,12 @@
             const selectedVideoModelName = ref('');
             // 是否处理人脸（仅 seedance2.0 系列商业版生效，默认不勾选）
             const processFace = ref(false);
+            // 生成次数（图片/视频直连模式批量生成，1-4，与后端 count 参数对齐，跨会话持久化）
+            const GENERATION_COUNT_STORAGE_KEY = 'marketing_generation_count';
+            const generationCountOptions = [1, 2, 3, 4];
+            const persistedGenerationCount = parseInt(localStorage.getItem(GENERATION_COUNT_STORAGE_KEY), 10);
+            const generationCount = ref(generationCountOptions.includes(persistedGenerationCount) ? persistedGenerationCount : 1);
+            const showCountPanel = ref(false);
             // 图生视频模型偏好（页面加载时预取，上传图片后使用）
             const savedImg2VidModelKey = ref('');
             const savedImg2VidModelName = ref('');
@@ -2691,7 +2697,7 @@
                         // 图片编辑/图生图
                         form.append('image', uploadedImageFile.value);
                         form.append('ratio', selectedRatio.value);
-                        form.append('count', '1');
+                        form.append('count', String(generationCount.value));
                         if (selectedResolution.value && selectedResolution.value !== 'auto') {
                             const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                             const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
@@ -2709,7 +2715,7 @@
                     } else {
                         // 文生图
                         form.append('aspect_ratio', selectedRatio.value);
-                        form.append('count', '1');
+                        form.append('count', String(generationCount.value));
                         if (selectedResolution.value && selectedResolution.value !== 'auto') {
                             const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                             const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
@@ -3205,7 +3211,7 @@
                     form.append('auth_token', authToken.value);
                     form.append('ratio', selectedRatio.value);
                     form.append('duration_seconds', String(resolveSelectedDurationForSubmission()));
-                    form.append('count', '1');
+                    form.append('count', String(generationCount.value));
                     const videoResolution = ensureSelectedVideoResolution();
                     if (videoResolution) {
                         form.append('resolution', videoResolution);
@@ -3485,6 +3491,7 @@
                     image_mode: videoImageMode.value,
                     model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
                     task_id: taskId || undefined,
+                    count: generationCount.value,
                     // 是否处理人脸（仅图生视频 + seedance2.0 商业版生效）
                     enable_face_mask: useImageToVideo && processFace.value === true
                 };
@@ -3591,7 +3598,8 @@
                     // 构建图片偏好（auto 分辨率不传）
                     const imagePreferences = {
                         ratio: selectedRatio.value,
-                        model_name: selectedImageModel.value
+                        model_name: selectedImageModel.value,
+                        count: generationCount.value
                     };
                     const imageCategory = validImageUrls.length > 0 ? 'image_edit' : 'text_to_image';
                     const imageTaskId = window.TaskConfig?.getTaskIdByKey
@@ -7236,6 +7244,7 @@
                 showModelPanel.value = false;
                 showRatioPanel.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             function toggleModelPanel() {
@@ -7243,6 +7252,7 @@
                 showDropdown.value = false;
                 showRatioPanel.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             function toggleRatioPanel() {
@@ -7252,6 +7262,21 @@
                 showSettingsPanel.value = false;
                 showModelSelect.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
+            }
+
+            function toggleCountPanel() {
+                showCountPanel.value = !showCountPanel.value;
+                showDropdown.value = false;
+                showModelPanel.value = false;
+                showRatioPanel.value = false;
+                showDurationPanel.value = false;
+            }
+
+            function selectGenerationCount(count) {
+                generationCount.value = count;
+                localStorage.setItem(GENERATION_COUNT_STORAGE_KEY, String(count));
+                showCountPanel.value = false;
             }
 
             function toggleSettingsPanel() {
@@ -7294,6 +7319,7 @@
                 showModelSelect.value = false;
                 showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             // 组件卸载时清理定时器
@@ -7582,6 +7608,11 @@
                 showSettingsPanel,
                 showVideoModePanel,
                 showDurationPanel,
+                generationCount,
+                generationCountOptions,
+                showCountPanel,
+                toggleCountPanel,
+                selectGenerationCount,
                 autoMode,
                 showModelSelect,
                 isVideoMode,

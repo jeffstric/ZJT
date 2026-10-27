@@ -770,5 +770,7 @@
     "title_voiceover_progress": "Voiceover progress",
     "video_type_dh": "Lip-sync",
     "video_type_image": "Image",
-    "video_type_video": "Video"
+    "video_type_video": "Video",
+    "option_director_stage": "Generate 3D space",
+    "hint_director_stage": "Generates a 3D space for each shot, powering the 3D preview and the video-workflow director stage"
 }

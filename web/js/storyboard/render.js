@@ -53,6 +53,7 @@ import {
     getAutoVideoCompleteButtonViewModel,
     getAutoVideoCompleteSummary,
 } from './auto_missing_videos_state.js';
+import { hasSpatialLayout } from './spatial_3d_preview.js';
 import {
     onDomWillRerender,
     updatePlayheadPosition,
@@ -609,6 +610,7 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
                         ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} ${i18nT('btn_edit', '编辑')}</button>
+                            ${(state.directorStageGenerated !== false && hasSpatialLayout(scene)) ? `<button data-action="open-spatial-preview" data-id="${scene.id}" title="${i18nT('title_open_spatial_preview', '3D 空间布局预览')}">3D</button>` : ''}
                             <button data-action="duplicate-scene" data-id="${scene.id}"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)} ${i18nT('btn_duplicate', '复制')}</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} ${i18nT('btn_delete', '删除')}</button>
                         </div>`}
@@ -2592,6 +2594,15 @@ function renderGenerateFromScriptDialog() {
         const lockedBadge = qualityLocked
             ? `<span class="sequence-locked-badge">${icon('lock', 12)}<span>${i18nT('label_pro_edition', '商业版')}</span></span>`
             : '';
+        // 「生成 3D 导演台」内嵌效果模式卡片（数据仅效果模式产出），勾选即选中效果模式
+        const directorCheck = isQuality ? `
+            <label class="sequence-mode-director-check${qualityLocked || busy ? ' is-disabled' : ''}"
+                   title="${escapeHtmlAttr(i18nT('hint_director_stage', '为每镜生成 3D 空间，用于 3D 空间预览与工作流导演台'))}">
+                <input type="checkbox" data-action="toggle-enable-director-stage"
+                       ${state.enableDirectorStage === true ? 'checked' : ''}
+                       ${qualityLocked || busy ? 'disabled' : ''}>
+                <span>${escapeHtml(i18nT('option_director_stage', '生成3D空间'))}</span>
+            </label>` : '';
         return `
         <div class="${classes}"
              data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="${mode}">
@@ -2606,6 +2617,7 @@ function renderGenerateFromScriptDialog() {
             <div class="sequence-mode-intro-meta">
                 <span class="sequence-mode-benefit">${escapeHtml(tag)}</span>
                 ${lockedBadge}
+                ${directorCheck}
             </div>
         </div>`;
     }).join('');
