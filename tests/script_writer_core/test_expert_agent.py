@@ -352,6 +352,83 @@ class TestPowerConfirmSwitch(TestExpertAgent):
             agent = self._create_agent()
         self.assertIn("算力确认上限", agent.system_prompt)
 
+    def test_confirmed_video_price_is_not_asked_again_and_does_not_pause(self):
+        from script_writer_core.agents.power_budget import PowerBudget
+        from script_writer_core.agents.power_confirm import PowerEstimate
+        from script_writer_core.agents.task_manager import TaskManager
+
+        with patch('script_writer_core.agents.power_confirm.resolve_user_soft_threshold',
+                   return_value=(35, False)):
+            agent = self._create_agent(
+                power_confirm_enabled=True,
+                allowed_tools=["image_to_video"],
+            )
+        agent.task_manager = TaskManager(power_confirm_approval_loader=lambda session_id: [])
+        agent.task_id = "task-1"
+        agent._session_id = "session-1"
+        agent.power_budget = PowerBudget(limit=200, start_balance=1000)
+        same_price = PowerEstimate(cost=303, label="图生视频", duration=5)
+        pricier = PowerEstimate(cost=454, label="图生视频", duration=15)
+
+        with patch("script_writer_core.agents.power_confirm.estimate_tool_computing_power", return_value=same_price), \
+             patch("script_writer_core.agents.power_confirm.query_user_balance", return_value=1000), \
+             patch("script_writer_core.agents.power_confirm.get_effective_thresholds", return_value=(35, 200, False)), \
+             patch.object(agent, "_handle_ask_user", return_value={"success": True, "user_input": "确认生成"}) as ask:
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 5}))
+            self.assertEqual(ask.call_count, 1)
+            self.assertTrue(agent._budget_authorize_next)
+            agent._authorize_generation_spend({"computing_power_required": 303})
+
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 5}))
+            self.assertEqual(ask.call_count, 1)
+            self.assertEqual(agent.task_manager.get_power_confirm_state("session-1")["approved_ceiling"], 303)
+
+        agent.power_budget.observe(697)
+        agent.power_budget.check()
+
+        with patch("script_writer_core.agents.power_confirm.estimate_tool_computing_power", return_value=pricier), \
+             patch("script_writer_core.agents.power_confirm.query_user_balance", return_value=697), \
+             patch("script_writer_core.agents.power_confirm.get_effective_thresholds", return_value=(35, 200, False)), \
+             patch.object(agent, "_handle_ask_user", return_value={"success": True, "user_input": "确认生成"}) as ask_again:
+            self.assertIsNone(agent._gate_computing_power("image_to_video", {"duration": 15}))
+            self.assertEqual(ask_again.call_count, 1)
+            self.assertEqual(agent.task_manager.get_power_confirm_state("session-1")["approved_ceiling"], 454)
+
+    def test_approved_price_is_visible_to_another_task_manager(self):
+        from script_writer_core.agents.power_confirm import should_confirm
+        from script_writer_core.agents.task_manager import TaskManager
+
+        approvals = [{
+            "context": {"estimated_cost": 233, "type": "computing_power_confirm"},
+            "result": {"action": "confirm", "user_input": "确认生成"},
+        }]
+        first = TaskManager(power_confirm_approval_loader=lambda session_id: approvals)
+        second = TaskManager(power_confirm_approval_loader=lambda session_id: approvals)
+        state = second.get_power_confirm_state("27be256f-session")
+        self.assertEqual(state["approved_ceiling"], 233)
+        self.assertFalse(state["skip"])
+        decision = should_confirm(210, False, 35, 200, approved_ceiling=state["approved_ceiling"])
+        self.assertFalse(decision.need_confirm)
+        self.assertEqual(decision.reason, "within_approved_ceiling")
+        self.assertEqual(first.get_power_confirm_state("27be256f-session")["approved_ceiling"], 233)
+
+        cancelled = [{
+            "context": {"estimated_cost": 210},
+            "result": {"action": "confirm", "user_input": "取消本次生成"},
+        }]
+        fresh = TaskManager(power_confirm_approval_loader=lambda session_id: cancelled)
+        self.assertEqual(fresh.get_power_confirm_state("27be256f-session")["approved_ceiling"], 0)
+
+        def broken(session_id):
+            raise RuntimeError("db down")
+
+        failed = TaskManager(power_confirm_approval_loader=broken)
+        failed.raise_approved_ceiling("27be256f-session", 233)
+        failed.set_power_confirm_skip("27be256f-session", True)
+        downgraded = failed.get_power_confirm_state("27be256f-session")
+        self.assertEqual(downgraded["approved_ceiling"], 0)
+        self.assertFalse(downgraded["skip"])
+
 
 if __name__ == '__main__':
     unittest.main()

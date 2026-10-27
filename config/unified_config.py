@@ -1879,6 +1879,11 @@ LLM_ARREARS_BREAKER_ENABLED = True
 LLM_ARREARS_BREAKER_THRESHOLD = 1  # 余额低于该值时拒绝发起新的 LLM 调用（与 Agent 循环阈值一致）
 AGENT_POWER_CONFIRM_THRESHOLD = 35  # 用户未自定义时的软阈值：本次/本轮累计超过才确认
 AGENT_POWER_CONFIRM_HARD_THRESHOLD = 200  # 「本次对话不再询问」后仍强制确认的硬阈值
+# 单次任务算力消耗上限（PowerBudget）：任务启动时快照余额，PM/专家循环逐迭代核对，
+# 累计消耗达到上限自动暂停任务（充值或调高上限后发送新消息可继续）。
+# 背景见 docs/backend/incidents/2026-09-01 与 2026-09-26：无人应答时
+# ask_user「提问→300s 超时→LLM 重试」可无限空转扣费，余额熔断（阈值 1）兜底太晚。
+AGENT_POWER_BUDGET_DEFAULT = 200  # 用户未自定义时的默认上限；0 表示不限制
 
 
 # ============ 任务类型 ID 常量 ============

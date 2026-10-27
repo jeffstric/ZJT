@@ -2,11 +2,11 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-
 from config.constant import AGENT_LLM_IMAGE_TOKEN_ESTIMATE, VIDEO_GENERATION_EXPERT_SKILLS
 from .base_agent import BaseAgent, InsufficientComputingPowerError, check_computing_power_sync
 from .expert_agent import ExpertAgent
 from .ask_user_mixin import AskUserMixin
+from .power_budget import PowerBudget, observe_and_check
 from .summarizer import ConversationSummarizer
 from .task_manager import TaskManager, AgentTask
 from .tool_definitions import ASK_USER_TOOL_DEFINITION, LOAD_SOP_TOOL_DEFINITION
@@ -188,6 +188,15 @@ class PMAgent(BaseAgent, AskUserMixin):
         # 设置 task_id，供 AskUserMixin 使用
         self.task_id = task.task_id
 
+        # 单次任务算力上限：任务启动时快照余额，PM/专家循环逐迭代核对，
+        # ask_user 在超限后立即返回（见 power_budget.py 模块注释）
+        self.power_budget = PowerBudget.create_for_task(task, agent_id=self.agent_id)
+        if self.power_budget:
+            logger.info(
+                f"{self.agent_id}: 本次任务算力上限 {self.power_budget.limit}，"
+                f"起始余额 {self.power_budget.start_balance}"
+            )
+
         # 设置逐条消息持久化上下文。__init__ 阶段 recorder 还未绑定 session，
         # system prompt 和工具定义需要在任务开始时补写到 chat_messages。
         self._session_id = task.session_id
@@ -317,9 +326,11 @@ class PMAgent(BaseAgent, AskUserMixin):
                 })
                 return f"任务执行停止: {reason}"
 
-            # 检查算力是否充足
+            # 检查算力是否充足，并核对单次任务算力上限
+            # （超限抛 PowerBudgetExhaustedError，复用下方算力不足的停止链路
+            #  向用户推送停止消息后结束任务；新消息会开启新任务并重新快照预算）
             try:
-                check_computing_power_sync(self.auth_token, self.agent_id)
+                observe_and_check(getattr(self, "power_budget", None), self.auth_token, self.agent_id)
             except InsufficientComputingPowerError as e:
                 logger.warning(f"{self.agent_id}: 算力不足，停止任务 - {e.message}")
                 self.task_manager.push_message(task.task_id, 'message', {
@@ -722,7 +733,9 @@ class PMAgent(BaseAgent, AskUserMixin):
             max_consecutive_no_progress=expert_config.get("max_consecutive_no_progress", 3),
             max_consecutive_errors=expert_config.get("max_consecutive_errors", 3),
             max_total_errors=expert_config.get("max_total_errors", 7),
-            power_confirm_enabled=getattr(self, "power_confirm_enabled", True)
+            power_confirm_enabled=getattr(self, "power_confirm_enabled", True),
+            # 单次任务算力预算随任务透传给专家，避免子 agent 重新快照导致计数重置
+            power_budget=getattr(self, "power_budget", None)
         )
 
         # 合并 LLM 提供的 conversation_history 和 PM 已有的 ask_user 交互

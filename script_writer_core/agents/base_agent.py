@@ -26,6 +26,24 @@ class InsufficientComputingPowerError(Exception):
         super().__init__(self.message)
 
 
+class PowerBudgetExhaustedError(InsufficientComputingPowerError):
+    """单次任务算力消耗达到上限。
+
+    继承 InsufficientComputingPowerError：PM/专家循环与 _execute_tool 中的
+    「算力不足 → 截断历史 → 逐层上抛/推送停止消息」链路原样生效，任务优雅停止。
+    """
+    def __init__(self, consumed: int, limit: int):
+        self.consumed = consumed
+        self.limit = limit
+        super().__init__(
+            computing_power=0,
+            message=(
+                f"已达本次任务算力上限（本次未授权消耗 {consumed}，上限 {limit}），"
+                f"任务已自动暂停；充值或调高上限后重新发送消息即可继续"
+            ),
+        )
+
+
 def check_computing_power_sync(auth_token: str, agent_id: str, threshold: int = COMPUTING_POWER_CHECK_THRESHOLD) -> int:
     """
     同步检查用户算力（在后台线程中使用）

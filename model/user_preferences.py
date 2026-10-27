@@ -104,6 +104,8 @@ PREF_TYPE_IMAGE_TO_VIDEO_MODEL = "image_to_video_model"
 PREF_TYPE_DEFAULT_LLM_MODEL = "default_llm_model"
 # 用户级算力确认软阈值：{"threshold": int}，world_id 使用 PREF_WORLD_ID_GLOBAL
 PREF_TYPE_POWER_CONFIRM = "power_confirm"
+# 用户级单次任务算力消耗上限：{"limit": int}（0 表示不限制），world_id 使用 PREF_WORLD_ID_GLOBAL
+PREF_TYPE_POWER_BUDGET = "power_budget"
 # 用户级 VL（视觉语言）模型偏好：{model, model_id, vendor_id}
 # 画风识别（script_writer.html 识别模型下拉）与资产检查专家（asset-readiness-checker）
 # 等需要看图的场景共用同一存储；默认值见 config/constant.py VL_MODEL_PREFERRED_DEFAULT
