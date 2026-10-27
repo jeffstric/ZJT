@@ -46,7 +46,7 @@ describe('@资产 token 构造与还原', () => {
     expect(window.AssetLibrary.buildMentionToken({ id: 42 })).toBe('@资产:42');
   });
 
-  test('resolveMentionTokens：缓存资产还原为 markdown 图片（绝对 URL）', async () => {
+  test('resolveMentionTokens：缓存资产还原为 markdown 图片（相对 URL）', async () => {
     mockFetch(() => jsonResponse({
       code: 0,
       data: {
@@ -56,7 +56,7 @@ describe('@资产 token 构造与还原', () => {
     }));
     await window.AssetLibrary.fetchMentionItems('');
     const out = await window.AssetLibrary.resolveMentionTokens('参考 @资产:7 的风格');
-    expect(out).toBe(`参考 ![产品主图](${location.origin}/upload/asset_library/1/a.png) 的风格`);
+    expect(out).toBe('参考 ![产品主图](/upload/asset_library/1/a.png) 的风格');
   });
 
   test('resolveMentionTokens：无权访问/已清除的 token 保留原文', async () => {
@@ -91,7 +91,7 @@ describe('@资产 token 构造与还原', () => {
     await window.AssetLibrary.fetchMentionItems('');
     const out = await window.AssetLibrary.resolveMentionTokens('参考 @资产:5');
     // alt 中 []() 已被清洗，输出为合法 markdown 图片
-    expect(out).toBe(`参考 ![产品图主视觉终版](${location.origin}/upload/b.png)`);
+    expect(out).toBe('参考 ![产品图主视觉终版](/upload/b.png)');
   });
 });
 

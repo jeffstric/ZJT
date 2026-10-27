@@ -824,9 +824,10 @@
         return ready.then(function () {
             return text.replace(new RegExp(MENTION_PREFIX + '(\\d+)(?![\\d])', 'g'), function (all, idStr) {
                 var asset = assetCache[Number(idStr)];
-                if (!asset || !asset.file_url) return all;
+                var fileUrl = asset && (asset.file_url || asset.url);
+                if (!fileUrl) return all;
                 // alt 清洗掉 markdown 语法字符（[]()），名称含括号时不破坏图片语法
-                return '![' + String(asset.name || '资产').replace(/[\[\]()]/g, '') + '](' + asset.file_url + ')';
+                return '![' + String(asset.name || '资产').replace(/[\[\]()]/g, '') + '](' + fileUrl + ')';
             });
         });
     }

@@ -810,8 +810,8 @@ async def admin_get_asset_library_config(
     await require_admin(auth_token)
     try:
         from services import asset_library_service as asset_svc
-        cfg = asset_svc.get_feature_config()
-        used = asset_svc.total_used_bytes()
+        cfg = await asyncio.to_thread(asset_svc.get_feature_config)
+        used = await asyncio.to_thread(asset_svc.total_used_bytes)
         return {
             "code": 0,
             "data": {
@@ -856,7 +856,8 @@ async def admin_set_asset_library_config(
             (ALC.CONFIG_KEY_TOTAL_QUOTA_GB, 'float', str(request.total_quota_gb), '资产库总磁盘上限（GB，0=不限）'),
         ]
         for key, vtype, value, desc in items:
-            SystemConfigModel.upsert(
+            await asyncio.to_thread(
+                SystemConfigModel.upsert,
                 env=env,
                 config_key=f"{ALC.CONFIG_NAMESPACE}.{key}",
                 config_value=value,
@@ -865,7 +866,7 @@ async def admin_set_asset_library_config(
                 editable=1,
                 updated_by=admin.id,
             )
-            invalidate_dynamic_cache(f"{ALC.CONFIG_NAMESPACE}.{key}")
+            await asyncio.to_thread(invalidate_dynamic_cache, f"{ALC.CONFIG_NAMESPACE}.{key}")
         return {"code": 0, "message": "资产库配置已保存"}
     except HTTPException:
         raise
@@ -890,10 +891,10 @@ async def admin_set_user_asset_permission(
         raise HTTPException(status_code=400, detail="请求体不能为空")
     try:
         from model.asset_library_quota import AssetLibraryQuotaModel
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        AssetLibraryQuotaModel.set_enabled(user_id, request.enabled)
+        await asyncio.to_thread(AssetLibraryQuotaModel.set_enabled, user_id, request.enabled)
         return {"code": 0, "message": "已更新", "data": {"user_id": user_id, "enabled": request.enabled}}
     except HTTPException:
         raise
@@ -912,19 +913,20 @@ async def admin_get_user_asset_quota(
     try:
         from services import asset_library_service as asset_svc
         from model.asset_library_quota import AssetLibraryQuotaModel
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        quota = asset_svc.get_quota(user_id)
-        asset_total = asset_svc.list_user_assets_for_admin(user_id, limit=1)["total"]
+        quota = await asyncio.to_thread(asset_svc.get_quota, user_id)
+        assets = await asyncio.to_thread(asset_svc.list_user_assets_for_admin, user_id, limit=1)
+        enabled = await asyncio.to_thread(AssetLibraryQuotaModel.is_enabled, user_id)
         return {
             "code": 0,
             "data": {
                 "user_id": user_id,
                 "quota_bytes": quota["quota_bytes"],
                 "used_bytes": quota["used_bytes"],
-                "asset_count": asset_total,
-                "enabled": AssetLibraryQuotaModel.is_enabled(user_id),
+                "asset_count": assets["total"],
+                "enabled": enabled,
             }
         }
     except HTTPException:
@@ -946,12 +948,12 @@ async def admin_set_user_asset_quota(
         raise HTTPException(status_code=400, detail="quota_bytes 必须是非负整数（0=不限制）")
     try:
         from model.asset_library_quota import AssetLibraryQuotaModel
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        old = AssetLibraryQuotaModel.get_by_user(user_id) or {}
-        AssetLibraryQuotaModel.set_quota(user_id, request.quota_bytes)
-        new = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+        old = await asyncio.to_thread(AssetLibraryQuotaModel.get_by_user, user_id) or {}
+        await asyncio.to_thread(AssetLibraryQuotaModel.set_quota, user_id, request.quota_bytes)
+        new = await asyncio.to_thread(AssetLibraryQuotaModel.get_by_user, user_id) or {}
         return {
             "code": 0,
             "message": "资产库容量设置成功",
@@ -979,10 +981,15 @@ async def admin_list_user_assets(
     await require_admin(auth_token)
     try:
         from services import asset_library_service as asset_svc
-        user = UsersModel.get_by_id(user_id)
+        user = await asyncio.to_thread(UsersModel.get_by_id, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="用户不存在")
-        result = asset_svc.list_user_assets_for_admin(user_id, limit=page_size, offset=(page - 1) * page_size)
+        result = await asyncio.to_thread(
+            asset_svc.list_user_assets_for_admin,
+            user_id,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+        )
         return {"code": 0, "data": result}
     except HTTPException:
         raise
