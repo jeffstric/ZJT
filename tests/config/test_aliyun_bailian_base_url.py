@@ -107,5 +107,31 @@ class TestNormalizeAliyunBailianBaseUrlForMedia(unittest.TestCase):
         )
 
 
+class TestNormalizeAliyunBailianBaseUrlProtocol(unittest.TestCase):
+    """API Host 不带协议时默认使用 HTTPS，显式协议保持不变"""
+
+    def test_bare_host_for_llm(self):
+        self.assertEqual(
+            normalize_aliyun_bailian_base_url(
+                'llm-xxx.cn-beijing.maas.aliyuncs.com', for_llm=True
+            ),
+            'https://llm-xxx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1',
+        )
+
+    def test_bare_host_with_trailing_slash_for_media(self):
+        self.assertEqual(
+            normalize_aliyun_bailian_base_url(
+                'llm-xxx.cn-beijing.maas.aliyuncs.com/', for_llm=False
+            ),
+            'https://llm-xxx.cn-beijing.maas.aliyuncs.com/api/v1',
+        )
+
+    def test_explicit_http_is_preserved(self):
+        self.assertEqual(
+            normalize_aliyun_bailian_base_url('http://localhost:8080', for_llm=True),
+            'http://localhost:8080/compatible-mode/v1',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()
