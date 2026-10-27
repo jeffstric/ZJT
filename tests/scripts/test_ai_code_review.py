@@ -572,3 +572,95 @@ def test_run_survives_missing_base_and_failed_fetch():
     }
     assert review.run(env, opener=opener, sleep=lambda _seconds: None, command_runner=command_runner) == "posted"
     assert "未发现必须修改的问题" in posted[0]
+
+
+def test_probe_falls_through_to_direct_backend_when_router_down():
+    """路由器探针失败时轮询直连候选：不得在探针阶段终止（换后端兜底可用）。"""
+    vllm_calls = []
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and "/diffs?" in url:
+            return FakeResponse(
+                200,
+                json.dumps([{"new_path": "api/foo.py", "diff": "@@ -1 +1 @@\n-old\n+new\n"}]),
+            )
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            if ":4000" in url:
+                # 会话路由器整体宕机：5xx（retryable）
+                return FakeResponse(502, "bad gateway")
+            # 直连后端健康
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            if ":4000" in url:
+                # 路由器整体宕机：生成请求同样失败，触发 call_vllm 换后端
+                return FakeResponse(502, "bad gateway")
+            vllm_calls.append(url)
+            return FakeResponse(
+                200,
+                json.dumps(
+                    {
+                        "choices": [{"message": {"content": "## 结论\n无\n## 问题\n无"}}],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+                    }
+                ),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            return FakeResponse(201, "{}")
+        raise AssertionError(f"unexpected {method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "7",
+        "CI_MERGE_REQUEST_IID": "15",
+        "CI_COMMIT_SHA": "abc123def456",
+        "CI_JOB_TOKEN": "job-token",
+        "CI_MERGE_REQUEST_TITLE": "修复探针",
+        "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "fix",
+        "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "AI_REVIEW_DIFF_SOURCE": "api",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _seconds: None) == "posted"
+    # 探针与生成均已落到直连后端
+    assert vllm_calls and ":4000" not in vllm_calls[0]
+
+
+def test_probe_raises_when_all_backends_down():
+    """全部候选后端不可达时探针才失败（此时确实无法审查）。"""
+    from pytest import raises
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if method == "GET" and "/diffs?" in url:
+            return FakeResponse(
+                200,
+                json.dumps([{"new_path": "api/foo.py", "diff": "@@ -1 +1 @@\n-old\n+new\n"}]),
+            )
+        if method == "GET" and url.rstrip("/").endswith("/v1/models"):
+            return FakeResponse(502, "bad gateway")
+        raise AssertionError(f"unexpected {method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "7",
+        "CI_MERGE_REQUEST_IID": "15",
+        "CI_COMMIT_SHA": "abc123def456",
+        "CI_JOB_TOKEN": "job-token",
+        "CI_MERGE_REQUEST_TITLE": "全挂",
+        "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME": "fix",
+        "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "AI_REVIEW_DIFF_SOURCE": "api",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    with raises(Exception) as excinfo:
+        review.run(env, opener=opener, sleep=lambda _seconds: None)
+    assert "502" in str(excinfo.value) or "探针" in str(excinfo.value)

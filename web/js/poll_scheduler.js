@@ -34,6 +34,14 @@ function clearTimer(task) {
         clearTimeout(task.timer);
         task.timer = null;
     }
+    clearResumeTimer(task);
+}
+
+function clearResumeTimer(task) {
+    if (task && task.resumeTimer) {
+        clearTimeout(task.resumeTimer);
+        task.resumeTimer = null;
+    }
 }
 
 function schedule(key, fn, userOpts = {}) {
@@ -48,9 +56,17 @@ function schedule(key, fn, userOpts = {}) {
         signature: null,
         firstSeenAt: Date.now(), // 最近一次「签名变化」时间，deadline 计时基准
         timer: null,
+        resumeTimer: null,
         paused: false,
     };
     tasks.set(key, task);
+    // 后台标签页里新挂起的任务以挂起态起步：浏览器恢复会话时页面初始即 hidden
+    // 且不会再发 visibilitychange，立即 tick 会让挂机标签页全速轮询。
+    // 恢复可见后由 setPaused(false) 的补轮接管。
+    if (opts.pauseWhenHidden && typeof document !== 'undefined' && document.hidden) {
+        task.paused = true;
+        return;
+    }
     tick(key);
 }
 
@@ -83,6 +99,10 @@ function tick(key) {
             }
             // 服务端 pollAfterMs 优先于本地退避间隔
             const delay = (result && result.pollAfterMs) || task.interval;
+            // 排下一轮前撤掉残留的旧 timer：in-flight 请求跨过「隐藏→恢复」窗口返回时，
+            // 会与恢复补轮并发各排一条链；后处理结果的一方负责收敛为单链，
+            // 否则两条链互相覆盖 task.timer 句柄且永不合并，请求频率翻倍
+            clearTimer(task);
             task.timer = setTimeout(() => tick(key), delay);
         } catch (err) {
             if (tasks.get(key) !== task || task.paused) return;
@@ -97,6 +117,7 @@ function tick(key) {
                 task.opts.errorInitial * 2 ** (task.consecutiveErrors - 1),
                 task.opts.errorMax,
             );
+            clearTimer(task);
             task.timer = setTimeout(() => tick(key), backoff);
         }
     })();
@@ -122,6 +143,12 @@ function isActive(key) {
 }
 
 function setPaused(paused) {
+    if (paused && resumeTimer) {
+        // 快速切页（可见→隐藏）时撤掉已排定的补轮：它触发时任务全部处于
+        // paused 会被跳过，但清掉可避免与下一次恢复排的新补轮形成双补轮
+        clearTimeout(resumeTimer);
+        resumeTimer = null;
+    }
     for (const task of tasks.values()) {
         if (!task.opts.pauseWhenHidden) continue;
         task.paused = paused;
@@ -133,11 +160,19 @@ function setPaused(paused) {
         resumeTimer = setTimeout(() => {
             resumeTimer = null;
             for (const task of tasks.values()) {
-                if (task.paused) continue;
+                // 只补真正因隐藏挂起过的任务；pauseWhenHidden:false 的任务
+                // 隐藏期间从未停轮，补轮会给它叠加一条多余的链
+                if (task.paused || !task.opts.pauseWhenHidden) continue;
                 const jitter = task.opts.resumeJitter
                     ? Math.floor(Math.random() * task.opts.resumeJitter)
                     : 0;
-                setTimeout(() => tick(task.key), jitter);
+                // 与常规 timer 分开保存：隐藏、取消、重调度均可撤销；不能用
+                // task.timer 覆盖已有轮询链句柄，否则会重新引入双链。
+                clearResumeTimer(task);
+                task.resumeTimer = setTimeout(() => {
+                    task.resumeTimer = null;
+                    tick(task.key);
+                }, jitter);
             }
         }, DEFAULTS.resumeDebounce);
     }

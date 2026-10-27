@@ -478,6 +478,46 @@ class TestCheckStatus(unittest.TestCase):
         result = self.driver.check_status('task_12345')
         self.assertEqual(result['status'], 'RUNNING')
 
+    def test_outputs_network_error_returns_running(self):
+        """上游已 SUCCESS 后 outputs 单次网络抖动：RUNNING 待重试，不得终态失败"""
+        self.driver._request = MagicMock(side_effect=[
+            {"code": 0, "data": "SUCCESS"},
+            ConnectionError("outputs timeout"),
+        ])
+        result = self.driver.check_status('task_12345')
+        self.assertEqual(result['status'], 'RUNNING')
+        self.assertTrue(result['preserve_retry_count'])
+
+    def test_outputs_api_error_returns_running(self):
+        """上游已 SUCCESS 后 outputs 返回限流/5xx：RUNNING 且保留生成重试次数"""
+        self.driver._request = MagicMock(side_effect=[
+            {"code": 0, "data": "SUCCESS"},
+            {"code": 429, "msg": "rate limited"},
+        ])
+        result = self.driver.check_status('task_12345')
+        self.assertEqual(result['status'], 'RUNNING')
+        self.assertTrue(result['preserve_retry_count'])
+
+    def test_outputs_permanent_api_error_returns_failed(self):
+        """永久业务错误不得伪装成网络抖动无限轮询"""
+        self.driver._request = MagicMock(side_effect=[
+            {"code": 0, "data": "SUCCESS"},
+            {"code": 404, "msg": "task not found"},
+        ])
+        result = self.driver.check_status('task_12345')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error_type'], 'SYSTEM')
+
+    def test_outputs_success_without_file_url_keeps_terminal(self):
+        """outputs 正常返回但确无 fileUrl：保持 SUCCESS+None 终态语义（真实无产物）"""
+        self.driver._request = MagicMock(side_effect=[
+            {"code": 0, "data": "SUCCESS"},
+            {"code": 0, "data": []},
+        ])
+        result = self.driver.check_status('task_12345')
+        self.assertEqual(result['status'], 'SUCCESS')
+        self.assertIsNone(result['result_url'])
+
     def test_api_error_code(self):
         self.driver._request = MagicMock(return_value={"code": 1, "msg": "Invalid task"})
         result = self.driver.check_status('task_12345')

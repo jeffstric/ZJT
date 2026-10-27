@@ -204,4 +204,74 @@ describe('poll_scheduler', () => {
         await vi.advanceTimersByTimeAsync(3000);
         expect(fn.mock.calls.length).toBeGreaterThanOrEqual(3); // 不受隐藏影响
     });
+
+    // ---- 回归：恢复可见后 in-flight 返回与补轮并发不得分裂出第二条轮询链 ----
+    it('in-flight response returning after resume converges to a single chain', async () => {
+        let resolveFirst;
+        const fn = vi.fn()
+            .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
+            .mockImplementation(async () => ({ done: false, signature: 'a' }));
+        scheduler.schedule('k14', fn, { initial: 1000, growth: 1, max: 1000 });
+        await vi.advanceTimersByTimeAsync(0); // t=0：首轮 in-flight（挂起不返回）
+
+        setHidden(true);   // 隐藏挂起
+        setHidden(false);  // 立即恢复：paused 已回 false，排 1.5s 补轮
+        await vi.advanceTimersByTimeAsync(600);
+        resolveFirst({ done: false, signature: 'a' }); // t=0.6：in-flight 晚到返回，排 timer_A
+        await vi.advanceTimersByTimeAsync(900);        // t=1.5：补轮触发 → fn2 立即返回 → 应撤 timer_A 收敛单链
+
+        const before = fn.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(5000); // 单链 1s 间隔 ≈5 次；双链 ≈10 次
+        const delta = fn.mock.calls.length - before;
+        expect(delta).toBeLessThanOrEqual(6);
+    });
+
+    // ---- 回归：页面在隐藏状态下 schedule 的新任务必须挂起，等恢复补轮接管 ----
+    it('scheduling while already hidden starts paused until visibility returns', async () => {
+        const fn = vi.fn(async () => ({ done: false, signature: 'a' }));
+        setHidden(true); // 后台标签页恢复会话：初始即 hidden，不会再发 visibilitychange
+        scheduler.schedule('k15', fn, { initial: 1000, growth: 1, max: 1000 });
+
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(fn).not.toHaveBeenCalled(); // 挂机标签页 0 请求
+
+        setHidden(false);
+        await vi.advanceTimersByTimeAsync(1500 + 400); // 去抖 + 最大 jitter
+        expect(fn.mock.calls.length).toBeGreaterThanOrEqual(1); // 恢复补轮接管
+    });
+
+    // ---- 回归：pauseWhenHidden:false 的任务隐藏期间从未停轮，恢复补轮不得叠加 tick ----
+    it('resume catch-up skips tasks that never suspended', async () => {
+        const fn = vi.fn(async () => ({ done: false, signature: 'a' }));
+        scheduler.schedule('k16', fn, { initial: 1000, growth: 1, max: 1000, pauseWhenHidden: false });
+
+        await vi.advanceTimersByTimeAsync(0);   // t=0
+        await vi.advanceTimersByTimeAsync(1000); // t=1（处理完排 t=2）
+        setHidden(true);
+        setHidden(false);
+        await vi.advanceTimersByTimeAsync(1900); // 到 t≈2.9：单链只有 t=2 一次
+        // t=0/1/2 共 3 次；若补轮错误地 tick 了从未暂停的任务会是 4 次
+        expect(fn.mock.calls.length).toBeLessThanOrEqual(3);
+    });
+
+    // ---- 回归：全局去抖已结束、jitter 尚未执行时二次切页，旧补轮必须撤销 ----
+    it('second hide cancels a pending jitter catch-up before the next resume', async () => {
+        const random = vi.spyOn(Math, 'random').mockReturnValue(0.5); // jitter 固定 200ms
+        const fn = vi.fn(async () => ({ done: false, signature: 'a' }));
+        scheduler.schedule('k17', fn, { initial: 1000, growth: 1, max: 1000 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(fn).toHaveBeenCalledTimes(1);
+
+        setHidden(true);
+        setHidden(false);
+        await vi.advanceTimersByTimeAsync(1500); // 已创建第一次恢复的 200ms jitter
+        setHidden(true);                        // 必须撤掉上面的 jitter
+        setHidden(false);
+        await vi.advanceTimersByTimeAsync(400);
+        expect(fn).toHaveBeenCalledTimes(1);    // 旧补轮不得在第二次恢复后漏执行
+
+        await vi.advanceTimersByTimeAsync(1500 + 400);
+        expect(fn).toHaveBeenCalledTimes(2);    // 只有第二次恢复的一次补轮
+        random.mockRestore();
+    });
 });

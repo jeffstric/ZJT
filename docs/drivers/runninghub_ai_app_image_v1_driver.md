@@ -72,7 +72,7 @@
 ### 状态查询
 
 - **POST** `/task/openapi/status`：`{apiKey, taskId}`，`data` 为 `SUCCESS / FAILED / RUNNING`
-- **POST** `/task/openapi/outputs`：成功后提取 `data[].fileUrl` 作为 `result_url`
+- **POST** `/task/openapi/outputs`：成功后提取 `data[].fileUrl` 作为 `result_url`。上游已 `SUCCESS` 后 outputs 的瞬时失败（网络错误、超时、421 拥堵、429 限流、5xx 服务端错误）返回 `RUNNING + preserve_retry_count=True`，调度层自行安排下一轮且不消耗生成阶段 `try_count`，避免长任务因一次 outputs 抖动触及 `max_retry_count`；任务过期检查仍作最终兜底。其他非零业务错误码直接 `FAILED`，不作无限重试。`code == 0` 但确无 `fileUrl`（含空 `data`）仍返回 `SUCCESS + result_url=None` 走「任务成功但未返回结果URL」终态。
 
 ### 参考图上传
 

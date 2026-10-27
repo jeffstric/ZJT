@@ -17,6 +17,8 @@ Merge Request Pipeline 会跑 `ai_code_review`：用本地 git 取本次 MR 的 
 
 Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP(S)_PROXY`。
 
+探针（生成前的短超时可达性检查）同样轮询全部候选后端（入口路由器 → 两台直连，与 `call_vllm` 的换后端同源）：任一候选可达即放行，全部不可达才报错终止——路由器整体宕机正是直连兜底要覆盖的场景，不能在探针阶段就把换后端堵死。
+
 ## 流水线行为
 
 - 只在 `CI_PIPELINE_SOURCE == merge_request_event` 时运行。

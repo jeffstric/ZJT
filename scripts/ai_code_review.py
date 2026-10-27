@@ -1000,14 +1000,26 @@ def run(
         return "post_failed"
 
     probe_timeout = env_int(env, "AI_REVIEW_PROBE_TIMEOUT", DEFAULT_VLLM_PROBE_TIMEOUT)
-    try:
-        probe_vllm(base_url, probe_timeout, opener=opener)
-    except ReviewError as exc:
-        if not exc.retryable:
-            raise
-        print(f"vLLM 探针失败，准备重试: {exc}", file=sys.stderr)
-        sleep(2)
-        probe_vllm(base_url, probe_timeout, opener=opener)
+    # 探针轮询全部候选后端（与 call_vllm 的换后端同源）：路由器整体不可达正是
+    # 最需要直连兜底的场景，只探测 base_url 会在探针阶段就把换后端堵死
+    probe_urls = vllm_candidates(
+        base_url, max(1, env_int(env, "AI_REVIEW_LLM_ATTEMPTS", DEFAULT_LLM_ATTEMPTS))
+    )
+    probe_last_error: ReviewError | None = None
+    for probe_url in probe_urls:
+        try:
+            probe_vllm(probe_url, probe_timeout, opener=opener)
+            break
+        except ReviewError as exc:
+            if not exc.retryable:
+                raise
+            probe_last_error = exc
+            print(f"vLLM 探针失败（{probe_url}），尝试下一候选: {exc}", file=sys.stderr)
+            sleep(2)
+    else:
+        raise probe_last_error if probe_last_error is not None else ReviewError(
+            "vLLM 探针失败：无候选后端可探测", retryable=True
+        )
 
     messages = build_messages(
         env.get("CI_MERGE_REQUEST_TITLE") or "",

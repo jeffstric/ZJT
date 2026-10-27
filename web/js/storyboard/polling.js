@@ -431,7 +431,9 @@ export function pollVoiceReplace(sceneId) {
 
 // 剧本分段拆分任务轮询：见 docs/script/script_parser_incremental_split_design.md §13.3 §15。
 // 维持固定节奏（growth=1），服务端 poll_after_ms 优先——拆分是用户正盯着的交互任务，
-// 不做本地退避；错误路径保留原指数退避曲线（4s→8s→16s→20s 封顶），新增连续失败放弃。
+// 不做本地退避；错误路径维持原实现指数曲线（首错 8s→16s→20s 封顶），新增连续失败放弃。
+// 放弃/超时必须走 onError 终态：调用方（events.js/bootstrap.js）只在回调里清
+// isGeneratingFromScript，静默放弃会让进度弹窗永久停在 running。
 const SPLIT_TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'];
 const SPLIT_INTERACTIVE_STATUSES = ['paused', 'waiting_auth'];
 
@@ -468,9 +470,21 @@ export function pollScriptSplitTask(taskId, callbacks = {}) {
         initial: POLL_INTERVAL,
         growth: 1,
         max: POLL_INTERVAL,
-        errorInitial: POLL_INTERVAL,
+        // 原实现首错即 POLL_INTERVAL*2（errorBackoff 初始 1、失败 ×2），保持一致，
+        // 避免服务端故障时海量客户端比旧版更早重试
+        errorInitial: POLL_INTERVAL * 2,
         errorMax: POLL_INTERVAL * 5,
         onError: e => { if (callbacks.onRecoverableError) callbacks.onRecoverableError(e); },
+        onGiveUp: () => {
+            if (callbacks.onError) {
+                callbacks.onError(new Error('网络持续异常，已停止查询拆分进度；请检查网络后刷新页面查看结果'));
+            }
+        },
+        onDeadline: () => {
+            if (callbacks.onError) {
+                callbacks.onError(new Error('拆分任务长时间无进展，已停止查询；请刷新页面查看最新状态'));
+            }
+        },
     });
 }
 
