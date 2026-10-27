@@ -1190,6 +1190,8 @@
   "restore_image_already_current": "This image is already the current one",
   "restore_image_success": "Restored as current image",
   "restore_image_failed": "Restore failed: {error}",
+  "pick_image_from_asset_library": "Asset Library",
+  "pick_image_from_asset_library_title": "Pick Reference Image from Asset Library",
   "ann_bell_title": "Notifications",
   "ann_panel_title": "Notification Center",
   "ann_mark_all_read": "Mark all read",

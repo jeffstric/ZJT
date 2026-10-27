@@ -561,6 +561,24 @@ async def startup_event():
 
     asyncio.create_task(start_notification_service())
 
+    # 资产库文件完整性检查（只读）：DB 记录在磁盘缺失文件时告警，
+    # 便于及时发现外部误删（应用内删除路径均有日志，缺失基本来自外部）
+    async def check_asset_library_files():
+        try:
+            from services import asset_library_service as _al_svc
+            result = await asyncio.to_thread(_al_svc.verify_asset_files)
+            if result.get("missing"):
+                ids = result["missing"][:20]
+                more = "…" if len(result["missing"]) > len(ids) else ""
+                logger.warning(
+                    f"资产库完整性检查：{len(result['missing'])}/{result['total']} 个资产文件磁盘缺失"
+                    f"（id: {ids}{more}），对应图片将无法显示"
+                )
+        except Exception as e:
+            logger.warning(f"资产库文件完整性检查失败（non-critical）: {e}")
+
+    asyncio.create_task(check_asset_library_files())
+
 # 导入并注册 script_writer API 路由
 from api.script_writer import router as script_writer_router
 app.include_router(script_writer_router)

@@ -53,6 +53,28 @@ function assetMentionById(assetId) {
     return item ? { name: item.name || '', url: item.thumb || '' } : null;
 }
 
+/** 目录式懒加载后资产池不再全量：历史输入里的资产 token 若不在池中，
+ *  按详情接口兜底拉取入池并重渲染胶囊（每个 id 只尝试一次，失败不再
+ *  重试——无权限/已清除的 token 维持纯文本退化，见 syncChatMentionChips）。 */
+const assetDetailTried = new Set();
+function ensureAssetMentionItemsByIds(assetIds) {
+    if (!window.AssetLibrary) return;
+    assetIds.forEach((assetId) => {
+        const key = Number(assetId);
+        if (!key || assetMentionById(key) || assetDetailTried.has(key)) return;
+        assetDetailTried.add(key);
+        window.AssetLibrary.api(`/assets/${key}`).then((res) => {
+            const d = res.data;
+            if (!d || d.id == null) return;
+            state.assetMentionItems = state.assetMentionItems || [];
+            if (!state.assetMentionItems.some((a) => Number(a.id) === Number(d.id))) {
+                state.assetMentionItems.push({ id: d.id, name: d.name, thumb: d.file_url || '' });
+            }
+            syncChatMentionChips();
+        }).catch(() => {});
+    });
+}
+
 const syncedTextareas = new WeakSet();
 let resizeObserver = null;
 
@@ -67,7 +89,10 @@ export function syncChatMentionChips(depth = 0) {
     ensureSyncListeners(ta);
     const urlByKey = frameUrlByKey();
     const text = String(ta.value ?? '');
-    const tokens = scanFrameMentionTokens(text).filter((t) => urlByKey[t.key]
+    const allTokens = scanFrameMentionTokens(text);
+    // 历史/分页外的资产 token 先触发详情兜底（入池后本轮重跑渲染胶囊）
+    ensureAssetMentionItemsByIds(allTokens.filter((t) => t.key === 'asset').map((t) => t.assetId));
+    const tokens = allTokens.filter((t) => urlByKey[t.key]
         // 资产引用胶囊依赖资产数据（未加载/无权限时退化为纯文本）
         || (t.key === 'asset' && assetMentionById(t.assetId)));
     if (!tokens.length) {

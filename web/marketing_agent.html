@@ -57,7 +57,7 @@
                 <div class="marketing-nav-text">{{ $t('nav_assets') }}</div>
             </div>
             <div class="marketing-nav-item" @click="openSharedAssetLibrary()" :title="sharedAssetLibraryTitle">
-                <div class="marketing-nav-icon">🗂</div>
+                <div class="marketing-nav-icon">📚</div>
                 <div class="marketing-nav-text">{{ sharedAssetLibraryTitle }}</div>
             </div>
         </nav>
@@ -315,18 +315,41 @@
                                     @blur="onPromptBlur"
                                     ref="inputTextarea"
                                 ></textarea>
-                                <!-- @ 引用下拉框 -->
-                                <div v-if="mentionDropdown.visible && filteredMentionItems.length > 0" style="position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 4px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 6px; max-height: 200px; overflow-y: auto; z-index: 100;" @mousedown.prevent>
-                                    <div v-for="(item, idx) in filteredMentionItems" :key="item.id"
-                                         @click="insertMention(item)"
-                                         @mouseenter="mentionDropdown.selectedIndex = idx"
-                                         style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s;"
-                                         :style="{ background: idx === mentionDropdown.selectedIndex ? '#e6f7ff' : 'transparent' }">
-                                        <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" style="width: 28px; height: 28px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" />
-                                        <div v-else style="width: 28px; height: 28px; border-radius: 4px; background: #f0f4f8; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">{{ item.type === 'video' ? '🎬' : item.type === 'asset' ? '🗂' : '🎵' }}</div>
-                                        <span style="flex: 1; font-size: 13px; color: #1a1a1a;">{{ item.displayName }}</span>
-                                        <span style="font-size: 11px; color: #94a3b8; padding: 2px 6px; border-radius: 3px; background: #f0f4f8;">{{ item.type === 'image' ? $t('type_image') : item.type === 'video' ? $t('type_video') : item.type === 'asset' ? $t('type_asset') : $t('type_audio') }}</span>
-                                    </div>
+                                <!-- @ 引用下拉框：本地上传媒体 + 资产库目录（分组两级，滚动翻页懒加载） -->
+                                <div v-if="mentionDropdown.visible && filteredMentionItems.length > 0" style="position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 4px; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 -4px 20px rgba(0,0,0,0.1); padding: 6px; max-height: 260px; overflow-y: auto; z-index: 100;" @mousedown.prevent @scroll="onMentionDropdownScroll">
+                                    <template v-for="(item, idx) in filteredMentionItems" :key="item.id">
+                                        <!-- 资产分组目录条目（点击进入该组，组内滚动懒加载） -->
+                                        <div v-if="item.kind === 'group'"
+                                             @click="enterMentionGroup(item.groupId, item.groupName)"
+                                             @mouseenter="mentionDropdown.selectedIndex = idx"
+                                             style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s;"
+                                             :style="{ background: idx === mentionDropdown.selectedIndex ? '#e6f7ff' : 'transparent' }">
+                                            <span style="width: 28px; text-align: center; font-size: 15px; flex-shrink: 0;">📁</span>
+                                            <span style="flex: 1; font-size: 13px; color: #1a1a1a;">{{ item.groupName }}</span>
+                                            <span v-if="item.count != null" style="font-size: 11px; color: #94a3b8; padding: 2px 6px; border-radius: 3px; background: #f0f4f8;">{{ item.count }}</span>
+                                        </div>
+                                        <!-- 从分组返回目录 -->
+                                        <div v-else-if="item.kind === 'back'"
+                                             @click="backToMentionGroups(item)"
+                                             @mouseenter="mentionDropdown.selectedIndex = idx"
+                                             style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 12px; color: #64748b; border-bottom: 1px solid #f1f5f9;"
+                                             :style="{ background: idx === mentionDropdown.selectedIndex ? '#e6f7ff' : 'transparent' }">
+                                            <span style="font-size: 13px;">←</span>
+                                            <span>{{ item.groupName || $t('mention_back_to_groups') }}</span>
+                                        </div>
+                                        <!-- 本地上传媒体 / 资产条目 -->
+                                        <div v-else
+                                             @click="insertMention(item)"
+                                             @mouseenter="mentionDropdown.selectedIndex = idx"
+                                             style="display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; transition: background 0.15s;"
+                                             :style="{ background: idx === mentionDropdown.selectedIndex ? '#e6f7ff' : 'transparent' }">
+                                            <img v-if="item.thumbnailUrl" :src="item.thumbnailUrl" style="width: 28px; height: 28px; border-radius: 4px; object-fit: cover; flex-shrink: 0;" />
+                                            <div v-else style="width: 28px; height: 28px; border-radius: 4px; background: #f0f4f8; display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;">{{ item.type === 'video' ? '🎬' : '🎵' }}</div>
+                                            <span style="flex: 1; font-size: 13px; color: #1a1a1a;">{{ item.displayName }}</span>
+                                            <span style="font-size: 11px; color: #94a3b8; padding: 2px 6px; border-radius: 3px; background: #f0f4f8;">{{ item.type === 'image' ? $t('type_image') : item.type === 'video' ? $t('type_video') : item.type === 'asset' ? $t('type_asset') : $t('type_audio') }}</span>
+                                        </div>
+                                    </template>
+                                    <div v-if="mentionAssetView.loading" style="text-align: center; font-size: 12px; color: #94a3b8; padding: 6px 0 2px;">{{ $t('loading') }}…</div>
                                 </div>
                             </div>
                         </div>

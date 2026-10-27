@@ -1,6 +1,32 @@
     const addBtn = document.getElementById('addBtn');
     const addMenu = document.getElementById('addMenu');
 
+    // 从资产库选择的资产落到画布：图片 → 图片节点（data.url/preview 直填资产
+    // 相对路径，作为参考图参与下游工作流）；视频资产暂无对应素材节点类型
+    // （资产库入库白名单现仅图片），提示不支持。
+    function addAssetFromLibraryToCanvas(asset) {
+      if (!asset || !asset.file_url) return;
+      if (asset.asset_type && asset.asset_type !== 'image') {
+        showToast(window.t ? (window.t('msg_video_asset_canvas_unsupported') || '视频资产暂不支持添加到画布，敬请期待') : '视频资产暂不支持添加到画布，敬请期待', 'error');
+        return;
+      }
+      const nodeId = createImageNode({ checkCollision: true, data: { name: asset.name || '资产图' } });
+      const node = state.nodes.find(n => n.id === nodeId);
+      if (node) {
+        node.data.url = asset.file_url;
+        node.data.preview = asset.file_url;
+        const nodeEl = canvasEl.querySelector(`.node[data-node-id="${nodeId}"]`);
+        if (nodeEl) {
+          const imgEl = nodeEl.querySelector('.image-preview');
+          const rowEl = nodeEl.querySelector('.image-preview-row');
+          if (imgEl) imgEl.src = asset.file_url;
+          if (rowEl) rowEl.style.display = 'flex';
+        }
+      }
+      renderMinimap();
+      showToast(window.t ? (window.t('msg_asset_added_to_canvas') || '已从资产库添加素材') : '已从资产库添加素材', 'success');
+    }
+
     // 仅在 server-config 确认允许后为 true；加载中禁止打开反馈弹窗（避免误点绿色按钮弹出二维码）
     let feedbackQrEnabled = false;
 
@@ -304,6 +330,17 @@
     document.getElementById('menuAddProps').addEventListener('click', () => {
       openPropsModal();
       addMenu.classList.remove('show');
+    });
+
+    document.getElementById('menuAddAssetLibrary').addEventListener('click', () => {
+      addMenu.classList.remove('show');
+      if (!window.AssetLibrary) return;
+      // 浏览弹窗自带分组目录/搜索/分页；不限制资产类型（图片/视频均可见）
+      window.AssetLibrary.openModal({
+        title: window.t ? (window.t('asset_library_entry') || '资产库') : '资产库',
+        assetType: 'all',
+        onPick: (asset) => addAssetFromLibraryToCanvas(asset),
+      });
     });
 
     document.getElementById('menuAddTextToSpeech').addEventListener('click', () => {

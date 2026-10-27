@@ -1370,5 +1370,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('i18n init failed:', e);
   }
 
+  // 左侧 nav「资产库」入口：打开共享资产库浏览弹窗（内部自带功能开关/权限校验）
+  const sharedLibraryNav = document.getElementById('sharedAssetLibraryNav');
+  if (sharedLibraryNav) {
+    sharedLibraryNav.addEventListener('click', () => {
+      if (window.AssetLibrary) window.AssetLibrary.openModal();
+    });
+  }
+
   await initPage();
 });

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """资产库 API 路由（/api/asset-library，见 docs/backend/asset_library.md）。
 
-用户侧：加入/浏览/编辑资产、分组目录、容量查询、成员搜索、@引用数据源。
-管理侧：资产清除走本路由 DELETE /assets/{id}（admin only），
-配额设置在 api/admin.py（PUT /api/admin/users/{id}/asset-quota）。
+用户侧：加入/浏览/编辑/删除资产、分组目录、容量查询、成员搜索、@引用数据源。
+管理侧：配额设置在 api/admin.py（PUT /api/admin/users/{id}/asset-quota）。
+资产删除（DELETE /assets/{id}）：属主可删自己的资产，管理员可删任意资产。
 
 鉴权：@require_permission + request.state.user_id（登录即可，
 资产级权限由 services/asset_library_service.py 判定）。
@@ -143,13 +143,15 @@ async def list_assets(
     asset_type: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None, max_length=100),
     scope: str = Query("all", pattern="^(all|mine|shared)$"),
+    lite: bool = Query(False, description="轻量模式（@ 提及）：跳过 COUNT/属主/成员/文件检查，返回 has_more"),
 ):
     """资产列表（仅返回当前用户可见的资产）。group_scope=ungrouped 查未分组。"""
     user_id = _current_user_id(request)
+    is_admin = await _is_admin(user_id)
     effective_group = "ungrouped" if group_scope == "ungrouped" else group_id
     try:
         result = await asyncio.to_thread(
-            svc.list_assets, user_id, page, page_size, effective_group, asset_type, keyword, scope,
+            svc.list_assets, user_id, page, page_size, effective_group, asset_type, keyword, scope, is_admin, lite,
         )
         return {"code": 0, "data": result}
     except AssetLibraryError as e:
@@ -212,14 +214,13 @@ async def update_asset(request: Request, asset_id: int, body: AssetUpdateRequest
 
 
 @router.delete("/assets/{asset_id}")
-@require_permission("asset_library:purge")
-async def purge_asset(request: Request, asset_id: int):
-    """清除资产（仅管理员；删文件 + 删记录 + 释放该用户容量记录）。"""
+@require_permission("asset_library:edit")
+async def purge_asset(request: Request, asset_id: int, _guard: None = Depends(_feature_guard)):
+    """删除资产（属主或管理员；删文件 + 删记录 + 释放该用户容量记录）。"""
     user_id = _current_user_id(request)
-    if not await _is_admin(user_id):
-        raise HTTPException(status_code=403, detail="资产库内容不允许删除，仅管理员可清除")
+    is_admin = await _is_admin(user_id)
     try:
-        result = await asyncio.to_thread(svc.purge_asset, asset_id)
+        result = await asyncio.to_thread(svc.purge_asset, asset_id, user_id, is_admin)
         return {"code": 0, "data": result}
     except AssetLibraryError as e:
         raise _http_error(e)

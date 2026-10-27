@@ -4,6 +4,10 @@
 不连接数据库：权限判定、成员归一化、扩展名推断、SQL 过滤片段组装、
 quota 错误语义。DB 交互经 monkeypatch 替换。
 """
+import os
+import shutil
+import tempfile
+
 import pytest
 
 from config.constant import AssetLibraryConstants as ALC
@@ -13,6 +17,7 @@ from services.asset_library_service import (
     _guess_extension,
     _normalize_members,
     _validate_permission,
+    can_delete,
     can_edit,
     can_view,
 )
@@ -87,6 +92,52 @@ def test_can_edit_matrix(monkeypatch):
     assert can_edit(public, 99) is True
 
 
+def test_can_delete_matrix():
+    # 删除：仅属主 / 管理员；不受 public/specified 编辑权限影响
+    asset = make_asset(edit_permission='public')
+    assert can_delete(asset, 10) is True            # 属主
+    assert can_delete(asset, 10, is_admin=True) is True
+    assert can_delete(asset, 99) is False           # 他人（即便 edit=public）
+    assert can_delete(asset, 99, is_admin=True) is True
+    specified = make_asset(edit_permission='specified')
+    assert can_delete(specified, 12) is False       # edit 指定成员也不可删除
+
+
+# ============ 文件完整性 ============
+
+def test_asset_file_exists(monkeypatch):
+    from services.asset_library_service import asset_file_exists
+
+    existing = {'asset_library/1/ok.png'}
+    monkeypatch.setattr(os.path, 'isfile', lambda p: p in existing)
+    # 脏路径：真实 resolve 抛 ValueError → 按缺失处理，不向上抛
+    assert asset_file_exists('../../etc/passwd') is False
+    assert asset_file_exists('') is False
+    assert asset_file_exists(None) is False
+    # 正常路径：resolve 映射到 upload 根下后按 isfile 判定
+    monkeypatch.setattr(svc, 'resolve_upload_url_to_local_path', lambda p: p)
+    assert asset_file_exists('asset_library/1/ok.png') is True
+    assert asset_file_exists('asset_library/1/gone.png') is False
+
+
+def test_verify_asset_files_lists_missing(monkeypatch):
+    from services.asset_library_service import verify_asset_files
+
+    rows = [
+        {'id': 1, 'file_path': 'asset_library/1/a.png'},
+        {'id': 2, 'file_path': 'asset_library/1/b.png'},
+        {'id': 3, 'file_path': 'asset_library/1/c.png'},
+    ]
+    monkeypatch.setattr(svc, 'execute_query', staticmethod(lambda *a, **kw: rows))
+    monkeypatch.setattr(
+        svc, 'asset_file_exists',
+        staticmethod(lambda p: any(f"asset_library/1/{n}.png" == p for n in ('a', 'c'))),
+    )
+    result = verify_asset_files()
+    assert result['total'] == 3
+    assert result['missing'] == [2]
+
+
 # ============ 参数校验 ============
 
 def test_validate_permission_rejects_invalid():
@@ -149,6 +200,59 @@ def test_apply_filters_empty_returns_empty_string():
     assert _apply_filters([]) == ''
 
 
+# ============ lite 列表（@ 提及轻量模式） ============
+
+def test_list_assets_lite_shape_and_pagination(monkeypatch):
+    """lite 模式：不做 COUNT、不查属主/成员/文件存在性；条目精简 + has_more 探测。"""
+    rows_page2 = [
+        {"id": 1, "name": "A", "file_path": "asset_library/1/a.png", "group_id": 3},
+    ]
+    captured = []
+
+    def fake_query(sql, params=(), fetch_one=False, fetch_all=False):
+        captured.append((" ".join(sql.split()), tuple(params)))
+        # page_size=1 + 探测 1 条 → 返回 2 行表示还有第二页
+        return [
+            {"id": 2, "name": "B", "file_path": "asset_library/1/b.png", "group_id": None},
+            rows_page2[0],
+        ]
+
+    monkeypatch.setattr(svc, 'execute_query', staticmethod(fake_query))
+
+    def _forbidden(*a, **kw):
+        raise AssertionError("lite 模式不应触发属主/成员映射/文件存在性检查")
+
+    monkeypatch.setattr(svc.UsersModel, 'get_display_names', staticmethod(_forbidden))
+    monkeypatch.setattr(svc.AssetPermissionMemberModel, 'map_by_assets', staticmethod(_forbidden))
+    monkeypatch.setattr(svc, 'asset_file_exists', _forbidden)
+
+    result = svc.list_assets(user_id=7, page=1, page_size=1, lite=True)
+
+    # 只有一条列表查询：无 COUNT(*)；LIMIT=page_size+1（has_more 探测）
+    assert len(captured) == 1
+    sql, params = captured[0]
+    assert "COUNT(*)" not in sql
+    assert params[-2:] == (2, 0)
+
+    assert result["has_more"] is True
+    assert result["items"] == [
+        {"id": 2, "name": "B", "file_url": "/upload/asset_library/1/b.png", "group_id": None},
+    ]
+    assert "can_edit" not in result["items"][0]
+    assert "owner_name" not in result["items"][0]
+
+
+def test_list_assets_lite_last_page_has_more_false(monkeypatch):
+    monkeypatch.setattr(svc, 'execute_query', staticmethod(
+        lambda sql, params=(), fetch_one=False, fetch_all=False: [
+            {"id": 1, "name": "A", "file_path": "asset_library/1/a.png", "group_id": None},
+        ]
+    ))
+    result = svc.list_assets(user_id=7, page=1, page_size=2, lite=True)
+    assert result["has_more"] is False
+    assert len(result["items"]) == 1
+
+
 # ============ 入库主链路（本地复制 + 配额预留 + 失败回滚） ============
 
 import asyncio
@@ -193,50 +297,58 @@ def _mock_models(monkeypatch, reserve_ok=True, feature=None):
     return calls
 
 
-def _cleanup_asset_dir(user_id=1):
-    user_dir = Path(get_upload_subdir(UploadPathConstants.ASSET_LIBRARY_DIR, str(user_id), ensure=False))
-    if user_dir.exists():
-        for f in user_dir.glob('asset_1_*'):
-            f.unlink()
-        for f in user_dir.glob('.tmp_*'):
-            f.unlink()
+@pytest.fixture
+def asset_tmp_dir(monkeypatch):
+    """把资产库存放根重定向到独立临时目录（yield 其路径，结束后整目录删除）。
+
+    回归防护：早期版本在 finally 里 glob 清理生产 upload/asset_library/1/
+    （asset_1_*），曾把真实用户资产一并删除；fixture 让测试全程不碰生产目录。
+    """
+    root = Path(tempfile.mkdtemp(prefix='al_asset_test_'))
+    real_get_subdir = svc.get_upload_subdir
+
+    def fake_get_subdir(*parts, ensure=True):
+        if parts and parts[0] == UploadPathConstants.ASSET_LIBRARY_DIR:
+            target = root.joinpath(*[str(p) for p in parts[1:]])
+            if ensure:
+                target.mkdir(parents=True, exist_ok=True)
+            return str(target)
+        return real_get_subdir(*parts, ensure=ensure)
+
+    monkeypatch.setattr(svc, 'get_upload_subdir', fake_get_subdir)
+    yield root
+    shutil.rmtree(root, ignore_errors=True)
 
 
-def test_add_asset_local_copy_success(monkeypatch):
+def test_add_asset_local_copy_success(monkeypatch, asset_tmp_dir):
     payload = b'PNGDATA' * 10
     url = _prepare_local_source(monkeypatch, payload)
     calls = _mock_models(monkeypatch)
-    try:
-        asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='主图'))
-        assert asset.file_size == len(payload)
-        assert calls['create']['file_size'] == len(payload)
-        assert calls['create']['file_path'].startswith('asset_library/1/asset_1_')
-        assert calls['create']['file_path'].endswith('.png')
-        assert calls['reserve'] == [(1, len(payload))]
-        assert calls['release'] == []  # 成功路径不回滚
-        # 文件真实落盘且内容一致
-        local = Path(get_upload_subdir()).joinpath(*calls['create']['file_path'].split('/'))
-        assert local.exists() and local.read_bytes() == payload
-        # 指定成员写入两次（view/edit），属主被剔除语义在模型层单测覆盖
-        assert len(calls['members']) == 2
-    finally:
-        _cleanup_asset_dir()
+    asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='主图'))
+    assert asset.file_size == len(payload)
+    assert calls['create']['file_size'] == len(payload)
+    assert calls['create']['file_path'].startswith('asset_library/1/asset_1_')
+    assert calls['create']['file_path'].endswith('.png')
+    assert calls['reserve'] == [(1, len(payload))]
+    assert calls['release'] == []  # 成功路径不回滚
+    # 文件真实落盘且内容一致（落点已被 fixture 重定向到临时目录）
+    local = asset_tmp_dir.joinpath(*calls['create']['file_path'].split('/')[1:])
+    assert local.exists() and local.read_bytes() == payload
+    # 指定成员写入两次（view/edit），属主被剔除语义在模型层单测覆盖
+    assert len(calls['members']) == 2
 
 
-def test_add_asset_quota_exceeded_rolls_back_file(monkeypatch):
+def test_add_asset_quota_exceeded_rolls_back_file(monkeypatch, asset_tmp_dir):
     payload = b'X' * 33
     url = _prepare_local_source(monkeypatch, payload)
     calls = _mock_models(monkeypatch, reserve_ok=False)
-    try:
-        with pytest.raises(AssetLibraryError) as ei:
-            asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
-        assert ei.value.code == 'quota_exceeded'
-        assert calls['create'] is None      # 未落库
-        user_dir = Path(get_upload_subdir(UploadPathConstants.ASSET_LIBRARY_DIR, '1', ensure=False))
-        leftovers = list(user_dir.glob('asset_1_*')) + list(user_dir.glob('.tmp_*')) if user_dir.exists() else []
-        assert leftovers == []              # 临时文件已清理
-    finally:
-        _cleanup_asset_dir()
+    with pytest.raises(AssetLibraryError) as ei:
+        asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+    assert ei.value.code == 'quota_exceeded'
+    assert calls['create'] is None      # 未落库
+    user_dir = asset_tmp_dir / '1'
+    leftovers = list(user_dir.glob('asset_1_*')) + list(user_dir.glob('.tmp_*')) if user_dir.exists() else []
+    assert leftovers == []              # 临时文件已清理
 
 
 def test_add_asset_rejects_relative_upload_path_when_missing(monkeypatch):
@@ -258,10 +370,40 @@ def test_get_asset_detail_admin_can_view_private(monkeypatch):
     detail = svc.get_asset_detail(user_id=99, asset_id=1, is_admin=True)
     assert detail['owner_name'] == '他人'
     assert detail['can_edit'] is True
+    assert detail['can_delete'] is True
     # 普通用户仍不可见
     with pytest.raises(AssetLibraryError) as ei:
         svc.get_asset_detail(user_id=99, asset_id=1)
     assert ei.value.code == 'not_found'
+
+
+def test_purge_asset_owner_and_admin_allowed(monkeypatch):
+    # 属主可删自己的资产；管理员可删他人资产（删除后释放属主配额）
+    asset = make_asset(user_id=10, file_path='')  # file_path 置空：跳过文件删除分支
+    monkeypatch.setattr(svc.AssetLibraryModel, 'get_by_id', staticmethod(lambda aid: asset))
+    monkeypatch.setattr(svc.AssetLibraryModel, 'delete', staticmethod(lambda aid: 1))
+    releases = []
+    monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'release',
+                        staticmethod(lambda uid, size: releases.append((uid, size))))
+    monkeypatch.setattr(svc.AssetPermissionMemberModel, 'delete_for_asset',
+                        staticmethod(lambda aid: None))
+
+    result = svc.purge_asset(1, user_id=10)
+    assert result['owner_user_id'] == 10
+    assert releases == [(10, 100)]
+
+    result = svc.purge_asset(1, user_id=99, is_admin=True)
+    assert result['owner_user_id'] == 10
+    assert releases == [(10, 100), (10, 100)]
+
+
+def test_purge_asset_forbidden_for_non_owner(monkeypatch):
+    # 非属主非管理员不可删除（即便 edit=public 也不行）
+    asset = make_asset(user_id=10, edit_permission='public')
+    monkeypatch.setattr(svc.AssetLibraryModel, 'get_by_id', staticmethod(lambda aid: asset))
+    with pytest.raises(AssetLibraryError) as ei:
+        svc.purge_asset(1, user_id=99)
+    assert ei.value.code == 'forbidden'
 
 
 def test_purge_asset_tolerates_dirty_file_path(monkeypatch):
@@ -274,7 +416,7 @@ def test_purge_asset_tolerates_dirty_file_path(monkeypatch):
                         staticmethod(lambda uid, size: releases.append((uid, size))))
     monkeypatch.setattr(svc.AssetPermissionMemberModel, 'delete_for_asset',
                         staticmethod(lambda aid: None))
-    result = svc.purge_asset(1)
+    result = svc.purge_asset(1, user_id=10)
     assert result['freed_bytes'] == 100
     assert releases == [(10, 100)]
 
@@ -354,7 +496,7 @@ def test_add_asset_blocked_when_feature_disabled(monkeypatch):
     assert calls['create'] is None
 
 
-def test_add_asset_blocked_without_user_permission(monkeypatch):
+def test_add_asset_blocked_without_user_permission(monkeypatch, asset_tmp_dir):
     # 全员模式关闭 + 用户未开启 → 拒绝；开启 → 放行
     url = _prepare_local_source(monkeypatch, b'perm')
     calls = _mock_models(monkeypatch, feature={'enabled': True, 'allow_all_users': False, 'total_quota_bytes': 0})
@@ -364,14 +506,11 @@ def test_add_asset_blocked_without_user_permission(monkeypatch):
     assert ei.value.code == 'user_not_allowed'
 
     monkeypatch.setattr(svc.AssetLibraryQuotaModel, 'is_enabled', staticmethod(lambda uid: True))
-    try:
-        asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
-        assert asset.file_size == len(b'perm')
-    finally:
-        _cleanup_asset_dir()
+    asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+    assert asset.file_size == len(b'perm')
 
 
-def test_add_asset_blocked_by_global_capacity(monkeypatch):
+def test_add_asset_blocked_by_global_capacity(monkeypatch, asset_tmp_dir):
     # 全站总容量：已用+新增超限 → global_quota_exceeded，文件不落库
     url = _prepare_local_source(monkeypatch, b'G' * 50)
     calls = _mock_models(monkeypatch, feature={'enabled': True, 'allow_all_users': True, 'total_quota_bytes': 100})
@@ -382,11 +521,8 @@ def test_add_asset_blocked_by_global_capacity(monkeypatch):
     assert calls['create'] is None
 
     monkeypatch.setattr(svc, 'total_used_bytes', lambda: 40)  # 40+50 <= 100
-    try:
-        asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='ok'))
-        assert asset.file_size == 50
-    finally:
-        _cleanup_asset_dir()
+    asset = asyncio.run(svc.add_asset(user_id=1, source_url=url, name='ok'))
+    assert asset.file_size == 50
 
 
 def test_ensure_user_allowed_matrix(monkeypatch):

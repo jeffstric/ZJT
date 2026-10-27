@@ -10,8 +10,11 @@
     <link rel="stylesheet" href="/css/marketing_agent.css" />
     <!-- 灵感页面专用样式 -->
     <link rel="stylesheet" href="/css/marketing_inspiration.css" />
+    <!-- 资产库浏览弹窗（nav「资产库」入口） -->
+    <link rel="stylesheet" href="/css/asset_library.css?v=__VERSION__">
     <!-- TaskConfig（模型数据加载） -->
     <script src="/js/escape.js"></script>
+    <script src="/js/asset_library.js?v=__VERSION__"></script>
     <script src="/js/task_config.js"></script>
     <!-- i18n 支持 -->
     <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
@@ -37,8 +40,12 @@
         </a>
         <a href="/marketing-agent?tab=assets" class="marketing-nav-item" data-i18n-title="nav_assets">
             <div class="marketing-nav-icon">📁</div>
-            <div class="marketing-nav-text" data-i18n="nav_assets">资产</div>
+            <div class="marketing-nav-text" data-i18n="nav_assets">已生成</div>
         </a>
+        <div class="marketing-nav-item" id="sharedAssetLibraryNav" data-i18n-title="nav_shared_asset_library">
+            <div class="marketing-nav-icon">📚</div>
+            <div class="marketing-nav-text" data-i18n="nav_shared_asset_library">资产库</div>
+        </div>
     </nav>
 
     <!-- 主内容区 -->

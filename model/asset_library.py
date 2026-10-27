@@ -204,6 +204,7 @@ CREATE TABLE IF NOT EXISTS `asset_library` (
   PRIMARY KEY (`id`),
   KEY `idx_user_create` (`user_id`,`create_at`),
   KEY `idx_group` (`group_id`),
+  KEY `idx_group_create` (`group_id`,`create_at`),
   KEY `idx_type` (`asset_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='资产库表-用户收藏的生成产物，永久存放';
 """

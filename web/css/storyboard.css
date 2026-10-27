@@ -4439,6 +4439,14 @@ img.card-char-avatar.is-missing {
 .mention-list { max-height: 260px; overflow: auto; padding: 8px; display: grid; gap: 6px; }
 .mention-list button { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 6px; background: #fff; color: var(--foreground); text-align: left; }
 .mention-list img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+/* 资产库 tab 目录两级（分组条目 / 返回目录条，见 render.js renderAssetMentionList） */
+.mention-list .mention-group-item { padding: 7px 8px; }
+.mention-list .mention-group-item:hover { background: #f0f8ff; }
+.mention-group-name { flex: 1; }
+.mention-group-icon { font-size: 15px; }
+.mention-group-count { font-size: 11px; color: var(--muted); padding: 2px 6px; border-radius: 3px; background: var(--panel-soft); }
+.mention-list .mention-back-item { font-size: 12px; color: var(--muted); padding: 6px 8px; border-bottom: 1px solid var(--border); border-radius: 0; }
+.mention-list .mention-back-item:hover { background: #f0f8ff; }
 
 .sb-dd-item:hover { background: #f0f8ff; }
 

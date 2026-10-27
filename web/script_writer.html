@@ -967,7 +967,7 @@
                                         清空
                                     </button>
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="pickImageFromAssetLibrary('char-image')" title="从共享资产库选择图片">
-                                        🗂 资产库
+                                        📚 资产库
                                     </button>
                                     <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('char-image', 1)">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1112,7 +1112,7 @@
                                         清空
                                     </button>
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="pickImageFromAssetLibrary('prop-image')" title="从共享资产库选择图片">
-                                        🗂 资产库
+                                        📚 资产库
                                     </button>
                                     <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('prop-image', 3)" data-i18n="btn_upload_image">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1621,6 +1621,12 @@
                             <circle cx="12" cy="8.5" r="6.5" stroke-dasharray="2 2"/>
                         </svg>
                         <span data-i18n="view_image_history">历史形象图</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="preview-asset-library-btn" onclick="pickPreviewImageFromAssetLibrary()" style="margin-left: 8px;" title="从资产库选择图片设为形象图">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span data-i18n="pick_image_from_asset_library">资产库</span>
                     </button>
                     <span id="preview-regenerate-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;" data-i18n="regenerate_character_image_hint">点击后由 AI 重新生成该角色的形象参考图（AI 处理中会自动排队）</span>
                 </div>

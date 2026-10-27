@@ -919,23 +919,90 @@ function activeFrameMentionPrompt(userText, scene) {
     return scene?.videoPrompt || '';
 }
 
-/** 共享资产库提及数据加载（一次；提及菜单与胶囊层共用 state.assetMentionItems） */
-let assetMentionLoadStarted = false;
-function ensureAssetMentionItems() {
-    if (assetMentionLoadStarted || !window.AssetLibrary) return;
-    assetMentionLoadStarted = true;
-    window.AssetLibrary.fetchMentionItems('').then((items) => {
-        state.assetMentionItems = items || [];
-        // 历史输入中已有资产 token 时补渲染胶囊
+/** 共享资产库提及数据（提及菜单与胶囊层共用 state.assetMentionItems）。
+ *  资产多时不再一次性全量拉取：@ 弹窗资产 tab 改为目录两级懒加载——
+ *  先显示分组目录（ensureAssetMentionData 拉一次），点击分组进入组内
+ *  资产列表，滚动到近底部翻下一页（loadAssetMentionPage，lite 接口）。
+ *  浏览到的条目渐进合并进 assetMentionItems 供胶囊层/提交还原使用。 */
+let assetMentionGroupsLoadStarted = false;
+function ensureAssetMentionData() {
+    if (!window.AssetLibrary) return;
+    if (!assetMentionGroupsLoadStarted) {
+        assetMentionGroupsLoadStarted = true;
+        window.AssetLibrary.fetchMentionGroups().then((res) => {
+            state.assetMentionGroups = res.groups || [];
+            state.assetMentionUngroupedCount = res.ungroupedCount || 0;
+            state.assetMentionGroupsLoaded = true;
+            rerenderModals();
+        }).catch(() => { assetMentionGroupsLoadStarted = false; });
+    }
+    // 已处于某分组视图但首屏还没拉过（如切 tab 回来）：补拉
+    const view = state.assetMentionView;
+    if (view.mode === 'assets' && view.page === 0 && !view.loading) {
+        loadAssetMentionPage(1);
+    }
+}
+
+function resetAssetMentionView(mode, groupId = null, groupName = '') {
+    state.assetMentionView = { mode, groupId, groupName, page: 0, items: [], hasMore: false, loading: false };
+}
+
+function enterAssetMentionGroup(groupId, groupName) {
+    resetAssetMentionView('assets', groupId, groupName);
+    loadAssetMentionPage(1);
+}
+
+function backToAssetMentionGroups() {
+    resetAssetMentionView('groups');
+    ensureAssetMentionData();
+    rerenderModals();
+}
+
+/** 翻页拉取当前分组资产（lite 模式）；条目渐进合并进 assetMentionItems 池 */
+function loadAssetMentionPage(nextPage) {
+    const view = state.assetMentionView;
+    if (!window.AssetLibrary || view.loading || (view.page >= 1 && !view.hasMore)) return;
+    view.loading = true;
+    const snapshot = view;  // 防竞态：目录已切走时丢弃过期响应
+    window.AssetLibrary.fetchMentionItemsPaged({
+        groupId: view.groupId,
+        page: nextPage,
+        pageSize: 30,
+    }).then((res) => {
+        if (state.assetMentionView !== snapshot) return;
+        view.items = view.items.concat(res.items);
+        view.page = nextPage;
+        view.hasMore = res.hasMore;
+        const seen = new Set((state.assetMentionItems || []).map((a) => Number(a.id)));
+        res.items.forEach((a) => {
+            if (!seen.has(Number(a.id))) state.assetMentionItems.push(a);
+        });
+        view.loading = false;
+        rerenderModals();
         syncChatMentionChips();
-    }).catch(() => {});
+    }).catch(() => {
+        if (state.assetMentionView === snapshot) view.loading = false;
+    });
+}
+
+/** mention-list 滚动到近底部时翻下一页（scroll 不冒泡，用捕获委托） */
+function bindMentionListScroll() {
+    document.addEventListener('scroll', (event) => {
+        const list = event.target;
+        if (!(list instanceof Element) || !list.classList.contains('mention-list')) return;
+        if (state.mentionTab !== 'asset') return;
+        const view = state.assetMentionView;
+        if (view.mode !== 'assets' || !view.hasMore || view.loading) return;
+        if (list.scrollHeight - list.scrollTop - list.clientHeight > 60) return;
+        loadAssetMentionPage(view.page + 1);
+    }, true);
 }
 
 function openChatMentionPopup(textarea) {
     chatMentionCaret = textarea && typeof textarea.selectionStart === 'number'
         ? textarea.selectionStart
         : (state.inputMessage || '').length;
-    ensureAssetMentionItems();
+    ensureAssetMentionData();
     if (state.showMentionPopup) return;
     state.showMentionPopup = true;
     rerenderModals();
@@ -2082,12 +2149,6 @@ async function handleAction(action, target) {
         return;
     }
 
-    if (action === 'open-asset-library') {
-        // 顶栏「资产库」入口：浏览共享资产库
-        if (window.AssetLibrary) window.AssetLibrary.openModal();
-        return;
-    }
-
     if (action === 'toggle-episode-picker') {
         state.showEpisodePicker = !state.showEpisodePicker;
         rerender([Region.HEADER]);
@@ -3103,6 +3164,9 @@ export function bindEvents() {
     // 悬停大图预览（@ 提及弹窗条目 + 输入框内标记胶囊共用）
     setupHoverPreview();
 
+    // 资产库 @ 弹窗 mention-list 滚动翻页（捕获委托，scroll 不冒泡）
+    bindMentionListScroll();
+
     // 视频预估（后端估价接口异步返回）回填后重渲助手面板的预估行
     onPowerEstimateUpdated(() => rerenderAgentPanel());
 
@@ -3929,7 +3993,23 @@ export function bindEvents() {
         const mentionTab = event.target.closest('[data-mention-tab]');
         if (mentionTab) {
             state.mentionTab = mentionTab.dataset.mentionTab;
+            // 切到资产 tab 时若分组目录还没拉过（或组内首屏未拉）则补拉
+            if (state.mentionTab === 'asset') ensureAssetMentionData();
             rerenderModals();
+            return;
+        }
+
+        // 资产库目录两级：点击分组进入组内资产（抽屉式逐级展示）
+        const mentionGroupBtn = event.target.closest('[data-mention-group]');
+        if (mentionGroupBtn) {
+            const rawId = mentionGroupBtn.dataset.mentionGroup || 'all';
+            const groupId = rawId === 'all' ? null : rawId;
+            enterAssetMentionGroup(groupId, mentionGroupBtn.dataset.mentionGroupName || '');
+            return;
+        }
+        const mentionBackBtn = event.target.closest('[data-mention-back]');
+        if (mentionBackBtn) {
+            backToAssetMentionGroups();
             return;
         }
 

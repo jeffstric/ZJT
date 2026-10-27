@@ -3,7 +3,7 @@
 
 核心规则（见 docs/backend/asset_library.md）：
 - 资产文件永久存放在 upload/asset_library/<user_id>/ 下，不受媒体缓存
-  清理策略影响，普通用户不可删除；管理员清除时删文件+删记录+释放配额。
+  清理策略影响；删除限属主/管理员（删文件+删记录+释放配额）。
 - 加入资产库按 file_size 预留用户配额（asset_library_quota.try_reserve
   原子条件 UPDATE，无事务依赖）；任何失败路径必须释放预留并清理临时文件。
 - 可见性：自己的 + view=public + 被指定 view/edit 成员；编辑权限隐含查看。
@@ -79,6 +79,36 @@ def can_edit(asset: AssetItem, user_id: int, is_admin: bool = False) -> bool:
         members = _perm_members(asset.id)
         return user_id in members.get('edit', [])
     return False
+
+
+def can_delete(asset: AssetItem, user_id: int, is_admin: bool = False) -> bool:
+    """删除权限：属主 / 管理员（删除是管理操作，不受 public/specified 编辑权限影响）。"""
+    return bool(is_admin or asset.user_id == user_id)
+
+
+def asset_file_exists(file_path: Optional[str]) -> bool:
+    """资产文件是否仍在磁盘上。
+
+    外部误删/磁盘迁移导致文件丢失时返回 False（列表据此标记「文件缺失」，
+    避免无声裂图）；file_path 脏数据同样按缺失处理。
+    """
+    if not file_path:
+        return False
+    try:
+        return os.path.isfile(resolve_upload_url_to_local_path(file_path))
+    except ValueError:
+        return False
+
+
+def verify_asset_files() -> Dict[str, Any]:
+    """启动完整性检查：找出 DB 记录在磁盘上缺失文件的资产。
+
+    只读（os.path.isfile），不修改任何数据；资产量大时由调用方丢线程池执行
+    （server 启动钩子 asyncio.to_thread 包装）。返回缺失清单供日志告警。
+    """
+    rows = execute_query("SELECT id, file_path FROM asset_library", (), fetch_all=True) or []
+    missing = [int(r["id"]) for r in rows if not asset_file_exists(r.get("file_path"))]
+    return {"total": len(rows), "missing": missing}
 
 
 def _visible_where(user_id: int) -> Tuple[str, List[Any]]:
@@ -463,13 +493,45 @@ def list_assets(
     asset_type: Optional[str] = None,
     keyword: Optional[str] = None,
     scope: str = "all",
+    is_admin: bool = False,
+    lite: bool = False,
 ) -> Dict[str, Any]:
-    """列出用户可见的资产（分页 + 附加属主名/成员映射/可编辑标志）。"""
+    """列出用户可见的资产（分页 + 附加属主名/成员映射/可编辑/可删除标志）。
+
+    lite=True：@ 提及等轻量场景——跳过 COUNT(*)（LIMIT page_size+1 探测
+    has_more）、跳过属主名/成员映射/权限标志/文件存在性检查（后者为每条
+    一次磁盘 stat，资产多时是列表请求的主要额外开销），只返回
+    id/name/file_url/group_id。
+    """
     page = max(1, int(page or 1))
     page_size = min(max(1, int(page_size or ALC.DEFAULT_PAGE_SIZE)), ALC.MAX_PAGE_SIZE)
 
     visible_where, visible_params = _visible_where(user_id)
     filters = _apply_filters(visible_params, group_id, asset_type, keyword, scope, user_id)
+
+    if lite:
+        # has_more 探测：多取一条，多出即还有下一页——省掉可见性 OR 过滤下的全表 COUNT
+        lite_params = list(visible_params)
+        lite_sql = f"""
+            SELECT a.id, a.name, a.file_path, a.group_id FROM asset_library a
+            WHERE {visible_where}{filters}
+            ORDER BY a.create_at DESC, a.id DESC
+            LIMIT %s OFFSET %s
+        """
+        lite_params.extend([page_size + 1, (page - 1) * page_size])
+        rows = execute_query(lite_sql, tuple(lite_params), fetch_all=True) or []
+        has_more = len(rows) > page_size
+        rows = rows[:page_size]
+        items = [
+            {
+                "id": int(r["id"]),
+                "name": r["name"],
+                "file_url": f"/upload/{r['file_path']}" if r["file_path"] else "",
+                "group_id": r["group_id"],
+            }
+            for r in rows
+        ]
+        return {"items": items, "has_more": has_more, "page": page, "page_size": page_size}
 
     count_sql = f"SELECT COUNT(*) AS cnt FROM asset_library a WHERE {visible_where}{filters}"
     count_row = execute_query(count_sql, tuple(visible_params), fetch_one=True)
@@ -494,7 +556,9 @@ def list_assets(
     for item in items:
         d = item.to_dict()
         d["owner_name"] = names.get(item.user_id, f"用户{item.user_id}")
-        d["can_edit"] = can_edit(item, user_id)
+        d["can_edit"] = can_edit(item, user_id, is_admin)
+        d["can_delete"] = can_delete(item, user_id, is_admin)
+        d["file_missing"] = not asset_file_exists(item.file_path)
         members = member_map.get(item.id, {})
         d["view_members"] = members.get("view", [])
         d["edit_members"] = members.get("edit", [])
@@ -510,6 +574,8 @@ def get_asset_detail(user_id: int, asset_id: int, is_admin: bool = False) -> Dic
     d = asset.to_dict()
     d["owner_name"] = UsersModel.get_display_names([asset.user_id]).get(asset.user_id, f"用户{asset.user_id}")
     d["can_edit"] = can_edit(asset, user_id, is_admin)
+    d["can_delete"] = can_delete(asset, user_id, is_admin)
+    d["file_missing"] = not asset_file_exists(asset.file_path)
     members = _perm_members(asset.id)
     d["view_members"] = members.get("view", [])
     d["edit_members"] = members.get("edit", [])
@@ -565,23 +631,28 @@ def update_asset(
     return get_asset_detail(user_id, asset_id, is_admin)
 
 
-def purge_asset(asset_id: int) -> Dict[str, Any]:
-    """管理员清除资产：删文件 + 删记录 + 删成员 + 释放配额（幂等）。"""
+def purge_asset(asset_id: int, user_id: Optional[int] = None, is_admin: bool = False) -> Dict[str, Any]:
+    """删除资产（属主或管理员）：删文件 + 删记录 + 删成员 + 释放配额（幂等）。
+
+    user_id 为 None 视为内部管理直调（不做属主校验）；否则须属主或管理员。
+    文件删除丢调用方线程池（API 层 asyncio.to_thread 包装本函数）；
+    记录/配额已清理，文件路径异常（脏数据）不应让接口失败造成"半清除"误报
+    """
     asset = AssetLibraryModel.get_by_id(int(asset_id))
     if not asset:
         raise AssetLibraryError("资产不存在", "not_found")
+    if user_id is not None and not can_delete(asset, user_id, is_admin):
+        raise AssetLibraryError("没有该资产的删除权限", "forbidden")
     AssetPermissionMemberModel.delete_for_asset(asset.id)
     AssetLibraryModel.delete(asset.id)
     AssetLibraryQuotaModel.release(asset.user_id, asset.file_size)
-    # 文件删除丢调用方线程池（API 层 asyncio.to_thread 包装本函数）；
-    # 记录/配额已清理，文件路径异常（脏数据）不应让接口失败造成"半清除"误报
     if asset.file_path:
         try:
             local = resolve_upload_url_to_local_path(f"/upload/{asset.file_path}")
             _remove_file_quietly(Path(local))
         except ValueError as e:
             logger.warning(f"Asset {asset_id} has invalid file_path '{asset.file_path}', skip file removal: {e}")
-    logger.info(f"Asset {asset_id} purged by admin (owner={asset.user_id}, freed {asset.file_size} bytes)")
+    logger.info(f"Asset {asset_id} purged (by user={user_id}, admin={is_admin}, owner={asset.user_id}, freed {asset.file_size} bytes)")
     return {"asset_id": asset.id, "freed_bytes": asset.file_size, "owner_user_id": asset.user_id}
 
 

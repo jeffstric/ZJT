@@ -1046,7 +1046,6 @@ function renderHeader() {
                 <button class="header-nav-btn" data-route="script">${i18nT('btn_back_to_script', '剧本策划')}</button>
                 <button class="header-nav-btn" data-route="canvas">${i18nT('btn_canvas_mode', '画布')}</button>
                 <button class="header-nav-btn active" type="button">${i18nT('btn_editor_mode', '编辑器')}</button>
-                <button class="header-nav-btn" type="button" data-action="open-asset-library" title="${i18nT('title_open_asset_library', '共享资产库')}">${icon('folder', 14)} ${i18nT('label_asset_library', '资产库')}</button>
             </nav>
             <div class="header-right">
                 <span class="header-lang-slot" data-lang-switcher-slot></span>
@@ -2699,6 +2698,37 @@ function renderFrameMentionButtons() {
     return `<div class="mention-frames">${buttons.join('')}</div>`;
 }
 
+/**
+ * 资产库 tab 的目录两级渲染（对齐 marketing_agent @ 下拉）：
+ * - groups 模式：分组目录（全部资产/未分组/各分组，带计数）；
+ * - assets 模式：「← 返回资产目录」+ 组内资产条目（滚动到底翻页，
+ *   翻页加载见 events.js loadAssetMentionPage / bindMentionListScroll）。
+ */
+function renderAssetMentionList() {
+    const view = state.assetMentionView;
+    if (view.mode === 'groups') {
+        const dirs = [
+            `<button type="button" class="mention-group-item" data-mention-group="all"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(i18nT('mention_all_assets', '全部资产'))}</span></button>`,
+            `<button type="button" class="mention-group-item" data-mention-group="ungrouped"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(i18nT('mention_ungrouped', '未分组'))}</span><span class="mention-group-count">${state.assetMentionUngroupedCount || 0}</span></button>`,
+        ].concat((state.assetMentionGroups || []).map((g) =>
+            `<button type="button" class="mention-group-item" data-mention-group="${escapeHtml(String(g.id))}" data-mention-group-name="${escapeHtmlAttr(g.name || '')}"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(g.name || '')}</span><span class="mention-group-count">${g.assetCount || 0}</span></button>`));
+        const loading = (!state.assetMentionGroupsLoaded && !(state.assetMentionGroups || []).length)
+            ? `<div class="empty-note">${escapeHtml(i18nT('msg_loading', '加载中…'))}</div>`
+            : '';
+        return dirs.join('') + loading;
+    }
+    const back = `<button type="button" class="mention-back-item" data-mention-back><span>←</span><span>${escapeHtml(i18nT('mention_back_to_groups', '返回资产目录'))}${view.groupName ? ' · ' + escapeHtml(view.groupName) : ''}</span></button>`;
+    const items = view.items.map((item) =>
+        `<button data-mention-item="${escapeHtml('资产:' + item.id)}" data-hover-preview="${escapeHtmlAttr(item.thumb || '')}"><img src="${escapeHtml(getThumbnailUrl(item.thumb, 24))}" alt=""><span>${escapeHtml(item.name || ('资产' + item.id))}</span></button>`).join('');
+    const empty = (view.items.length || view.loading)
+        ? ''
+        : `<div class="empty-note">${escapeHtml(i18nT('msg_no_asset_library_items', '资产库为空，可在各页面生成图片后入库'))}</div>`;
+    const footer = view.loading
+        ? `<div class="empty-note">${escapeHtml(i18nT('msg_loading', '加载中…'))}</div>`
+        : (view.items.length && !view.hasMore ? `<div class="empty-note">${escapeHtml(i18nT('msg_no_more_items', '已全部加载'))}</div>` : '');
+    return back + items + empty + footer;
+}
+
 function renderMentionPopup() {
     if (!state.showMentionPopup) return '';
     const groups = {
@@ -2721,9 +2751,7 @@ function renderMentionPopup() {
             </div>
             <div class="mention-list">
                 ${isAssetTab
-                    ? (items.length
-                        ? items.map(item => `<button data-mention-item="${escapeHtml('资产:' + item.id)}" data-hover-preview="${escapeHtmlAttr(item.thumb || '')}"><img src="${escapeHtml(getThumbnailUrl(item.thumb, 24))}" alt=""><span>${escapeHtml(item.name || ('资产' + item.id))}</span></button>`).join('')
-                        : `<div class="empty-note">${i18nT('msg_no_asset_library_items', '资产库为空，可在各页面生成图片后入库')}</div>`)
+                    ? renderAssetMentionList()
                     : items.map(item => {
                         const preview = item.avatar || item.reference_image || '';
                         return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;

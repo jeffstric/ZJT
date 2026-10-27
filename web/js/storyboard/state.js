@@ -190,9 +190,16 @@ const state = {
         submitting: false,
     },
     mentionTab: 'character',
-    /** 共享资产库提及条目：[{id, name, thumb}]（提及菜单/胶囊层共用，
-     *  经 window.AssetLibrary.fetchMentionItems 加载，见 events.js） */
+    /** 共享资产库提及条目：[{id, name, thumb}]（提及菜单/胶囊层共用）。
+     *  目录式懒加载后此池随浏览渐进填充，另由 chat_mention_chips.js 按
+     *  历史 token 兜底拉取详情（见 ensureAssetMentionItemsByIds）。 */
     assetMentionItems: [],
+    /** 资产 tab 目录两级懒加载视图（见 events.js loadAssetMentionPage）：
+     *  groups=分组目录；assets=某分组内资产（滚动翻页）。 */
+    assetMentionView: { mode: 'groups', groupId: null, groupName: '', page: 0, items: [], hasMore: false, loading: false },
+    assetMentionGroups: [],
+    assetMentionUngroupedCount: 0,
+    assetMentionGroupsLoaded: false,
     isSaving: false,
     error: '',
     showGenerateFromScriptDialog: false,

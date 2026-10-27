@@ -10,7 +10,7 @@
  *  - AssetLibrary.fetchMentionItems(keyword)         @ 提及数据源（返回 [{id,name,thumb}])
  *  - AssetLibrary.MENTION_PREFIX                     提及 token 前缀 '@资产:'
  *  - AssetLibrary.buildMentionToken(asset)           生成 `@资产:{id}` token
- *  - AssetLibrary.resolveMentionTokens(text)         提交前把 token 解析为 ![名称](绝对URL)
+ *  - AssetLibrary.resolveMentionTokens(text)         提交前把 token 解析为 ![名称](/upload/相对路径)
  *  - AssetLibrary.toast(message, isError)            轻提示
  *
  * 后端接口见 api/asset_library.py（/api/asset-library/*）与 docs/backend/asset_library.md。
@@ -86,6 +86,10 @@
         if (url.indexOf('data:') === 0) return url;
         return location.origin + (url.charAt(0) === '/' ? url : '/' + url);
     }
+
+    // 分组操作图标（内联 SVG，避免 ✎/🗑 等字符跨平台渲染不一致）
+    var ICON_EDIT = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>';
+    var ICON_TRASH = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
 
     // ============ 弹窗骨架 ============
 
@@ -330,7 +334,7 @@
         };
         var body =
             '<div class="al-add-layout">' +
-            '<div class="al-add-preview"><img src="' + esc(absoluteUrl(sourceUrl)) + '" alt="预览" onerror="this.style.display=\'none\'"></div>' +
+            '<div class="al-add-preview"><img src="' + esc(sourceUrl) + '" alt="预览" onerror="this.style.display=\'none\'"></div>' +
             '<div class="al-add-form">' +
             '<div class="al-field"><label class="al-label">资产名称</label>' +
             '<input type="text" class="al-input" data-al-name maxlength="200" value="' + esc(opts.name || '') + '" placeholder="给资产起个名字"></div>' +
@@ -399,12 +403,16 @@
         }
 
         var body =
+            '<div class="al-add-layout">' +
+            '<div class="al-add-preview al-add-preview--sm"><img src="' + esc(asset.file_url) + '" alt="预览" onerror="this.style.display=\'none\'"></div>' +
+            '<div class="al-add-form">' +
             '<div class="al-field"><label class="al-label">资产名称</label>' +
             '<input type="text" class="al-input" data-al-name maxlength="200" value="' + esc(asset.name || '') + '"></div>' +
             '<div class="al-field"><label class="al-label">分组</label><div class="al-perm-row" data-al-group-row></div></div>' +
             '<div class="al-field" data-al-perm="view"></div>' +
             '<div class="al-field" data-al-perm="edit"></div>' +
-            '<div class="al-error" data-al-error></div>';
+            '<div class="al-error" data-al-error></div>' +
+            '</div></div>';
         var footer =
             '<button type="button" class="al-btn" data-al-close>取消</button>' +
             '<button type="button" class="al-btn al-btn--primary" data-al-submit>保存</button>';
@@ -469,7 +477,10 @@
             page: 1,
             pageSize: 24,
             total: 0,
-            groups: []
+            groups: [],
+            // 资产类型过滤：默认 image（既有弹窗语义）；传 'all' 列全部类型
+            // （video_workflow 素材选择等场景，未来开放视频入库后自动可见）
+            assetType: opts.assetType === 'all' ? '' : (opts.assetType || 'image')
         };
 
         var body =
@@ -519,27 +530,39 @@
             html += '<button type="button" class="al-group-item' + (view.groupId === 'ungrouped' ? ' is-active' : '') +
                 '" data-al-g="ungrouped">未分组<span class="al-group-count">' + esc(String(view.ungroupedCount || 0)) + '</span></button>';
             view.groups.forEach(function (g) {
-                html += '<button type="button" class="al-group-item' + (view.groupId === g.id ? ' is-active' : '') +
-                    '" data-al-g="' + esc(String(g.id)) + '"><span class="al-group-name" style="overflow:hidden;text-overflow:ellipsis">' +
+                // 外层用 div 而非 button：button 内嵌 button 会被 HTML 解析器强制闭合，
+                // 导致操作按钮脱离 .al-group-item 布局（样式与点击区域全部失效）
+                html += '<div role="button" tabindex="0" class="al-group-item' + (view.groupId === g.id ? ' is-active' : '') +
+                    '" data-al-g="' + esc(String(g.id)) + '"><span class="al-group-name">' +
                     esc(g.name) + '</span><span class="al-group-count">' + esc(String(g.asset_count || 0)) + '</span>';
                 if (g.can_manage) {
                     html += '<span class="al-group-ops">' +
-                        '<button type="button" data-al-g-rename="' + esc(String(g.id)) + '" title="重命名">✎</button>' +
-                        '<button type="button" data-al-g-del="' + esc(String(g.id)) + '" title="删除">🗑</button></span>';
+                        '<button type="button" data-al-g-rename="' + esc(String(g.id)) + '" title="重命名">' + ICON_EDIT + '</button>' +
+                        '<button type="button" data-al-g-del="' + esc(String(g.id)) + '" title="删除">' + ICON_TRASH + '</button></span>';
                 }
-                html += '</button>';
+                html += '</div>';
             });
             html += '<button type="button" class="al-new-group" data-al-new-group>＋ 新建分组</button>';
             els.side.innerHTML = html;
 
             els.side.querySelectorAll('[data-al-g]').forEach(function (btn) {
-                btn.addEventListener('click', function (ev) {
-                    if (ev.target.closest('[data-al-g-rename]') || ev.target.closest('[data-al-g-del]')) return;
+                function selectGroup() {
                     var raw = btn.getAttribute('data-al-g');
                     view.groupId = raw === '' ? null : (raw === 'ungrouped' ? 'ungrouped' : Number(raw));
                     view.page = 1;
                     renderSide();
                     loadAssets();
+                }
+                btn.addEventListener('click', function (ev) {
+                    if (ev.target.closest('[data-al-g-rename]') || ev.target.closest('[data-al-g-del]')) return;
+                    selectGroup();
+                });
+                // 外层是 div（button 不能内嵌 button），补回键盘 Enter/Space 触发
+                btn.addEventListener('keydown', function (ev) {
+                    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+                    if (ev.target.closest('[data-al-g-rename]') || ev.target.closest('[data-al-g-del]')) return;
+                    ev.preventDefault();
+                    selectGroup();
                 });
             });
             els.side.querySelectorAll('[data-al-g-rename]').forEach(function (btn) {
@@ -580,7 +603,8 @@
         function loadAssets() {
             els.grid.innerHTML = '<div class="al-empty">加载中…</div>';
             var params = '?page=' + view.page + '&page_size=' + view.pageSize +
-                '&scope=' + view.scope + '&asset_type=image';
+                '&scope=' + view.scope;
+            if (view.assetType) params += '&asset_type=' + encodeURIComponent(view.assetType);
             if (view.groupId === 'ungrouped') params += '&group_scope=ungrouped';
             else if (view.groupId !== null) params += '&group_id=' + view.groupId;
             if (view.keyword) params += '&keyword=' + encodeURIComponent(view.keyword);
@@ -602,10 +626,15 @@
             }
             var html = '';
             items.forEach(function (a) {
+                var isVideo = a.asset_type === 'video';
+                var thumbInner = isVideo
+                    ? '<video src="' + esc(a.file_url) + '" muted preload="metadata"></video>'
+                    : '<img src="' + esc(a.file_url) + '" alt="' + esc(a.name) + '" loading="lazy">';
                 html += '<div class="al-card" data-al-asset="' + esc(String(a.id)) + '">' +
-                    '<div class="al-card-thumb" data-al-thumb="' + esc(String(a.id)) + '" data-al-url="' + esc(absoluteUrl(a.file_url)) + '">' +
-                    '<img src="' + esc(absoluteUrl(a.file_url)) + '" alt="' + esc(a.name) + '" loading="lazy">' +
+                    '<div class="al-card-thumb" data-al-thumb="' + esc(String(a.id)) + '" data-al-url="' + esc(a.file_url) + '">' +
+                    thumbInner +
                     (a.user_id !== currentUserId() ? '<span class="al-card-badge">' + esc(a.owner_name || '') + '</span>' : '') +
+                    (a.file_missing ? '<span class="al-card-missing">文件缺失</span>' : '') +
                     '</div>' +
                     '<div class="al-card-info"><div class="al-card-name" title="' + esc(a.name) + '">' + esc(a.name) + '</div>' +
                     '<div class="al-card-meta">' + formatSize(a.file_size) + '</div></div>' +
@@ -615,6 +644,9 @@
                         : '') +
                     (a.can_edit
                         ? '<button type="button" class="al-btn al-btn--small" data-al-edit="' + esc(String(a.id)) + '">编辑</button>'
+                        : '') +
+                    (a.can_delete
+                        ? '<button type="button" class="al-btn al-btn--small al-btn--danger" data-al-del="' + esc(String(a.id)) + '">删除</button>'
                         : '') +
                     '</div></div>';
                 assetCache[a.id] = a;
@@ -638,6 +670,21 @@
                 btn.addEventListener('click', function () {
                     var id = Number(btn.getAttribute('data-al-edit'));
                     promptEdit(assetCache[id], function () { loadAssets(); loadGroups(); });
+                });
+            });
+            els.grid.querySelectorAll('[data-al-del]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    var id = Number(btn.getAttribute('data-al-del'));
+                    var asset = assetCache[id];
+                    var label = asset && asset.name ? asset.name : String(id);
+                    if (!confirm('确认删除资产「' + label + '」？文件与记录将一并删除，不可恢复')) return;
+                    api('/assets/' + id, { method: 'DELETE' }).then(function () {
+                        toast('已删除');
+                        loadAssets();
+                        loadGroups();
+                    }).catch(function (e) {
+                        toast(e.message || '删除失败', true);
+                    });
                 });
             });
         }
@@ -691,17 +738,56 @@
     /**
      * @ 提及数据源：返回 [{id, name, thumb}]（Promise）。
      * 各页提及菜单调用，选择后用 buildMentionToken 生成插入文本。
+     * 注意：资产多时请改用 fetchMentionGroups + fetchMentionItemsPaged
+     * 做目录两级懒加载（本函数保留为单次 50 条的兼容入口）。
      */
     function fetchMentionItems(keyword) {
-        var params = '?page=1&page_size=50&scope=all&asset_type=image';
-        if (keyword) params += '&keyword=' + encodeURIComponent(keyword);
+        return fetchMentionItemsPaged({ keyword: keyword || '', page: 1, pageSize: 50 })
+            .then(function (res) { return res.items; });
+    }
+
+    /**
+     * 提及分组目录：GET /groups（轻量，一次聚合）。
+     * 返回 Promise<[{id, name, asset_count}], ungroupedCount>（解构 {groups, ungroupedCount}）。
+     */
+    function fetchMentionGroups() {
+        return api('/groups').then(function (res) {
+            var d = res.data || {};
+            return {
+                groups: (d.groups || []).map(function (g) {
+                    return { id: g.id, name: g.name, assetCount: g.asset_count || 0 };
+                }),
+                ungroupedCount: d.ungrouped_count || 0
+            };
+        }).catch(function () { return { groups: [], ungroupedCount: 0 }; });
+    }
+
+    /**
+     * 提及资产分页拉取（lite 模式：后端跳过 COUNT/属主/成员/文件检查）。
+     * @param opts {keyword?, groupId?|'ungrouped', page=1, pageSize=30}
+     * @returns Promise<{items: [{id,name,thumb,url}], hasMore}>；条目会写入
+     *          assetCache 供 resolveMentionTokens 兜底解析。
+     */
+    function fetchMentionItemsPaged(opts) {
+        opts = opts || {};
+        var params = '?page=' + (opts.page || 1) +
+            '&page_size=' + (opts.pageSize || 30) +
+            '&scope=all&asset_type=image&lite=1';
+        if (opts.groupId === 'ungrouped') params += '&group_scope=ungrouped';
+        else if (opts.groupId != null) params += '&group_id=' + encodeURIComponent(opts.groupId);
+        if (opts.keyword) params += '&keyword=' + encodeURIComponent(opts.keyword);
         return api('/assets' + params).then(function (res) {
-            var items = (res.data && res.data.items) || [];
-            items.forEach(function (a) { assetCache[a.id] = a; });
-            return items.map(function (a) {
-                return { id: a.id, name: a.name, thumb: absoluteUrl(a.file_url), url: absoluteUrl(a.file_url) };
+            var d = res.data || {};
+            var items = (d.items || []).map(function (a) {
+                // thumb/url 用相对路径（/upload/...）：浏览器原生解析，落库后不随 host/端口失效
+                return { id: a.id, name: a.name, thumb: a.file_url, url: a.file_url };
             });
-        }).catch(function () { return []; });
+            items.forEach(function (a) {
+                // lite 条目字段不全，合并缓存（保留先前完整详情字段）
+                assetCache[a.id] = Object.assign({}, assetCache[a.id] || {}, a);
+            });
+            return { items: items, hasMore: !!d.has_more };
+        }).catch(function () { return { items: [], hasMore: false }; });
     }
 
     function buildMentionToken(asset) {
@@ -710,8 +796,10 @@
 
     /**
      * 提交前解析文本中的 `@资产:{id}` token：
-     * 已缓存的资产直接替换为 ![名称](绝对URL)；未缓存的拉取详情后替换；
+     * 已缓存的资产直接替换为 ![名称](/upload/相对路径)；未缓存的拉取详情后替换；
      * 拉取失败的 token 保留原文（不阻断提交）。
+     * 用相对路径：落库（分镜/消息）后不随 host/端口失效，服务端消费链
+     * （extract_local_path_from_url 等）域名无关解析，两种格式均认。
      */
     function resolveMentionTokens(text) {
         if (!text || text.indexOf(MENTION_PREFIX) < 0) return Promise.resolve(text);
@@ -738,7 +826,7 @@
                 var asset = assetCache[Number(idStr)];
                 if (!asset || !asset.file_url) return all;
                 // alt 清洗掉 markdown 语法字符（[]()），名称含括号时不破坏图片语法
-                return '![' + String(asset.name || '资产').replace(/[\[\]()]/g, '') + '](' + absoluteUrl(asset.file_url) + ')';
+                return '![' + String(asset.name || '资产').replace(/[\[\]()]/g, '') + '](' + asset.file_url + ')';
             });
         });
     }
@@ -754,6 +842,8 @@
         promptEdit: promptEdit,
         openModal: openModal,
         fetchMentionItems: fetchMentionItems,
+        fetchMentionGroups: fetchMentionGroups,
+        fetchMentionItemsPaged: fetchMentionItemsPaged,
         buildMentionToken: buildMentionToken,
         resolveMentionTokens: resolveMentionTokens,
         absoluteUrl: absoluteUrl
