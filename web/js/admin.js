@@ -110,7 +110,7 @@ const PROVIDER_DEFINITIONS = [
         impactsKey: 'provider_qwen_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
-            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'https://llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
             { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
             { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
@@ -276,8 +276,7 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
-        // 阿里云百炼（多媒体）：与大模型条目 qwen 共享 llm.qwen.api_key，
-        // base_url 复用大模型条目配置（生图/生视频自动追加 /api/v1）
+        // 阿里云百炼（多媒体）：与大模型条目 qwen 共享配置，生图/生视频自动追加 /api/v1
         id: 'qwen_media',
         nameKey: 'provider_qwen_name',
         descKey: 'provider_qwen_media_desc',
@@ -290,10 +289,13 @@ const PROVIDER_DEFINITIONS = [
         isOfficialAPI: false,
         impactsKey: 'provider_qwen_media_impacts',
         fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true }
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
+            { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
-        configKeyMap: { api_key: 'llm.qwen.api_key' },
-        testEndpoint: null,
+        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url', workspace_id: 'wan3.workspace_id', endpoint_region: 'wan3.endpoint_region' },
+        testEndpoint: 'qwen',
         _sharedWith: 'qwen'
     },
     {

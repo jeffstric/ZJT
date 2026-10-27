@@ -533,7 +533,7 @@
   "field_api_key_placeholder_google": "输入您的 Google API Key",
   "field_api_key_placeholder_claude": "输入您的 Claude API Key",
   "field_api_key_placeholder_qwen": "输入您的阿里云百炼 API Key",
-  "field_base_url_help_qwen": "复制百炼「保存你的 API Key」弹窗中的 API Host 填入即可（形如 https://llm-xxx.cn-beijing.maas.aliyuncs.com，点下方示例图查看），也可填经典域名 https://dashscope.aliyuncs.com；大模型自动追加 /compatible-mode/v1，生图/生视频自动追加 /api/v1；万相3.0 会从 maas 域名自动识别业务空间",
+  "field_base_url_help_qwen": "在百炼 API Key 弹窗中复制「API Host」，直接粘贴即可；无需添加 https:// 或路径，业务空间和地域通常留空。",
   "field_api_key_placeholder_deepseek": "输入您的 DeepSeek API Key",
   "field_api_key_placeholder_agnes": "输入您的 Agnes API Key",
   "field_api_key_placeholder_mimo": "输入您的小米 MiMo API Key（Token Plan）",
