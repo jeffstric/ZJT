@@ -183,6 +183,7 @@
   "uploading_video": "Uploading video...",
   "video_upload_success": "Video uploaded successfully",
   "video_upload_failed": "Video upload failed. Changes will be lost after refresh",
+  "node_video_uploading": "Uploading...",
   "uploading_audio": "Uploading audio...",
   "audio_upload_success": "Audio uploaded successfully",
   "audio_upload_failed": "Audio upload failed",

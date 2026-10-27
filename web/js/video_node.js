@@ -47,6 +47,10 @@
             <div class="label" data-i18n="node_preview_label">${window.t ? window.t('node_preview_label') : '预览'}</div>
             <div class="video-preview">
               <video class="video-thumb" playsinline></video>
+              <div class="video-uploading-overlay" style="display:none;">
+                <span class="video-uploading-spinner"></span>
+                <span class="video-uploading-text" data-i18n="node_video_uploading">${window.t ? window.t('node_video_uploading') : '上传中...'}</span>
+              </div>
               <div class="video-preview-actions">
                 <button class="vp-btn vp-play" type="button" aria-label="${window.t ? window.t('node_play_btn') : '播放'}">▶</button>
                 <button class="vp-btn vp-zoom" type="button" aria-label="${window.t ? window.t('node_zoom_btn') : '放大'}">⤢</button>
@@ -83,6 +87,7 @@
       const playBtn = el.querySelector('.vp-play');
       const zoomBtn = el.querySelector('.vp-zoom');
       const nameEl = el.querySelector('.video-name');
+      const uploadingOverlay = el.querySelector('.video-uploading-overlay');
       const addTimelineBtn = el.querySelector('.video-add-timeline');
       const downloadBtn = el.querySelector('.video-download');
       const clearBtn = el.querySelector('.video-clear');
@@ -172,7 +177,10 @@
         // 先显示本地预览
         setVideoFromFile(file);
         fileEl.value = '';
-        
+
+        // 上传中标识：提醒用户当前只有本地临时预览，服务器地址尚未就绪
+        uploadingOverlay.style.display = '';
+
         // 立即上传到服务器获取永久URL
         try {
           showToast(window.t ? window.t('uploading_video') : '正在上传视频...', 'info');
@@ -198,6 +206,8 @@
         } catch(error){
           console.error('视频上传失败:', error);
           showToast(window.t ? window.t('video_upload_failed') : '视频上传失败，刷新页面后将丢失', 'error');
+        } finally {
+          uploadingOverlay.style.display = 'none';
         }
       });
 

@@ -183,6 +183,7 @@
   "uploading_video": "正在上传视频...",
   "video_upload_success": "视频上传成功",
   "video_upload_failed": "视频上传失败，刷新页面后将丢失",
+  "node_video_uploading": "上传中...",
   "uploading_audio": "正在上传音频...",
   "audio_upload_success": "音频上传成功",
   "audio_upload_failed": "音频上传失败",
