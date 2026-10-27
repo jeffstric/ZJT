@@ -176,6 +176,13 @@ async function generateShotFrameImage(nodeId, node){
       showToast('图片提示词不能为空', 'warning');
       return;
     }
+
+    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见
+    // web/js/asset_library.js）。分镜节点的图片/视频提示词放大窗口均挂
+    // 资产条目下拉，此处不还原则后端只能看到字面 token 无图片上下文
+    if (window.AssetLibrary && imagePrompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+      imagePrompt = await window.AssetLibrary.resolveMentionTokens(imagePrompt);
+    }
     
     // 1. 收集参考图（角色/场景/道具）
     const characterNames = typeof mergeShotCharacterNames === 'function'

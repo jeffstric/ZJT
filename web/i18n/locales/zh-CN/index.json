@@ -1187,6 +1187,8 @@
   "restore_image_already_current": "该图已是当前形象图",
   "restore_image_success": "已恢复为当前形象图",
   "restore_image_failed": "恢复失败: {error}",
+  "pick_image_from_asset_library": "资产库",
+  "pick_image_from_asset_library_title": "从资产库选择形象图",
   "ann_bell_title": "通知",
   "ann_panel_title": "通知中心",
   "ann_mark_all_read": "全部已读",

@@ -56,6 +56,14 @@
                     </a>
                 </li>
                 <li>
+                    <a href="#" :class="{ active: currentPage === 'assetlib' }" @click.prevent="switchPage('assetlib')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                        </svg>
+                        <span>{{ t('nav_asset_lib') }}</span>
+                    </a>
+                </li>
+                <li>
                     <a href="#" :class="{ active: currentPage === 'config' }" @click.prevent="switchPage('config')">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -843,6 +851,7 @@
                                     <button class="action-btn primary" @click="viewUserDetail(user.user_id)">{{ t('btn_view_detail') }}</button>
                                     <button class="action-btn" @click="openRemarkModal(user)">{{ t('btn_edit_remark') }}</button>
                                     <button class="action-btn success" @click="openPowerModal(user)">{{ t('btn_adjust_power') }}</button>
+                                    <button class="action-btn" @click="openAssetQuotaModal(user)">{{ t('btn_asset_quota') }}</button>
                                     <button
                                         v-if="user.status === 2"
                                         class="action-btn success"
@@ -899,6 +908,50 @@
             </section>
 
             <!-- 系统配置页面 -->
+            <section v-if="currentPage === 'assetlib'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('asset_lib_title') }}</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="loadAssetLibConfig" :disabled="assetLib.loading">
+                                {{ assetLib.loading ? t('loading') : '↻ ' + t('refresh') }}
+                            </button>
+                        </div>
+                    </div>
+                    <div class="admin-form" style="max-width: 560px; padding: 18px 22px;">
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" v-model="assetLib.enabled" style="width: auto;">
+                                <span style="font-weight: 600;">{{ t('asset_lib_enabled') }}</span>
+                            </label>
+                            <p class="form-hint">{{ t('asset_lib_enabled_hint') }}</p>
+                        </div>
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" v-model="assetLib.allowAllUsers" style="width: auto;">
+                                <span style="font-weight: 600;">{{ t('asset_lib_allow_all') }}</span>
+                            </label>
+                            <p class="form-hint">{{ t('asset_lib_allow_all_hint') }}</p>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('asset_lib_total_quota') }}</label>
+                            <input type="number" v-model.number="assetLib.totalQuotaGB" min="0" step="1" style="width: 220px;">
+                            <p class="form-hint">{{ t('asset_lib_total_quota_hint') }}</p>
+                        </div>
+                        <div class="form-group">
+                            <label>{{ t('asset_lib_used') }}</label>
+                            <input type="text" :value="assetLib.usedText + (assetLib.totalQuotaGB > 0 ? ' / ' + assetLib.totalQuotaGB + ' GB' : '')" disabled style="width: 220px;">
+                        </div>
+                        <div class="form-group">
+                            <p class="form-hint">{{ t('asset_lib_user_perm_hint') }}</p>
+                        </div>
+                        <button class="action-btn success" @click="saveAssetLibConfig" :disabled="assetLib.saving">
+                            {{ assetLib.saving ? t('btn_submit_loading') : t('btn_save_config') }}
+                        </button>
+                    </div>
+                </div>
+            </section>
+
             <section v-if="currentPage === 'config'">
                 <div class="table-container">
                     <div class="table-header">
@@ -2577,6 +2630,62 @@
                     <button class="modal-btn cancel" @click="closePowerModal">{{ t('cancel_btn') }}</button>
                     <button class="modal-btn confirm" @click="submitPowerAdjust" :disabled="powerModal.loading">
                         {{ powerModal.loading ? t('btn_submit_loading') : t('btn_submit') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 资产库容量设置弹窗（资产库文件永久存放，按用户计容量） -->
+        <div class="modal-overlay" v-if="assetQuotaModal.show" @click.self="closeAssetQuotaModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('modal_asset_quota') }}</h3>
+                    <button class="modal-close" @click="closeAssetQuotaModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('modal_user_label') }}</label>
+                        <input type="text" :value="assetQuotaModal.userName" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_asset_quota_used') }}</label>
+                        <input type="text" :value="assetQuotaModal.usedText + ' / ' + (assetQuotaModal.quotaGB === 0 ? t('asset_quota_unlimited') : assetQuotaModal.quotaGB + ' GB') + '（' + t('modal_asset_count', { count: assetQuotaModal.assetCount }) + '）'" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" v-model="assetQuotaModal.enabled" style="width: auto;">
+                            <span style="font-weight: 600;">{{ t('asset_lib_user_enabled') }}</span>
+                        </label>
+                        <p class="form-hint">{{ t('asset_lib_user_enabled_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_asset_quota_set') }}</label>
+                        <input type="number" v-model.number="assetQuotaModal.quotaGB" min="0" step="0.1" :placeholder="t('modal_asset_quota_hint')">
+                        <p class="form-hint">{{ t('modal_asset_quota_hint') }}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_asset_list') }}</label>
+                        <div v-if="assetQuotaModal.assetsLoading" class="form-hint">{{ t('loading') }}</div>
+                        <div v-else-if="assetQuotaModal.assets.length === 0" class="form-hint">{{ t('modal_asset_list_empty') }}</div>
+                        <div v-else style="max-height: 220px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 6px;">
+                            <div v-for="asset in assetQuotaModal.assets" :key="asset.id"
+                                style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+                                <img :src="asset.file_url" style="width: 34px; height: 34px; object-fit: cover; border-radius: 4px; flex-shrink: 0;" loading="lazy" />
+                                <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" :title="asset.name">{{ asset.name }}</span>
+                                <span style="color: #64748b; flex-shrink: 0;">{{ formatBytes(asset.file_size) }}</span>
+                                <button class="action-btn" style="color: #dc2626; flex-shrink: 0;"
+                                    @click="purgeAssetLibraryAsset(asset)" :disabled="assetQuotaModal.purgingId === asset.id">
+                                    {{ assetQuotaModal.purgingId === asset.id ? '…' : t('btn_asset_purge') }}
+                                </button>
+                            </div>
+                        </div>
+                        <p class="form-hint">{{ t('modal_asset_purge_hint') }}</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeAssetQuotaModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="submitAssetQuota" :disabled="assetQuotaModal.loading">
+                        {{ assetQuotaModal.loading ? t('btn_submit_loading') : t('btn_submit') }}
                     </button>
                 </div>
             </div>

@@ -243,7 +243,9 @@ body {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: transform 0.3s ease;
+  /* transform 过渡只属于移动端收起交互，收进 @media 断点内（见 1074 行）。
+     放在桌面态会在视口跨 768 抖动时把侧栏卡死在 translateX(-100%) 起点
+     （transition 每帧重启停在 time 0），位移 -260px 盖住左侧导航列。 */
 }
 
 .sidebar-header {
@@ -1077,6 +1079,7 @@ body {
     z-index: 100;
     height: 100vh;
     transform: translateX(-100%);
+    transition: transform 0.3s ease;
   }
 
   .sidebar.open {

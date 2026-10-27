@@ -562,6 +562,24 @@ async def startup_event():
 
     asyncio.create_task(start_notification_service())
 
+    # 资产库文件完整性检查（只读）：DB 记录在磁盘缺失文件时告警，
+    # 便于及时发现外部误删（应用内删除路径均有日志，缺失基本来自外部）
+    async def check_asset_library_files():
+        try:
+            from services import asset_library_service as _al_svc
+            result = await asyncio.to_thread(_al_svc.verify_asset_files)
+            if result.get("missing"):
+                ids = result["missing"][:20]
+                more = "…" if len(result["missing"]) > len(ids) else ""
+                logger.warning(
+                    f"资产库完整性检查：{len(result['missing'])}/{result['total']} 个资产文件磁盘缺失"
+                    f"（id: {ids}{more}），对应图片将无法显示"
+                )
+        except Exception as e:
+            logger.warning(f"资产库文件完整性检查失败（non-critical）: {e}")
+
+    asyncio.create_task(check_asset_library_files())
+
 # 导入并注册 script_writer API 路由
 from api.script_writer import router as script_writer_router
 app.include_router(script_writer_router)
@@ -618,6 +636,10 @@ app.include_router(announcements_admin_router)
 # 导入并注册月度订阅 API 路由（微信委托代扣·周期扣费，见 docs/backend/wechat_monthly_subscription.md）
 from api.subscription import router as subscription_router
 app.include_router(subscription_router)
+
+# 资产库 API 路由（生成产物收藏/共享/@引用，见 docs/backend/asset_library.md）
+from api.asset_library import router as asset_library_router
+app.include_router(asset_library_router)
 
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。

@@ -374,13 +374,19 @@
                 return `<button class="publish-result-btn" data-publish-tool-id="${escapeHtml(aiToolId)}" data-publish-title="${escapeHtml(title || '')}">发布</button>`;
             }
 
+            // 「入库」按钮：把生成图加入共享资产库（弹窗走 web/js/asset_library.js）
+            function buildAddToAssetLibraryButton(sourceUrl) {
+                if (!sourceUrl || !window.AssetLibrary) return '';
+                return `<button class="publish-result-btn" data-asset-add-src="${escapeHtml(sourceUrl)}" title="${window.t('add_to_asset_library')}">${window.t('add_to_asset_library')}</button>`;
+            }
+
             function buildGeneratedMediaRowsHtml(type, rows) {
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
                         const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
-                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}${buildAddToAssetLibraryButton(url)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
@@ -1242,14 +1248,129 @@
                 }
             }
 
-            // @ 引用可选项
-            const mentionableItems = Vue.computed(() => {
-                return mediaItems.value.filter(m => m.fileUrl && !m.uploading && !m.uploadFailed).map(m => ({
-                    id: m.id,
-                    displayName: m.displayName,
-                    type: m.type,
-                    thumbnailUrl: m.thumbnailUrl
+            // @ 引用可选项：本地上传媒体（平面）+ 共享资产库（目录逐级懒加载）
+            // 资产条目 isAsset=true，插入 `@资产:{id}` token（提交时由
+            // AssetLibrary.resolveMentionTokens 还原为 markdown 图片）。
+            // 模式（mentionAssetView.mode）：
+            //   root   — 一级固定两项：「全部资产」（所有资产分页）+「资产目录」；
+            //   groups — 资产目录层：各分组列表（目录多时不污染一级菜单）；
+            //   assets — 某个分组（或全部）内的资产，滚动到底自动翻页（lite 接口）；
+            //   search — @ 后输入了关键字，跨组搜索，同样翻页。
+            // assets 记录 returnMode（root/groups），返回条回到进入前的层级。
+            const mentionGroups = Vue.ref({ loaded: false, loading: false, groups: [], ungroupedCount: 0 });
+            const mentionAssetView = Vue.ref({ mode: 'root', groupId: null, groupName: '', page: 0, items: [], hasMore: false, loading: false, returnMode: 'root' });
+            let mentionSearchTimer = null;
+
+            function ensureMentionGroups() {
+                if (!window.AssetLibrary) return;
+                if (mentionGroups.value.loaded || mentionGroups.value.loading) return;
+                mentionGroups.value.loading = true;
+                window.AssetLibrary.fetchMentionGroups().then(res => {
+                    mentionGroups.value.groups = res.groups;
+                    mentionGroups.value.ungroupedCount = res.ungroupedCount;
+                    mentionGroups.value.loaded = true;
+                }).finally(() => { mentionGroups.value.loading = false; });
+            }
+
+            function resetMentionAssetView(mode, groupId = null, groupName = '', returnMode = 'root') {
+                mentionAssetView.value = { mode, groupId, groupName, page: 0, items: [], hasMore: false, loading: false, returnMode };
+            }
+
+            function loadMentionAssetPage(nextPage) {
+                const view = mentionAssetView.value;
+                if (view.loading || (view.page >= 1 && !view.hasMore)) return;
+                view.loading = true;
+                const snapshot = view;  // 防竞态：模式已切走时丢弃过期响应
+                const req = view.mode === 'search'
+                    ? window.AssetLibrary.fetchMentionItemsPaged({ keyword: mentionDropdown.value.query, page: nextPage, pageSize: 30 })
+                    : window.AssetLibrary.fetchMentionItemsPaged({ groupId: view.groupId, page: nextPage, pageSize: 30 });
+                req.then(res => {
+                    if (mentionAssetView.value !== snapshot) return;
+                    view.items = view.items.concat(res.items);
+                    view.page = nextPage;
+                    view.hasMore = res.hasMore;
+                }).finally(() => {
+                    if (mentionAssetView.value === snapshot) view.loading = false;
+                });
+            }
+
+            function enterMentionGroup(groupId, groupName) {
+                if (groupId === '__folders__') {
+                    // 「资产目录」：进入分组列表层
+                    resetMentionAssetView('groups');
+                    ensureMentionGroups();
+                    return;
+                }
+                const returnMode = groupId === null ? 'root' : 'groups';
+                resetMentionAssetView('assets', groupId, groupName, returnMode);
+                loadMentionAssetPage(1);
+            }
+
+            function backToMentionGroups(item) {
+                const target = (item && item.target) || 'groups';
+                if (target === 'root') {
+                    resetMentionAssetView('root');
+                    return;
+                }
+                resetMentionAssetView('groups');
+                ensureMentionGroups();
+            }
+
+            // @ 后输入关键字：300ms 防抖后切 search 模式拉取；清空关键字回到一级
+            function scheduleMentionSearch(query) {
+                if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
+                if (!query) {
+                    if (mentionAssetView.value.mode === 'search') resetMentionAssetView('root');
+                    return;
+                }
+                mentionSearchTimer = setTimeout(() => {
+                    resetMentionAssetView('search');
+                    loadMentionAssetPage(1);
+                }, 300);
+            }
+
+            // 下拉滚到近底部时翻下一页（assets/search 模式）
+            function onMentionDropdownScroll(e) {
+                const el = e.target;
+                const view = mentionAssetView.value;
+                if (view.mode === 'root' || view.mode === 'groups' || !view.hasMore || view.loading) return;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight > 60) return;
+                loadMentionAssetPage(view.page + 1);
+            }
+
+            // 当前模式的扁平可选项（键盘 ↑↓/Enter 与鼠标共用同一顺序）
+            const mentionFlatItems = Vue.computed(() => {
+                const view = mentionAssetView.value;
+                const q = (mentionDropdown.value.query || '').toLowerCase();
+                const local = mediaItems.value
+                    .filter(m => m.fileUrl && !m.uploading && !m.uploadFailed)
+                    .filter(m => !q || m.displayName.toLowerCase().includes(q))
+                    .map(m => ({ id: m.id, kind: 'media', displayName: m.displayName, type: m.type, thumbnailUrl: m.thumbnailUrl }));
+                if (view.mode === 'root') {
+                    // 一级固定两项：全部资产（点开即所有资产）+ 资产目录（点开才见分组）
+                    const directories = [
+                        { id: 'group-all', kind: 'group', groupId: null, groupName: window.t('mention_all_assets'), count: null },
+                        { id: 'group-folders', kind: 'group', groupId: '__folders__', groupName: window.t('mention_asset_folders'), count: null },
+                    ];
+                    return local.concat(directories);
+                }
+                if (view.mode === 'groups') {
+                    const back = [{ id: 'mention-back', kind: 'back', target: 'root' }];
+                    const directories = [
+                        { id: 'group-ungrouped', kind: 'group', groupId: 'ungrouped', groupName: window.t('mention_ungrouped'), count: mentionGroups.value.ungroupedCount },
+                    ].concat(mentionGroups.value.groups.map(g => ({
+                        id: `group-${g.id}`, kind: 'group', groupId: g.id, groupName: g.name, count: g.assetCount
+                    })));
+                    return back.concat(directories);
+                }
+                const assets = view.items.map(a => ({
+                    id: `asset-${a.id}`, kind: 'asset', assetId: a.id, displayName: a.name,
+                    type: 'asset', thumbnailUrl: a.thumb, isAsset: true
                 }));
+                const back = view.mode === 'assets'
+                    ? [{ id: 'mention-back', kind: 'back', target: view.returnMode || 'root' }]
+                    : [];
+                return back.concat(local, assets);
             });
 
             const hasPendingAgentImages = Vue.computed(() => {
@@ -1426,14 +1547,7 @@
                 return parts.join('\n\n');
             }
 
-            const filteredMentionItems = Vue.computed(() => {
-                if (!mentionDropdown.value.query) return mentionableItems.value;
-                const q = mentionDropdown.value.query.toLowerCase();
-                return mentionableItems.value.filter(item =>
-                    item.displayName.toLowerCase().includes(q) ||
-                    (item.type === 'image' ? window.t('type_image') : item.type === 'video' ? window.t('type_video') : window.t('type_audio')).includes(q)
-                );
-            });
+            const filteredMentionItems = mentionFlatItems;
 
             // 是否显示视频模式按钮（视频模式 + 有图片/媒体时）
             const showVideoModeBtn = Vue.computed(() => {
@@ -1976,6 +2090,19 @@
                         );
                         return;
                     }
+                    // 「入库」按钮：加入共享资产库（弹窗由公共模块提供）
+                    const addAssetBtn = e.target.closest('[data-asset-add-src]');
+                    if (addAssetBtn) {
+                        const src = addAssetBtn.getAttribute('data-asset-add-src') || '';
+                        const card = addAssetBtn.closest('[data-tool-title]');
+                        if (src && window.AssetLibrary) {
+                            window.AssetLibrary.promptAdd({
+                                sourceUrl: src,
+                                name: ((card && card.getAttribute('data-tool-title')) || '').slice(0, 60)
+                            });
+                        }
+                        return;
+                    }
                     const zoomTarget = e.target.closest('img[data-full-src], [data-modal-src]');
                     if (!zoomTarget) return;
                     const src = zoomTarget.getAttribute('data-full-src')
@@ -1983,6 +2110,53 @@
                     const toolId = zoomTarget.getAttribute('data-tool-id');
                     showImageModal(src, toolId || null, zoomTarget.getAttribute('data-tool-title') || '');
                 });
+            }
+
+            // ============ 历史存量生成图卡片补「入库」按钮 ============
+            // 背景：「入库」按钮上线前生成的消息以旧 HTML 存库，回放时生成图卡片只有
+            // 「发布」。渲染后扫描聊天 DOM，为缺按钮的生成图卡片补齐（幂等）；点击行为
+            // 复用上方 data-asset-add-src 全局委托，弹窗与权限校验由 AssetLibrary 提供。
+
+            // 从卡片 img 的 src 还原入库源地址：/api/proxy-image?url=ENC 反解出原始外链
+            // （入库直连图床，避免服务端 aiohttp 自请求带鉴权的代理接口），本站路径
+            // （/upload/...）原样返回（后端直接复制本地文件）；data:/blob: 不可入库。
+            function resolveAssetSourceFromImgSrc(src) {
+                const raw = String(src || '').trim();
+                if (!raw || /^(data|blob):/i.test(raw)) return '';
+                const m = raw.match(/^\/api\/proxy-image\?url=([^&]+)/);
+                if (!m) return raw;
+                try { return decodeURIComponent(m[1]); } catch (e) { return ''; }
+            }
+
+            function augmentGeneratedImageCards(root) {
+                if (!root || !window.AssetLibrary) return;
+                root.querySelectorAll('.generated-image-wrapper').forEach(wrapper => {
+                    if (wrapper.querySelector('[data-asset-add-src]')) return;
+                    const img = wrapper.querySelector('img.generated-image') || wrapper.querySelector('img');
+                    if (!img) return;
+                    const sourceUrl = resolveAssetSourceFromImgSrc(img.getAttribute('src'));
+                    if (!sourceUrl) return;
+                    let actions = wrapper.querySelector('.generated-result-actions');
+                    if (!actions) {
+                        actions = document.createElement('div');
+                        actions.className = 'generated-result-actions';
+                        wrapper.appendChild(actions);
+                    }
+                    actions.insertAdjacentHTML('beforeend', buildAddToAssetLibraryButton(sourceUrl));
+                });
+            }
+
+            // 聊天容器随视图切换 v-if 销毁重建：watch template ref，容器出现/重建后重挂
+            // Observer。回调直接同步扫描（幂等）——rAF 在后台标签页会被节流，导致
+            // 切走期间完成的生成结果延迟补按钮。
+            function bindGeneratedImageCardAugmenter() {
+                Vue.watch(chatMessages, (el) => {
+                    if (!el || el.__cardAugmenterBound) return;
+                    el.__cardAugmenterBound = true;
+                    const observer = new MutationObserver(() => augmentGeneratedImageCards(el));
+                    observer.observe(el, { childList: true, subtree: true });
+                    augmentGeneratedImageCards(el);
+                }, { immediate: true });
             }
 
             function previewMedia(src, mediaType) {
@@ -2375,9 +2549,15 @@
 
             // 发送消息
             async function handleSend() {
-                const text = inputText.value.trim();
+                let text = inputText.value.trim();
                 if (!text || (isLoading.value && !pendingVerificationId.value)) return;
                 isLoading.value = true;
+
+                // 共享资产库 @引用 token（`@资产:{id}`）提交前还原为 markdown 图片，
+                // 使图片 URL 进入生成上下文（文生图参考图提取 / LLM 均可消费）
+                if (window.AssetLibrary && text.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+                    text = await window.AssetLibrary.resolveMentionTokens(text);
+                }
 
                 // ===== 发送前：统一等待图片/视频上传完成 =====
                 if (selectedType.value === 'agent') {
@@ -4655,6 +4835,9 @@
                 // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
                 bindGeneratedMediaDelegation();
 
+                // 历史存量生成图卡片补「入库」按钮（见 augmentGeneratedImageCards）
+                bindGeneratedImageCardAugmenter();
+
                 // 获取服务器配置（图片大小限制 / 意见反馈等）
                 try {
                     const resp = await fetch('/api/system/server-config');
@@ -6273,6 +6456,12 @@
                     mentionDropdown.value.query = atMatch[1];
                     mentionDropdown.value.queryStart = cursorPos - atMatch[0].length;
                     mentionDropdown.value.selectedIndex = 0;
+                    // 每次 @ 唤起都回到一级（全部资产/资产目录），不保留上次浏览层级；
+                    // 搜索中（query 有值）不重置，等防抖搜索继续
+                    if (mentionAssetView.value.mode !== 'search') {
+                        resetMentionAssetView('root');
+                    }
+                    scheduleMentionSearch(atMatch[1]);
                 } else {
                     mentionDropdown.value.visible = false;
                 }
@@ -6292,7 +6481,14 @@
                     } else if (e.key === 'Enter' || e.key === 'Tab') {
                         if (filteredMentionItems.value.length > 0) {
                             e.preventDefault();
-                            insertMention(filteredMentionItems.value[mentionDropdown.value.selectedIndex]);
+                            const item = filteredMentionItems.value[mentionDropdown.value.selectedIndex];
+                            if (item && item.kind === 'group') {
+                                enterMentionGroup(item.groupId, item.groupName);
+                            } else if (item && item.kind === 'back') {
+                                backToMentionGroups(item);
+                            } else if (item) {
+                                insertMention(item);
+                            }
                         }
                         return;
                     } else if (e.key === 'Escape') {
@@ -6330,7 +6526,11 @@
                 const end = start + 1 + mentionDropdown.value.query.length;
                 const before = inputText.value.substring(0, start);
                 const after = inputText.value.substring(end);
-                const insertText = `@${item.displayName}`;
+                // 资产库条目插入 `@资产:{id}` token，提交时还原为 markdown 图片；
+                // 本地媒体沿用 @名称 文本
+                const insertText = item.isAsset && window.AssetLibrary
+                    ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
+                    : `@${item.displayName}`;
 
                 inputText.value = before + insertText + ' ' + after;
                 mentionDropdown.value.visible = false;
@@ -6360,6 +6560,7 @@
                 mentionDropdown.value.query = '';
                 mentionDropdown.value.queryStart = actualAtPos;
                 mentionDropdown.value.selectedIndex = 0;
+                resetMentionAssetView('root');
 
                 nextTick(() => {
                     const newCursorPos = actualAtPos + 1;
@@ -7313,6 +7514,10 @@
                 searchQuery,
                 activeView,
                 switchView,
+                sharedAssetLibraryTitle: window.t('nav_shared_asset_library'),
+                openSharedAssetLibrary() {
+                    if (window.AssetLibrary) window.AssetLibrary.openModal();
+                },
                 assetItems,
                 assetsLoading,
                 assetsPage,
@@ -7324,6 +7529,13 @@
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
+                addHistoryAssetToLibrary(asset) {
+                    if (!window.AssetLibrary || !asset || !asset.result_url) return;
+                    window.AssetLibrary.promptAdd({
+                        sourceUrl: asset.result_url,
+                        name: (asset.prompt || '').slice(0, 60)
+                    });
+                },
                 publishAsset,
 
                 sessions,
@@ -7492,8 +7704,11 @@
                 mediaItems,
                 mediaCounters,
                 mentionDropdown,
-                mentionableItems,
+                mentionAssetView,
                 filteredMentionItems,
+                enterMentionGroup,
+                backToMentionGroups,
+                onMentionDropdownScroll,
                 showVideoModeBtn,
                 supportsLastFrame,
                 maxImageCount,

@@ -5787,10 +5787,16 @@
                 generateSection.style.display = 'none';
             }
 
-            // 显示/隐藏「重新生成形象图 / 历史形象图」区域（仅角色）
+            // 显示/隐藏「重新生成形象图 / 历史形象图 / 资产库」区域（角色完整功能；道具仅资产库按钮）
             const regenerateSection = document.getElementById('preview-regenerate-section');
             if (regenerateSection) {
-                regenerateSection.style.display = previewImageFileType === 'characters' ? 'block' : 'none';
+                const isCharacter = previewImageFileType === 'characters';
+                const isProp = previewImageFileType === 'props';
+                regenerateSection.style.display = (isCharacter || isProp) ? 'block' : 'none';
+                ['preview-regenerate-image-btn', 'preview-image-history-btn', 'preview-regenerate-status'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = isCharacter ? '' : 'none';
+                });
             }
 
             // 显示/隐藏「设为当前形象图」恢复区（仅角色历史视图；恢复的是当前选中大图）
@@ -6044,6 +6050,7 @@
         function resetPreviewHistoryViewState() {
             previewViewingHistory = false;
             previewCurrentImages = [];
+            resetRestoreStatus();
             const historyBtn = document.getElementById('preview-image-history-btn');
             if (historyBtn) {
                 const label = historyBtn.querySelector('span:last-child');
@@ -6052,9 +6059,24 @@
             }
         }
 
+        // 「设为当前形象图」状态文案复位：上次恢复操作的「正在恢复…」若残留
+        // （如请求期间关闭弹窗），再次进入历史视图会吓到用户——每次进出历史
+        // 视图都重置回默认引导提示，并解除按钮禁用态。
+        function resetRestoreStatus() {
+            const statusEl = document.getElementById('preview-restore-status');
+            if (statusEl) {
+                statusEl.textContent = window.t
+                    ? window.t('restore_history_image_hint')
+                    : '在下方缩略图中选择后，当前大图将被恢复为角色形象图';
+            }
+            const restoreBtn = document.getElementById('preview-restore-image-btn');
+            if (restoreBtn) restoreBtn.disabled = false;
+        }
+
         function enterPreviewHistoryView(historyUrls) {
             previewCurrentImages = previewImages.slice();
             previewViewingHistory = true;
+            resetRestoreStatus();
             previewImages = historyUrls.map((url, idx) => ({ url, label: idx === 0 ? '最近归档' : `历史 ${idx + 1}` }));
             previewImageIndex = 0;
             document.getElementById('preview-image').src = previewImages[0].url;
@@ -6181,6 +6203,69 @@
                 if (btn) btn.disabled = false;
             }
         }
+
+        // 从资产库选择图片并设为当前预览对象（角色/道具）的形象图（reference_image）。
+        // 复用各自保存接口；形象图统一存相对路径（AI/生图消费链对相对/绝对均认）。
+        function pickPreviewImageFromAssetLibrary() {
+            if (!window.AssetLibrary || (previewImageFileType !== 'characters' && previewImageFileType !== 'props')) return;
+            window.AssetLibrary.openModal({
+                title: window.t ? window.t('pick_image_from_asset_library_title') : '从资产库选择形象图',
+                onPick: function (asset) {
+                    if (asset && asset.file_url) applyAssetAsPreviewImage(asset.file_url);
+                }
+            });
+        }
+
+        async function applyAssetAsPreviewImage(url) {
+            const fileType = previewImageFileType;
+            const fileName = previewImageFileName;
+            if ((fileType !== 'characters' && fileType !== 'props') || !fileName) return;
+            const apiBase = fileType === 'characters' ? '/api/characters-files' : '/api/props-files';
+            const entityKey = fileType === 'characters' ? 'character' : 'prop';
+            const typeLabel = fileType === 'characters' ? '角色卡' : '道具';
+            try {
+                const resp = await fetch(`${apiBase}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                const data = await resp.json();
+                if (checkTokenExpired(data, resp)) return;
+                if (!data.success) {
+                    throw new Error(data.error || (window.t ? window.t('error_unknown') : '未知错误'));
+                }
+                let jsonData = data[entityKey]?.json_data || {};
+                if (!jsonData || Object.keys(jsonData).length === 0) {
+                    const content = data[entityKey]?.content || '';
+                    jsonData = content.trim() ? JSON.parse(content) : {};
+                }
+                if ((jsonData.reference_image || '') === url) {
+                    showInfo(window.t ? window.t('restore_image_already_current') : '该图已是当前形象图');
+                    return;
+                }
+                jsonData.reference_image = url;
+                const saveResp = await fetch(`${apiBase}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: JSON.stringify({
+                        content: JSON.stringify(jsonData),
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                const saveData = await saveResp.json();
+                if (checkTokenExpired(saveData, saveResp)) return;
+                if (!saveResp.ok || !saveData.success) {
+                    throw new Error(saveData.error || saveData.message || `HTTP ${saveResp.status}`);
+                }
+                showSuccess(window.t ? window.t('restore_image_success') : '已恢复为当前形象图');
+                closeImagePreviewModal();
+                loadFiles(fileType);
+                notifyAgentAssetUpdated(`系统通知：${typeLabel} "${fileName}" 的形象图已被用户从资产库设置，请重新读取最新内容。`);
+            } catch (error) {
+                showError((window.t ? window.t('restore_image_failed', {error: error.message}) : '设置形象图失败: ' + error.message));
+            }
+        }
+        window.pickPreviewImageFromAssetLibrary = pickPreviewImageFromAssetLibrary;
 
         // 生成场景多角度图片（90°, 180°, 270°）
         // 多角度生图任务轮询状态
@@ -6891,6 +6976,27 @@
                 if (zone) zone.classList.add('has-image');
             }
         }
+
+        /**
+         * 从共享资产库选择图片，回填参考图输入框（角色/道具编辑表单通用）。
+         * 资产库列表仅返回当前用户可见的图片资产（自己的/公开的/被指派的，
+         * 见 services/asset_library_service.py _visible_where），满足引用权限要求。
+         */
+        function pickImageFromAssetLibrary(inputId) {
+            if (!window.AssetLibrary) return;
+            window.AssetLibrary.openModal({
+                title: '从资产库选择图片',
+                onPick: function (asset) {
+                    if (!asset || !asset.file_url) return;
+                    const inputEl = document.getElementById(inputId);
+                    if (inputEl) inputEl.value = asset.file_url;
+                    showImagePreview(inputId, window.AssetLibrary.absoluteUrl(asset.file_url));
+                }
+            });
+        }
+
+        // 暴露给内联 onclick（IIFE 内函数默认全局可见，显式挂 window 保险）
+        window.pickImageFromAssetLibrary = pickImageFromAssetLibrary;
 
         function removeImagePreview(inputId) {
             const inputEl = document.getElementById(inputId);

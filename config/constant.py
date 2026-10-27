@@ -2445,6 +2445,7 @@ class UploadPathConstants:
     CHARACTER_VOICE_DIR = "character/voice"
     FACE_MASK_DIR = "face_mask"     # 人脸遮盖视频结果目录
     BRANDING_DIR = "branding"      # 品牌定制资源目录（Logo / Favicon / 用户手册，永久存放）
+    ASSET_LIBRARY_DIR = "asset_library"  # 资产库目录（永久存放，不受媒体缓存清理策略影响）
 
     # 文件名前缀
     MEDIA_PREFIX = "media"      # 媒体文件前缀（图生视频上传）
@@ -2454,6 +2455,75 @@ class UploadPathConstants:
     # Agent 模式上传数量限制
     AGENT_IMAGE_MAX_COUNT = 9   # Agent 模式最多上传图片数
     AGENT_VIDEO_MAX_COUNT = 3   # Agent 模式最多上传视频数
+
+
+class AssetLibraryConstants:
+    """资产库相关常量（见 docs/backend/asset_library.md）
+
+    资产库与媒体缓存（utils/media_cache.py）是两套独立的存储生命周期：
+    资产文件永久存放（不受存储容量限制、不被清理任务删除），
+    但按用户维度记录已用容量（asset_library_quota），由管理员逐人控制配额。
+    """
+
+    # ===== 权限可见性枚举（asset_library.view_permission / edit_permission）=====
+    PERMISSION_PRIVATE = "private"      # 仅自己
+    PERMISSION_SPECIFIED = "specified"  # 指定成员
+    PERMISSION_PUBLIC = "public"        # 所有人（登录用户）
+    PERMISSION_CHOICES = (PERMISSION_PRIVATE, PERMISSION_SPECIFIED, PERMISSION_PUBLIC)
+
+    # ===== 指定成员权限类型（asset_permission_member.perm_type）=====
+    PERM_TYPE_VIEW = "view"             # 可看
+    PERM_TYPE_EDIT = "edit"             # 可编辑
+    PERM_TYPE_CHOICES = (PERM_TYPE_VIEW, PERM_TYPE_EDIT)
+
+    # ===== 资产类型（当前仅图片，预留视频/音频）=====
+    ASSET_TYPE_IMAGE = "image"
+    ASSET_TYPE_VIDEO = "video"   # 预留
+    ASSET_TYPE_AUDIO = "audio"   # 预留
+    ASSET_TYPE_CHOICES = (ASSET_TYPE_IMAGE, ASSET_TYPE_VIDEO, ASSET_TYPE_AUDIO)
+    ASSET_TYPE_EXTENSIONS = {
+        ASSET_TYPE_IMAGE: ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'),
+    }
+
+    # ===== 容量配额（asset_library_quota）=====
+    # 默认单人资产库容量 2GB；quota_bytes=0 表示不限制（管理员可逐人调整）
+    DEFAULT_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
+    QUOTA_UNLIMITED = 0
+
+    # 单个资产文件大小上限（50MB，图片足够；视频/音频接入时再评估调整）
+    MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
+
+    # ===== 列表分页 =====
+    DEFAULT_PAGE_SIZE = 24
+    MAX_PAGE_SIZE = 100
+
+    # ===== 文件名 / 引用 token =====
+    FILENAME_PREFIX = "asset"
+    # @ 引用 token：`@资产:{id}`（id 为 asset_library.id）。
+    # 前端提及菜单插入该字面 token，提交前由 window.AssetLibrary.resolveMentionTokens
+    # 解析为 markdown 图片注入上下文；服务端见到该 token 同样按资产 URL 还原。
+    MENTION_TOKEN_PREFIX = "@资产:"
+
+    # ===== 下载/写盘超时（加入资产库时把远程 URL 持久化到本地）=====
+    DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 10
+    DOWNLOAD_TOTAL_TIMEOUT_SECONDS = 120
+    DOWNLOAD_WRITE_CHUNK_TIMEOUT_SECONDS = 30
+    DOWNLOAD_IO_CHUNK_BYTES = 65536
+
+    # ===== 分组 =====
+    GROUP_NAME_MAX_LENGTH = 50
+    ASSET_NAME_MAX_LENGTH = 200
+    # 用户搜索（指定成员选择）返回上限
+    MEMBER_SEARCH_LIMIT = 20
+
+    # ===== 功能开关（system_config，管理员在 admin「资产管理」配置）=====
+    # get_dynamic_config_value('asset_library', <key>) 读取；写入走
+    # SystemConfigModel.upsert + invalidate_dynamic_cache
+    CONFIG_KEY_ENABLED = 'enabled'              # bool，默认 False：总开关
+    CONFIG_KEY_TOTAL_QUOTA_GB = 'total_quota_gb'  # number，默认 0=不限：全站总磁盘上限
+    CONFIG_KEY_ALLOW_ALL_USERS = 'allow_all_users'  # bool，默认 False：全员可用（关闭则逐用户 quota.enabled）
+    CONFIG_NAMESPACE = 'asset_library'
+    GLOBAL_QUOTA_EXCEEDED_MSG = '资产库总容量已满，请联系管理员调整'
 
 
 class MediaConstants:

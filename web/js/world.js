@@ -587,6 +587,19 @@ async function initWorldSelector() {
     });
   }
 
+  // 共享资产库入口（web/js/asset_library.js）
+  const assetLibraryBtn = document.getElementById('assetLibraryBtn');
+  if (assetLibraryBtn) {
+    assetLibraryBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeWorldSearchDropdown();
+      if (window.AssetLibrary) {
+        window.AssetLibrary.openModal();
+      }
+    });
+  }
+
   if (editWorldModal) {
     if (editWorldSaveBtn) {
       editWorldSaveBtn.addEventListener('click', (e) => {
