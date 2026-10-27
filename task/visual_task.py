@@ -72,7 +72,7 @@ _enterprise_failure_handler = None
 #   PROCESS_RESULT_FAILED    → 已被 _handle_task_failure 处理为终态失败
 #                              （社区版标 FAILED+退费，或企业版接管进入重试流水线）
 #   PROCESS_RESULT_IN_FLIGHT → 提交/流转成功但任务仍在进行（pipeline/sync/异步提交/
-#                              拥堵重排队/轮询宽限/孤儿重置），处理函数已自行维护状态
+#                              拥堵重排队/轮询宽限/孤儿重置/结果获取重试），处理函数已自行维护状态
 #   True（遗留）             → 兼容旧调用点，按成功计（新代码勿再返回裸 True）
 #   False / None             → transient 失败或仍在轮询，调度循环按 try_count 退避后再调度
 PROCESS_RESULT_SUCCESS = "SUCCESS"
@@ -778,6 +778,18 @@ async def _check_task_status(ai_tool):
             # 任务仍在处理中
             message = result.get("message", "任务处理中...")
             logger.info(f"Task {task_id} still processing: {message}")
+            if result.get("preserve_retry_count"):
+                # 上游已成功、仅结果获取失败时，不能继续消耗生成阶段的
+                # max_retry_count，否则长任务在一次 outputs 抖动后就会判死。
+                # 自行安排下一次轮询并返回 IN_FLIGHT，任务过期检查仍负责终态兜底。
+                task_row = TasksModel.get_by_task_id(task_id)
+                try_count = max(1, int(getattr(task_row, 'try_count', 0) or 0))
+                delay_seconds = calculate_next_retry_delay(try_count)
+                TasksModel.update_by_task_id(
+                    task_id,
+                    next_trigger=datetime.now() + timedelta(seconds=delay_seconds),
+                )
+                return PROCESS_RESULT_IN_FLIGHT
             return False  # 返回 False 表示仍在处理中
             
         else:

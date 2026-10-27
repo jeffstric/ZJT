@@ -335,3 +335,59 @@ def test_video_tool_executor_accepts_and_forwards_model_id():
     )
     assert delegated_calls[-1]["tool_name"] == "generate_text_to_video"
     assert delegated_calls[-1]["kwargs"].get("model_id") == 34
+
+
+def test_storyboard_video_tool_injects_generation_count_from_preferences():
+    """视频生成次数按「已由系统注入」语义：界面偏好 count 强制覆盖 LLM 传参（1-4）。"""
+    module = _load_video_tool_module()
+    assert module is not None
+
+    delegated_calls = []
+
+    class FakeDelegate:
+        def get_tool_definitions(self, allowed_tools):
+            return []
+
+        def execute_tool(self, tool_name, tool_args, user_id, world_id, auth_token, **kwargs):
+            delegated_calls.append({"tool_name": tool_name, "tool_args": dict(tool_args)})
+            return {"success": True}
+
+    # 合法偏好 count=3：LLM 即使传了 count=1 也必须被覆盖
+    executor = module.StoryboardAgentVideoToolExecutor(
+        FakeDelegate(),
+        scene_id=26,
+        video_preferences={"count": 3},
+    )
+    executor.execute_tool(
+        "generate_text_to_video",
+        {"prompt": "camera moves", "count": 1},
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+    )
+    executor.execute_tool(
+        "image_to_video",
+        {"prompt": "camera moves", "image_urls": "https://cdn.example.test/frame.png"},
+        user_id="7",
+        world_id="9",
+        auth_token="token",
+    )
+    assert delegated_calls[0]["tool_args"]["count"] == 3
+    assert delegated_calls[1]["tool_args"]["count"] == 3
+
+    # 非法偏好（越界 / 非数字）不注入，LLM 传参原样保留
+    for bad in (0, 5, "many", None):
+        delegated_calls.clear()
+        executor_bad = module.StoryboardAgentVideoToolExecutor(
+            FakeDelegate(),
+            scene_id=26,
+            video_preferences={"count": bad},
+        )
+        executor_bad.execute_tool(
+            "generate_text_to_video",
+            {"prompt": "camera moves", "count": 2},
+            user_id="7",
+            world_id="9",
+            auth_token="token",
+        )
+        assert delegated_calls[0]["tool_args"].get("count") == 2

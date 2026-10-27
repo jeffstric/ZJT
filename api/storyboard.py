@@ -618,6 +618,7 @@ async def _build_storyboard_agent_video_preferences(
     video_resolution: Optional[str],
     video_task_id: Optional[int] = None,
     enable_face_mask: bool = False,
+    count: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Build an immutable task snapshot without mutating shared user preferences.
 
@@ -644,6 +645,12 @@ async def _build_storyboard_agent_video_preferences(
     }
     if video_resolution:
         preferences['resolution'] = str(video_resolution)
+    try:
+        parsed_count = int(count)
+    except (TypeError, ValueError):
+        parsed_count = 0
+    if 1 <= parsed_count <= 4:
+        preferences['count'] = parsed_count
 
     resolved_task_id = None
     if video_task_id is not None and str(video_task_id).strip() != '':
@@ -5310,6 +5317,7 @@ async def scene_ai_chat(
                 video_resolution=video_resolution,
                 video_task_id=video_task_id,
                 enable_face_mask=_coerce_enable_face_mask(data.get('enable_face_mask')),
+                count=data.get('count'),
             )
 
             video_mode = MediaGenerationPreferenceService.determine_mode(

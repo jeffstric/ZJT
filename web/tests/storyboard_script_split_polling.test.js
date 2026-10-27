@@ -109,6 +109,37 @@ describe('pollScriptSplitTask', () => {
         expect(onComplete).toHaveBeenCalled();
     });
 
+    // 回归：调度器放弃（连续失败）必须走 onError 终态——调用方只在回调里清
+    // isGeneratingFromScript，静默放弃会让进度弹窗永久停在 running
+    it('invokes onError when the scheduler gives up after consecutive failures', async () => {
+        apiMocks.getScriptSplitTaskStatus.mockRejectedValue(new Error('network down'));
+        const onError = vi.fn();
+        const onComplete = vi.fn();
+
+        pollScriptSplitTask(7, { onError, onComplete });
+        // 首错 8s→16s→20s*6：8 次失败约 144s，推进 200s 确保放弃已发生
+        await vi.advanceTimersByTimeAsync(200000);
+
+        expect(onError).toHaveBeenCalledTimes(1);
+        expect(onComplete).not.toHaveBeenCalled();
+        // 放弃后不再轮询
+        const frozen = apiMocks.getScriptSplitTaskStatus.mock.calls.length;
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(apiMocks.getScriptSplitTaskStatus).toHaveBeenCalledTimes(frozen);
+    });
+
+    // 回归：同签名长时间无进展触发 onDeadline 时同样要走 onError 终态
+    it('invokes onError when the no-progress deadline is reached', async () => {
+        apiMocks.getScriptSplitTaskStatus.mockResolvedValue({ status: 'generating', progress: 30 });
+        const onError = vi.fn();
+
+        pollScriptSplitTask(8, { onError });
+        // 30 分钟软超时（服务端 poll_after_ms 缺省时按本地间隔 4s 节奏走）
+        await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
+
+        expect(onError).toHaveBeenCalledTimes(1);
+    });
+
     it('ignores falsy taskId', () => {
         // 不应抛错也不应启动轮询
         expect(() => pollScriptSplitTask(null)).not.toThrow();
