@@ -11,6 +11,19 @@
     { direction: 'output', titleI18nKey: 'extract_frame_output_port' }
   ];
 
+  // 浏览器本地临时地址（blob:/data:）：服务端无法访问，不可作为 video_url 提交
+  function isTemporaryVideoUrl(url) {
+    return !!url && (url.indexOf('blob:') === 0 || url.indexOf('data:') === 0);
+  }
+
+  // 查找输入端口当前连接的视频源节点（无连接返回 null）
+  function findConnectedVideoNode(node) {
+    if (typeof state === 'undefined' || !state.connections || !state.nodes) return null;
+    var conn = state.connections.find(function(c) { return c.to === node.id; });
+    if (!conn) return null;
+    return state.nodes.find(function(n) { return n.id === conn.from; }) || null;
+  }
+
   // 秒 → "mm:ss.cc" 时间码
   function formatTimecode(sec) {
     if (!isFinite(sec) || sec < 0) sec = 0;
@@ -135,15 +148,20 @@
           acceptType: 'video',
           connectionType: 'connections',
           onConnect: function(fromNode) {
-            node.data.videoUrl = fromNode.data.url;
-            node.data.videoName = fromNode.data.name || '视频';
-            if (node.data.videoUrl) {
-              thumbVideo.src = proxyDownloadUrl(node.data.videoUrl);
-              previewField.style.display = '';
-              nameEl.textContent = node.data.videoName;
-            }
+            applySourceVideo(fromNode);
           }
         });
+
+        // 从源视频节点同步地址与预览（onConnect 与提取前回读共用）
+        function applySourceVideo(fromNode) {
+          node.data.videoUrl = fromNode.data.url || '';
+          node.data.videoName = fromNode.data.name || '视频';
+          if (node.data.videoUrl) {
+            thumbVideo.src = proxyDownloadUrl(node.data.videoUrl);
+            previewField.style.display = '';
+            nameEl.textContent = node.data.videoName;
+          }
+        }
 
         // 设置视频
         function setVideoFromUrl(url, name) {
@@ -382,6 +400,26 @@
         }
 
         async function extractFrame() {
+          // 连线场景下 videoUrl 可能复制于源节点上传完成前（blob: 临时地址），
+          // 提交前实时回读源节点最新地址；源节点仍在上传/无视频时给出明确提示，
+          // 避免把临时地址发给后端报"不支持外部视频URL"
+          var connectedVideoNode = (!node.data.videoFile) ? findConnectedVideoNode(node) : null;
+          if (connectedVideoNode) {
+            var liveUrl = (connectedVideoNode.data && connectedVideoNode.data.url) || '';
+            if (!liveUrl) {
+              showToast(window.t ? window.t('extract_frame_source_no_video') : '源视频节点还没有视频，请先上传', 'warning');
+              return;
+            }
+            if (isTemporaryVideoUrl(liveUrl)) {
+              showToast(window.t ? window.t('extract_frame_source_uploading') : '源视频还在上传中，请稍候再试', 'warning');
+              return;
+            }
+            if (liveUrl !== node.data.videoUrl) {
+              applySourceVideo(connectedVideoNode);
+              safeAutoSave();
+            }
+          }
+
           var hasVideoFile = node.data.videoFile !== null;
           var hasVideoUrl = node.data.videoUrl && node.data.videoUrl.length > 0;
 
@@ -516,6 +554,20 @@
         thumbVideo.src = proxyDownloadUrl(node.data.videoUrl);
         previewField.style.display = '';
         nameEl.textContent = node.data.videoName;
+      } else {
+        // 连线来源的视频地址不入库（blob: 地址保存时被清空）：连接恢复晚于节点创建，
+        // 延迟一拍等连接就位后从源节点回读，保证重载后提取帧节点能复原预览与提取能力
+        setTimeout(function() {
+          var fromNode = findConnectedVideoNode(node);
+          if (!fromNode) return;
+          var liveUrl = (fromNode.data && fromNode.data.url) || '';
+          if (!liveUrl || isTemporaryVideoUrl(liveUrl)) return;
+          node.data.videoUrl = liveUrl;
+          if (!node.data.videoName) node.data.videoName = fromNode.data.name || '视频';
+          thumbVideo.src = proxyDownloadUrl(liveUrl);
+          previewField.style.display = '';
+          nameEl.textContent = node.data.videoName;
+        }, 0);
       }
 
       if (node.data.frameType) {

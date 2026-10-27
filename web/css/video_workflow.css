@@ -2009,6 +2009,36 @@ html.theme-dark .node.image-node .image-camera-control-btn{
   backdrop-filter: blur(6px);
 }
 .video-preview-actions .vp-btn:hover{ background: rgba(0,0,0,0.65); }
+/* ===== 视频节点：上传中标识 ===== */
+.video-uploading-overlay{
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.2;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 2;
+}
+.video-uploading-spinner{
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: video-uploading-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes video-uploading-spin{
+  to { transform: rotate(360deg); }
+}
 /* ===== 提取帧节点：时间轴选帧 + 关键帧候选网格 ===== */
 .time-picker-field .time-slider{
   width: 100%;
