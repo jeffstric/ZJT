@@ -2,7 +2,6 @@
 RunningHub 视频高清修复驱动
 
 通过 RunningHub OpenAPI v2 AI-App 调用「视频高清放大」工作流。
-webapp_id: 2064116518987845634（常量 VIDEO_ENHANCE_APP_ID）
 
 参数注入节点：
   - 视频       → nodeId 46  fieldName=video（VHS 加载，传上传后的 fileName 或公网 URL）
@@ -20,15 +19,8 @@ import traceback
 
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
-    VIDEO_ENHANCE_APP_ID,
-    VIDEO_ENHANCE_INSTANCE_TYPE,
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
-    VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID,
-    VIDEO_ENHANCE_MAX_RESOLUTION_VALUE,
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
-    VIDEO_ENHANCE_MODEL_SWITCH_NODE_ID,
-    VIDEO_ENHANCE_MODEL_SWITCH_VALUE,
-    VIDEO_ENHANCE_VIDEO_NODE_ID,
 )
 from config.unified_config import TaskTypeId, VIDEO_ENHANCE_COMPUTING_POWER
 from utils.file_storage import RunningHubFileStorage
@@ -36,6 +28,18 @@ from utils.runninghub_error import is_upstream_congested_error
 from utils.sentry_util import AlertLevel, SentryUtil
 
 from .base_video_driver import BaseVideoDriver
+
+# ==================== RunningHub AI App「视频高清放大」参数（仅本驱动使用） ====================
+# app id 与节点参数映射；时长上下限/探测超时在 config/constant.py（端点与驱动共用）
+VIDEO_ENHANCE_APP_ID = '2064116518987845634'
+VIDEO_ENHANCE_VIDEO_NODE_ID = '46'
+VIDEO_ENHANCE_MODEL_SWITCH_NODE_ID = '108'
+VIDEO_ENHANCE_MODEL_SWITCH_VALUE = '1'
+VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID = '112'
+VIDEO_ENHANCE_MAX_RESOLUTION_VALUE = '1920'
+# default=24G 显存 / plus=48G / ultra=84G。SeedVR2 视频超分实测 default 必爆显存
+# （torch.OutOfMemoryError，2026-10-28 任务 2115435158520954881），须用 plus（48G）
+VIDEO_ENHANCE_INSTANCE_TYPE = 'plus'
 
 VIDEO_RESULT_EXTENSIONS = (".mp4", ".webm", ".mov", ".mkv")
 

@@ -32,7 +32,9 @@
 
 ## RunningHub AI App 节点参数
 
-常量在 `config/constant.py` 的 `VIDEO_ENHANCE_*`：
+App id 与节点参数常量在驱动文件顶部维护（仅驱动使用，惯例同去水印/音频驱动）：
+`task/visual_drivers/video_enhance_runninghub_v1_driver.py` 的 `VIDEO_ENHANCE_*`。
+时长上下限与 ffprobe 探测超时（端点与驱动共用）在 `config/constant.py`：
 
 | 节点 | 字段 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -63,9 +65,9 @@
 
 ## 相关文件
 
-- `config/constant.py`：`VIDEO_ENHANCE_*` 常量 + `DRIVER_IMPLEMENTATION_MAPPING` 登记
+- `config/constant.py`：时长边界/探测超时常量（端点与驱动共用）+ `DRIVER_IMPLEMENTATION_MAPPING` 登记
 - `config/unified_config.py`：算力表、任务配置、实现方注册（ImplementationId 102）
-- `task/visual_drivers/video_enhance_runninghub_v1_driver.py`：驱动（提交/轮询/告警/重试分类）
+- `task/visual_drivers/video_enhance_runninghub_v1_driver.py`：驱动（App id/节点参数/instanceType 常量 + 提交/轮询/告警/重试分类）
 - `server.py`：`_probe_video_duration_seconds()` / `_snap_duration_to_enhance_tier()` / `/api/video-enhance`
 - 前端：`web/js/pages/video_enhance.js`、`web/js/pages/ai_script_gen.js`
 - 测试：`tests/api/test_video_enhance_v2.py`

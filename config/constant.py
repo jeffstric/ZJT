@@ -1237,20 +1237,10 @@ RUNNINGHUB_TASK_TYPES = TaskTypeRegistry.get_by_provider(TaskProvider.RUNNINGHUB
 RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
 
 # ==================== 视频高清修复（RunningHub OpenAPI v2 AI App） ====================
-# AI App「视频高清放大」(app id 2064116518987845634) 的节点参数映射：
-#   node 46  video  上传视频（RunningHub 上传返回的 fileName 或公网 URL）
-#   node 108 select 模型切换（"1"）
-#   node 112 value  最大分辨率（不建议超过 1920）
-VIDEO_ENHANCE_APP_ID = '2064116518987845634'
-VIDEO_ENHANCE_VIDEO_NODE_ID = '46'
-VIDEO_ENHANCE_MODEL_SWITCH_NODE_ID = '108'
-VIDEO_ENHANCE_MODEL_SWITCH_VALUE = '1'
-VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID = '112'
-VIDEO_ENHANCE_MAX_RESOLUTION_VALUE = '1920'
-# default=24G 显存 / plus=48G / ultra=84G。SeedVR2 视频超分实测 default 必爆显存
-# （torch.OutOfMemoryError，2026-10-28 任务 2115435158520954881），须用 plus（48G）
-VIDEO_ENHANCE_INSTANCE_TYPE = 'plus'
-# 时长档位边界（ffprobe 探测后向上取整吸附到 [4, 15] 档，算力随档位递增）
+# AI App「视频高清放大」的 app id 与节点参数常量在驱动文件内维护
+# （task/visual_drivers/video_enhance_runninghub_v1_driver.py，仅驱动使用）。
+# 时长档位边界与 ffprobe 探测超时由提交端点与驱动共用，保留在此：
+# ffprobe 探测后向上取整吸附到 [4, 15] 档，算力随档位递增
 VIDEO_ENHANCE_MIN_DURATION_SECONDS = 4
 VIDEO_ENHANCE_MAX_DURATION_SECONDS = 15
 # ffprobe 探测视频时长的超时（秒），本地文件与远程 URL 共用
