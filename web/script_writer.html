@@ -449,7 +449,7 @@
                         <textarea 
                             id="message-input" 
                             class="message-input"
-                            placeholder="输入消息... (Shift+Enter 换行，Enter 发送)" data-i18n-placeholder="placeholder_message"
+                            placeholder="输入消息... (Enter 换行，Ctrl+Enter 发送)" data-i18n-placeholder="placeholder_message_ctrl_enter"
                             rows="1"
                         ></textarea>
                         <button id="send-btn" class="send-btn">
@@ -470,6 +470,7 @@
                             <span id="status-text">就绪</span>
                         </span>
                         <span class="status-item"><span data-i18n="session_label">会话:</span> <span id="session-id" data-i18n="session_not_created">未创建</span></span>
+                        <button id="send-shortcut-toggle" class="send-shortcut-toggle" type="button" title="点击切换发送快捷键（Enter / Ctrl+Enter）"></button>
                     </div>
                 </div>
             </div>

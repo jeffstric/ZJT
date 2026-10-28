@@ -548,12 +548,69 @@
                     syncSendBtnLayout();
                 });
 
+                // 发送快捷键：默认 Ctrl+Enter 发送（Enter 换行），
+                // 用户可点击状态栏切换按钮改回 Enter 发送；偏好持久化 localStorage
+                const SEND_SHORTCUT_STORAGE_KEY = 'script_writer_send_shortcut';
+                const sendShortcutI18n = (key, fallback) => {
+                    // ZJTi18n.t 对缺失 key 返回键本身，需显式识别后走 fallback
+                    let value = null;
+                    try {
+                        value = window.ZJTi18n && ZJTi18n.t(key);
+                    } catch (e) {
+                        value = null;
+                    }
+                    return (value && value !== key) ? value : fallback;
+                };
+                const getSendShortcutMode = () =>
+                    localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'enter' ? 'enter' : 'ctrl_enter';
+                const applySendShortcutUI = () => {
+                    const mode = getSendShortcutMode();
+                    const toggleBtn = document.getElementById('send-shortcut-toggle');
+                    if (toggleBtn) {
+                        toggleBtn.textContent = mode === 'enter'
+                            ? sendShortcutI18n('send_shortcut_enter', 'Enter 发送')
+                            : sendShortcutI18n('send_shortcut_ctrl_enter', 'Ctrl+Enter 发送');
+                    }
+                    const input = document.getElementById('message-input');
+                    if (input) {
+                        input.placeholder = mode === 'enter'
+                            ? sendShortcutI18n('placeholder_message', '输入消息... (Shift+Enter 换行，Enter 发送)')
+                            : sendShortcutI18n('placeholder_message_ctrl_enter', '输入消息... (Enter 换行，Ctrl+Enter 发送)');
+                    }
+                };
+
                 messageInput.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
+                    if (e.key !== 'Enter') return;
+                    if (e.isComposing) return; // 输入法组词中不触发发送
+                    const mode = getSendShortcutMode();
+                    if (mode === 'enter') {
+                        // 旧习惯：Enter 发送，Shift+Enter 换行
+                        if (!e.shiftKey) {
+                            e.preventDefault();
+                            sendMessage();
+                        }
+                    } else {
+                        // 默认：Ctrl+Enter / Cmd+Enter（macOS）发送，Enter / Shift+Enter 换行
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            sendMessage();
+                        }
                     }
                 });
+
+                applySendShortcutUI();
+                const shortcutToggleBtn = document.getElementById('send-shortcut-toggle');
+                if (shortcutToggleBtn) {
+                    shortcutToggleBtn.addEventListener('click', () => {
+                        const next = getSendShortcutMode() === 'enter' ? 'ctrl_enter' : 'enter';
+                        localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, next);
+                        applySendShortcutUI();
+                    });
+                }
+                // 语言切换后刷新按钮与 placeholder 文案
+                if (window.ZJTi18n && typeof ZJTi18n.on === 'function') {
+                    ZJTi18n.on('locale-changed', applySendShortcutUI);
+                }
                 // 首屏：单行居中
                 syncSendBtnLayout();
             }
