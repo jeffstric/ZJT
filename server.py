@@ -8,6 +8,7 @@ import asyncio
 import uuid
 from io import BytesIO
 import json
+import math
 import os
 import time
 import logging
@@ -93,6 +94,9 @@ from config.constant import (
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
     FaceMaskPromptConstants,
+    VIDEO_ENHANCE_MIN_DURATION_SECONDS,
+    VIDEO_ENHANCE_MAX_DURATION_SECONDS,
+    VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -2275,6 +2279,70 @@ async def text_to_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+async def _refund_failed_runninghub_task(task_record, auth_token: str, project_id: str) -> None:
+    """失败任务的幂等退费（/api/runninghub-status v1/v2 轮询分支共用）。
+
+    幂等防重复退费：本端点可被任意次轮询（前端停止轮询不是服务端控制），
+    原实现每次轮询生成新 uuid，绕过 perseids 交易号去重，可对同一失败任务
+    重复退费（实测 N 次轮询 = N 倍退费）。对齐后台退费路径（task/visual_task.py）
+    的既有模式：已退费检查 + 由扣费流水号派生的退费流水号（refund-{原扣费流水号}）。
+    """
+    from utils.computing_power import (
+        build_refund_transaction_id,
+        is_already_refunded,
+    )
+    if is_already_refunded(task_record):
+        logger.info(
+            f"Task {project_id} already refunded (idempotent transaction), "
+            f"skip repeated refund on status poll"
+        )
+        return
+    transaction_id = build_refund_transaction_id(task_record) or str(uuid.uuid4())
+    headers = {'Authorization': f'Bearer {auth_token}'}
+    # 发起请求，获取用户ID
+    success, message, response_data = await async_make_perseids_request(
+        endpoint='user/get_user_id_by_auth_token',
+        method='POST',
+        headers=headers
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    user_id_from_token = response_data.get('user_id')
+    if user_id_from_token != task_record.user_id:
+        raise HTTPException(status_code=400, detail="用户ID不匹配")
+    # 发起请求，增加算力
+    type = task_record.type
+    task_config = TaskTypeRegistry.get(type)
+    # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
+    context = build_context_from_task_record(task_record)
+    impl_id = getattr(task_record, 'implementation', None)
+    impl_name = get_implementation_name(impl_id) if impl_id else None
+    implementation = (
+        impl_name
+        if impl_name and impl_name != 'unknown'
+        else get_implementation_for_user(type, task_record.user_id)
+    )
+    computing_power = task_config.get_computing_power(
+        duration=task_record.duration,
+        implementation=implementation,
+        context=context
+    ) if task_config else 0
+    success, message, response_data = await async_make_perseids_request(
+        endpoint='user/calculate_computing_power',
+        method='POST',
+        headers=headers,
+        data={
+            "computing_power": computing_power,
+            "behavior": "increase",
+            "transaction_id": transaction_id
+        }
+    )
+    if success:
+        logger.info(f"Successfully refunded {computing_power} computing power for failed task {project_id}, transaction_id: {transaction_id}")
+    else:
+        logger.error(f"Failed to refund computing power: {message}")
+
+
 @app.get("/api/runninghub-status/{project_id}")
 @require_permission("image:view_status")
 async def runninghub_status(
@@ -2330,65 +2398,8 @@ async def runninghub_status(
                 status=AI_TOOL_STATUS_FAILED
             )
             if CHECK_AUTH_TOKEN and auth_token:
-                # 幂等防重复退费：本端点可被任意次轮询（前端停止轮询不是服务端
-                # 控制），原实现每次轮询生成新 uuid，绕过 perseids 交易号去重，
-                # 可对同一失败任务重复退费（实测 N 次轮询 = N 倍退费）。对齐
-                # 后台退费路径（task/visual_task.py）的既有模式：已退费检查 +
-                # 由扣费流水号派生的退费流水号（refund-{原扣费流水号}）。
-                from utils.computing_power import (
-                    build_refund_transaction_id,
-                    is_already_refunded,
-                )
-                if is_already_refunded(task_record):
-                    logger.info(
-                        f"Task {project_id} already refunded (idempotent transaction), "
-                        f"skip repeated refund on status poll"
-                    )
-                    return JSONResponse({"status": status.value, "results": []})
-                transaction_id = build_refund_transaction_id(task_record) or str(uuid.uuid4())
-                headers = {'Authorization': f'Bearer {auth_token}'}
-                #发起请求，获取用户ID
-                success, message, response_data = await async_make_perseids_request(
-                    endpoint='user/get_user_id_by_auth_token',
-                    method='POST',
-                    headers=headers
-                )
-                if not success:
-                    raise HTTPException(status_code=400, detail=message)
-                user_id_from_token = response_data.get('user_id')
-                if user_id_from_token != task_record.user_id:
-                    raise HTTPException(status_code=400, detail="用户ID不匹配")
-                #发起请求，增加算力
-                type = task_record.type
-                task_config = TaskTypeRegistry.get(type)
-                # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
-                context = build_context_from_task_record(task_record)
-                impl_id = getattr(task_record, 'implementation', None)
-                impl_name = get_implementation_name(impl_id) if impl_id else None
-                implementation = (
-                    impl_name
-                    if impl_name and impl_name != 'unknown'
-                    else get_implementation_for_user(type, task_record.user_id)
-                )
-                computing_power = task_config.get_computing_power(
-                    duration=task_record.duration,
-                    implementation=implementation,
-                    context=context
-                ) if task_config else 0
-                success, message, response_data = await async_make_perseids_request(
-                    endpoint='user/calculate_computing_power',
-                    method='POST',
-                    headers=headers,
-                    data={
-                        "computing_power": computing_power,
-                        "behavior": "increase",
-                        "transaction_id": transaction_id
-                    }
-                )
-                if success:
-                    logger.info(f"Successfully refunded {computing_power} computing power for failed task {project_id}, transaction_id: {transaction_id}")
-                else:
-                    logger.error(f"Failed to refund computing power for task {project_id}: {message}")
+                # 幂等防重复退费（与 v2 分支共用，模式说明见函数 docstring）
+                await _refund_failed_runninghub_task(task_record, auth_token, project_id)
             return JSONResponse({
                 "status": status.value,
                 "results": []
@@ -4669,229 +4680,207 @@ async def image_upscale(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"图片高清放大失败: {str(e)}")
         
+async def _probe_video_duration_seconds(source: str) -> Optional[float]:
+    """ffprobe 探测视频时长（本地路径或远程 URL），失败/超时返回 None。
+
+    视频高清修复按秒数定算力档位：本地文件直接探测，远程 URL 由 ffprobe
+    拉流探测；超时受 VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS 约束，子进程异步
+    执行不阻塞事件循环。
+    """
+    ffprobe_path = resolve_bin_path(
+        get_config_value("bin", "ffprobe", default="ffprobe"), APP_DIR
+    )
+    cmd = [
+        ffprobe_path, '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        source,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.warning(f"ffprobe timeout when probing video duration: {source}")
+            return None
+        if proc.returncode != 0:
+            logger.warning(f"ffprobe failed to probe video duration: {source}")
+            return None
+        return float(stdout.decode('utf-8', errors='ignore').strip())
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Error probing video duration for {source}: {exc}")
+        return None
+
+
+def _snap_duration_to_enhance_tier(duration_seconds: float) -> int:
+    """把探测到的视频时长吸附到高清修复算力档位（向上取整，下限 4 秒）。"""
+    return max(
+        VIDEO_ENHANCE_MIN_DURATION_SECONDS,
+        int(math.ceil(float(duration_seconds))),
+    )
+
+
 @app.post("/api/video-enhance")
 @require_permission("video:enhance")
 async def video_enhance(
     request: Request,
     video: UploadFile = File(None, description="需要修复的视频文件"),
     video_url: str = Form(None, description="视频URL（如果提供则不需要上传文件）"),
+    duration_seconds: Optional[int] = Form(None, description="视频时长（秒），ffprobe 探测失败时的回退档位，4-15"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    enhance_type: int = Form(5, description="增强类型：5-视频高清修复，6-从其他任务生成高清视频")
+    enhance_type: int = Form(5, description="（已废弃，仅兼容旧调用）任务来源：5-直接上传，6-从其他任务生成"),
 ):
     """
-    Video enhancement endpoint - Enhance blurry video to higher quality
-    Args:
-    video: The video file to enhance (optional if video_url provided)
-    video_url: Direct video URL to enhance (optional if video file provided)
-    user_id: User ID for tracking
-    auth_token: Authentication token
-    enhance_type: Type for database record (5 for direct upload, 6 for history enhancement)
-    Returns:
-    JSON response with enhancement task information
+    提交视频高清修复任务。只落库并入队，RunningHub 上传与 OpenAPI v2 提交由
+    调度进程的 video_enhance_runninghub_v1 驱动完成（模式同视频去水印）。
+    算力按 ffprobe 探测的视频秒数吸附 4-15 档计费（MiniMax H3 梯度的 2 倍），
+    提交前预扣，任务失败由后台幂等退费；前端轮询 /api/get-status/{project_id}。
     """
     try:
-        logger.info(f"Video enhancement request received from user: {user_id}")
-        # Generate transaction ID
-        transaction_id = str(uuid.uuid4())
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
         task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_ENHANCE)
-        computing_power = task_config.get_computing_power()
-        if CHECK_AUTH_TOKEN:
-            headers = {'Authorization': f'Bearer {auth_token}'}
-            # Check if computing power is sufficient
-            success, message, response_data = await async_make_perseids_request(
-                endpoint='user/check_computing_power',
-                method='GET',
-                headers=headers
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400,
-                    detail=message
-                )
-            user_computing_power = response_data.get('computing_power', 0)
-            user_id_from_token = response_data.get('user_id')
-            if user_computing_power < computing_power:
-                raise HTTPException(
-                    status_code=400,
-                    detail="您的算力不足，无法进行视频修复"
-                )
-            if user_id_from_token != user_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="用户ID不匹配"
-                )
-        
-        # Determine video URL - either from upload or from parameter
-        # 用于存入数据库的本地 URL
-        local_video_url = None
-        
-        if video_url:
-            # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
-            local_file_path = _resolve_local_upload_path(video_url, '/upload/cache/')
-            if local_file_path is not None:
-                # 本地缓存文件，需要上传到 RunningHub
-                from utils.file_storage import RunningHubFileStorage
-                from config.config_util import get_config, get_dynamic_config_value
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频高清修复任务未配置")
 
-                if not local_file_path.is_file():
-                    raise HTTPException(
-                        status_code=404,
-                        detail="本地缓存文件不存在"
-                    )
-                
-                logger.info(f"本地缓存文件检测到，准备上传到 RunningHub: {video_url}")
-                
-                # 上传到 RunningHub
-                rh_host = get_dynamic_config_value("runninghub", "host", default="")
-                rh_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
-                storage = RunningHubFileStorage(
-                    host=rh_host,
-                    api_key=rh_api_key,
-                    config=get_config(),
-                    logger=logger
-                )
-                
-                upload_result = await storage.upload_file("", str(local_file_path))
-                if not upload_result.success:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"文件上传到 RunningHub 失败: {upload_result.error}"
-                    )
-                
-                # 使用 fileName 作为 comfyUI 节点的引用
-                final_video_url = upload_result.key
-                local_video_url = video_url  # 保存本地路径到数据库
-                logger.info(f"本地缓存文件上传完成，fileName: {final_video_url}")
-            else:
-                # 远程 URL，直接使用
-                final_video_url = video_url
-                local_video_url = video_url
-                logger.info(f"Using provided video URL: {video_url}")
-        elif video:
-            # 读取视频文件
-            file_bytes = await video.read()
-            
-            # 1. 先保存到本地
-            filename = video.filename or "video.mp4"
-            ext = os.path.splitext(filename)[1].lower()
-            video_filename = f"{uuid.uuid4()}{ext}"
-            local_video_path = os.path.join(get_upload_dir(), video_filename)
-            os.makedirs(get_upload_dir(), exist_ok=True)
+        # ===== 1. 解析视频来源（不触达 RunningHub），确定 ffprobe 探测源 =====
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # _save_uploaded_image 返回本站完整 URL（内部生成，可安全转本地路径）
+            try:
+                probe_source = resolve_upload_url_to_local_path(saved_video)
+            except ValueError:
+                probe_source = saved_video
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+            # 本站 /upload/ 缓存路径安全解析（防路径穿越）；远程 URL 由 ffprobe 拉流探测
+            local_file_path = _resolve_local_upload_path(saved_video, '/upload/')
+            probe_source = str(local_file_path) if local_file_path is not None else saved_video
+        else:
+            raise HTTPException(status_code=400, detail="必须提供视频文件或视频URL")
 
-            await asyncio.to_thread(_sync_write_file, local_video_path, file_bytes)
-
-            # Create accessible URL for frontend
-            local_video_url = build_upload_url(video_filename, host=SERVER_HOST)
-            logger.info(f"Video saved to local: {local_video_url}")
-            
-            # 2. 上传到 RunningHub 获取 fileName
-            from utils.file_storage import RunningHubFileStorage
-            from config.config_util import get_config, get_dynamic_config_value
-            
-            rh_host = get_dynamic_config_value("runninghub", "host", default="")
-            rh_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
-            storage = RunningHubFileStorage(
-                host=rh_host,
-                api_key=rh_api_key,
-                config=get_config(),
-                logger=logger
-            )
-            
-            # 上传本地文件到 RunningHub
-            upload_result = await storage.upload_file("", local_video_path)
-            if not upload_result.success:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"视频上传失败: {upload_result.error}"
-                )
-            
-            # 使用 fileName 作为 comfyUI 节点的引用
-            final_video_url = upload_result.key
-            logger.info(f"Video uploaded to RunningHub, fileName: {final_video_url}")
+        # ===== 2. ffprobe 探测时长 -> 算力档位（探测失败回退调用方传入时长）=====
+        probed_duration = await _probe_video_duration_seconds(probe_source)
+        if probed_duration is not None and probed_duration > 0:
+            duration_tier = _snap_duration_to_enhance_tier(probed_duration)
+            logger.info(f"Probed video duration: {probed_duration:.2f}s -> tier {duration_tier}s")
+        elif duration_seconds:
+            duration_tier = _snap_duration_to_enhance_tier(duration_seconds)
+            logger.warning(f"ffprobe 探测失败，回退调用方时长档位: {duration_tier}s")
         else:
             raise HTTPException(
                 status_code=400,
-                detail="必须提供视频文件或视频URL"
-            )
-        
-        # Submit video enhancement task using runninghub_request module
-        try:
-            from api.clients.runninghub_client import run_ai_app_task
-            
-            node_info_list = [{
-                "nodeId": "6",
-                "fieldName": "video",
-                "fieldValue": final_video_url,
-                "description": "video"
-            }]
-
-            result = await asyncio.to_thread(
-                run_ai_app_task,
-                "1989206149524238338",  # webappId for video enhancement
-                "9549532f3c3d435ebe5e1ca78dcac1e8",  # apiKey
-                node_info_list,
-                None,
-                "plus"  # instanceType
+                detail="无法识别视频时长，请重试或改用视频文件上传",
             )
 
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "Unknown error")
-                raise RuntimeError(f"Task submission failed: {error_msg}")
-            
-            project_id = result.get("data", {}).get("taskId")
-            if not project_id:
-                raise HTTPException(status_code=500, detail="提交任务失败，未返回 taskId")
-            
-            logger.info(f"Video enhancement task created with project_id: {project_id}")
-            
-        except Exception as task_error:
-            logger.error(f"Failed to submit video enhancement task: {task_error}")
+        if duration_tier > VIDEO_ENHANCE_MAX_DURATION_SECONDS:
             raise HTTPException(
-                status_code=500,
-                detail=f"任务提交失败: {str(task_error)}"
+                status_code=400,
+                detail=(
+                    f"视频时长超过 {VIDEO_ENHANCE_MAX_DURATION_SECONDS} 秒上限"
+                    f"（按 {duration_tier} 秒计），暂不支持高清修复"
+                ),
             )
-        
-        # Deduct computing power
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_ENHANCE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_tier,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        # ===== 3. 算力检查 + 预扣费（失败由后台调度器幂等退费）=====
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
         if CHECK_AUTH_TOKEN:
             success, message, response_data = await async_make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，高清修复 {duration_tier} 秒需 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
                 headers=headers,
                 data={
                     "computing_power": computing_power,
                     "behavior": "deduct",
-                    "transaction_id": transaction_id
-                }
+                    "transaction_id": transaction_id,
+                },
             )
             if not success:
-                logger.error(f"Failed to deduct computing power: {message}")
-                # Don't fail the request, just log the error
-        
-        # Create database record
-        if user_id:
-            try:
-                from config.unified_config import get_implementation_id
-                await asyncio.to_thread(
-                    AIToolsModel.create,
-                    prompt="视频高清修复",
-                    user_id=user_id,
-                    type=enhance_type,  # Use provided enhance_type
-                    image_path=local_video_url,  # 使用本地 URL 存入数据库
-                    project_id=project_id,
-                    transaction_id=transaction_id,
-                    status=AI_TOOL_STATUS_PROCESSING,
-                    implementation=get_implementation_id('local_video_enhance')
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-        
+                logger.error(f"Video enhance computing power deduction failed: {message}")
+
+        # ===== 4. 落库并入队（上传与 v2 提交由驱动在调度进程完成）=====
+        # type 统一 TaskTypeId.VIDEO_ENHANCE；旧 enhance_type 5/6 仅保留为来源标记
+        extra_config = {"source": "history" if int(enhance_type) == 6 else "direct"}
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt="视频高清修复",
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_ENHANCE,
+            video_path=saved_video,
+            image_path=saved_video,  # 兼容历史列表按 image_path 渲染
+            transaction_id=transaction_id,
+            duration=duration_tier,
+            status=AI_TOOL_STATUS_PENDING,
+            implementation=impl_id,
+            extra_config=json.dumps(extra_config, ensure_ascii=False),
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
         return JSONResponse({
-            "project_id": project_id,
+            "success": True,
+            "project_id": ai_tool_id,
             "status": "submitted",
-            "video_url": final_video_url
+            "duration": duration_tier,
+            "computing_power": computing_power,
         })
-        
+
     except HTTPException:
         raise
     except Exception as e:

@@ -1069,6 +1069,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
     DriverKey.DIGITAL_HUMAN_MINIMAX_H3: DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 数字人
     DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
+    DriverKey.VIDEO_ENHANCE: DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,  # RunningHub 视频高清修复（OpenAPI v2 AI App）
     DriverKey.QWEN_2_1_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,  # qwenimage2.1（图片编辑 + 文生图）
     
     # Vidu 相关驱动
@@ -1234,6 +1235,26 @@ RUNNINGHUB_TASK_TYPES = TaskTypeRegistry.get_by_provider(TaskProvider.RUNNINGHUB
 # RunningHub 服务端在账号并发达上限时返回该 errorCode，判定为「上游拥堵」可重试错误，
 # 触发自动延迟重试（不消耗用户重试次数、不退算力）
 RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
+
+# ==================== 视频高清修复（RunningHub OpenAPI v2 AI App） ====================
+# AI App「视频高清放大」(app id 2064116518987845634) 的节点参数映射：
+#   node 46  video  上传视频（RunningHub 上传返回的 fileName 或公网 URL）
+#   node 108 select 模型切换（"1"）
+#   node 112 value  最大分辨率（不建议超过 1920）
+VIDEO_ENHANCE_APP_ID = '2064116518987845634'
+VIDEO_ENHANCE_VIDEO_NODE_ID = '46'
+VIDEO_ENHANCE_MODEL_SWITCH_NODE_ID = '108'
+VIDEO_ENHANCE_MODEL_SWITCH_VALUE = '1'
+VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID = '112'
+VIDEO_ENHANCE_MAX_RESOLUTION_VALUE = '1920'
+# default=24G 显存 / plus=48G / ultra=84G。SeedVR2 视频超分实测 default 必爆显存
+# （torch.OutOfMemoryError，2026-10-28 任务 2115435158520954881），须用 plus（48G）
+VIDEO_ENHANCE_INSTANCE_TYPE = 'plus'
+# 时长档位边界（ffprobe 探测后向上取整吸附到 [4, 15] 档，算力随档位递增）
+VIDEO_ENHANCE_MIN_DURATION_SECONDS = 4
+VIDEO_ENHANCE_MAX_DURATION_SECONDS = 15
+# ffprobe 探测视频时长的超时（秒），本地文件与远程 URL 共用
+VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS = 15
 
 # RunningHub 上游拥堵自动重试的默认延迟（秒）
 # 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖

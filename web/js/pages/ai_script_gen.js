@@ -356,15 +356,18 @@
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/runninghub-status/${taskId}`, { params });
+          const res = await axios.get(`/api/get-status/${taskId}`, { params });
+          const payload = res?.data?.tasks?.[0];
 
-          if (res.data.status === 'SUCCESS') {
-            if (res.data.results && res.data.results.length > 0) {
-              this.$set ? this.$set(item, 'enhancedVideo', res.data.results[0]) : (item.enhancedVideo = res.data.results[0]);
+          if (!payload || typeof payload.status === 'undefined') return;
+
+          if (payload.status === 'SUCCESS') {
+            if (payload.results && payload.results.length > 0) {
+              this.$set ? this.$set(item, 'enhancedVideo', payload.results[0]) : (item.enhancedVideo = payload.results[0]);
             }
             this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
             delete this.enhanceTaskIds[index];
-          } else if (res.data.status === 'FAILED') {
+          } else if (payload.status === 'FAILED') {
             alert('视频增强失败');
             this.$set ? this.$set(this.enhancingVideos, index, false) : (this.enhancingVideos[index] = false);
             delete this.enhanceTaskIds[index];
