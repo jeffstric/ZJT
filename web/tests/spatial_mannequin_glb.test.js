@@ -304,4 +304,8 @@ describe('接线断言（3D 预览链路）', () => {
   it('弹窗打开预载模板', () => {
     expect(previewSrc).toContain('await ensureMannequinTemplate()');
   });
+
+  it('loadThree 必须 export：mannequin 模块静态导入，缺 export 会让整个故事板 ESM 图链接失败', () => {
+    expect(previewSrc).toMatch(/export\s+function\s+loadThree\s*\(/);
+  });
 });

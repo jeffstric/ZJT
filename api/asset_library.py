@@ -160,8 +160,12 @@ async def list_assets(
 
 @router.post("/assets")
 @require_permission("asset_library:create")
-async def add_asset(request: Request, body: AssetAddRequest):
-    """加入资产库：下载/复制源文件到永久目录 + 配额预留。"""
+async def add_asset(request: Request, body: AssetAddRequest, _guard: None = Depends(_feature_guard)):
+    """加入资产库：下载/复制源文件到永久目录 + 配额预留。
+
+    svc.add_asset 内部把 pymysql / os.makedirs 收拢进 asyncio.to_thread，
+    HTTP 下载保持 aiohttp，不阻塞事件循环（AGENTS.md 第 1 条）。
+    """
     user_id = _current_user_id(request)
     is_admin = await _is_admin(user_id)
     try:

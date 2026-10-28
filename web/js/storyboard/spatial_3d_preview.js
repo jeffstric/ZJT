@@ -112,7 +112,7 @@ export function invalidateSpatialPreviewCache() {
 
 // ============ three.js 懒加载 ============
 
-function loadThree() {
+export function loadThree() {
     if (threeLoading) return threeLoading;
     threeLoading = new Promise((resolve, reject) => {
         if (window.THREE) {

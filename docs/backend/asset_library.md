@@ -37,7 +37,7 @@
 
 ## 4. 后端接口
 
-用户侧 `api/asset_library.py`（prefix `/api/asset-library`，`@require_permission` 登录即可，DB/IO 全部 `asyncio.to_thread`/线程池，不阻塞事件循环）：
+用户侧 `api/asset_library.py`（prefix `/api/asset-library`，`@require_permission` 登录即可，DB/IO 全部 `asyncio.to_thread`/线程池，不阻塞事件循环）。`POST /assets` 的 `svc.add_asset` 是唯一的 async 入口：HTTP 下载走 aiohttp，pymysql / `os.makedirs` / 配额预留与落库收拢进 `asyncio.to_thread`；落库后写成员失败会删除已插入行并释放配额，避免客户端看到失败后重试重复扣配额。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -67,8 +67,8 @@
 2. 源文件持久化：`/upload/` 本站路径直接复制，外链走 aiohttp 下载（超时常量 `AssetLibraryConstants.DOWNLOAD_*`；写盘丢 `utils/download_io_pool` 长寿线程池）；
 2.5. **全站总容量校验**：`check_global_capacity`（total_quota_gb>0 时 SUM+size≤limit，SUM 与 INSERT 间有并发窗口属软限制）；
 3. **原子预留**：`quota.try_reserve` 用条件 UPDATE（`used_bytes + size <= quota_bytes OR quota_bytes = 0`）无锁防超卖；失败返回 `quota_exceeded`；
-4. `os.replace` 转正文件名 → 插入 `asset_library` → 写指定成员；
-5. `finally` 兜底：失败路径清理临时/已转正文件并 `quota.release`（AGENTS.md 第 10 条 try/finally 清理红线）。
+4. `os.replace` 转正文件名 → `_persist_added_asset`（容量校验 + `try_reserve` + 插入 `asset_library` + 写指定成员，同一线程）。成员/落库失败会 `delete` 已插入行并 `quota.release`，避免重试重复扣配额；
+5. `finally` 兜底：未提交成功时清理临时/已转正文件（配额回滚由 `_persist_added_asset` 在同一线程完成，避免双释放）。
 
 单文件上限 `MAX_FILE_SIZE_BYTES=50MB`（下载流式统计，超限即中断）。
 

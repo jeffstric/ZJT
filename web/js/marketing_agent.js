@@ -6521,7 +6521,8 @@
                 // mention dropdown 不可见时，按当前快捷键模式发送消息
                 //（默认 Enter 发送；用户可切换为 Ctrl+Enter，见 sendShortcutMode）
                 if (e.key === 'Enter') {
-                    if (e.isComposing) return; // 输入法组词中不触发发送
+                    // Safari 组词确认 Enter：isComposing=false 且 keyCode=229
+                    if (e.isComposing || e.keyCode === 229) return;
                     const ctrlEnterMode = sendShortcutMode.value === 'ctrl_enter';
                     const shouldSend = ctrlEnterMode ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
                     if (shouldSend) {
