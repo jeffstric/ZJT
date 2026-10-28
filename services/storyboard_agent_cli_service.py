@@ -2666,6 +2666,22 @@ class StoryboardAgentCliService:
             cell_context = extra.get("grid_prompt_cell_context") if isinstance(extra.get("grid_prompt_cell_context"), dict) else {}
             prompt = str(cell_context.get("prompt_text") or "").strip() or None
             submit_mode = "image_edit" if source_image else (job.get("mode") or "auto")
+            if submit_mode == "image_edit" and snapshots:
+                # 批任务以 text_to_image 创建时快照只锁了 image.text_to_image 一个 slot，
+                # 强走 image_edit 必被 generate_image 拒收（MODEL_MODE_UNSUPPORTED）。
+                # 此时放弃前一幕参考图退化为纯文生图，与批任务声明的 mode 语义一致，
+                # 也比整链级联判死好（宫格主路径对此类批任务另有 task_type 兜底）。
+                image_edit_slot = MediaGenerationPreferenceService.slot_key(
+                    MediaGenerationType.IMAGE, MediaGenerationMode.IMAGE_EDIT
+                )
+                if image_edit_slot not in snapshots:
+                    submit_mode = "text_to_image"
+                    source_image = None
+                    logger.warning(
+                        "[grid-fallback] job=%s item=#%s scene=%s 快照未锁 image.image_edit，"
+                        "降级提交退化为 text_to_image（放弃前一幕参考图）",
+                        job.get("id"), item.get("id"), item.get("scene_id"),
+                    )
             try:
                 result = self.generate_image(
                     scene_id=int(item["scene_id"]),
