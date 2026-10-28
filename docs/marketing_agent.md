@@ -105,7 +105,9 @@ Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可�
 
 #### 生成次数（批量生成）
 
-图片/视频直连模式与 Agent 模式在输入栏提供「生成次数」选择器（×1 ~ ×4），选中值持久化在 `localStorage`（key：`marketing_generation_count`），与其他下拉（类型/模型/比例/时长）互斥弹出，点击面板外部自动关闭。
+> 2026-10-28 起营销页已**移除**输入栏的「生成次数」选择器（底部工具栏横向空间紧张，产品决策恢复单次生成）。前端固定单次提交（直连表单显式传 `count=1`——后端表单默认值为 5，必须显式传；偏好 payload 不再带 count 字段）。以下后端能力保留，供其他入口复用：
+
+历史实现（移除前）：图片/视频直连模式与 Agent 模式在输入栏提供「生成次数」选择器（×1 ~ ×4），选中值持久化在 `localStorage`（key：`marketing_generation_count`），与其他下拉（类型/模型/比例/时长）互斥弹出，点击面板外部自动关闭。
 
 - **直连模式**：单次提交向后端 `/api/text-to-image`、`/api/image-edit`、`/api/ai-app-run`、`/api/ai-app-run-image` 的 `count` 字段传入选定值，后端按次数循环创建多个生成任务并逐个扣费（算力按数量累计），前端轮询与结果渲染天然支持多任务/多结果。
 - **Agent 模式**：count 随 `image_preferences` / `video_preferences` 下发，后端持久化到世界偏好（图片侧经 `sync_agent_image_preferences` 的 STORABLE_PREFS，视频侧随 `/api/video-model` 整包存储），并在用户消息偏好摘要中注入「生成数量」提示。MCP 生成工具（`generate_text_to_image` / `edit_image` / `generate_text_to_video` / `image_to_video`）执行时按「已由系统注入」语义读取偏好 count 覆盖 LLM 传参（`_resolve_generation_count_from_prefs`，合法范围 1-4），不依赖 LLM 遵从提示；工具 schema 的 count 描述已同步改为系统注入语义。4 宫格生图（`is_grid=True`）跳过注入，保持固定 1 组。视频侧注入点：营销/Agent 链路在 `enterprise/tools/video_tools.py`（`_resolve_video_count_from_prefs`，算力预估前覆盖）；故事板链路由 `/scene/{scene_id}/ai-chat` 请求的 `count` 经 `_build_storyboard_agent_video_preferences` 写入任务级 preferences，再由 `services/storyboard_agent_video_tool.py` 的 wrapper 在委托前写入 `args["count"]`（合法范围 1-4，会话级 preferences 不走 DB 偏好路径）。
