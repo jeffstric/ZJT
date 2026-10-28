@@ -166,6 +166,7 @@
             return window.t ? window.t(key) : (STORY_TYPE_LABELS[normalized] || STORY_TYPE_LABELS.dialogue);
         }
         let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
+        let isSharedSpace = false;  // 是否共享空间模式（/api/edition 返回），仅共享模式下管理员侧栏才展示全部用户世界
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
@@ -480,12 +481,13 @@
             // 画风识别：初始化模型下拉监听 + 拖放区（区块仅「世界」tab 可见，首次切到时懒加载模型）
             initStyleModelSelectListener();
             initStyleDropZone();
-            // 获取版本信息，用于社区版功能标注（如 Ollama / 画风识别「限时免费」）
+            // 获取版本信息，用于社区版功能标注（如 Ollama / 画风识别「限时免费」）及共享空间判断
             try {
                 const editionResp = await fetch('/api/edition');
                 const editionResult = await editionResp.json();
                 if (editionResult.code === 0 && editionResult.data) {
                     isCommunityEdition = editionResult.data.mode === 'community';
+                    isSharedSpace = editionResult.data.shared_space === true;
                 }
             } catch (e) {
                 isCommunityEdition = true;
@@ -8182,8 +8184,8 @@
         async function loadUserWorlds() {
             try {
                 const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
-                // 管理员可见全部用户的世界（后端对非管理员自动回退 user 范围）
-                const scopeParam = isAdminUser() ? '&scope=all' : '';
+                // 仅共享空间模式下管理员才拉取全部用户的世界（后端独立空间模式同样会强制回退 user 范围）
+                const scopeParam = (isAdminUser() && isSharedSpace) ? '&scope=all' : '';
                 const response = await fetch(
                     `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}${scopeParam}`,
                     {

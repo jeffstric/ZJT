@@ -8534,6 +8534,7 @@ async def get_edition():
     获取版本信息
     """
     try:
+        space_isolated = await asyncio.to_thread(Edition.is_space_isolated)
         return JSONResponse(
             status_code=200,
             content={
@@ -8541,7 +8542,9 @@ async def get_edition():
                 'message': 'success',
                 'data': {
                     'mode': Edition.get_mode(),
-                    'mode_label': Edition.get_label()
+                    'mode_label': Edition.get_label(),
+                    # 共享空间模式：社区版恒为 true；商业版由 edition.shared_space 动态配置决定
+                    'shared_space': not space_isolated
                 }
             }
         )
@@ -8593,7 +8596,7 @@ async def get_worlds(
     ),
     scope: str = Query(
         'user',
-        description="数据范围：user=当前用户(默认) | all=全部用户（仅管理员生效，其余身份自动回退 user）",
+        description="数据范围：user=当前用户(默认) | all=全部用户（仅共享空间模式下管理员生效，独立空间模式或非管理员自动回退 user）",
     ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -8604,15 +8607,19 @@ async def get_worlds(
     身份以 Authorization token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
     传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
-    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）。
+    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）；
+    独立空间模式（企业版未开启共享空间）下 scope=all 强制回退 user 范围，保证用户数据隔离。
     """
     try:
         user_id = await resolve_authenticated_user_id(auth_token, user_id)
         vis = (visibility or 'active').lower()
         if vis not in ('active', 'deleted', 'all'):
             vis = 'active'
-        include_all_users = (scope or 'user').lower() == 'all' and await asyncio.to_thread(
-            is_admin_user, user_id
+        space_isolated = await asyncio.to_thread(Edition.is_space_isolated)
+        include_all_users = (
+            (scope or 'user').lower() == 'all'
+            and not space_isolated
+            and await asyncio.to_thread(is_admin_user, user_id)
         )
         result = await asyncio.to_thread(
             WorldModel.list_by_user,
