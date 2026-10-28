@@ -99,7 +99,7 @@ from services.vl_gateway import image_url_to_base64 as _vl_image_url_to_base64
 # 导入智能体系统
 from script_writer_core.agents import TaskManager, TaskStatus, ToolExecutor
 from script_writer_core.chat_session import ChatSession
-from script_writer_core.file_manager import FileManager
+from script_writer_core.file_manager import EntityNameValidationError, FileManager
 from script_writer_core.skill_loader import SkillLoader
 from utils.file_storage import get_file_storage
 from utils.conversation_history import append_message_if_not_duplicate
@@ -5128,6 +5128,8 @@ async def save_character(request: Request, character_name: str, file_request: Fi
             'success': success,
             'message': f'角色卡已保存: {character_name}' if success else '保存失败'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存角色卡失败: {str(e)}')
         return JSONResponse({
@@ -5225,6 +5227,8 @@ async def save_script(request: Request, script_name: str, file_request: FileCont
             'success': success,
             'message': f'剧本已保存: {script_name}' if success else '保存失败'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存剧本失败: {str(e)}')
         return JSONResponse({
@@ -5328,6 +5332,8 @@ async def save_location(request: Request, location_name: str, file_request: File
             'success': True,
             'message': f'场景已保存: {location_name}'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存场景失败: {str(e)}')
         return JSONResponse({
