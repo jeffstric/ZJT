@@ -562,7 +562,7 @@
                     return (value && value !== key) ? value : fallback;
                 };
                 const getSendShortcutMode = () =>
-                    localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'enter' ? 'enter' : 'ctrl_enter';
+                    localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
                 const applySendShortcutUI = () => {
                     const mode = getSendShortcutMode();
                     const toggleBtn = document.getElementById('send-shortcut-toggle');

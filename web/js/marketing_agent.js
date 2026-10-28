@@ -5,6 +5,16 @@
             // ========== 状态 ==========
             const messages = ref([]);
             const inputText = ref('');
+            // 发送快捷键：默认 Enter 发送，可点击输入栏切换按钮改为 Ctrl+Enter
+            //（macOS 下 Cmd+Enter 等效）；偏好持久化 localStorage，跨会话保持
+            const SEND_SHORTCUT_STORAGE_KEY = 'marketing_send_shortcut';
+            const sendShortcutMode = ref(
+                localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'ctrl_enter' ? 'ctrl_enter' : 'enter'
+            );
+            function toggleSendShortcut() {
+                sendShortcutMode.value = sendShortcutMode.value === 'ctrl_enter' ? 'enter' : 'ctrl_enter';
+                localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, sendShortcutMode.value);
+            }
             const isLoading = ref(false);
             const isInitializing = ref(true);
             const errorMessage = ref('');
@@ -6500,19 +6510,25 @@
                     return;
                 }
 
-                // mention dropdown 不可见时，Enter（不带 Shift）发送消息
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    // 如果有待回答的 verification，提交自定义回答
-                    if (pendingVerificationId.value) {
-                        const text = inputText.value.trim();
-                        if (text) {
-                            inputText.value = '';
-                            autoResize();
-                            submitVerificationAnswer(pendingVerificationId.value, text);
+                // mention dropdown 不可见时，按当前快捷键模式发送消息
+                //（默认 Enter 发送；用户可切换为 Ctrl+Enter，见 sendShortcutMode）
+                if (e.key === 'Enter') {
+                    if (e.isComposing) return; // 输入法组词中不触发发送
+                    const ctrlEnterMode = sendShortcutMode.value === 'ctrl_enter';
+                    const shouldSend = ctrlEnterMode ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
+                    if (shouldSend) {
+                        e.preventDefault();
+                        // 如果有待回答的 verification，提交自定义回答
+                        if (pendingVerificationId.value) {
+                            const text = inputText.value.trim();
+                            if (text) {
+                                inputText.value = '';
+                                autoResize();
+                                submitVerificationAnswer(pendingVerificationId.value, text);
+                            }
+                        } else {
+                            handleSend();
                         }
-                    } else {
-                        handleSend();
                     }
                 }
             }
@@ -7491,6 +7507,8 @@
             return {
                 messages,
                 inputText,
+                sendShortcutMode,
+                toggleSendShortcut,
                 isLoading,
                 isInitializing,
                 errorMessage,

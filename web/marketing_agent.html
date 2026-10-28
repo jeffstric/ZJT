@@ -805,6 +805,9 @@
                                 </svg>
                                 <span style="font-weight: 600; color: #00a8e6;">{{ computingPower }}</span>
                             </div>
+                            <button class="marketing-bar-btn marketing-send-shortcut-toggle" @click.stop="toggleSendShortcut" :title="$t('send_shortcut_toggle_hint')" type="button" style="font-size: 11px; white-space: nowrap;">
+                                {{ sendShortcutMode === 'ctrl_enter' ? $t('send_shortcut_ctrl_enter') : $t('send_shortcut_enter') }}
+                            </button>
                             <button class="marketing-send-btn" @click="handleSend" :disabled="!inputText.trim() || (isLoading && !pendingVerificationId) || hasPendingAgentImages">
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>

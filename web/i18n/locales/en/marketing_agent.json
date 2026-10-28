@@ -54,6 +54,9 @@
 
   "welcome_desc": "I'm your marketing assistant. I can help you create sales scripts, ad creative, product copywriting and more. Tell me what you need.",
 
+  "send_shortcut_ctrl_enter": "Send with Ctrl+Enter",
+  "send_shortcut_toggle_hint": "Click to toggle send shortcut (Enter / Ctrl+Enter)",
+  "send_shortcut_enter": "Send with Enter",
   "input_placeholder": "Enter ideas, scripts or upload references, paste screenshots/videos directly, use @ to mention media files...",
   "verification_placeholder": "Please enter your choice...",
 
