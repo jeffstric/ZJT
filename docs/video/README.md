@@ -7,6 +7,7 @@
 | 文档 | 说明 |
 |------|------|
 | [canvas_system.md](./canvas_system.md) | 画布系统 - 缩放、平移、小地图、节点操作 |
+| [node_asset_panel.md](./node_asset_panel.md) | 节点管理面板 - 资产管理入口、节点列表、搜索筛选、定位删除、缩略图 |
 | [world_management.md](./world_management.md) | 世界管理 - 世界 CRUD、画风继承、公共空间 |
 | [workflow_save_load.md](./workflow_save_load.md) | 工作流保存与加载 - 手动保存、自动恢复、撤销重做 |
 | [connection_system.md](./connection_system.md) | 连接线系统 - 5 种连接类型、创建删除、连接规则 |

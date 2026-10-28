@@ -1,0 +1,269 @@
+/* ==================== 节点管理面板（参考 libtv 节点列表） ====================
+ * 入口：右上工具条 #nodeAssetPanelBtn；面板为画布左侧悬浮抽屉。
+ * 配色全部走 video_workflow.css 的主题变量，浅色/暗色（html.theme-dark）自动适配。
+ */
+
+/* ---- 入口按钮 ---- */
+.node-asset-btn{
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+.node-asset-btn svg{
+  flex-shrink: 0;
+}
+
+/* ---- 面板主体 ---- */
+.node-asset-panel{
+  position: fixed;
+  left: 68px;
+  top: 50%;
+  transform: translateY(-50%) translateX(-16px);
+  width: 300px;
+  max-width: calc(100vw - 88px);
+  max-height: min(640px, calc(100vh - 120px));
+  display: flex;
+  flex-direction: column;
+  background: var(--floating-bg);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(8px);
+  z-index: 1400;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+  overflow: hidden;
+}
+.node-asset-panel.open{
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0);
+}
+
+/* ---- 头部 ---- */
+.nap-header{
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 12px 8px 16px;
+}
+.nap-title{
+  flex: 1;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.nap-refresh,
+.nap-close{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nap-refresh svg{
+  width: 14px;
+  height: 14px;
+}
+.nap-close{
+  font-size: 18px;
+  line-height: 1;
+}
+.nap-refresh:hover,
+.nap-close:hover{
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+/* ---- 搜索 + 类型筛选 ---- */
+.nap-toolbar{
+  display: flex;
+  gap: 8px;
+  padding: 4px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.nap-search-wrap{
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+}
+.nap-search-wrap svg{
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.nap-search{
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 7px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+.nap-search::placeholder{
+  color: var(--muted);
+}
+.nap-type-select{
+  max-width: 96px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+}
+
+/* ---- 列表 ---- */
+.nap-list{
+  flex: 1;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 8px;
+}
+.nap-item{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.nap-item:hover{
+  background: var(--panel-hover);
+}
+.nap-item.active{
+  background: var(--info-bg);
+}
+
+/* 缩略图：无图节点显示类型前两字占位 */
+.nap-thumb{
+  position: relative;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nap-thumb-media{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-3);
+}
+.nap-thumb-fallback{
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.nap-item-main{
+  flex: 1;
+  min-width: 0;
+}
+.nap-item-title{
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nap-item-type{
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.nap-item-actions{
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.nap-item:hover .nap-item-actions,
+.nap-item.active .nap-item-actions{
+  opacity: 1;
+}
+.nap-icon-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.nap-icon-btn svg{
+  width: 14px;
+  height: 14px;
+}
+.nap-icon-btn.nap-locate:hover{
+  background: var(--info-bg);
+  color: var(--info);
+}
+.nap-icon-btn.nap-delete:hover{
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* ---- 空状态 ---- */
+.nap-empty{
+  padding: 40px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---- 底部统计 ---- */
+.nap-footer{
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 小屏适配 ---- */
+@media (max-width: 640px){
+  .node-asset-panel{
+    left: 12px;
+    width: calc(100vw - 24px);
+    max-width: none;
+  }
+}

@@ -1037,5 +1037,18 @@
   "script_enable_director_stage": "生成 3D 导演台",
   "script_enable_director_stage_hint": "效果模式下为每镜生成 3D 空间，用于 3D 空间预览与导演台",
   "script_director_stage_hint_quality": "效果模式：为每镜生成 3D 空间，用于 3D 空间预览与导演台",
-  "script_director_stage_hint_need_quality": "仅效果模式下生效"
+  "script_director_stage_hint_need_quality": "仅效果模式下生效",
+  "node_asset_panel_btn": "资产管理",
+  "node_asset_panel_title": "节点管理",
+  "node_asset_search_placeholder": "搜索节点...",
+  "node_asset_filter_all": "全部类型",
+  "node_asset_total": "共 {n} 节点",
+  "node_asset_total_filtered": "{m} / {n}",
+  "node_asset_empty": "画布上还没有节点",
+  "node_asset_no_match": "没有匹配的节点",
+  "node_asset_locate": "定位节点",
+  "node_asset_delete": "删除节点",
+  "node_asset_delete_confirm": "确定删除该节点吗？删除后无法恢复。",
+  "node_asset_refresh": "刷新列表",
+  "node_asset_close": "关闭"
 }

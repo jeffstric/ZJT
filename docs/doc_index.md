@@ -20,6 +20,7 @@
 | 文档 | 说明 | 飞书链接 |
 |------|------|----------|
 | [画布系统](video/canvas_system.md) | 缩放、平移、小地图、节点拖拽、对齐、快捷键 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/CmB7dBzDhoQFiMx75TwcB6E6nPg) |
+| [节点管理面板](video/node_asset_panel.md) | 资产管理入口、节点列表、搜索筛选、定位删除、缩略图 | - |
 | [世界管理](video/world_management.md) | 世界 CRUD、画风继承、公共空间、世界切换 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/EpM0dkcyAoen7hxfnWScmSzCnfd) |
 | [工作流保存与加载](video/workflow_save_load.md) | 手动保存、自动恢复、撤销/重做、URL 加载 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/LwPVdC1okogsvLxLJ7pcC0NonTc) |
 | [连接线系统](video/connection_system.md) | 5 种连接类型、创建删除规则 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/WGUdd5Ymro1EUbxykIxcQoernge) |

@@ -1037,5 +1037,18 @@
   "script_enable_director_stage": "Generate 3D director stage",
   "script_enable_director_stage_hint": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
   "script_director_stage_hint_quality": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
-  "script_director_stage_hint_need_quality": "Quality mode only"
+  "script_director_stage_hint_need_quality": "Quality mode only",
+  "node_asset_panel_btn": "Assets",
+  "node_asset_panel_title": "Node Manager",
+  "node_asset_search_placeholder": "Search nodes...",
+  "node_asset_filter_all": "All types",
+  "node_asset_total": "{n} nodes",
+  "node_asset_total_filtered": "{m} / {n}",
+  "node_asset_empty": "No nodes on canvas yet",
+  "node_asset_no_match": "No matching nodes",
+  "node_asset_locate": "Locate node",
+  "node_asset_delete": "Delete node",
+  "node_asset_delete_confirm": "Delete this node? This cannot be undone.",
+  "node_asset_refresh": "Refresh list",
+  "node_asset_close": "Close"
 }
