@@ -341,9 +341,10 @@ class PMAgent(BaseAgent, AskUserMixin):
 
             logger.info(f"{self.agent_id}: PM Loop iteration {iteration}/{max_iterations}")
 
+            # 不展示迭代次数（如 5/20），用户易误以为任务异常；只提示任务运行时间较长
             self.task_manager.push_message(task.task_id, 'progress', {
                 'progress': iteration / max_iterations,
-                'step': f"执行中 ({iteration}/{max_iterations})"
+                'step': "任务运行时间较久，请耐心等待"
             })
 
             try:
