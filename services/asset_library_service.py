@@ -10,8 +10,9 @@
 - 分组目录全局共享（asset_group），任何登录用户可见、可创建。
 
 非阻塞约定（AGENTS.md 第 1/10 条）：HTTP 下载用 aiohttp，写盘/复制/删除
-丢 utils.download_io_pool 模块级长寿 executor，DB 调用由 API 层
-asyncio.to_thread 包装（本服务层方法本身为同步 DB 组装 + 少量 async IO）。
+丢 utils.download_io_pool 模块级长寿 executor。同步方法的 DB 调用由 API 层
+asyncio.to_thread 包装；唯一的 async 入口 add_asset 自行把 pymysql /
+os.makedirs 收拢进 to_thread（下载保持 aiohttp，禁止在事件循环里跑同步 DB）。
 """
 import asyncio
 import logging
@@ -318,6 +319,106 @@ def check_global_capacity(new_size: int) -> None:
 
 # ============ 加入资产库 ============
 
+def _resolve_local_source(text: str) -> Optional[str]:
+    """本站 /upload 路径解析为本地文件；缺失或不合法返回 None。"""
+    if "/upload/" not in text and not text.startswith("upload/"):
+        return None
+    try:
+        candidate = resolve_upload_url_to_local_path(text)
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    except ValueError:
+        return None
+    return None
+
+
+def _prepare_add_asset(user_id: int, group_id: Optional[int]) -> str:
+    """同步：分组存在 / 配额行 / 目标目录（含 os.makedirs）。
+
+    由 add_asset 经 asyncio.to_thread 调用，避免 pymysql / 建目录阻塞事件循环。
+    功能开关由调用方先 await asyncio.to_thread(ensure_user_allowed, ...)。
+    """
+    if group_id is not None:
+        group = AssetGroupModel.get_by_id(int(group_id))
+        if not group:
+            raise AssetLibraryError("分组不存在", "group_not_found")
+    AssetLibraryQuotaModel.ensure_for_user(user_id)
+    return get_upload_subdir(UploadPathConstants.ASSET_LIBRARY_DIR, str(user_id))
+
+
+def _persist_added_asset(
+    user_id: int,
+    group_id: Optional[int],
+    asset_type: str,
+    asset_name: str,
+    source_url: str,
+    relative_path: str,
+    file_size: int,
+    view_permission: str,
+    edit_permission: str,
+    view_ids: Sequence[int],
+    edit_ids: Sequence[int],
+) -> Tuple[int, AssetItem]:
+    """同步：容量校验 + 配额预留 + 落库 + 成员。
+
+    预留之后任何失败都在本函数内释放配额；若已插入行则删除该行，
+    避免客户端看到失败后重试导致重复扣配额（落库后失败不回滚）。
+    """
+    check_global_capacity(file_size)
+    if not AssetLibraryQuotaModel.try_reserve(user_id, file_size):
+        quota: Dict[str, Any] = {}
+        try:
+            quota = AssetLibraryQuotaModel.get_by_user(user_id) or {}
+        except Exception as detail_error:  # noqa: BLE001
+            logger.warning(f"Failed to read quota detail for user {user_id}: {detail_error}")
+        raise AssetLibraryError(
+            "资产库容量不足，请联系管理员调整配额"
+            f"（已用 {quota.get('used_bytes', 0)}/{quota.get('quota_bytes', 0)} 字节）",
+            "quota_exceeded",
+        )
+
+    asset_id: Optional[int] = None
+    try:
+        asset_id = AssetLibraryModel.create(
+            user_id=user_id,
+            group_id=int(group_id) if group_id is not None else None,
+            asset_type=asset_type,
+            name=asset_name,
+            source_url=source_url,
+            file_path=relative_path,
+            file_size=file_size,
+            view_permission=view_permission,
+            edit_permission=edit_permission,
+        )
+        AssetPermissionMemberModel.replace_for_asset(
+            asset_id, ALC.PERM_TYPE_VIEW, view_ids, exclude_user_id=user_id,
+        )
+        AssetPermissionMemberModel.replace_for_asset(
+            asset_id, ALC.PERM_TYPE_EDIT, edit_ids, exclude_user_id=user_id,
+        )
+        asset = AssetLibraryModel.get_by_id(asset_id)
+        if asset is None:
+            raise AssetLibraryError("加入资产库失败，请稍后重试", "add_failed")
+        return asset_id, asset
+    except Exception:
+        if asset_id is not None:
+            try:
+                AssetLibraryModel.delete(asset_id)
+            except Exception as del_err:  # noqa: BLE001
+                logger.warning(f"Failed to roll back asset {asset_id}: {del_err}")
+        try:
+            AssetLibraryQuotaModel.release(user_id, file_size)
+        except Exception as rel_err:  # noqa: BLE001
+            logger.warning(f"Failed to release quota for user {user_id} size={file_size}: {rel_err}")
+        raise
+
+
+def _cleanup_add_asset_files(tmp_path: Path, final_path: Optional[Path]) -> None:
+    _remove_file_quietly(tmp_path)
+    if final_path is not None:
+        _remove_file_quietly(final_path)
+
+
 async def add_asset(
     user_id: int,
     source_url: str,
@@ -332,10 +433,10 @@ async def add_asset(
 ) -> AssetItem:
     """把生成产物加入资产库：校验 → 下载/复制 → 配额预留 → 落库。
 
-    失败路径统一 try/finally 清理临时文件并释放预留（AGENTS.md 第 10 条）。
+    纯 CPU/DB/本地 FS 段全部 asyncio.to_thread；HTTP 下载保持 aiohttp。
+    失败路径 try/finally 清理临时文件；配额预留的回滚由 _persist_added_asset
+    在同一线程内完成（AGENTS.md 第 1/10 条）。
     """
-    # 功能开关 + 用户级权限（总开关关闭时管理员同样不可入库）
-    ensure_user_allowed(user_id, is_admin=is_admin)
     text = (source_url or "").strip()
     if not text:
         raise AssetLibraryError("源文件地址不能为空", "invalid_source_url")
@@ -349,35 +450,20 @@ async def add_asset(
     view_ids = _normalize_members(view_members)
     edit_ids = _normalize_members(edit_members)
 
-    # 源文件可达性预检（轻量 stat，不触发 DB/网络）：本站 /upload 路径本地已
-    # 缺失时快速失败，避免无效请求继续走分组/配额 DB 交互
-    local_candidate = None
-    if "/upload/" in text or text.startswith("upload/"):
-        try:
-            candidate = resolve_upload_url_to_local_path(text)
-            if candidate and os.path.isfile(candidate):
-                local_candidate = candidate
-        except ValueError:
-            local_candidate = None
-        if local_candidate is None and not re.match(r"^https?://", text):
+    # 功能开关优先于源文件预检，保持 feature_disabled 的错误优先级
+    await asyncio.to_thread(ensure_user_allowed, user_id, is_admin)
+
+    # 源文件可达性预检（轻量 stat）：本站 /upload 路径本地已缺失时快速失败
+    local_candidate = await asyncio.to_thread(_resolve_local_source, text)
+    if local_candidate is None and not re.match(r"^https?://", text):
+        if "/upload/" in text or text.startswith("upload/"):
             raise AssetLibraryError("源文件已被清理或不可访问，无法入库", "source_missing")
 
-    # 分组校验（共享目录：任何用户可用任何分组）
-    if group_id is not None:
-        group = AssetGroupModel.get_by_id(int(group_id))
-        if not group:
-            raise AssetLibraryError("分组不存在", "group_not_found")
-
-    # 确保配额行存在（首次访问初始化默认配额）
-    AssetLibraryQuotaModel.ensure_for_user(user_id)
-
-    # 目标目录与临时文件（同盘 rename，避免下载成功后跨盘移动失败）
-    user_dir = Path(get_upload_subdir(UploadPathConstants.ASSET_LIBRARY_DIR, str(user_id)))
+    user_dir = Path(await asyncio.to_thread(_prepare_add_asset, user_id, group_id))
     token = uuid.uuid4().hex
     tmp_path = user_dir / f".tmp_{token}"
 
-    reserved = 0
-    asset_id: Optional[int] = None
+    committed = False
     final_path: Optional[Path] = None
     try:
         # 1) 持久化文件：本站 /upload 路径直接复制，外链走 aiohttp 下载
@@ -390,49 +476,29 @@ async def add_asset(
         if file_size <= 0:
             raise AssetLibraryError("源文件为空", "empty_file")
 
-        # 1.5) 全站总磁盘上限（total_quota_gb=0 不限）；失败会走 finally 清理
-        check_global_capacity(file_size)
-
-        # 2) 配额预留（原子条件 UPDATE；quota=0 不限）
-        if not AssetLibraryQuotaModel.try_reserve(user_id, file_size):
-            # 配额详情仅用于错误文案，查询失败不改变 quota_exceeded 语义
-            quota: Dict[str, Any] = {}
-            try:
-                quota = AssetLibraryQuotaModel.get_by_user(user_id) or {}
-            except Exception as detail_error:  # noqa: BLE001
-                logger.warning(f"Failed to read quota detail for user {user_id}: {detail_error}")
-            raise AssetLibraryError(
-                "资产库容量不足，请联系管理员调整配额"
-                f"（已用 {quota.get('used_bytes', 0)}/{quota.get('quota_bytes', 0)} 字节）",
-                "quota_exceeded",
-            )
-        reserved = file_size
-
-        # 3) 转正文件名 + 落库
+        # 2) 转正文件名（同盘 rename）
         filename = f"{ALC.FILENAME_PREFIX}_{user_id}_{token}{ext}"
         final_path = user_dir / filename
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(get_download_io_executor(), os.replace, str(tmp_path), str(final_path))
         relative_path = f"{UploadPathConstants.ASSET_LIBRARY_DIR}/{user_id}/{filename}"
 
-        asset_id = AssetLibraryModel.create(
-            user_id=user_id,
-            group_id=int(group_id) if group_id is not None else None,
-            asset_type=asset_type,
-            name=asset_name,
-            source_url=text,
-            file_path=relative_path,
-            file_size=file_size,
-            view_permission=view_permission,
-            edit_permission=edit_permission,
+        # 3) 容量/预留/落库/成员（同一线程，失败自行回滚配额与已插入行）
+        asset_id, asset = await asyncio.to_thread(
+            _persist_added_asset,
+            user_id,
+            group_id,
+            asset_type,
+            asset_name,
+            text,
+            relative_path,
+            file_size,
+            view_permission,
+            edit_permission,
+            view_ids,
+            edit_ids,
         )
-
-        # 4) 指定成员（perm=specified 才有意义，但统一存以便切换权限时保留；
-        #    属主自身无意义，统一剔除）
-        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_VIEW, view_ids, exclude_user_id=user_id)
-        AssetPermissionMemberModel.replace_for_asset(asset_id, ALC.PERM_TYPE_EDIT, edit_ids, exclude_user_id=user_id)
-
-        asset = AssetLibraryModel.get_by_id(asset_id)
+        committed = True
         logger.info(f"Asset {asset_id} added to library by user {user_id}: {file_size} bytes, group={group_id}")
         return asset
     except AssetLibraryError:
@@ -441,13 +507,8 @@ async def add_asset(
         logger.error(f"Failed to add asset for user {user_id}: {e}")
         raise AssetLibraryError("加入资产库失败，请稍后重试", "add_failed")
     finally:
-        # 失败清理：临时文件 / 已转正但落库失败的文件 / 已预留的配额
-        if asset_id is None:
-            _remove_file_quietly(tmp_path)
-            if final_path is not None:
-                _remove_file_quietly(final_path)
-            if reserved > 0:
-                AssetLibraryQuotaModel.release(user_id, reserved)
+        if not committed:
+            await asyncio.to_thread(_cleanup_add_asset_files, tmp_path, final_path)
 
 
 # ============ 查询 ============

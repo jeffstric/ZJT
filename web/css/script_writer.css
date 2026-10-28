@@ -519,6 +519,9 @@ body {
     font-weight: 500;
     transition: all 0.2s;
     cursor: default;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
 }
 
 .computing-power-display .power-icon {
@@ -4887,6 +4890,14 @@ body {
 }
 
 /* ===== 单次任务算力上限（模型设置卡片内） ===== */
+.power-budget-item {
+    /* 自定义上限出现「恢复默认」后卡片可能溢出到右侧算力余额上；
+       抬高层级避免点击落到 computing-power-display 打开日志弹窗。 */
+    position: relative;
+    z-index: 3;
+    flex-shrink: 0;
+}
+
 .power-budget-wrapper {
     display: flex;
     align-items: center;
@@ -4914,11 +4925,14 @@ body {
 .power-budget-reset {
     font-size: 11px;
     color: #6366f1;
-    background: none;
+    background: #f8f9fa;
     border: none;
     cursor: pointer;
     white-space: nowrap;
-    padding: 0;
+    padding: 2px 6px;
+    border-radius: 4px;
+    position: relative;
+    z-index: 4;
 }
 
 .power-budget-reset:hover {

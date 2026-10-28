@@ -10,7 +10,9 @@
 
 - **默认：Enter 发送**，Shift+Enter 换行（与旧版完全一致）。
 - **可切换：Ctrl+Enter 发送**（macOS 下 Cmd+Enter 等效），Enter / Shift+Enter 换行。
-- 输入法组词中（`e.isComposing`）任何形态的回车都不会触发发送。
+- 输入法组词中任何形态的回车都不会触发发送：`e.isComposing` 或 `e.keyCode === 229`。
+  Safari / WebKit 在组词确认 Enter 的 keydown 上 `isComposing=false` 且 `keyCode=229`，
+  只判断 `isComposing` 会把正在组词的内容发出并清空输入框。
 
 ## 切换入口
 

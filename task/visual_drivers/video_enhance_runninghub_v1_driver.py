@@ -341,16 +341,63 @@ class VideoEnhanceRunninghubV1Driver(BaseVideoDriver):
                 try:
                     outputs_result = self._request(**outputs_params)
                 except Exception as exc:
-                    self.logger.error(f"Failed to get enhance outputs: {exc}")
+                    # 上游任务已 SUCCESS：outputs 网络抖动/超时不应把已完成任务
+                    # 判成终态失败。preserve_retry_count 让调度层单独安排结果获取
+                    # 重试，不消耗生成阶段的 max_retry_count；任务过期仍作最终兜底。
+                    self.logger.warning(
+                        f"Outputs fetch transient failure for task {project_id}: {exc}"
+                    )
+                    return {
+                        "status": "RUNNING",
+                        "message": "任务已完成，获取结果中...",
+                        "preserve_retry_count": True,
+                    }
+
+                if not isinstance(outputs_result, dict):
+                    self._send_alert(
+                        alert_type="INVALID_RESPONSE_FORMAT",
+                        message="视频高清修复 outputs API 响应格式异常",
+                        context={"api": "outputs", "response": outputs_result, "project_id": project_id},
+                    )
                     return {
                         "status": "FAILED",
                         "error": "获取结果失败",
                         "error_type": "SYSTEM",
-                        "error_detail": f"获取输出失败: {exc}",
+                        "error_detail": "outputs 响应格式错误",
                     }
-                result_url = None
-                if isinstance(outputs_result, dict) and outputs_result.get("code") == 0:
-                    result_url = self._pick_result_url(outputs_result.get("data"))
+
+                error_code = outputs_result.get("code")
+                if error_code != 0:
+                    try:
+                        numeric_code = int(error_code)
+                    except (TypeError, ValueError):
+                        numeric_code = None
+                    transient = (
+                        is_upstream_congested_error(error_code)
+                        or numeric_code == 429
+                        or (numeric_code is not None and 500 <= numeric_code < 600)
+                    )
+                    self.logger.warning(
+                        f"Outputs API returned code={error_code} "
+                        f"for task {project_id}: {outputs_result.get('msg', '')}"
+                    )
+                    if transient:
+                        return {
+                            "status": "RUNNING",
+                            "message": "任务已完成，获取结果中...",
+                            "preserve_retry_count": True,
+                        }
+                    return {
+                        "status": "FAILED",
+                        "error": "获取结果失败",
+                        "error_type": "SYSTEM",
+                        "error_detail": (
+                            f"获取输出失败: code={error_code}, "
+                            f"msg={outputs_result.get('msg', '')}"
+                        ),
+                    }
+
+                result_url = self._pick_result_url(outputs_result.get("data"))
                 if not result_url:
                     self._send_alert(
                         alert_type="INVALID_RESPONSE_FORMAT",

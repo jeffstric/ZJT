@@ -44,6 +44,7 @@ App id 与节点参数常量在驱动文件顶部维护（仅驱动使用，惯�
 
 - 提交：`POST /openapi/v2/run/ai-app/2064116518987845634`，`instanceType=plus`（48G 显存；default=24G 实测 SeedVR2 超分必 OOM，2026-10-28 任务 2115435158520954881 验证）
 - 状态查询：v1 `/task/openapi/status` + `/task/openapi/outputs`（与去水印一致，v2 提交的任务用 v1 端点轮询已验证同池）
+- **outputs 瞬时失败不得终态退费**：上游 status 已 `SUCCESS` 后，outputs 网络抖动/超时、421 拥堵、429 限流、5xx 返回 `RUNNING + preserve_retry_count=True`（对齐 `runninghub_ai_app_image_v1`），调度层自行安排结果获取且不消耗生成阶段 `try_count`；任务过期检查仍作最终兜底。其他非零业务错误码直接 `FAILED`。`code==0` 但没有视频地址仍 `FAILED`（视频任务必须有产物）。
 
 ## 算力：按视频秒数阶梯计费（= MiniMax H3 的 2 倍）
 
