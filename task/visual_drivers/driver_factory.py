@@ -808,6 +808,15 @@ def register_all_drivers():
         logger.warning(f"Failed to import VideoWatermarkRunninghubV1Driver: {e}")
 
     try:
+        from .video_enhance_runninghub_v1_driver import VideoEnhanceRunninghubV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,
+            VideoEnhanceRunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import VideoEnhanceRunninghubV1Driver: {e}")
+
+    try:
         from .vidu_default_driver import ViduDefaultDriver
         # 注册 Vidu 默认驱动
         VideoDriverFactory.register_driver(DriverImplementation.VIDU_DEFAULT, ViduDefaultDriver)
