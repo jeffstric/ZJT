@@ -2838,13 +2838,22 @@
                     console.error('generation status polling error:', err);
                     const failures = recordTaskError(errorKey);
                     if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                        clearDirectGenerationTask(task);
+                        // 不判死：任务仍在服务端生成（直连轮询常见瞬时 401/网络抖动），
+                        // 气泡转中性提示，高频 interval 降频后继续探测，恢复后照常展示结果。
+                        // 与 Agent 轮询路径（pollAgentVideoStatus）错误兜底语义对齐。
+                        resetTaskErrorCount(errorKey);
                         const currentMsgIdx = messages.value.findIndex(m => m._uid === task.msgUid);
                         if (currentMsgIdx !== -1) {
-                            messages.value[currentMsgIdx].content = window.t('request_timeout') || '请求超时，请稍后重试。';
+                            messages.value[currentMsgIdx].content = window.t('generating_placeholder') || '生成中...';
                             scrollToBottom();
                         }
-                        resetTaskErrorCount(errorKey);
+                        if (task.intervalId) {
+                            trackedClearInterval(task.intervalId);
+                            const checkFn = task.type === 'image' ? checkImageStatus : checkVideoStatus;
+                            task.intervalId = trackedSetInterval(() => checkFn(task), TASK_ERROR_BACKOFF_INTERVAL);
+                            if (task.type === 'image') imageStatusInterval.value = task.intervalId;
+                            else videoStatusInterval.value = task.intervalId;
+                        }
                     }
                 }
             }

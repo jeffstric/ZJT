@@ -1823,7 +1823,10 @@ async def append_session_message(request: Request, session_id: str, message_requ
         # 判断消息类型
         message_type = "normal"
         if role == "assistant" and content and content.startswith('__PENDING_TASK__'):
-            message_type = "normal"  # pending task 标记也作为普通 assistant 消息
+            # 与 pm_agent 路径（script_writer_core/agents/pm_agent.py）保持一致存为
+            # pending_task，否则后端 replace_pending_task（只匹配 pending_task）
+            # 永远命中 0 行，轮询完成时只能 append 兜底 + 事后清理，无法原位替换
+            message_type = "pending_task"
 
         # 显式 idempotency_key：避免同一分钟内相同内容被吞掉
         import uuid as _uuid

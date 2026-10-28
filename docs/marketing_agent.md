@@ -294,13 +294,14 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - Agent 图片/视频轮询启动后均立即查询一次状态，已完成的任务可直接渲染结果，不必等待第一个轮询周期
 - 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果（`normalizeLoadedMessages` 以归一化 URL——解出代理内层 URL、解码、去签名——为去重 key，同一视频即使签名不同也只保留最早一条），避免切换会话后重复显示
 - 直接发起模式（`checkDirectGenerationStatus`）的轮询在每次 `await` 获取状态返回后，会再次校验 `currentSessionId` 是否仍等于任务实例的 `task.sessionId`：任务进行中切换会话时，旧轮询回调立即停止并清理，不再向当前（已切换的）`messages` 或全局 `imageResults/videoResults` 写入，杜绝"视频生成失败/图片生成失败"提示串到其他对话
+- 直接发起模式的轮询错误兜底与 Agent 路径对齐：连续 `MAX_CONSECUTIVE_TASK_ERRORS`（3）次错误后**不判死**——占位气泡转中性「生成中...」（`generating_placeholder`），高频 interval 降频为 `TASK_ERROR_BACKOFF_INTERVAL`（30s）继续探测；任一次轮询成功后照常走结果/失败分支。修复前此处是显示「请求超时，请稍后重试」并彻底停掉轮询，页面不刷新就永远拿不到结果（2026-10-28 事故，会话 3941fc69：视频服务端已生成完成，前端轮询已死，结果未回传对话）
 - `handleImageTaskSubmitted` / `handleVideoTaskSubmitted` 支持显式 `explicitSessionId` 入参；由 SSE 流派发任务时传入该流的 `streamSessionId`，使轮询与结果持久化归属发起会话，而非事件被处理时的"当前会话"
 
 #### 任务恢复机制
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
-1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
+1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。写入方有两处——pm_agent 后端落库，以及前端直连模式经 `POST /session/{id}/message` 追加（该接口对 `__PENDING_TASK__` 开头内容统一存为 `pending_task`，与 pm_agent 路径一致；修复前存为 `normal`，导致 `replace_pending_task` 永远匹配 0 行只能 append 兜底）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
 2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息。追加前有服务端判重兜底：`POST /session/{id}/replace-pending-task` 未找到 pending 行时，由 `ChatMessagesModel.has_generated_result` 检查会话历史中是否已含该批 project 的结果卡片（匹配 `data-publish-tool-id="{pid}"` 属性或 `{pid}_` 文件名片段），命中则返回 `duplicate: true`，前端视为已处理、跳过追加，防止跨页签双写或恢复流程重复触发时重复写入"视频已生成"消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
