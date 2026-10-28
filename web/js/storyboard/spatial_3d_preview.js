@@ -7,6 +7,8 @@
  *   每镜必须 setCamera(...) 确定镜头位置；
  * - 本模块把序列内 startScene 到当前镜的代码按顺序在沙箱内重放执行，
  *   得到该镜的完整空间状态后渲染，并提供「镜头视角」画中画取景器；
+ *   人偶使用工作流导演台同款 male_base_mesh.glb 蒙皮人台（加载与构建
+ *   见 spatial_mannequin_glb.js，失败回退程序化人偶）；
  * - 机位可编辑（手动：主视图拖拽机位方块/焦点球 + 侧栏滑杆/预设；
  *   对话：弹窗底部输入条走 /scene/{id}/camera-chat 单轮 LLM 参数提取）。
  *   所有修改统一经 rewriteSetCamera 写回本镜 three_scene_code 的 setCamera
@@ -32,6 +34,7 @@ import {
     normalizeCamera,
     rewriteSetCamera,
 } from './spatial_camera_edit.js';
+import { ensureMannequinTemplate, getReadyMannequinTemplate, buildGlbMannequin } from './spatial_mannequin_glb.js';
 
 // 转义统一收敛到 web/js/escape.js（window.escapeHtml，经典 script 先于本 module 执行）
 const escapeHtml = (typeof window !== 'undefined' && typeof window.escapeHtml === 'function')
@@ -169,7 +172,29 @@ function makeLabel(THREE, text, { color = '#1f2937', bg = 'rgba(255,255,255,0.92
 // ============ 代码重放沙箱（three_scene_code 方案核心） ============
 
 /**
- * LibTV 风格人偶（与导演台人偶同风格）：胶囊四肢 + 球形关节接缝 +
+ * 预览人偶：优先导演台同款 GLB 蒙皮人台（spatial_mannequin_glb.js，
+ * 模板需先经 ensureMannequinTemplate 预载），未就绪/构建失败回退
+ * 程序化人偶。两者同为静态站姿、面向 +Z（facing 度）、脚底 y=0。
+ */
+function buildPreviewMannequin(THREE, color, name, facing) {
+    const template = getReadyMannequinTemplate();
+    if (template) {
+        try {
+            return buildGlbMannequin(template, {
+                color,
+                name,
+                facing,
+                makeLabel: (text) => makeLabel(THREE, text),
+            });
+        } catch (error) {
+            console.warn('[spatial3d] GLB 人偶构建失败，回退程序化人偶:', error);
+        }
+    }
+    return buildMannequin(THREE, color, name, facing);
+}
+
+
+/** LibTV 风格人偶（程序化回退版，GLB 人台不可用时使用）：胶囊四肢 + 球形关节接缝 +
  * 蛋形无脸头 + 面甲深色带指示朝向。root 在脚底，身高约 1.55m。
  * 纯静态站姿（预览不做姿态编辑），几何体每偶独立，随预览 dispose。
  */
@@ -414,7 +439,7 @@ function createReplayContext(THREE, aspect) {
             const color = Number(options.color != null
                 ? options.color
                 : ACTOR_PALETTE[ctx.actorColorIndex++ % ACTOR_PALETTE.length]);
-            const group = buildMannequin(THREE, color, String(name), Number(options.facing) || 0);
+            const group = buildPreviewMannequin(THREE, color, String(name), Number(options.facing) || 0);
             group.position.set(x, 0, z);
             ctx.root.add(group);
             ctx.actors[name] = group;
@@ -537,6 +562,9 @@ function replayToIndex(THREE, previews, index) {
  * 机位方块 userData.dragKind='camera'、焦点球 'focus'，主视图可直接拖拽编辑。 */
 function makeCameraGizmoFromInfo(THREE, cameraInfo, aspect = 16 / 9) {
     const group = new THREE.Group();
+    // 标记机位 gizmo：镜头视角（画中画）渲染时隐藏——焦点球/机位方块/视锥线
+    // 属于编辑辅助，混进镜头画面会误导用户（快照渲染走独立重放，天然无 gizmo）
+    group.userData.isCameraGizmo = true;
     const { eye, target } = cameraInfo;
     if (!eye || !target) return group;
 
@@ -1305,13 +1333,15 @@ class Spatial3dSession {
         this.renderer.render(this.scene, this.camera);
 
         // 镜头视角画中画：用本镜 setCamera 的相机从机位看向场景
-        // （画幅跟随故事板 workflowRatio：9:16 竖屏故事板 PiP 亦为竖屏）
+        // （画幅跟随故事板 workflowRatio：9:16 竖屏故事板 PiP 亦为竖屏；
+        //  机位 gizmo 是编辑辅助，进镜头画面会误导——渲染前隐藏，主视图还原）
         if (this.shotCamera) {
             const pipW = Math.max(Math.round(width * 0.3), 120);
             const pipH = Math.round(pipW / previewAspect());
             const margin = 12;
             this.shotCamera.aspect = pipW / pipH;
             this.shotCamera.updateProjectionMatrix();
+            if (this.gizmoGroup) this.gizmoGroup.visible = false;
             this.renderer.setClearColor(0x101826, 0.92);
             this.renderer.setScissorTest(true);
             this.renderer.setViewport(width - pipW - margin, margin, pipW, pipH);
@@ -1321,12 +1351,16 @@ class Spatial3dSession {
             this.renderer.setScissorTest(false);
             this.renderer.setClearColor(0x000000, 0);
             this.renderer.setViewport(0, 0, width, height);
+            if (this.gizmoGroup) this.gizmoGroup.visible = true;
         }
     }
 
     _disposeObject(obj) {
         obj.traverse((node) => {
-            if (node.geometry) node.geometry.dispose();
+            // GLB 人偶的 geometry 是模板共享（SkeletonUtils.clone 不复制几何体），
+            // 只 dispose 每偶独立的材质；程序化人偶几何体每偶独立，照常 dispose。
+            const isGlbMannequin = node.userData && node.userData.isGlbMannequin;
+            if (node.geometry && !isGlbMannequin) node.geometry.dispose();
             const materials = Array.isArray(node.material) ? node.material : [node.material];
             for (const material of materials) {
                 if (!material) continue;
@@ -1463,6 +1497,8 @@ export async function openSpatial3dPreview(sceneId) {
     const startIndex = Math.max(0, previews.findIndex((item) => item.scene_id === sceneId));
     try {
         const THREE = await loadThree();
+        // GLB 人偶模板预载（与导演台同款形象；失败回退程序化人偶不阻塞打开）
+        await ensureMannequinTemplate();
         activePreview = new Spatial3dSession(THREE, previews, startIndex);
     } catch (error) {
         showToast(error.message || '3D 预览初始化失败', 'error');

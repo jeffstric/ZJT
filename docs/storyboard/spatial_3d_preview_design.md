@@ -234,3 +234,29 @@ three.js）把该镜空间映射为导演台人偶与机位，首次点击自动
 `parse_camera_instruction`；LLM 输入注入导演台人偶坐标）。应用后随
 工作流 400ms 防抖自动保存落库。机位 eye/target 双格式（数组/对象）
 在前后端全链路兼容。
+## 10. 人偶形象统一：导演台同款 GLB 人台（第四期，2026-10-27）
+
+预览人偶从程序化几何体（胶囊四肢+蛋形头，1.55m）升级为工作流导演台
+同款 `male_base_mesh.glb` 蒙皮人台（1.75m），两处人偶形象完全一致：
+
+- **加载**（`web/js/storyboard/spatial_mannequin_glb.js`）：幂等单例
+  `ensureMannequinTemplate`（three.min.js → GLTFLoader/SkeletonUtils
+  懒注入 → GLB 拉取），失败返回 null 且允许下次重试；
+  `getReadyMannequinTemplate` 同步读就绪模板（沙箱 makeActor 无法 await）。
+- **构建**（`buildGlbMannequin`，静态立正简版，不含导演台的关节组重挂
+  与头骨手术）：SkeletonUtils.clone 共享模板 → 染色树脂材质
+  （MeshPhysicalMaterial 同导演台 body 参数，r128 显式 `skinning=true`）→
+  归一化（面向 +Z、1.75m、脚底贴地、水平居中）→ 上臂从 T-pose 旋成
+  垂臂微外张（与导演台同一目标向量 `(0,-1,±0.07)`）→ 头顶 label。
+- **回退**：模板未就绪/构建失败回退原程序化人偶（`buildMannequin`），
+  预览不阻塞。
+- **dispose 契约**：克隆实例共享模板 geometry（整棵子树打
+  `userData.isGlbMannequin` 标记），预览销毁只回收每偶独立的材质/贴图，
+  禁止 dispose 共享 geometry。
+- **镜头视角净化**：机位 gizmo（视锥/机位方块/焦点球/机位标签）打
+  `userData.isCameraGizmo` 标记，画中画渲染前隐藏、渲染后还原——
+  编辑辅助不进镜头画面。
+- **入口预载**：3D 预览弹窗打开会先 `ensureMannequinTemplate`，
+  保证 GLB 形象一致。
+- 测试：`web/tests/spatial_mannequin_glb.test.js`（vitest 9 例：模板加载
+  幂等/失败重试、构建归一化/立正/子树标记、预览链路接线）。
