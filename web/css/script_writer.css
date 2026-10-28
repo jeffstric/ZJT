@@ -1559,6 +1559,25 @@ body {
     margin-top: 8px;
 }
 
+/* 发送快捷键切换（Enter / Ctrl+Enter），状态行右侧 */
+.send-shortcut-toggle {
+    margin-left: auto;
+    background: none;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.send-shortcut-toggle:hover {
+    color: var(--text-color);
+    border-color: var(--primary-color, #00a8e6);
+}
+
 .status-item {
     display: flex;
     align-items: center;

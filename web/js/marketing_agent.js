@@ -5,6 +5,16 @@
             // ========== 状态 ==========
             const messages = ref([]);
             const inputText = ref('');
+            // 发送快捷键：默认 Enter 发送，可点击输入栏切换按钮改为 Ctrl+Enter
+            //（macOS 下 Cmd+Enter 等效）；偏好持久化 localStorage，跨会话保持
+            const SEND_SHORTCUT_STORAGE_KEY = 'marketing_send_shortcut';
+            const sendShortcutMode = ref(
+                localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'ctrl_enter' ? 'ctrl_enter' : 'enter'
+            );
+            function toggleSendShortcut() {
+                sendShortcutMode.value = sendShortcutMode.value === 'ctrl_enter' ? 'enter' : 'ctrl_enter';
+                localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, sendShortcutMode.value);
+            }
             const isLoading = ref(false);
             const isInitializing = ref(true);
             const errorMessage = ref('');
@@ -2838,13 +2848,22 @@
                     console.error('generation status polling error:', err);
                     const failures = recordTaskError(errorKey);
                     if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                        clearDirectGenerationTask(task);
+                        // 不判死：任务仍在服务端生成（直连轮询常见瞬时 401/网络抖动），
+                        // 气泡转中性提示，高频 interval 降频后继续探测，恢复后照常展示结果。
+                        // 与 Agent 轮询路径（pollAgentVideoStatus）错误兜底语义对齐。
+                        resetTaskErrorCount(errorKey);
                         const currentMsgIdx = messages.value.findIndex(m => m._uid === task.msgUid);
                         if (currentMsgIdx !== -1) {
-                            messages.value[currentMsgIdx].content = window.t('request_timeout') || '请求超时，请稍后重试。';
+                            messages.value[currentMsgIdx].content = window.t('generating_placeholder') || '生成中...';
                             scrollToBottom();
                         }
-                        resetTaskErrorCount(errorKey);
+                        if (task.intervalId) {
+                            trackedClearInterval(task.intervalId);
+                            const checkFn = task.type === 'image' ? checkImageStatus : checkVideoStatus;
+                            task.intervalId = trackedSetInterval(() => checkFn(task), TASK_ERROR_BACKOFF_INTERVAL);
+                            if (task.type === 'image') imageStatusInterval.value = task.intervalId;
+                            else videoStatusInterval.value = task.intervalId;
+                        }
                     }
                 }
             }
@@ -6499,19 +6518,25 @@
                     return;
                 }
 
-                // mention dropdown 不可见时，Enter（不带 Shift）发送消息
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    // 如果有待回答的 verification，提交自定义回答
-                    if (pendingVerificationId.value) {
-                        const text = inputText.value.trim();
-                        if (text) {
-                            inputText.value = '';
-                            autoResize();
-                            submitVerificationAnswer(pendingVerificationId.value, text);
+                // mention dropdown 不可见时，按当前快捷键模式发送消息
+                //（默认 Enter 发送；用户可切换为 Ctrl+Enter，见 sendShortcutMode）
+                if (e.key === 'Enter') {
+                    if (e.isComposing) return; // 输入法组词中不触发发送
+                    const ctrlEnterMode = sendShortcutMode.value === 'ctrl_enter';
+                    const shouldSend = ctrlEnterMode ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
+                    if (shouldSend) {
+                        e.preventDefault();
+                        // 如果有待回答的 verification，提交自定义回答
+                        if (pendingVerificationId.value) {
+                            const text = inputText.value.trim();
+                            if (text) {
+                                inputText.value = '';
+                                autoResize();
+                                submitVerificationAnswer(pendingVerificationId.value, text);
+                            }
+                        } else {
+                            handleSend();
                         }
-                    } else {
-                        handleSend();
                     }
                 }
             }
@@ -7508,6 +7533,8 @@
             return {
                 messages,
                 inputText,
+                sendShortcutMode,
+                toggleSendShortcut,
                 isLoading,
                 isInitializing,
                 errorMessage,
