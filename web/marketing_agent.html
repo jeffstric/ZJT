@@ -417,6 +417,27 @@
                                             </div>
                                             <div class="power-confirm-hint">{{ $t('power_confirm_hint', { value: powerConfirmDefault }) }}</div>
                                         </div>
+                                        <!-- 单次任务算力上限（用户级，营销/剧本智能体任务共用） -->
+                                        <div class="power-confirm-field">
+                                            <div class="power-confirm-field-head">
+                                                <span class="power-confirm-field-title">{{ $t('power_budget_title') }}</span>
+                                                <button type="button"
+                                                    class="power-confirm-reset"
+                                                    v-if="powerBudgetIsCustom"
+                                                    @click.stop="resetPowerBudgetLimit">{{ $t('power_confirm_reset') }}</button>
+                                            </div>
+                                            <div class="power-confirm-field-row">
+                                                <input type="number"
+                                                    class="power-confirm-input"
+                                                    min="0"
+                                                    step="1"
+                                                    v-model.number="powerBudgetLimitInput"
+                                                    @click.stop
+                                                    @change="savePowerBudgetLimit" />
+                                                <span class="power-confirm-unit">{{ $t('power_budget_unit') }}</span>
+                                            </div>
+                                            <div class="power-confirm-hint">{{ $t('power_budget_hint', { value: powerBudgetDefault }) }}</div>
+                                        </div>
                                         <!-- 输出语言（对图片/视频/数字人/文案素材生效） -->
                                         <div class="output-language-field">
                                             <div class="output-language-field-head">

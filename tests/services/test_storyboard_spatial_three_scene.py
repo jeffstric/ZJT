@@ -8,8 +8,8 @@ import importlib.util
 import unittest
 
 _HAS_ENTERPRISE_SPATIAL = (
-    importlib.util.find_spec("enterprise") is not None
-    and importlib.util.find_spec("enterprise.services.storyboard_spatial") is not None
+    importlib.util.find_spec("enterprise.services.storyboard_spatial.three_scene")
+    is not None
 )
 
 if _HAS_ENTERPRISE_SPATIAL:

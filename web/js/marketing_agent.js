@@ -720,6 +720,13 @@
             const powerConfirmDefault = ref(35);
             const powerConfirmIsCustom = ref(false);
 
+            // 用户级单次任务算力上限（power budget，0=不限制；对营销/剧本
+            // 智能体任务统一生效，见 script_writer_core/agents/power_budget.py）
+            const powerBudgetLimit = ref(0);
+            const powerBudgetLimitInput = ref(0);
+            const powerBudgetDefault = ref(0);
+            const powerBudgetIsCustom = ref(false);
+
             const aspectRatioMap = {
                 'auto':  { label: window.t('ratio_smart'), value: 'auto', w: 20, h: 20 },
                 '21:9':  { label: '21:9', value: '21:9', w: 28, h: 12 },
@@ -4091,6 +4098,78 @@
                 }
             }
 
+            async function loadPowerBudgetSettings() {
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    const limit = Number(payload.limit);
+                    const fallback = Number(payload.default_limit);
+                    powerBudgetDefault.value = Number.isFinite(fallback) ? fallback : 0;
+                    powerBudgetLimit.value = Number.isFinite(limit) ? limit : powerBudgetDefault.value;
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 加载设置失败:', e);
+                }
+            }
+
+            async function savePowerBudgetLimit() {
+                const parsed = parseInt(powerBudgetLimitInput.value, 10);
+                if (!Number.isFinite(parsed) || parsed < 0) {
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken.value}`
+                        },
+                        body: JSON.stringify({ limit: parsed })
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    if (data.code !== 0) {
+                        throw new Error(data.message || data.detail || 'save failed');
+                    }
+                    const payload = data.data || {};
+                    powerBudgetLimit.value = Number(payload.limit);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                    if (payload.default_limit != null) {
+                        powerBudgetDefault.value = Number(payload.default_limit);
+                    }
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 保存失败:', e);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                }
+            }
+
+            async function resetPowerBudgetLimit() {
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    powerBudgetLimit.value = Number(payload.limit);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                    if (payload.default_limit != null) {
+                        powerBudgetDefault.value = Number(payload.default_limit);
+                    }
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 恢复默认失败:', e);
+                }
+            }
+
             function handleHumanVerification(verification) {
                 if (!verification) return;
 
@@ -4923,6 +5002,7 @@
                 await loadComputingPower();
                 startComputingPowerRefresh();
                 await loadPowerConfirmSettings();
+                await loadPowerBudgetSettings();
 
                 // 从后端加载会话列表
                 const backendSessions = await loadSessionsFromBackend();
@@ -7627,6 +7707,11 @@
                 powerConfirmIsCustom,
                 savePowerConfirmThreshold,
                 resetPowerConfirmThreshold,
+                powerBudgetLimitInput,
+                powerBudgetDefault,
+                powerBudgetIsCustom,
+                savePowerBudgetLimit,
+                resetPowerBudgetLimit,
                 verificationOptionClass,
                 toggleModelSelect,
                 toggleLLMModelSelect,

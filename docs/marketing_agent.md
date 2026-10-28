@@ -236,6 +236,17 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 > **作用范围**：算力确认门仅对营销智能体（`MarketingPMAgent`，`session_type=2`）及分镜（storyboard）链路开启。剧本创作页（`script_writer.html`，`PMAgent`）已于 2026-09-01 关闭此门（`power_confirm_enabled=False`，见 `docs/backend/incidents/2026-09-01-script-writer-power-confirm-loop.md`）：生成前不弹「算力确认」，也不在系统提示中注入阈值说明。
 
+#### 单次任务算力上限（power budget）
+
+自定义面板中「自动确认上限」下方另有「单次任务算力上限」输入框（2026-10-28 起，与剧本创作页 `script_writer.html` 顶栏的「本次任务算力上限」共用同一用户级设置）。它是任务级护栏：单次任务（从发送消息到任务结束）累计消耗超过上限即自动停止并提示，0 表示不限制。营销智能体（`MarketingPMAgent` 继承 `PMAgent.execute`）与剧本智能体任务统一生效，实现见 `script_writer_core/agents/power_budget.py`。
+
+- 用户级设置存 `user_preferences.pref_type=power_budget`（`world_id=_global`）；未设置时用平台默认 `agent.power_budget_default`（常量兜底 `AGENT_POWER_BUDGET_DEFAULT`）。
+- 读写接口（社区版 `api/user.py`、企业版 `enterprise/routes/user.py` 都挂载）：
+  - `GET /api/user/power-budget` → `{ limit, is_custom, default_limit }`
+  - `PUT /api/user/power-budget` body `{ limit }`（非负整数，0=不限制）
+  - `DELETE /api/user/power-budget` 回退平台默认
+- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 复用 `.power-confirm-field` 样式（`web/css/marketing_agent.css`），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
+
 ### SSE 流式响应
 
 #### 连接建立
