@@ -26,7 +26,7 @@
 
 ## API（`api/user.py`，Authorization 头认证）
 
-商业版进程在 `enterprise_loader` 成功时挂载独立仓库 `enterprise/routes/user.py`，不会挂载本文件的 router。`power-confirm` 已在该路由按同样路径再注册一层；`power-budget` 目前只定义在本文件。商业版上线前需要在 `enterprise/routes/user.py` 用同样方式再挂 GET/PUT/DELETE `/power-budget`，否则设置接口 404，任务仍按默认上限 200 暂停。
+商业版进程在 `enterprise_loader` 成功时挂载独立仓库 `enterprise/routes/user.py`，不会挂载本文件的 router。`power-confirm` 与 `power-budget` 均已在该路由按同样路径再注册一层（复用本文件的 `PowerBudgetRequest`/`_power_budget_payload` 等助手函数，行为与社区版一致；2026-10-28 补齐，此前商业版设置接口 405——请求被 SPA 通配 GET 路由 `server.py` 的 `/{full_path:path}` 部分匹配，前端无报错提示导致上限静默未保存）。
 
 - `GET /api/user/power-budget` → `{limit, is_custom, default_limit}`
 - `PUT /api/user/power-budget` body `{limit: int}`（0 = 不限制）

@@ -2626,6 +2626,8 @@
         // ===== 单次任务算力上限（PowerBudget） =====
         let powerBudgetDefault = null;
         let powerBudgetIsCustom = false;
+        // 最近一次从服务端成功加载/保存的生效值，保存失败时据此回显输入框
+        let powerBudgetCurrent = null;
 
         function updatePowerBudgetResetVisibility() {
             const resetBtn = document.getElementById('power-budget-reset');
@@ -2659,6 +2661,7 @@
                 if (input && typeof payload.limit === 'number') {
                     input.value = payload.limit;
                 }
+                powerBudgetCurrent = typeof payload.limit === 'number' ? payload.limit : null;
                 powerBudgetDefault = typeof payload.default_limit === 'number' ? payload.default_limit : null;
                 powerBudgetIsCustom = !!payload.is_custom;
                 updatePowerBudgetResetVisibility();
@@ -2677,7 +2680,15 @@
                 },
                 body: JSON.stringify({ limit })
             });
-            return await response.json();
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+                const detail = data?.detail || data?.error || `HTTP ${response.status}`;
+                const error = new Error(detail);
+                error.status = response.status;
+                error.data = data;
+                throw error;
+            }
+            return data;
         }
 
         async function onPowerBudgetChange() {
@@ -2691,8 +2702,8 @@
             }
             const limit = Number(raw);
             if (!Number.isInteger(limit) || limit < 0) {
-                updateStatus('⚠ ' + (window.t ? window.t('power_budget_invalid') : '算力上限必须是非负整数（0 表示不限制）'));
-                loadPowerBudgetPreference();
+                showError('⚠ ' + (window.t ? window.t('power_budget_invalid') : '算力上限必须是非负整数（0 表示不限制）'));
+                input.value = powerBudgetCurrent ?? '';
                 return;
             }
             try {
@@ -2703,15 +2714,26 @@
                 if (data?.code === 0) {
                     const payload = data.data || {};
                     powerBudgetIsCustom = !!payload.is_custom;
-                    if (typeof payload.limit === 'number') input.value = payload.limit;
+                    if (typeof payload.limit === 'number') {
+                        input.value = payload.limit;
+                        powerBudgetCurrent = payload.limit;
+                    }
                     updatePowerBudgetResetVisibility();
                     updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
                 } else {
-                    updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                    showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                    input.value = powerBudgetCurrent ?? '';
                 }
             } catch (error) {
+                if (error?.status === 401) {
+                    checkTokenExpired(error.data, { status: 401 });
+                    return;
+                }
                 console.error('保存单次任务算力上限失败:', error);
-                updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                const detail = error?.message ? `：${error.message}` : '';
+                showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败') + detail);
+                // 保存失败时回显为上次生效值，避免误以为修改已生效
+                input.value = powerBudgetCurrent ?? '';
             }
         }
 
@@ -2724,23 +2746,27 @@
                         'Authorization': `Bearer ${AUTH_TOKEN}`
                     }
                 });
-                const data = await response.json();
+                const data = await response.json().catch(() => null);
                 if (checkTokenExpired(data, response)) {
                     return;
                 }
-                if (data?.code === 0) {
+                if (response.ok && data?.code === 0) {
                     const payload = data.data || {};
                     powerBudgetIsCustom = false;
-                    if (input && typeof payload.limit === 'number') input.value = payload.limit;
+                    if (input && typeof payload.limit === 'number') {
+                        input.value = payload.limit;
+                        powerBudgetCurrent = payload.limit;
+                    }
                     updatePowerBudgetResetVisibility();
                     applyPowerBudgetHint(powerBudgetDefault);
                     updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
                 } else {
-                    updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                    const detail = data?.detail ? `：${data.detail}` : '';
+                    showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败') + detail);
                 }
             } catch (error) {
                 console.error('恢复默认算力上限失败:', error);
-                updateStatus('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
             }
         }
 

@@ -4891,6 +4891,9 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    /* 宽度自适应内容（输入框 + 恢复默认按钮），不继承 .model-select-wrapper 的固定宽度 */
+    width: fit-content;
+    flex-shrink: 0;
 }
 
 .power-budget-input {
