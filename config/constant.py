@@ -2360,6 +2360,10 @@ ENTITY_PROTECTED_META_FIELDS = (
     'updated_at', 'update_time',
 )
 
+# 角色/场景/剧本名称会参与跨平台文件名构造，统一拒绝路径分隔符及 Windows 非法字符。
+ENTITY_NAME_MAX_LENGTH = 200
+ENTITY_NAME_INVALID_CHARS_PATTERN = r'[<>:"/\\|?*\x00-\x1f]'
+
 # 实体类型 -> JSON 文件名前缀映射（文件名规则：{prefix}{name}.json）
 ENTITY_FILE_PREFIX_MAP = {
     'character': 'character_',

@@ -165,6 +165,35 @@
             const key = `story_type_${normalized}`;
             return window.t ? window.t(key) : (STORY_TYPE_LABELS[normalized] || STORY_TYPE_LABELS.dialogue);
         }
+
+        const ENTITY_NAME_MAX_LENGTH = 200;
+        const INVALID_ENTITY_NAME_CHARS = /[<>:"/\\|?*\x00-\x1F]/;
+
+        function getEntityNameValidationError(name, typeLabel) {
+            const value = String(name ?? '');
+            const trimmed = value.trim();
+            const translate = (key, fallback) => window.t ? window.t(key, { type: typeLabel }) : fallback;
+            if (!trimmed) {
+                return translate('error_entity_name_empty', `${typeLabel}不能为空`);
+            }
+            if (INVALID_ENTITY_NAME_CHARS.test(value)) {
+                return translate('error_entity_name_invalid_chars', `${typeLabel}不能包含 < > : " / \\ | ? * 或控制字符`);
+            }
+            if (value.endsWith(' ') || value.endsWith('.') || trimmed === '.' || trimmed === '..') {
+                return translate('error_entity_name_invalid_ending', `${typeLabel}不能是 . 或 ..，也不能以空格或点号结尾`);
+            }
+            if (trimmed.length > ENTITY_NAME_MAX_LENGTH) {
+                return translate('error_entity_name_too_long', `${typeLabel}不能超过 200 个字符`);
+            }
+            return '';
+        }
+
+        function validateEntityName(name, typeLabel) {
+            const error = getEntityNameValidationError(name, typeLabel);
+            if (error) showError(error);
+            return !error;
+        }
+
         let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
         let isSharedSpace = false;  // 是否共享空间模式（/api/edition 返回），仅共享模式下管理员侧栏才展示全部用户世界
         let currentFileType = 'worlds';
@@ -7592,6 +7621,16 @@
             const fileType = currentEditFile.fileType;
             const fileName = currentEditFile.fileName;
             if (!fileType || !fileName) return;
+            const editedNameFields = {
+                characters: ['char-name', 'label_character_name', '角色名称'],
+                locations: ['loc-name', 'label_scene_name', '场景名称'],
+                scripts: ['script-title', 'label_script_title', '剧本标题']
+            };
+            const nameField = editedNameFields[fileType];
+            if (nameField) {
+                const typeLabel = window.t ? window.t(nameField[1]) : nameField[2];
+                if (!validateEntityName(document.getElementById(nameField[0]).value, typeLabel)) return;
+            }
             isSavingEditedFile = true;
             let newContent = '';
 
@@ -8640,6 +8679,8 @@
                 showError(window.t ? window.t('error_enter_script_title') : '请输入剧本标题');
                 return;
             }
+            const scriptTitleLabel = window.t ? window.t('label_script_title') : '剧本标题';
+            if (!validateEntityName(title, scriptTitleLabel)) return;
             if (!episodeValue || isNaN(episode) || episode < 1) {
                 showError(window.t ? window.t('error_invalid_episode_num') : '请输入有效的集数（正整数）');
                 return;
@@ -8711,6 +8752,14 @@
             const hint = document.getElementById('char-name-hint');
             const value = nameInput.value.trim();
             if (!value) { hint.style.display = 'none'; return; }
+            const typeLabel = window.t ? window.t('label_character_name') : '角色名称';
+            const nameError = getEntityNameValidationError(value, typeLabel);
+            if (nameError) {
+                hint.style.display = 'block';
+                hint.style.color = 'var(--error-color, #e74c3c)';
+                hint.textContent = nameError;
+                return;
+            }
             if (existingCharacters.includes(value)) {
                 hint.style.display = 'block';
                 hint.style.color = 'var(--error-color, #e74c3c)';
@@ -8741,6 +8790,8 @@
         async function createNewCharacter() {
             const name = document.getElementById('new-char-name').value.trim();
             if (!name) { showError(window.t ? window.t('error_enter_character_name') : '请输入角色名称'); return; }
+            const characterNameLabel = window.t ? window.t('label_character_name') : '角色名称';
+            if (!validateEntityName(name, characterNameLabel)) return;
             if (existingCharacters.includes(name)) { showError(window.t ? window.t('error_character_exists', {name: name}) : `角色"${name}"已存在`); return; }
 
             try {
@@ -8797,6 +8848,14 @@
             const hint = document.getElementById('loc-name-hint');
             const value = nameInput.value.trim();
             if (!value) { hint.style.display = 'none'; return; }
+            const typeLabel = window.t ? window.t('label_scene_name') : '场景名称';
+            const nameError = getEntityNameValidationError(value, typeLabel);
+            if (nameError) {
+                hint.style.display = 'block';
+                hint.style.color = 'var(--error-color, #e74c3c)';
+                hint.textContent = nameError;
+                return;
+            }
             if (existingLocations.includes(value)) {
                 hint.style.display = 'block';
                 hint.style.color = 'var(--error-color, #e74c3c)';
@@ -8829,6 +8888,8 @@
         async function createNewLocation() {
             const name = document.getElementById('new-loc-name').value.trim();
             if (!name) { showError(window.t ? window.t('error_enter_scene_name') : '请输入场景名称'); return; }
+            const locationNameLabel = window.t ? window.t('label_scene_name') : '场景名称';
+            if (!validateEntityName(name, locationNameLabel)) return;
             if (existingLocations.includes(name)) { showError(window.t ? window.t('error_scene_exists', {name: name}) : `场景"${name}"已存在`); return; }
 
             try {
