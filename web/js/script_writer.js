@@ -6206,6 +6206,27 @@
             }
         }
 
+        // 将当前预览大图加入资产库；切换缩略图后始终使用当前选中的图片。
+        function addPreviewImageToAssetLibrary() {
+            const currentImage = previewImages[previewImageIndex];
+            if (!currentImage || !currentImage.url) {
+                showError(window.t ? window.t('add_preview_image_unavailable') : '当前没有可加入资产库的图片');
+                return;
+            }
+            const sourceUrl = currentImage.url.trim();
+            if (/^(data|blob):/i.test(sourceUrl)) {
+                showError(window.t ? window.t('add_preview_image_local_unsupported') : '本地临时图片暂不支持加入资产库，请先上传或生成图片');
+                return;
+            }
+            if (!window.AssetLibrary || typeof window.AssetLibrary.promptAdd !== 'function') {
+                showError(window.t ? window.t('asset_library_unavailable') : '资产库功能暂不可用');
+                return;
+            }
+            const name = [previewImageFileName, currentImage.label].filter(Boolean).join('-').slice(0, 200);
+            window.AssetLibrary.promptAdd({ sourceUrl, name });
+        }
+        window.addPreviewImageToAssetLibrary = addPreviewImageToAssetLibrary;
+
         // 从资产库选择图片并设为当前预览对象（角色/道具）的形象图（reference_image）。
         // 复用各自保存接口；形象图统一存相对路径（AI/生图消费链对相对/绝对均认）。
         function pickPreviewImageFromAssetLibrary() {
