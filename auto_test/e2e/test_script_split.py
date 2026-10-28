@@ -302,3 +302,46 @@ def test_cancel_submitted_task(api_client, user_id, auth_token, test_world, mock
         assert final.get("status") in ("cancelled", "completed", "cancelling"), (
             f"取消后状态异常: {final.get('status')}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 前置校验（889bd923a）：创建任务前拦截，不依赖 LLM，可进 ci_smoke
+# ---------------------------------------------------------------------------
+
+@pytest.mark.ci_smoke
+@pytest.mark.p0
+def test_split_short_script_rejected_before_task_creation(api_client, user_id, auth_token, test_world):
+    """split_pre_001 - 剧本正文 < 20 字直接 4xx（script_content_insufficient），
+    不创建任务、不消耗规划 LLM（重试也无法改变结论的输入必拒）。"""
+    resp = _submit_split(
+        api_client, user_id, auth_token, test_world["id"],
+        "太短了",  # < MIN_SCRIPT_SPLIT_CHARS(20)
+    )
+    assert resp.status_code in (400, 422), \
+        f"短剧本应被前置校验拒绝: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert "剧本内容信息不足" in str(body) or body.get("code") == "script_content_insufficient", \
+        f"应提示内容信息不足: {body}"
+
+
+@pytest.mark.ci_smoke
+@pytest.mark.p0
+def test_split_world_without_scene_rejected(api_client, user_id, auth_token, test_world):
+    """split_pre_002 - 新建 world 无场景时 4xx（world_no_scene），
+    提示先补场景而非拆到一半被 location guard 暂停。"""
+    resp = _submit_split(
+        api_client, user_id, auth_token, test_world["id"],
+        "这是一个足够长的测试剧本内容，" * 10,  # ≥20 字，通过长度校验
+    )
+    # 场景校验在 LLM 调用之前；若外部 LLM 配置先报错则按环境问题跳过
+    if resp.status_code >= 400:
+        try:
+            msg = str(resp.json().get("message", ""))
+        except Exception:
+            msg = ""
+        if "算力检查失败" in msg or "剧本解析失败" in msg:
+            _skip_or_fail(f"外部 LLM/平台集成不可用: {msg[:200]}")
+    assert resp.status_code in (400, 422), \
+        f"无场景 world 应被前置校验拒绝: {resp.status_code} {resp.text}"
+    body = resp.json()
+    assert "场景" in str(body), f"应提示场景缺失: {body}"

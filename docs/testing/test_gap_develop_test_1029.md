@@ -7,11 +7,51 @@
 相机对话、营销轮询修复等六大功能。develop 已自带大量测试（tests/ 新增 13 个文件、
 web/tests/ 新增 19 个文件），本次对剩余缺口做了系统性排查并补充。
 
-**总体结论**：测试纪律良好——power_budget/pending_reference_selections 全链路/
-wechat fail-closed/cookie 续期/新驱动等均有覆盖。真正的缺口集中在**路由层接线**、
-**调度循环返回值消费**与**若干 bugfix 的回归测试**，本次已补齐。
+**总范围**：除 10-22→10-28 这一周外，还回溯检查了再前 3 周（70bcc0a9..821d599f，
+2026-09-30→10-22，314 commits、512 文件、+4.2 万行）的合并改动——数字人 H3 分段、
+音色指纹 voice_desc、故事板↔画布互转、@ 提及胶囊化、KFRef 台词语义、SSE 假死修复、
+worker 进程池 fork→spawn、槽位对账回收、admin 每日统计等。
+
+**总体结论**：测试纪律良好——两大窗口内大部分功能与 bugfix 自带测试（后一窗口
+自带 57 个新测试文件）。真正的缺口集中在：路由层接线、调度/状态机语义、数字人
+服务本体、SSE 断点续传、时间轴导出链路，本次已补齐。
 
 ## 本次补充清单
+
+### 第二批：前 3 周窗口（70bcc0a9..821d599f）的缺口
+
+#### 后端单元测试（pytest，5 个文件，94 用例）
+
+| 文件 | 守护点 |
+|---|---|
+| `tests/services/test_storyboard_digital_human_service.py`（26 例） | 数字人服务本体（此前工具执行器层全 mock，本体零测试）：TTS 时长聚合、clamp 4-10s 计费口径、分辨率→max_edge、build_plan 时长优先级（TTS 总时长→scene.duration）、orchestrate 错误码链（404/invalid_video_type/audio_required）、plan_digital_human_ready 五态映射、deduct_computing_power_sync 跳过/失败/进参、prepare 多段音频合并失败不扣费 |
+| `tests/api/test_character_voice_endpoints.py`（13 例） | 角色音色三端点（4dcec8daa/9092d102b）：登录身份 401、claimed 403、DB 行属主为他人时忽略该行不泄露数据（str 对比回归）、analysis_failed→502 不吐兜底指纹、voice_description 字段回退、参考音频任务落库参数、预置音色 style/gender 三级指纹推导 |
+| `tests/drivers/test_digital_human_minimax_h3_runninghub_v1_driver.py`（扩展 11 例） | H3 驱动 submit/check_status 状态机（c5d637f85 421 拥堵回队、13347a6fc 断点续跑依赖）：拥堵→retry=True/UPSTREAM_CONGESTED、普通错误 USER 不重试、网络异常保持 RUNNING、SUCCESS 从 outputs 选 mp4、响应格式异常 SYSTEM+告警 |
+| `tests/services/test_window_topics_930_1022.py`（22 例） | 五个零测试改动面合集：抖音笔记解析器（TikHub 响应形状）、微信抓取 VL 识图并发化（**信号量峰值=4 断言**——串行识图曾拖爆整体超时）、sign-pay 400/503 透传不被 500 吞掉（a3dd5af7b）、剧本提取任务 TTL 判定（is_expired 边界）、admin 每日算力统计（按日分组/备注优先/日期校验/空数据） |
+
+#### 前端测试（vitest，6 个新文件，83 用例）
+
+| 文件 | 守护点 |
+|---|---|
+| `web/tests/sse_client_resume.test.js`（12 例） | SSE 断点续传（ce1b6d110 假死修复）：data:/id: 解析、done/error 收尾不重连、**空闲超时→带最新 Last-Event-ID 重连**、连接成功清零 attempts 与连接失败累计的语义区分、耗尽 throw→onError、close() 不触发 onError、Bearer 头 |
+| `web/tests/timeline_export_assets.test.js`（15 例） | 时间轴柱子归属链（682f89a3e：video/image_to_video/text_to_speech/audio 五类节点沿连线/产出线/ttsNodeId/sourceNodeId 向上追溯）+ 导出素材包（94ab321c6）：blob: 片段回退节点地址、order 排序、endTime 兜底、download_url 协议校验防 open redirect、downloadWithAuth 契约 |
+| `web/tests/marketing_agent_pending_card.test.js`（10 例） | 生成中进度卡片（038e05131）：i18n 模板动态正则、数字进度 width:pct 上限 100、'?' 不定进度、提交气泡后缀归类、locale 变化重建、300 字截断、裸音频 URL 内联播放器与保守前瞻（0163a57a1） |
+| `web/tests/storyboard_workflow_conversion.test.js`（7 例） | 画布↔故事板互转前端侧（d957af0ed）：无 id 拦截、flushAutoSave 先行、Bearer 补全、成功跳转、失败恢复按钮、故事板侧防重入守卫 |
+| `web/tests/subscription_agree_auto_qr.test.js`（12 例） | 勾选协议自动出微信二维码（85798489）：勾选即下单、五类不自动下单条件（无套餐/loading/已有码/已有单/微信内）、取消勾选仅清错误、防重复下单、recharge_center 同款守卫 |
+| `web/tests/admin_daily_power_stats.test.js`（8 例） | admin 每日统计（47192efe7/27c5598e4/8f00f3d1d）：跨日按用户聚合降序、display_name 备注优先、空数据 avgPerDay=0 非 NaN、start>end 回退、days 封顶 30 |
+| `web/tests/html_version_stamp.test.js`（9 例） | __VERSION__ 缓存戳守卫（e73286c1a）：机制在用 + 全部 HTML 无硬编码历史版本戳 |
+| `web/tests/shot_frame_last_frame_mode.test.js`（7 例） | 尾帧档位联动（f0101b875）：首尾帧齐备→first_last_with_tail 算力档、**提交 image_mode 保持 first_last_frame 不外泄**（服务端不识别 with_tail） |
+
+#### 端到端测试（Playwright，3 个文件扩展 + 1 个新建，8 用例）
+
+| 文件 | 守护点 |
+|---|---|
+| `auto_test/e2e/test_script_split.py`（+2 例，ci_smoke p0） | 前置校验（889bd923a）：短剧本 4xx（script_content_insufficient，不建任务不耗 LLM）、无场景 world 4xx（world_no_scene） |
+| `auto_test/e2e/test_storyboard.py`（新建 3 例，ci_smoke p0） | 互转端点守卫（d957af0ed 落库行为此前零自动化）：空/不存在画布 4xx、不存在 storyboard 404、未登录 401 |
+| `auto_test/e2e/test_audio.py`（+2 例，p1） | 预置音色 ≥100 且 voice_desc 回填率>90%（no_152）、mock TTS 产物 /upload/ 下载可达（25f67a9a1 302 签名/代理） |
+| `auto_test/e2e/test_script_writer_api.py`（+2 例） | 会话列表跨用户枚举不泄露（34e987ce6）、未知任务 404 自愈契约 |
+
+### 第一批：本周窗口（821d599f..dbaeb090）的缺口
 
 ### 后端单元测试（pytest，5 个文件，55 用例）
 
@@ -74,7 +114,20 @@ e2e 能拦的形态，已具备进 CI push 门禁条件；UI 用例（script_wri
 
 ## 验证记录（2026-10-29 本机）
 
-- pytest（新增/修改 6 个文件 + tests/frontend）：66 passed, 1 xfailed
-- vitest 全量：1068 passed（97 个文件）
+- pytest（两批新增/修改文件 + tests/frontend）：94 passed, 1 xfailed（第二批）+ 66 passed, 1 xfailed（第一批）
+- vitest 全量：**1151 passed**（113 个文件，两批合计新增 ~160 用例）
 - CI lint ×4（blocking_calls / migration_names / tool_executor_signature /
   frontend_xss）：全部通过（blocking_calls 仅存量 R5 advisory warning）
+- e2e：本机无 playwright，语法与 marker 静态校验；断言端点/请求形状已对照源码
+  与 conftest fixture 核实，首跑在 CI e2e 容器
+
+## 评估后未补的项（低价值或需重基建，供参考）
+
+- 数字人分段服务（marketing 侧 submit_segments/check_status 聚合）端到端——
+  mock 挡板已覆盖 H3 异步通道但 compose 拼接依赖真实 ffmpeg，且 param_prepare
+  VL 阶段无 mock 短路；建议随 mock 通道扩展后再上 e2e（test_digital_human.py）。
+- admin 每日统计 UI 渲染（Playwright route mock）——API 层已被单测+e2e 覆盖，
+  UI 侧建议随 AdminPage page object 补每日统计导航后一起加（p2）。
+- 画布级联清理/对话组删行重排/连线路由选择器（connection_base/dialogue_group/
+  canvas 删除三段）——依赖画布 state stub 基建，行为级成本高；核心状态迁移已有
+  readSource 守卫覆盖，建议在下次触碰这些文件时随改随补。
