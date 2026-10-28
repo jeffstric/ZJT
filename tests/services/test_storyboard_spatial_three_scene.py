@@ -7,10 +7,22 @@ import copy
 import importlib.util
 import unittest
 
-_HAS_ENTERPRISE_SPATIAL = (
-    importlib.util.find_spec("enterprise.services.storyboard_spatial.three_scene")
-    is not None
-)
+def _has_enterprise_spatial() -> bool:
+    try:
+        return (
+            importlib.util.find_spec(
+                "enterprise.services.storyboard_spatial.three_scene"
+            )
+            is not None
+        )
+    except (ImportError, AttributeError, ValueError):
+        # find_spec 会先导入父包：enterprise 整体缺失时抛 ModuleNotFoundError
+        # 而非返回 None（Community CI 无 enterprise 目录即此场景），
+        # 模块级异常会让 unittest 收集直接报 _FailedTest，必须降级为 False
+        return False
+
+
+_HAS_ENTERPRISE_SPATIAL = _has_enterprise_spatial()
 
 if _HAS_ENTERPRISE_SPATIAL:
     from enterprise.services.storyboard_spatial.three_scene import (
