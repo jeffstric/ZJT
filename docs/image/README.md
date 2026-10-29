@@ -6,7 +6,7 @@
 
 | 文档 | 说明 |
 |------|------|
-| [qwen_image_edit.md](./qwen_image_edit.md) | Qwen Image Edit 空壳任务（task_id=38，用接口模块导入本地 ComfyUI 工作流后绑定） |
+| [qwen_image_edit.md](./qwen_image_edit.md) | Qwen Image Edit 空壳任务（task_id=38，已从模型下拉隐藏；可用接口模块导入本地 ComfyUI 工作流后按 task_id 绑定） |
 | [z_index.md](./z_index.md) | Z-index 空壳任务（task_id=48，待接入实现方） |
 | [camera_control_implementation.md](./camera_control_implementation.md) | 图片节点相机控制功能（Yaw/Dolly/Pitch 参数） |
 | [image_node_text_to_image.md](./image_node_text_to_image.md) | 图片节点文生图（无底图按提示词直接生成，自动切换文生图/图生图模式） |

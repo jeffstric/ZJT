@@ -8,6 +8,7 @@ import asyncio
 import uuid
 from io import BytesIO
 import json
+import math
 import os
 import time
 import logging
@@ -44,7 +45,12 @@ import uuid
 from PIL import Image
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
-from config.unified_config import UnifiedConfigRegistry, get_implementation_id, get_implementation_name
+from config.unified_config import (
+    UnifiedConfigRegistry,
+    get_implementation_id,
+    get_implementation_name,
+    validate_video_enhance_params,
+)
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -93,6 +99,9 @@ from config.constant import (
     DS_ENV_FIT_DEFAULT_HORIZON,
     DS_ENV_FIT_DEFAULT_SCALE,
     FaceMaskPromptConstants,
+    VIDEO_ENHANCE_MIN_DURATION_SECONDS,
+    VIDEO_ENHANCE_MAX_DURATION_SECONDS,
+    VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -133,9 +142,11 @@ from utils.resource_access import (
     is_admin_user,
     resolve_authenticated_user_id,
     enforce_x_user_id_consistency,
+    decide_auth_cookie_renewal,
 )
 from utils.media_upload import (
     UploadValidationError,
+    check_media_magic,
     convert_tiff_file_to_png,
     resolve_media_extension,
     save_upload_chunked,
@@ -154,6 +165,7 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
     extract_first_frame,
@@ -360,32 +372,44 @@ def _generation_snapshot_extra_config(
 
 async def _validate_image_size(file: UploadFile, max_size_bytes: int = None) -> tuple[bool, str]:
     """
-    验证上传图片文件大小
-    
+    验证上传图片文件大小与格式
+
+    角色/场景/道具等资产参考图的 12 处落盘点均以本函数为唯一校验入口，
+    在此统一收口：大小上限 + 扩展名白名单 + 魔数校验。
+
     Args:
         file: 上传的文件对象
         max_size_bytes: 最大文件大小（字节），默认使用全局配置
-        
+
     Returns:
         (是否有效, 错误消息)
     """
     if not file or not file.filename:
         return True, ""
-    
+
     if max_size_bytes is None:
         max_size_bytes = MAX_IMAGE_SIZE_BYTES
-    
+
     # 读取文件内容获取大小
     content = await file.read()
     file_size = len(content)
-    
+
     # 重置文件指针以便后续读取
     await file.seek(0)
-    
+
     if file_size > max_size_bytes:
         max_size_mb = max_size_bytes / (1024 * 1024)
         return False, f"图片文件大小不能超过{max_size_mb:.0f}MB"
-    
+
+    # 扩展名白名单 + 魔数校验（docs/security/upload_security.md：/upload/ 由
+    # StaticFiles 直接对外提供，.html/.svg 落盘即同域存储型 XSS）。
+    # tif/tiff 放行后仍由各调用点走落盘后 PNG 归一化。
+    try:
+        ext = resolve_media_extension(file.filename)
+    except UploadValidationError as e:
+        return False, str(e)
+    if not check_media_magic(ext, content[:MediaUploadSafetyConstants.MAGIC_SCAN_BYTES]):
+        return False, f"文件内容与 {ext} 格式不符（魔数校验失败），请勿伪造文件扩展名"
     return True, ""
 
 
@@ -547,6 +571,24 @@ async def startup_event():
 
     asyncio.create_task(start_notification_service())
 
+    # 资产库文件完整性检查（只读）：DB 记录在磁盘缺失文件时告警，
+    # 便于及时发现外部误删（应用内删除路径均有日志，缺失基本来自外部）
+    async def check_asset_library_files():
+        try:
+            from services import asset_library_service as _al_svc
+            result = await asyncio.to_thread(_al_svc.verify_asset_files)
+            if result.get("missing"):
+                ids = result["missing"][:20]
+                more = "…" if len(result["missing"]) > len(ids) else ""
+                logger.warning(
+                    f"资产库完整性检查：{len(result['missing'])}/{result['total']} 个资产文件磁盘缺失"
+                    f"（id: {ids}{more}），对应图片将无法显示"
+                )
+        except Exception as e:
+            logger.warning(f"资产库文件完整性检查失败（non-critical）: {e}")
+
+    asyncio.create_task(check_asset_library_files())
+
 # 导入并注册 script_writer API 路由
 from api.script_writer import router as script_writer_router
 app.include_router(script_writer_router)
@@ -603,6 +645,10 @@ app.include_router(announcements_admin_router)
 # 导入并注册月度订阅 API 路由（微信委托代扣·周期扣费，见 docs/backend/wechat_monthly_subscription.md）
 from api.subscription import router as subscription_router
 app.include_router(subscription_router)
+
+# 资产库 API 路由（生成产物收藏/共享/@引用，见 docs/backend/asset_library.md）
+from api.asset_library import router as asset_library_router
+app.include_router(asset_library_router)
 
 # 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
 # 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
@@ -717,29 +763,33 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     把 token 注入请求头再放行。浏览器自动带 cookie、各接口继续从标准 Authorization
     头取 token；SameSite=Strict 保证 cookie 不会被跨站请求携带（CSRF 防线）。
 
-    滑动续期：带认证 cookie 的 /api/ 请求在响应阶段顺延 cookie 有效期。
-    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；若只续 DB 不续
-    cookie，持续活跃用户的 cookie 仍会在固定 max_age 后消失，"活跃免登录"不生效。
+    滑动续期：响应阶段按 decide_auth_cookie_renewal 判定顺延 cookie 有效期。
+    DB token 侧由 UserTokensModel.get_user_id_by_token 统一续期；cookie 必须
+    同步跟随续期，否则持续活跃用户的 cookie 仍会在固定 max_age 后消失，
+    "活跃免登录"不生效（此前只续"无 Authorization 头"的请求，页面日常心跳/SSE
+    全带 Bearer → DB token 持续续期而 cookie 不续，cookie 先于 DB token 死亡，
+    无显式凭证的轮询请求 401 → 401 自愈误清仍有效的 localStorage token，
+    活跃用户被"假过期"踢到登录页）。
     """
     path = request.url.path
     cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
-    translated = False
+    bearer_token = None
     if path == "/api" or path.startswith("/api/"):
-        current = extract_bearer_token(request.headers.get("authorization"))
-        if not current and cookie_token:
+        bearer_token = extract_bearer_token(request.headers.get("authorization"))
+        if not bearer_token and cookie_token:
             headers = [
                 (k, v) for k, v in request.scope.get("headers", [])
                 if k != b"authorization"
             ]
             headers.append((b"authorization", f"Bearer {cookie_token}".encode("latin-1")))
             request.scope["headers"] = headers
-            translated = True
     response = await call_next(request)
     # 登录/登出/注册端点自己管理 cookie（login 种新值、logout 删除），
     # 不能用请求带来的旧值覆盖它们的 Set-Cookie——否则登录成功后浏览器
     # 拿回的仍是被顶号的旧 token，永远无法重新登录
-    if translated and cookie_token and not path.startswith("/api/auth/"):
-        set_auth_cookie(response, cookie_token, request)
+    renew_token = decide_auth_cookie_renewal(path, bearer_token, cookie_token)
+    if renew_token:
+        set_auth_cookie(response, renew_token, request)
     return response
 
 
@@ -2234,6 +2284,70 @@ async def text_to_image(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+async def _refund_failed_runninghub_task(task_record, auth_token: str, project_id: str) -> None:
+    """失败任务的幂等退费（/api/runninghub-status v1/v2 轮询分支共用）。
+
+    幂等防重复退费：本端点可被任意次轮询（前端停止轮询不是服务端控制），
+    原实现每次轮询生成新 uuid，绕过 perseids 交易号去重，可对同一失败任务
+    重复退费（实测 N 次轮询 = N 倍退费）。对齐后台退费路径（task/visual_task.py）
+    的既有模式：已退费检查 + 由扣费流水号派生的退费流水号（refund-{原扣费流水号}）。
+    """
+    from utils.computing_power import (
+        build_refund_transaction_id,
+        is_already_refunded,
+    )
+    if is_already_refunded(task_record):
+        logger.info(
+            f"Task {project_id} already refunded (idempotent transaction), "
+            f"skip repeated refund on status poll"
+        )
+        return
+    transaction_id = build_refund_transaction_id(task_record) or str(uuid.uuid4())
+    headers = {'Authorization': f'Bearer {auth_token}'}
+    # 发起请求，获取用户ID
+    success, message, response_data = await async_make_perseids_request(
+        endpoint='user/get_user_id_by_auth_token',
+        method='POST',
+        headers=headers
+    )
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    user_id_from_token = response_data.get('user_id')
+    if user_id_from_token != task_record.user_id:
+        raise HTTPException(status_code=400, detail="用户ID不匹配")
+    # 发起请求，增加算力
+    type = task_record.type
+    task_config = TaskTypeRegistry.get(type)
+    # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
+    context = build_context_from_task_record(task_record)
+    impl_id = getattr(task_record, 'implementation', None)
+    impl_name = get_implementation_name(impl_id) if impl_id else None
+    implementation = (
+        impl_name
+        if impl_name and impl_name != 'unknown'
+        else get_implementation_for_user(type, task_record.user_id)
+    )
+    computing_power = task_config.get_computing_power(
+        duration=task_record.duration,
+        implementation=implementation,
+        context=context
+    ) if task_config else 0
+    success, message, response_data = await async_make_perseids_request(
+        endpoint='user/calculate_computing_power',
+        method='POST',
+        headers=headers,
+        data={
+            "computing_power": computing_power,
+            "behavior": "increase",
+            "transaction_id": transaction_id
+        }
+    )
+    if success:
+        logger.info(f"Successfully refunded {computing_power} computing power for failed task {project_id}, transaction_id: {transaction_id}")
+    else:
+        logger.error(f"Failed to refund computing power: {message}")
+
+
 @app.get("/api/runninghub-status/{project_id}")
 @require_permission("image:view_status")
 async def runninghub_status(
@@ -2289,51 +2403,8 @@ async def runninghub_status(
                 status=AI_TOOL_STATUS_FAILED
             )
             if CHECK_AUTH_TOKEN and auth_token:
-                # 生成交易ID
-                transaction_id = str(uuid.uuid4())
-                headers = {'Authorization': f'Bearer {auth_token}'}
-                #发起请求，获取用户ID
-                success, message, response_data = await async_make_perseids_request(
-                    endpoint='user/get_user_id_by_auth_token',
-                    method='POST',
-                    headers=headers
-                )
-                if not success:
-                    raise HTTPException(status_code=400, detail=message)
-                user_id_from_token = response_data.get('user_id')
-                if user_id_from_token != task_record.user_id:
-                    raise HTTPException(status_code=400, detail="用户ID不匹配")
-                #发起请求，增加算力
-                type = task_record.type
-                task_config = TaskTypeRegistry.get(type)
-                # 使用任务记录中的时长和 context 来计算正确的算力（支持按时长计费的任务和修饰符）
-                context = build_context_from_task_record(task_record)
-                impl_id = getattr(task_record, 'implementation', None)
-                impl_name = get_implementation_name(impl_id) if impl_id else None
-                implementation = (
-                    impl_name
-                    if impl_name and impl_name != 'unknown'
-                    else get_implementation_for_user(type, task_record.user_id)
-                )
-                computing_power = task_config.get_computing_power(
-                    duration=task_record.duration,
-                    implementation=implementation,
-                    context=context
-                ) if task_config else 0
-                success, message, response_data = await async_make_perseids_request(
-                    endpoint='user/calculate_computing_power',
-                    method='POST',
-                    headers=headers,
-                    data={
-                        "computing_power": computing_power,
-                        "behavior": "increase",
-                        "transaction_id": transaction_id
-                    }
-                )
-                if success:
-                    logger.info(f"Successfully refunded {computing_power} computing power for failed task {project_id}, transaction_id: {transaction_id}")
-                else:
-                    logger.error(f"Failed to refund computing power for task {project_id}: {message}")
+                # 幂等防重复退费（与 v2 分支共用，模式说明见函数 docstring）
+                await _refund_failed_runninghub_task(task_record, auth_token, project_id)
             return JSONResponse({
                 "status": status.value,
                 "results": []
@@ -4614,229 +4685,222 @@ async def image_upscale(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"图片高清放大失败: {str(e)}")
         
+async def _probe_video_duration_seconds(source: str) -> Optional[float]:
+    """ffprobe 探测视频时长（本地路径或远程 URL），失败/超时返回 None。
+
+    视频高清修复按秒数定算力档位：本地文件直接探测，远程 URL 由 ffprobe
+    拉流探测；超时受 VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS 约束，子进程异步
+    执行不阻塞事件循环。
+    """
+    ffprobe_path = resolve_bin_path(
+        get_config_value("bin", "ffprobe", default="ffprobe"), APP_DIR
+    )
+    cmd = [
+        ffprobe_path, '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        source,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.warning(f"ffprobe timeout when probing video duration: {source}")
+            return None
+        if proc.returncode != 0:
+            logger.warning(f"ffprobe failed to probe video duration: {source}")
+            return None
+        return float(stdout.decode('utf-8', errors='ignore').strip())
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Error probing video duration for {source}: {exc}")
+        return None
+
+
+def _snap_duration_to_enhance_tier(duration_seconds: float) -> int:
+    """把探测到的视频时长吸附到高清修复算力档位（向上取整，下限 4 秒）。"""
+    return max(
+        VIDEO_ENHANCE_MIN_DURATION_SECONDS,
+        int(math.ceil(float(duration_seconds))),
+    )
+
+
 @app.post("/api/video-enhance")
 @require_permission("video:enhance")
 async def video_enhance(
     request: Request,
     video: UploadFile = File(None, description="需要修复的视频文件"),
     video_url: str = Form(None, description="视频URL（如果提供则不需要上传文件）"),
+    duration_seconds: Optional[int] = Form(None, description="视频时长（秒），ffprobe 探测失败时的回退档位，4-15"),
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
-    enhance_type: int = Form(5, description="增强类型：5-视频高清修复，6-从其他任务生成高清视频")
+    enhance_type: int = Form(5, description="（已废弃，仅兼容旧调用）任务来源：5-直接上传，6-从其他任务生成"),
+    params: Optional[str] = Form(None, description='用户可选参数（JSON 字符串，如 {"max_resolution":"1080"}），合法 key 与取值见 task-configs 的 params_schema'),
 ):
     """
-    Video enhancement endpoint - Enhance blurry video to higher quality
-    Args:
-    video: The video file to enhance (optional if video_url provided)
-    video_url: Direct video URL to enhance (optional if video file provided)
-    user_id: User ID for tracking
-    auth_token: Authentication token
-    enhance_type: Type for database record (5 for direct upload, 6 for history enhancement)
-    Returns:
-    JSON response with enhancement task information
+    提交视频高清修复任务。只落库并入队，RunningHub 上传与 OpenAPI v2 提交由
+    调度进程的 video_enhance_runninghub_v1 驱动完成（模式同视频去水印）。
+    算力按 ffprobe 探测的视频秒数吸附 4-15 档计费（MiniMax H3 梯度的 2 倍），
+    提交前预扣，任务失败由后台幂等退费；前端轮询 /api/get-status/{project_id}。
     """
     try:
-        logger.info(f"Video enhancement request received from user: {user_id}")
-        # Generate transaction ID
-        transaction_id = str(uuid.uuid4())
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
         task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_ENHANCE)
-        computing_power = task_config.get_computing_power()
-        if CHECK_AUTH_TOKEN:
-            headers = {'Authorization': f'Bearer {auth_token}'}
-            # Check if computing power is sufficient
-            success, message, response_data = await async_make_perseids_request(
-                endpoint='user/check_computing_power',
-                method='GET',
-                headers=headers
-            )
-            if not success:
-                raise HTTPException(
-                    status_code=400,
-                    detail=message
-                )
-            user_computing_power = response_data.get('computing_power', 0)
-            user_id_from_token = response_data.get('user_id')
-            if user_computing_power < computing_power:
-                raise HTTPException(
-                    status_code=400,
-                    detail="您的算力不足，无法进行视频修复"
-                )
-            if user_id_from_token != user_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="用户ID不匹配"
-                )
-        
-        # Determine video URL - either from upload or from parameter
-        # 用于存入数据库的本地 URL
-        local_video_url = None
-        
-        if video_url:
-            # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
-            local_file_path = _resolve_local_upload_path(video_url, '/upload/cache/')
-            if local_file_path is not None:
-                # 本地缓存文件，需要上传到 RunningHub
-                from utils.file_storage import RunningHubFileStorage
-                from config.config_util import get_config, get_dynamic_config_value
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频高清修复任务未配置")
 
-                if not local_file_path.is_file():
-                    raise HTTPException(
-                        status_code=404,
-                        detail="本地缓存文件不存在"
-                    )
-                
-                logger.info(f"本地缓存文件检测到，准备上传到 RunningHub: {video_url}")
-                
-                # 上传到 RunningHub
-                rh_host = get_dynamic_config_value("runninghub", "host", default="")
-                rh_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
-                storage = RunningHubFileStorage(
-                    host=rh_host,
-                    api_key=rh_api_key,
-                    config=get_config(),
-                    logger=logger
-                )
-                
-                upload_result = await storage.upload_file("", str(local_file_path))
-                if not upload_result.success:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"文件上传到 RunningHub 失败: {upload_result.error}"
-                    )
-                
-                # 使用 fileName 作为 comfyUI 节点的引用
-                final_video_url = upload_result.key
-                local_video_url = video_url  # 保存本地路径到数据库
-                logger.info(f"本地缓存文件上传完成，fileName: {final_video_url}")
-            else:
-                # 远程 URL，直接使用
-                final_video_url = video_url
-                local_video_url = video_url
-                logger.info(f"Using provided video URL: {video_url}")
-        elif video:
-            # 读取视频文件
-            file_bytes = await video.read()
-            
-            # 1. 先保存到本地
-            filename = video.filename or "video.mp4"
-            ext = os.path.splitext(filename)[1].lower()
-            video_filename = f"{uuid.uuid4()}{ext}"
-            local_video_path = os.path.join(get_upload_dir(), video_filename)
-            os.makedirs(get_upload_dir(), exist_ok=True)
+        # ===== 1. 解析视频来源（不触达 RunningHub），确定 ffprobe 探测源 =====
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            # _save_uploaded_image 返回本站完整 URL（内部生成，可安全转本地路径）
+            try:
+                probe_source = resolve_upload_url_to_local_path(saved_video)
+            except ValueError:
+                probe_source = saved_video
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+            # 本站 /upload/ 缓存路径安全解析（防路径穿越）；远程 URL 由 ffprobe 拉流探测
+            local_file_path = _resolve_local_upload_path(saved_video, '/upload/')
+            probe_source = str(local_file_path) if local_file_path is not None else saved_video
+        else:
+            raise HTTPException(status_code=400, detail="必须提供视频文件或视频URL")
 
-            await asyncio.to_thread(_sync_write_file, local_video_path, file_bytes)
-
-            # Create accessible URL for frontend
-            local_video_url = build_upload_url(video_filename, host=SERVER_HOST)
-            logger.info(f"Video saved to local: {local_video_url}")
-            
-            # 2. 上传到 RunningHub 获取 fileName
-            from utils.file_storage import RunningHubFileStorage
-            from config.config_util import get_config, get_dynamic_config_value
-            
-            rh_host = get_dynamic_config_value("runninghub", "host", default="")
-            rh_api_key = get_dynamic_config_value("runninghub", "api_key", default="")
-            storage = RunningHubFileStorage(
-                host=rh_host,
-                api_key=rh_api_key,
-                config=get_config(),
-                logger=logger
-            )
-            
-            # 上传本地文件到 RunningHub
-            upload_result = await storage.upload_file("", local_video_path)
-            if not upload_result.success:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"视频上传失败: {upload_result.error}"
-                )
-            
-            # 使用 fileName 作为 comfyUI 节点的引用
-            final_video_url = upload_result.key
-            logger.info(f"Video uploaded to RunningHub, fileName: {final_video_url}")
+        # ===== 2. ffprobe 探测时长 -> 算力档位（探测失败回退调用方传入时长）=====
+        probed_duration = await _probe_video_duration_seconds(probe_source)
+        if probed_duration is not None and probed_duration > 0:
+            duration_tier = _snap_duration_to_enhance_tier(probed_duration)
+            logger.info(f"Probed video duration: {probed_duration:.2f}s -> tier {duration_tier}s")
+        elif duration_seconds:
+            duration_tier = _snap_duration_to_enhance_tier(duration_seconds)
+            logger.warning(f"ffprobe 探测失败，回退调用方时长档位: {duration_tier}s")
         else:
             raise HTTPException(
                 status_code=400,
-                detail="必须提供视频文件或视频URL"
-            )
-        
-        # Submit video enhancement task using runninghub_request module
-        try:
-            from api.clients.runninghub_client import run_ai_app_task
-            
-            node_info_list = [{
-                "nodeId": "6",
-                "fieldName": "video",
-                "fieldValue": final_video_url,
-                "description": "video"
-            }]
-
-            result = await asyncio.to_thread(
-                run_ai_app_task,
-                "1989206149524238338",  # webappId for video enhancement
-                "9549532f3c3d435ebe5e1ca78dcac1e8",  # apiKey
-                node_info_list,
-                None,
-                "plus"  # instanceType
+                detail="无法识别视频时长，请重试或改用视频文件上传",
             )
 
-            if result.get("code") != 0:
-                error_msg = result.get("msg", "Unknown error")
-                raise RuntimeError(f"Task submission failed: {error_msg}")
-            
-            project_id = result.get("data", {}).get("taskId")
-            if not project_id:
-                raise HTTPException(status_code=500, detail="提交任务失败，未返回 taskId")
-            
-            logger.info(f"Video enhancement task created with project_id: {project_id}")
-            
-        except Exception as task_error:
-            logger.error(f"Failed to submit video enhancement task: {task_error}")
+        if duration_tier > VIDEO_ENHANCE_MAX_DURATION_SECONDS:
             raise HTTPException(
-                status_code=500,
-                detail=f"任务提交失败: {str(task_error)}"
+                status_code=400,
+                detail=(
+                    f"视频时长超过 {VIDEO_ENHANCE_MAX_DURATION_SECONDS} 秒上限"
+                    f"（按 {duration_tier} 秒计），暂不支持高清修复"
+                ),
             )
-        
-        # Deduct computing power
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_ENHANCE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_tier,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        # ===== 3. 算力检查 + 预扣费（失败由后台调度器幂等退费）=====
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
         if CHECK_AUTH_TOKEN:
             success, message, response_data = await async_make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，高清修复 {duration_tier} 秒需 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
                 headers=headers,
                 data={
                     "computing_power": computing_power,
                     "behavior": "deduct",
-                    "transaction_id": transaction_id
-                }
+                    "transaction_id": transaction_id,
+                },
             )
             if not success:
-                logger.error(f"Failed to deduct computing power: {message}")
-                # Don't fail the request, just log the error
-        
-        # Create database record
-        if user_id:
+                logger.error(f"Video enhance computing power deduction failed: {message}")
+
+        # ===== 4. 落库并入队（上传与 v2 提交由驱动在调度进程完成）=====
+        # type 统一 TaskTypeId.VIDEO_ENHANCE；旧 enhance_type 5/6 仅保留为来源标记
+        extra_config = {"source": "history" if int(enhance_type) == 6 else "direct"}
+        # 用户可选参数：按 schema 校验（未知 key / 白名单外取值直接 400，不静默丢弃）；
+        # 不传则不落 params，驱动侧缺省回落 schema default（库数据保持干净）
+        if params is not None and str(params).strip():
             try:
-                from config.unified_config import get_implementation_id
-                await asyncio.to_thread(
-                    AIToolsModel.create,
-                    prompt="视频高清修复",
-                    user_id=user_id,
-                    type=enhance_type,  # Use provided enhance_type
-                    image_path=local_video_url,  # 使用本地 URL 存入数据库
-                    project_id=project_id,
-                    transaction_id=transaction_id,
-                    status=AI_TOOL_STATUS_PROCESSING,
-                    implementation=get_implementation_id('local_video_enhance')
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to create database record: {db_error}")
-        
+                raw_params = json.loads(params)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"params 必须是 JSON 字符串，如 {{\"max_resolution\":\"1080\"}}: {exc}",
+                ) from exc
+            try:
+                extra_config["params"] = validate_video_enhance_params(raw_params)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"params 校验失败: {exc}") from exc
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt="视频高清修复",
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_ENHANCE,
+            video_path=saved_video,
+            image_path=saved_video,  # 兼容历史列表按 image_path 渲染
+            transaction_id=transaction_id,
+            duration=duration_tier,
+            status=AI_TOOL_STATUS_PENDING,
+            implementation=impl_id,
+            extra_config=json.dumps(extra_config, ensure_ascii=False),
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
         return JSONResponse({
-            "project_id": project_id,
+            "success": True,
+            "project_id": ai_tool_id,
             "status": "submitted",
-            "video_url": final_video_url
+            "duration": duration_tier,
+            "computing_power": computing_power,
         })
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -6304,7 +6368,14 @@ async def wechat_payment_callback(request: Request):
 
             if not success:
                 logger.error(f"Failed to get auth token for user {user_id}: {message}")
-                return False
+                # 200/204 会被微信视为通知成功并停止全部重试；未入账必须应答
+                # 4xx/5xx，让微信按 15s..6h 的重试计划继续投递（如等用户重新
+                # 登录后再取到 token 自动补账）。裸 return False 会被 FastAPI
+                # 序列化为 200 body `false`，曾把已付款订单变成永不入账的吞单。
+                return JSONResponse(
+                    {"code": "FAIL", "message": "暂时无法处理订单，等待重试"},
+                    status_code=500,
+                )
                 
             auth_token = response_data['token']
             computing_power = order.computing_power
@@ -6322,9 +6393,6 @@ async def wechat_payment_callback(request: Request):
                 else:
                     # 更新用户首充状态
                     await _update_first_recharge_status(auth_token=auth_token)
-            
-            # 更新订单状态为已支付
-            PaymentOrdersModel.update_paid(order_id, transaction_id)
 
             # 邀请抽佣结算（商业版；返回被邀请人到账算力，已按佣金比例打折）。
             # 首充/社区版/无邀请人/未开启抽佣等情况下 service 内部返回全额 computing_power；
@@ -6360,7 +6428,22 @@ async def wechat_payment_callback(request: Request):
                     "transaction_id": transaction_id
                 }
             )
-            
+
+            # 校验入账结果：除幂等重放（"该交易已处理"=算力已发放过）外，
+            # 任何入账失败都必须应答 5xx 让微信重试，禁止静默应答 SUCCESS
+            #（否则已收款订单永远停留在 status=0 且不再有投递，只能手工修库）。
+            if not success and message != '该交易已处理':
+                logger.error(f"Crediting failed for order {order_id}: {message}")
+                return JSONResponse(
+                    {"code": "FAIL", "message": "算力入账失败，等待重试"},
+                    status_code=500,
+                )
+
+            # 入账成功（或幂等重放）后才标记订单已支付：避免 status=1 早退分支
+            # 把"已收款未入账"的订单变成吞掉微信重试修复机制的墓碑
+            #（订单账本与算力账本是两个存储，无法跨库事务，只能以入账为准收尾）。
+            PaymentOrdersModel.update_paid(order_id, transaction_id)
+
             logger.info(f"Payment processed successfully: order_id={order_id}, user_id={order.user_id}, computing_power={computing_power}")
         
         # 返回成功响应（V3 API使用JSON格式）
@@ -6442,6 +6525,72 @@ async def fit_video_workflow_environment(
         horizon_y=body.horizon_y,
         scene_scale=body.scene_scale,
         ground_y=body.ground_y,
+    )
+
+
+class VideoWorkflowCameraChatRequest(BaseModel):
+    """导演台对话改机位请求：当前机位 + 场景人偶清单 + 自然语言指令。"""
+
+    class Config:
+        # eye/target 为数组或 {x,y,z} 对象均可，交给 parse_camera_instruction 兼容解析
+        extra = "allow"
+
+    message: str = ''
+    current_camera: Optional[Dict[str, Any]] = None
+    entities: Optional[List[Dict[str, Any]]] = None
+    model: str = ''
+    vendor_id: Optional[int] = None
+    model_id: Optional[int] = None
+
+
+@app.post('/api/video-workflow/camera-chat')
+@require_permission("video_workflow:update")
+async def camera_chat_for_video_workflow(
+    request: Request,
+    body: VideoWorkflowCameraChatRequest,
+    auth_token: Optional[str] = Header(None, alias="Authorization"),
+    header_user_id: Optional[int] = Header(None, alias="X-User-Id"),
+):
+    """导演台对话改机位：单轮 LLM 参数提取（不落库，前端应用后随工作流自动保存）。
+
+    与故事板 /scene/{id}/camera-chat 共用 services/storyboard_camera_chat.py，
+    本路由面向画布导演台（无分镜归属，鉴权走登录用户）。
+    """
+    resolved_user_id, auth_error = await resolve_authorization_user_id(auth_token)
+    if auth_error:
+        return auth_error
+    if header_user_id is not None and header_user_id != resolved_user_id:
+        return JSONResponse(
+            status_code=403,
+            content={"success": False, "error": "X-User-Id 与登录用户不一致"},
+        )
+
+    message = str(body.message or '').strip()
+    if not message:
+        return JSONResponse(status_code=400, content={'success': False, 'error': '指令不能为空'})
+    camera = body.current_camera or {}
+    eye, target = camera.get('eye'), camera.get('target')
+    if not isinstance(eye, (list, dict)) or not isinstance(target, (list, dict)):
+        return JSONResponse(status_code=400, content={'success': False, 'error': '缺少当前机位数据'})
+    if not str(body.model or '').strip():
+        return JSONResponse(status_code=400, content={'success': False, 'error': '请先选择对话模型'})
+
+    # 归一化 model_id / vendor_id（统一规则见 normalize_model_selection_refs）
+    from llm.llm_client_factory import normalize_model_selection_refs
+    numeric_model_id, vendor_id = await asyncio.to_thread(
+        normalize_model_selection_refs,
+        body.model_id,
+        body.vendor_id,
+    )
+
+    return await parse_camera_instruction(
+        message,
+        {'eye': eye, 'target': target, 'fov': camera.get('fov', 50)},
+        entities=body.entities or [],
+        model=str(body.model).strip(),
+        vendor_id=vendor_id,
+        model_id=numeric_model_id,
+        auth_token=normalize_authorization_token(auth_token),
     )
 
 
@@ -8394,6 +8543,7 @@ async def get_edition():
     获取版本信息
     """
     try:
+        space_isolated = await asyncio.to_thread(Edition.is_space_isolated)
         return JSONResponse(
             status_code=200,
             content={
@@ -8401,7 +8551,9 @@ async def get_edition():
                 'message': 'success',
                 'data': {
                     'mode': Edition.get_mode(),
-                    'mode_label': Edition.get_label()
+                    'mode_label': Edition.get_label(),
+                    # 共享空间模式：社区版恒为 true；商业版由 edition.shared_space 动态配置决定
+                    'shared_space': not space_isolated
                 }
             }
         )
@@ -8453,7 +8605,7 @@ async def get_worlds(
     ),
     scope: str = Query(
         'user',
-        description="数据范围：user=当前用户(默认) | all=全部用户（仅管理员生效，其余身份自动回退 user）",
+        description="数据范围：user=当前用户(默认) | all=全部用户（仅共享空间模式下管理员生效，独立空间模式或非管理员自动回退 user）",
     ),
     auth_token: str = Header(None, alias="Authorization"),
     user_id: int = Header(None, alias="X-User-Id")
@@ -8464,15 +8616,19 @@ async def get_worlds(
     身份以 Authorization token 解析为准；X-User-Id 头仅作一致性参考，不一致 401。
     默认仅返回未伪删除世界（visibility=active），全站世界选择器自动生效。
     传入 visibility=deleted 可查看已隐藏世界（剧本策划侧栏「已删除」视图）。
-    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）。
+    管理员传 scope=all 可查看全部用户的世界（剧本策划侧栏管理员删除入口）；
+    独立空间模式（企业版未开启共享空间）下 scope=all 强制回退 user 范围，保证用户数据隔离。
     """
     try:
         user_id = await resolve_authenticated_user_id(auth_token, user_id)
         vis = (visibility or 'active').lower()
         if vis not in ('active', 'deleted', 'all'):
             vis = 'active'
-        include_all_users = (scope or 'user').lower() == 'all' and await asyncio.to_thread(
-            is_admin_user, user_id
+        space_isolated = await asyncio.to_thread(Edition.is_space_isolated)
+        include_all_users = (
+            (scope or 'user').lower() == 'all'
+            and not space_isolated
+            and await asyncio.to_thread(is_admin_user, user_id)
         )
         result = await asyncio.to_thread(
             WorldModel.list_by_user,
@@ -10398,10 +10554,13 @@ async def add_character_reference_images(
     为角色添加多张参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         character = CharacterModel.get_by_id(character_id)
         if not character:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        # 属主校验：参考图是资产核心数据，仅创建者可增删（防止登录用户篡改他人角色）
+        if character.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该角色的参考图', 'data': None})
 
         labels = []
         try:
@@ -10461,6 +10620,8 @@ async def add_character_reference_images(
             'message': '添加成功',
             'data': updated_character.to_dict() if updated_character else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add character reference images: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10477,10 +10638,13 @@ async def delete_character_reference_image(
     删除角色的指定参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         character = CharacterModel.get_by_id(character_id)
         if not character:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        # 属主校验：仅创建者可删参考图（防止登录用户篡改他人角色）
+        if character.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该角色的参考图', 'data': None})
 
         existing_images = []
         if character.reference_images:
@@ -10523,6 +10687,8 @@ async def delete_character_reference_image(
             'message': '删除成功',
             'data': updated_character.to_dict() if updated_character else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete character reference image: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10543,10 +10709,13 @@ async def add_location_reference_images(
     为场景添加多张参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         location = LocationModel.get_by_id(location_id)
         if not location:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+        # 属主校验：参考图是资产核心数据，仅创建者可增删（防止登录用户篡改他人场景）
+        if location.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该场景的参考图', 'data': None})
 
         labels = []
         angles = []
@@ -10615,6 +10784,8 @@ async def add_location_reference_images(
             'message': '添加成功',
             'data': updated_location.to_dict() if updated_location else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add location reference images: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})
@@ -10631,10 +10802,13 @@ async def delete_location_reference_image(
     删除场景的指定参考图
     """
     try:
-        user_id = _get_user_id_from_header(user_id)
+        user_id = await resolve_authenticated_user_id(auth_token, user_id)
         location = LocationModel.get_by_id(location_id)
         if not location:
             return JSONResponse(status_code=404, content={'code': -1, 'message': '场景不存在', 'data': None})
+        # 属主校验：仅创建者可删参考图（防止登录用户篡改他人场景）
+        if location.user_id != user_id:
+            return JSONResponse(status_code=403, content={'code': -1, 'message': '无权操作该场景的参考图', 'data': None})
 
         existing_images = []
         if location.reference_images:
@@ -10677,6 +10851,8 @@ async def delete_location_reference_image(
             'message': '删除成功',
             'data': updated_location.to_dict() if updated_location else None
         })
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete location reference image: {e}")
         return JSONResponse(status_code=500, content={'code': -1, 'message': str(e), 'data': None})

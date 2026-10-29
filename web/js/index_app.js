@@ -2789,9 +2789,7 @@
         this.rechargePackagesLoading = true;
         try {
           const response = await axios.get('/api/recharge/packages', {
-            params: {
-              auth_token: this.authToken
-            }
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.rechargePackages = response.data.packages || [];
@@ -3137,7 +3135,7 @@
         this.subscriptionPlansLoading = true;
         try {
           const response = await axios.get('/api/subscription/plans', {
-            params: { auth_token: this.authToken }
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.subscriptionPlans = response.data.plans || [];
@@ -3164,7 +3162,8 @@
         this.subCancelling = true;
         try {
           const response = await axios.get('/api/subscription/status', {
-            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+            params: { user_id: parseInt(this.userId, 10) },
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (response.data.success) {
             this.subscriptionStatus = response.data.subscription || null;
@@ -3204,7 +3203,8 @@
         this._subStatusPollingInFlight = true;
         try {
           const response = await axios.get('/api/subscription/status', {
-            params: { user_id: parseInt(this.userId, 10), auth_token: this.authToken }
+            params: { user_id: parseInt(this.userId, 10) },
+            headers: { Authorization: 'Bearer ' + this.authToken }
           });
           if (!response.data.success) return;
           const sub = response.data.subscription || null;
@@ -3381,7 +3381,8 @@
           }
           try {
             const resp = await axios.get('/api/subscription/order-status', {
-              params: { order_id: this.subOrderId, user_id: this.userId, auth_token: this.authToken }
+              params: { order_id: this.subOrderId, user_id: this.userId },
+              headers: { Authorization: 'Bearer ' + this.authToken }
             });
             if (resp.data && resp.data.success && resp.data.paid) {
               this.stopSubPayPolling();
@@ -3412,8 +3413,20 @@
         window.open('/auto_renewal_agreement.html', '_blank');
       },
 
+      // 勾选《自动续费服务协议》即自动生成二维码，无需再点「微信支付」；
+      // 微信内 JSAPI 无二维码且需用户手势调起支付，仍走按钮点击
+      onSubAgreeChange() {
+        this.subAgreementError = false;
+        if (!this.subAgreed) return;
+        if (!this.selectedSubPlan || this.subPaymentLoading) return;
+        if (this.subQrCode || this.subOrderId) return;
+        if (this.isWechatBrowser()) return;
+        this.createSubscriptionOrder();
+      },
+
       async createSubscriptionOrder() {
         if (!this.selectedSubPlan) return;
+        if (this.subQrCode || this.subOrderId) return; // 已有二维码/订单，防止勾选+点击重复下单
         if (!this.authToken || !this.userId) {
           alert('请先登录');
           this.showRechargePowerModal = false;

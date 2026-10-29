@@ -133,3 +133,37 @@ describe('storyboard frame mention tokens', () => {
         expect(eventsSource).toContain('consumeChatMentionTrigger(target)');
     });
 });
+
+// ===== 资产库 @资产:{id} token（共享资产库引用，见 web/js/asset_library.js）=====
+describe('scanFrameMentionTokenRanges asset tokens', () => {
+    it('识别 @资产:{id} 为 key=asset 且携带 assetId', () => {
+        expect(scanFrameMentionTokenRanges('参考 @资产:19 的风格')).toEqual([
+            { key: 'asset', assetId: 19, token: '@资产:19', start: 3, end: 9 },
+        ]);
+    });
+
+    it('连续数字 id 不误切（1234 不切成 123）', () => {
+        const found = scanFrameMentionTokenRanges('@资产:1234');
+        expect(found).toHaveLength(1);
+        expect(found[0].assetId).toBe(1234);
+        expect(found[0].end).toBe(8);
+    });
+
+    it('无数字或非数字后缀不匹配', () => {
+        expect(scanFrameMentionTokenRanges('@资产:')).toEqual([]);
+        expect(scanFrameMentionTokenRanges('@资产:abc')).toEqual([]);
+        expect(scanFrameMentionTokenRanges('@资产库')).toEqual([]);
+    });
+
+    it('与首尾帧 token 混排按出现顺序排列', () => {
+        const found = scanFrameMentionTokenRanges('从 @首帧图 与 @资产:7 到 @尾帧图');
+        expect(found.map(f => f.key)).toEqual(['first', 'asset', 'last']);
+        expect(found[1].assetId).toBe(7);
+    });
+
+    it('帧提及守卫不把资产 token 当帧（guardFrameMentions 不受资产引用影响）', () => {
+        // promptHasFrameMention 只认首尾帧：资产 token 不触发缺图拦截
+        expect(promptHasFrameMention('只要 @资产:19')).toBe(false);
+        expect(promptHasFrameMention('@资产:19 加 @首帧图')).toBe(true);
+    });
+});

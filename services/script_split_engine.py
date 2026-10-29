@@ -739,6 +739,9 @@ async def step_generate_segment(
         # 依赖感知：优先用 build_runtime_segment_context（按依赖类型注入真实 handoff，
         # 见设计文档 §9.2/§20.2）。仅当策略未提供该方法（如非 quality）时回退到旧逻辑。
         if _all_segments is not None and hasattr(strategy, "build_runtime_segment_context"):
+            # handoff 是 previous_three_scene_code 的唯一真源；依赖未满足时清空
+            # 串行兜底值，避免无关段代码污染 three.js 代码链 prompt。
+            segment_context.pop("previous_three_scene_code", None)
             segment_context.update(
                 strategy.build_runtime_segment_context(plan, seg, _all_segments)
             )
@@ -1613,6 +1616,16 @@ async def step_merge(task: ScriptSplitTask) -> None:
         merged = sanitize_parsed_location_references(merged, db_locations)
         merged = repair_spatial_layout_continuity(merged)
 
+    # 「生成 3D 导演台」关闭：确定性剥离 three.js 空间代码（LLM 偶发产出兜底），
+    # 保证故事板 / 视频工作流两侧均不出现 3D 导演台数据。
+    if not _director_stage_enabled(cfg):
+        stripped = _strip_three_scene_code(merged)
+        if stripped:
+            logger.info(
+                "task %s 3D 导演台已关闭，合并阶段剥离 %d 个镜头的 three_scene_code",
+                task.id, stripped,
+            )
+
     # 合并前再检规划 registry（生成中途可能被用户删除世界场景）
     plan = task.get_segment_plan() or {}
     if plan.get("compiled_registry"):
@@ -1838,42 +1851,29 @@ async def step_publish(task: ScriptSplitTask) -> None:
         )
 
     # 角色形象变化变体生成（幂等、分 tick 推进，见
-    # docs/storyboard/script_split_character_variant.md）。未全部终态时保存
-    # final_result（含 plan 检查点）并保持 publishing 让出 tick，下个 worker
-    # tick 从 plan 恢复继续轮询/提交；单变体失败/超时降级用主参考图。
-    if bool(cfg.get(
+    # docs/storyboard/script_split_character_variant.md）。发布不再等待变体图
+    # 终态：这里只负责提交尚未提交的变体并保存 plan 检查点；仍未终态的变体
+    # 落库时记入分镜 prompt_json.pending_reference_selections，由
+    # grid_image_task item_type=7 终态回填（成功写 {url,label}，失败/超时清除
+    # 后该镜头降级用主参考图）。
+    variant_enabled = bool(cfg.get(
         "enable_character_variant",
         ScriptSplitConstants.ENABLE_CHARACTER_VARIANT_DEFAULT,
-    )):
+    ))
+    if variant_enabled:
         from services.script_split_character_variant_service import (
-            SUMMARY_METADATA_KEY,
-            build_character_variant_summary,
             ensure_character_variants,
         )
         variant_summary = await asyncio.to_thread(
             ensure_character_variants, task, final_result,
         )
         if not variant_summary.get("all_settled"):
-            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
-            ScriptSplitTaskModel.update_status(
-                task.id, ScriptSplitConstants.STATUS_PUBLISHING,
-                phase=ScriptSplitConstants.PHASE_CHARACTER_VARIANT,
-            )
-            logger.info(
-                "task %s 角色形象变体生成进行中: %s", task.id, variant_summary,
-            )
-            return
-        if int(variant_summary.get("total") or 0) > 0:
-            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
-                build_character_variant_summary(final_result)
-            )
+            # 只保存 plan 检查点（含已提交 task_key），不再 return：worker 崩溃
+            # 重入时不重复提交，发布照常继续。
             ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
             logger.info(
-                "task %s 角色形象变体生成完成: ready=%s failed=%s skipped=%s",
-                task.id,
-                variant_summary.get("ready"),
-                variant_summary.get("failed"),
-                variant_summary.get("skipped"),
+                "task %s 角色形象变体未全部终态，发布不等待（未就绪记为镜头待回填）: %s",
+                task.id, variant_summary,
             )
 
     # 发布前最后一道独立结构硬门禁。必须位于 bootstrap/create_scenes 之前，
@@ -1939,11 +1939,37 @@ async def step_publish(task: ScriptSplitTask) -> None:
             )
 
     # 2. 构造 scenes_payload（携带角色形象变化变体选择，使分镜生图直接
-    #     使用新形象：reference_selections → select_reference_variant_for_asset）
+    #     使用新形象：reference_selections → select_reference_variant_for_asset）。
+    #     已生成的变体写 reference_selections；仍未终态的记 pending_reference_
+    #     selections，由宫格任务终态回填（见文档 §5）。
     from api.storyboard import build_storyboard_scenes_from_parsed_script
     from services.script_split_character_variant_service import (
+        SUMMARY_METADATA_KEY,
+        build_character_variant_summary,
+        collect_pending_variant_map,
         collect_ready_variant_map,
     )
+    if variant_enabled:
+        # 落库前最后一次推进：把场景资产化期间已完成的变体直接写进分镜，
+        # 其余仍未终态的由 grid_image_task 回填，不再阻塞。
+        second_summary = await asyncio.to_thread(
+            ensure_character_variants, task, final_result,
+        )
+        if int(second_summary.get("total") or 0) > 0:
+            _ensure_metadata_dict(final_result)[SUMMARY_METADATA_KEY] = (
+                build_character_variant_summary(final_result)
+            )
+            ScriptSplitTaskModel.save_field(task.id, final_result_json=final_result)
+            logger.info(
+                "task %s 发布时角色形象变体状态: ready=%s pending=%s submitted=%s"
+                " failed=%s skipped=%s",
+                task.id,
+                second_summary.get("ready"),
+                second_summary.get("pending"),
+                second_summary.get("submitted"),
+                second_summary.get("failed"),
+                second_summary.get("skipped"),
+            )
     style = ""
     try:
         sb = await asyncio.to_thread(StoryboardModel.get_by_id, storyboard_id)
@@ -1955,6 +1981,7 @@ async def step_publish(task: ScriptSplitTask) -> None:
         build_storyboard_scenes_from_parsed_script,
         final_result, style,
         character_variants=collect_ready_variant_map(final_result),
+        pending_character_variants=collect_pending_variant_map(final_result),
         video_gen_mode=str(cfg.get("video_gen_mode") or ""),
         max_shot_duration=cfg.get("max_shot_duration") or cfg.get("max_group_duration"),
     )
@@ -2119,10 +2146,47 @@ def _load_registry(task: ScriptSplitTask) -> AcceptedRegistry:
     return reg
 
 
+def _director_stage_enabled(cfg: Dict[str, Any]) -> bool:
+    """「生成 3D 导演台」开关：效果模式 three.js 空间代码（three_scene_code）。
+
+    显式 False 时关闭（拆分不产出任何 3D 导演台数据）。缺省回退服务端常量
+    （config/constant.py ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT），
+    覆盖任务恢复等未走 _normalize_request_config 的路径。
+    注意：仅效果模式（quality）会生成 three_scene_code，速度/均衡模式天然无此产物。
+    """
+    value = (cfg or {}).get("enable_director_stage")
+    if value is None:
+        return bool(ScriptSplitConstants.ENABLE_DIRECTOR_STAGE_DEFAULT)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return bool(value)
+
+
+def _strip_three_scene_code(parsed: Dict[str, Any]) -> int:
+    """剥离分镜中的 three.js 空间代码（three_scene_code / three_scene_seq_start）。
+
+    「生成 3D 导演台」关闭时的兜底：即使 LLM 偶发产出相关字段也不落库，
+    保证故事板 / 视频工作流两侧均不出现 3D 导演台数据。
+    """
+    stripped = 0
+    for group in (parsed.get("shot_groups") or []):
+        if not isinstance(group, dict):
+            continue
+        for shot in (group.get("shots") or []):
+            if not isinstance(shot, dict):
+                continue
+            if shot.pop("three_scene_code", None) is not None:
+                stripped += 1
+            shot.pop("three_scene_seq_start", None)
+    return stripped
+
+
 def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistry) -> Dict[str, Any]:
     """构建传给 parse_script_to_shots 的 segment_context。"""
+    cfg = task.get_request_config() or {}
     # 上一段尾部镜头摘要
     tail = []
+    previous_three_code = ""
     prev_segs = ScriptSplitSegmentModel.get_completed(task.id)
     if prev_segs:
         last = prev_segs[-1]
@@ -2130,8 +2194,12 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
         groups = last_parsed.get("shot_groups", []) or []
         shots = [s for g in groups for s in (g.get("shots", []) or [])]
         tail = shots[-ScriptSplitConstants.HISTORY_TAIL_SHOTS:] if shots else []
+        # 上一镜 three.js 空间代码：本段首镜基于它增量调整（效果模式代码链）。
+        # 「生成 3D 导演台」关闭时不注入，避免链上残留代码诱导 LLM 继续产出。
+        if shots and _director_stage_enabled(cfg):
+            previous_three_code = str(shots[-1].get("three_scene_code") or "").strip()
 
-    return {
+    context = {
         "task_id": task.id,
         "segment_id": seg.segment_id,
         "segment_index": seg.segment_index,
@@ -2142,6 +2210,14 @@ def _build_segment_context(task: ScriptSplitTask, seg, registry: AcceptedRegistr
         "id_reservations": registry.id_reservations(),
         "source_block_ids": seg.get_block_ids(),
     }
+    if previous_three_code:
+        context["previous_three_scene_code"] = previous_three_code
+    if not _director_stage_enabled(cfg):
+        # 「生成 3D 导演台」关闭：段上下文显式置 False，效果模式据此跳过
+        # three.js 空间代码的 prompt 要求与物化校验（见 llm/script_parser.py
+        # 与企业版 spatial_materializer）；spatial_layout 一致性约束不受影响。
+        context["enable_three_scene_code"] = False
+    return context
 
 
 async def _run_enabled_segment_qc(

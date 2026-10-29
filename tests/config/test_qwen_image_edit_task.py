@@ -30,9 +30,9 @@ class TestQwenImageEditTask(unittest.TestCase):
         self.assertIn(TaskTypeId.QWEN_IMAGE_EDIT, TaskTypeRegistry.get_by_category(TaskCategory.IMAGE_EDIT))
         self.assertNotIn(TaskTypeId.QWEN_IMAGE_EDIT, TaskTypeRegistry.get_by_category(TaskCategory.TEXT_TO_IMAGE))
 
-    def test_visible_empty_shell(self):
+    def test_hidden_empty_shell(self):
         task = UnifiedConfigRegistry.get_by_id(TaskTypeId.QWEN_IMAGE_EDIT)
-        self.assertFalse(task.hidden)
+        self.assertTrue(task.hidden)
         self.assertTrue(task.enabled)
         self.assertEqual(task.implementation, 'qwen_image_edit_pending')
         self.assertEqual(task.driver_name, DriverKey.QWEN_IMAGE_EDIT)
@@ -62,7 +62,7 @@ class TestQwenImageEditTask(unittest.TestCase):
         payload = task.to_frontend_dict()
         self.assertEqual(payload['short_key'], 'qwen-image-edit')
         self.assertEqual(payload['category'], TaskCategory.IMAGE_EDIT)
-        self.assertFalse(payload['hidden'])
+        self.assertTrue(payload['hidden'])
         self.assertEqual(payload['implementations'], [])
         self.assertEqual(payload['supported_ratios'], [])
         self.assertEqual(payload['supported_sizes'], [])

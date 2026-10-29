@@ -110,7 +110,7 @@ const PROVIDER_DEFINITIONS = [
         impactsKey: 'provider_qwen_impacts',
         fields: [
             { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
-            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'https://llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
             { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
             { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
@@ -276,8 +276,7 @@ const PROVIDER_DEFINITIONS = [
         testEndpoint: null
     },
     {
-        // 阿里云百炼（多媒体）：与大模型条目 qwen 共享 llm.qwen.api_key，
-        // base_url 复用大模型条目配置（生图/生视频自动追加 /api/v1）
+        // 阿里云百炼（多媒体）：与大模型条目 qwen 共享配置，生图/生视频自动追加 /api/v1
         id: 'qwen_media',
         nameKey: 'provider_qwen_name',
         descKey: 'provider_qwen_media_desc',
@@ -290,10 +289,13 @@ const PROVIDER_DEFINITIONS = [
         isOfficialAPI: false,
         impactsKey: 'provider_qwen_media_impacts',
         fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true }
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_qwen', required: true },
+            { id: 'base_url', labelKey: 'field_api_host_label_optional', type: 'url', placeholder: 'llm-xxx.cn-beijing.maas.aliyuncs.com', required: false, helpTextKey: 'field_base_url_help_qwen', helpImage: 'assets/guide/aliyun_api_key_api_host.png' },
+            { id: 'workspace_id', label: '业务空间 ID（万相3.0 视频，一般留空）', type: 'text', placeholder: '如 llm-xxxxxxxx', required: false, helpText: '一般无需填写：上方 API Host 填密钥弹窗中的地址即可自动识别。手动填写时，取 API Host（如 llm-xxx.cn-beijing.maas.aliyuncs.com）第一个点号前的部分' },
+            { id: 'endpoint_region', label: '业务空间地域（可选）', type: 'text', placeholder: 'cn-beijing', required: false, helpText: '万相3.0 视频模型用，默认 cn-beijing；可选 ap-southeast-1 / ap-northeast-1 / eu-central-1 / us-east-1' }
         ],
-        configKeyMap: { api_key: 'llm.qwen.api_key' },
-        testEndpoint: null,
+        configKeyMap: { api_key: 'llm.qwen.api_key', base_url: 'llm.qwen.base_url', workspace_id: 'wan3.workspace_id', endpoint_region: 'wan3.endpoint_region' },
+        testEndpoint: 'qwen',
         _sharedWith: 'qwen'
     },
     {
@@ -301,7 +303,9 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 1 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 1 },
+        // 实例站点与注册引导链接：出现在描述文案中的 exampleName 会被渲染为指向 exampleUrl 的超链接（缺省不展示链接）
+        exampleName: 'openlux',
+        exampleUrl: 'https://www.openlux.ai/register?aff=OIt4',
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -322,7 +326,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 2 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 2 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -344,7 +347,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 3 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 3 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -366,7 +368,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 4 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 4 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -388,7 +389,6 @@ const PROVIDER_DEFINITIONS = [
         nameKey: 'provider_site_name',
         nameKeyParams: { n: 5 },
         descKey: 'provider_site_desc',
-        descKeyParams: { n: 5 },
         category: 'multimedia',
         icon: '🔗',
         lazyRecommended: false,
@@ -531,6 +531,16 @@ function translateProvider(p, tFn) {
     translated.description = p.descKey ? tFn(p.descKey, p.descKeyParams || {}) : (p.description || '');
     translated.impacts = p.impactsKey ? tFn(p.impactsKey).split(',').map(s => s.trim()) : (p.impacts || []);
     translated.docUrlLabel = p.docUrlLabelKey ? tFn(p.docUrlLabelKey) : (p.docUrlLabel || '');
+    translated.exampleName = p.exampleName || '';
+    translated.exampleUrl = p.exampleUrl || '';
+    // 描述中的实例站点名渲染为超链接（静态 i18n 文案 + 常量 URL，无用户输入，直接拼接）
+    translated.descriptionHtml = '';
+    if (translated.exampleName && translated.exampleUrl && translated.description.includes(translated.exampleName)) {
+        translated.descriptionHtml = translated.description.replace(
+            translated.exampleName,
+            `<a href="${translated.exampleUrl}" target="_blank" rel="noopener noreferrer" class="qc-example-link">${translated.exampleName}</a>`
+        );
+    }
     translated.fields = p.fields.map(f => ({
         ...f,
         label: f.labelKey ? tFn(f.labelKey) : (f.label || ''),
@@ -656,6 +666,32 @@ const AdminApp = {
                 amount: 0,
                 reason: '',
                 loading: false
+            },
+
+            // 资产库容量设置弹窗（见 docs/backend/asset_library.md）
+            assetQuotaModal: {
+                show: false,
+                userId: null,
+                userName: '',
+                quotaGB: 2,
+                usedText: '',
+                assetCount: 0,
+                assets: [],
+                assetsLoading: false,
+                purgingId: null,
+                loading: false,
+                enabled: false,
+                originalEnabled: false
+            },
+
+            // 资产管理页（功能开关/全员权限/总磁盘上限，system_config 热生效）
+            assetLib: {
+                loading: false,
+                saving: false,
+                enabled: false,
+                allowAllUsers: false,
+                totalQuotaGB: 0,
+                usedText: ''
             },
 
             // 用户备注编辑弹窗
@@ -793,7 +829,8 @@ const AdminApp = {
                 testResults: {},         // { providerId: { success: boolean, message: string } }
                 saveLoading: {},         // { providerId: boolean }
                 secretRevealed: {},      // { baseName::fieldId: boolean } 密钥毛玻璃是否已揭开
-                leftPanelOpen: true
+                leftPanelOpen: true,
+                userSwitchedCategory: false  // 用户是否在配置加载期间手动切换过分类 tab
             },
 
             // 字段示例图灯箱（快速配置字段 helpImage 点击放大查看）
@@ -1785,6 +1822,8 @@ const AdminApp = {
             }
             if (page === 'users') {
                 this.loadUsers();
+            } else if (page === 'assetlib') {
+                this.loadAssetLibConfig();
             } else if (page === 'config') {
                 this.loadConfigs();
             } else if (page === 'checkin') {
@@ -2999,6 +3038,209 @@ const AdminApp = {
             }
         },
 
+        // 打开资产库容量设置弹窗：先查当前用量与资产列表再展示
+        // ===== 资产管理页（功能开关/全员权限/总磁盘上限） =====
+        async loadAssetLibConfig() {
+            this.assetLib.loading = true;
+            try {
+                const response = await axios.get(
+                    '/api/admin/asset-library/config',
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    const d = response.data.data;
+                    this.assetLib.enabled = !!d.enabled;
+                    this.assetLib.allowAllUsers = !!d.allow_all_users;
+                    this.assetLib.totalQuotaGB = Number(d.total_quota_gb) || 0;
+                    this.assetLib.usedText = this.formatBytes(d.used_bytes);
+                }
+            } catch (error) {
+                console.error('Load asset lib config failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_load_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetLib.loading = false;
+            }
+        },
+
+        async saveAssetLibConfig() {
+            if (this.assetLib.totalQuotaGB === null || this.assetLib.totalQuotaGB === undefined
+                || this.assetLib.totalQuotaGB < 0) {
+                this.showToast(this.t('asset_lib_total_quota_hint'), 'error');
+                return;
+            }
+            this.assetLib.saving = true;
+            try {
+                const response = await axios.put(
+                    '/api/admin/asset-library/config',
+                    {
+                        enabled: !!this.assetLib.enabled,
+                        allow_all_users: !!this.assetLib.allowAllUsers,
+                        total_quota_gb: parseFloat(this.assetLib.totalQuotaGB) || 0
+                    },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_asset_lib_saved'), 'success');
+                    await this.loadAssetLibConfig();
+                }
+            } catch (error) {
+                console.error('Save asset lib config failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_adjust_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetLib.saving = false;
+            }
+        },
+
+        async openAssetQuotaModal(user) {
+            this.assetQuotaModal.userId = user.user_id;
+            this.assetQuotaModal.userName = user.phone || user.email || user.display_name || `用户${user.user_id}`;
+            this.assetQuotaModal.quotaGB = 2;
+            this.assetQuotaModal.usedText = '';
+            this.assetQuotaModal.assetCount = 0;
+            this.assetQuotaModal.assets = [];
+            this.assetQuotaModal.assetsLoading = true;
+            this.assetQuotaModal.purgingId = null;
+            this.assetQuotaModal.loading = false;
+            this.assetQuotaModal.enabled = false;
+            this.assetQuotaModal.originalEnabled = false;
+            this.assetQuotaModal.show = true;
+            try {
+                const response = await axios.get(
+                    `/api/admin/users/${user.user_id}/asset-quota`,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    const data = response.data.data;
+                    this.assetQuotaModal.quotaGB = data.quota_bytes > 0
+                        ? Math.round(data.quota_bytes / (1024 * 1024 * 1024) * 100) / 100
+                        : 0;
+                    this.assetQuotaModal.usedText = this.formatBytes(data.used_bytes);
+                    this.assetQuotaModal.assetCount = data.asset_count || 0;
+                    this.assetQuotaModal.enabled = !!data.enabled;
+                    this.assetQuotaModal.originalEnabled = !!data.enabled;
+                }
+            } catch (error) {
+                console.error('Load asset quota failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_load_failed');
+                this.showToast(detail, 'error');
+                this.assetQuotaModal.show = false;
+                return;
+            }
+            await this.loadAssetQuotaAssets();
+        },
+
+        // 拉取该用户的资产库资产（最近 50 条，供清除）
+        async loadAssetQuotaAssets() {
+            if (this.assetQuotaModal.userId == null) return;
+            this.assetQuotaModal.assetsLoading = true;
+            try {
+                const response = await axios.get(
+                    `/api/admin/asset-library/assets`,
+                    {
+                        params: { user_id: this.assetQuotaModal.userId, page: 1, page_size: 50 },
+                        headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.assetQuotaModal.assets = response.data.data.items || [];
+                }
+            } catch (error) {
+                console.error('Load user assets failed:', error);
+            } finally {
+                this.assetQuotaModal.assetsLoading = false;
+            }
+        },
+
+        // 清除资产（删文件+删记录+扣减容量；二次确认）
+        async purgeAssetLibraryAsset(asset) {
+            if (!confirm(this.t('confirm_asset_purge', { name: asset.name }))) return;
+            this.assetQuotaModal.purgingId = asset.id;
+            try {
+                const response = await axios.delete(
+                    `/api/asset-library/assets/${asset.id}`,
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    this.showToast(this.t('toast_asset_purged'), 'success');
+                    // 刷新用量与列表（清除会扣减容量记录）
+                    const quotaResp = await axios.get(
+                        `/api/admin/users/${this.assetQuotaModal.userId}/asset-quota`,
+                        { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                    );
+                    if (quotaResp.data.code === 0) {
+                        const data = quotaResp.data.data;
+                        this.assetQuotaModal.usedText = this.formatBytes(data.used_bytes);
+                        this.assetQuotaModal.assetCount = data.asset_count || 0;
+                    }
+                    await this.loadAssetQuotaAssets();
+                }
+            } catch (error) {
+                console.error('Purge asset failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_adjust_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetQuotaModal.purgingId = null;
+            }
+        },
+
+        // 关闭资产库容量设置弹窗
+        closeAssetQuotaModal() {
+            this.assetQuotaModal.show = false;
+            this.assetQuotaModal.userId = null;
+            this.assetQuotaModal.userName = '';
+            this.assetQuotaModal.quotaGB = 2;
+            this.assetQuotaModal.usedText = '';
+            this.assetQuotaModal.assetCount = 0;
+            this.assetQuotaModal.enabled = false;
+            this.assetQuotaModal.originalEnabled = false;
+        },
+
+        // 提交资产库容量设置（0=不限制）
+        async submitAssetQuota() {
+            if (this.assetQuotaModal.quotaGB === null || this.assetQuotaModal.quotaGB === undefined
+                || this.assetQuotaModal.quotaGB < 0) {
+                this.showToast(this.t('modal_asset_quota_hint'), 'error');
+                return;
+            }
+            this.assetQuotaModal.loading = true;
+            try {
+                const quotaBytes = Math.round(parseFloat(this.assetQuotaModal.quotaGB) * 1024 * 1024 * 1024);
+                const response = await axios.put(
+                    `/api/admin/users/${this.assetQuotaModal.userId}/asset-quota`,
+                    { quota_bytes: quotaBytes },
+                    { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                );
+                if (response.data.code === 0) {
+                    // 权限开关有变化时同步提交
+                    if (this.assetQuotaModal.enabled !== this.assetQuotaModal.originalEnabled) {
+                        await axios.put(
+                            `/api/admin/users/${this.assetQuotaModal.userId}/asset-permission`,
+                            { enabled: !!this.assetQuotaModal.enabled },
+                            { headers: { 'Authorization': `Bearer ${this.authToken}` } }
+                        );
+                    }
+                    this.showToast(this.t('toast_asset_quota_set'), 'success');
+                    this.closeAssetQuotaModal();
+                }
+            } catch (error) {
+                console.error('Set asset quota failed:', error);
+                const detail = error?.response?.data?.detail || this.t('error_adjust_failed');
+                this.showToast(detail, 'error');
+            } finally {
+                this.assetQuotaModal.loading = false;
+            }
+        },
+
+        // 字节数可读化（资产库用量展示）
+        formatBytes(bytes) {
+            const n = Number(bytes) || 0;
+            if (n >= 1024 * 1024 * 1024) return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+            if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1) + ' MB';
+            if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+            return n + ' B';
+        },
+
         // 打开用户备注编辑弹窗
         openRemarkModal(user) {
             this.remarkModal.userId = user.user_id;
@@ -3837,6 +4079,12 @@ const AdminApp = {
         
         // ==================== 快速配置方法（两栏模式） ====================
 
+        // 切换分类 tab：记录用户手动切换，配置异步加载完成后不再自动跳转覆盖
+        switchQuickConfigCategory(cat) {
+            this.quickConfigModal.userSwitchedCategory = true;
+            this.quickConfigModal.activeCategory = cat;
+        },
+
         // 打开快速配置弹窗
         async openQuickConfigModal() {
             this.quickConfigModal.show = true;
@@ -3850,6 +4098,7 @@ const AdminApp = {
             this.quickConfigModal.secretRevealed = {};
             this.quickConfigModal.leftPanelOpen = true;
             this.quickConfigModal.quickSelected = false;
+            this.quickConfigModal.userSwitchedCategory = false;
 
             // 从后端加载现有配置值
             try {
@@ -3898,15 +4147,17 @@ const AdminApp = {
                         }
                     }
 
-                    // 切换到第一个有选中服务商的分类
-                    for (const cat of Object.keys(CATEGORY_LABELS)) {
-                        const hasSelected = this.quickConfigModal.selectedProviderIds.some(id => {
-                            const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
-                            return p && p.category === cat;
-                        });
-                        if (hasSelected) {
-                            this.quickConfigModal.activeCategory = cat;
-                            break;
+                    // 切换到第一个有选中服务商的分类（用户在加载期间已手动切 tab 则尊重其选择）
+                    if (!this.quickConfigModal.userSwitchedCategory) {
+                        for (const cat of Object.keys(CATEGORY_LABELS)) {
+                            const hasSelected = this.quickConfigModal.selectedProviderIds.some(id => {
+                                const p = PROVIDER_DEFINITIONS.find(d => d.id === id);
+                                return p && p.category === cat;
+                            });
+                            if (hasSelected) {
+                                this.quickConfigModal.activeCategory = cat;
+                                break;
+                            }
                         }
                     }
                 }
@@ -5220,6 +5471,7 @@ const AdminApp = {
                 'gemini_image_edit': 'Gemini 图片编辑 (标准版)',
                 'gemini_image_edit_pro': 'Gemini 图片编辑 (Pro版)',
                 'gemini_3_1_flash_image_edit': 'Gemini 3.1 Flash 图片编辑',
+                'nano_banana_2_1_image_edit': 'Nano Banana 2.1 图片编辑',
                 'veo3_image_to_video': 'VEO3 图生视频',
                 'ltx2_image_to_video': 'LTX2 图生视频',
                 'ltx2_3_image_to_video': 'LTX2.3 图生视频',
@@ -5238,7 +5490,8 @@ const AdminApp = {
                 'grok_image_to_video': 'Grok 图生视频',
                 'happy_horse_image_to_video': 'Happy Horse 图生视频',
                 'happy_horse_reference_to_video': 'Happy Horse 参考生视频',
-                'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑'
+                'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑',
+                'qwen_2_1_image': 'qwenimage2.1'
             };
             return keyMap[driverKey] || driverKey;
         },

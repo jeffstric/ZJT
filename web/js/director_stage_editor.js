@@ -20,13 +20,59 @@
 
   var PUPPET_COLORS = ['#4f8ef7', '#f76f5e', '#34c38f', '#b57de8', '#e8b34d', '#4dc3e8', '#f07ab6', '#8d9aa8'];
 
+  // ============ male_base_mesh.glb（男性高精度人台）预载 ============
+  // 男人体型优先使用外部蒙皮骨骼人台替换程序化人偶；其余体型保留程序化实现。
+  // 预载在模块加载即开始，GLB 只有 93KB；未就绪或失败时 buildPuppetRig 自动回退程序化人偶。
+  var MALE_BASE_MESH_URL = '/assets/puppet/male_base_mesh.glb';
+  var MALE_BASE_MESH_STATE = 'idle';
+  var maleBaseMeshGltf = null;
+  // 注意：不要在常量区自动调用 preloadMaleBaseMesh()——提取几何块的测试/预览 harness
+  // 会重复执行该定义；真正的预载统一在模块底部（IIFE 末尾）发起一次。
+  function preloadMaleBaseMesh() {
+    if (MALE_BASE_MESH_STATE !== 'idle') return;
+    if (typeof window === 'undefined' || !window.THREE || !THREE.GLTFLoader) {
+      MALE_BASE_MESH_STATE = 'unsupported';
+      return;
+    }
+    MALE_BASE_MESH_STATE = 'loading';
+    try {
+      new THREE.GLTFLoader().load(MALE_BASE_MESH_URL, function (gltf) {
+        maleBaseMeshGltf = gltf;
+        MALE_BASE_MESH_STATE = 'ready';
+      }, undefined, function () {
+        MALE_BASE_MESH_STATE = 'failed';
+      });
+    } catch (e) {
+      MALE_BASE_MESH_STATE = 'failed';
+    }
+  }
+
+  // 人偶关节键 → GLB 骨骼名。注意 GLTFLoader 会按 PropertyBinding 规则去掉节点名中的
+  // "."（spine.005 → spine005），映射表必须使用加载后的名字。只列出每段骨骼链的顶骨，
+  // 子骨（spine002/004、手指、脚趾等）保持原父子关系跟随顶骨，无需逐个挂载。
+  var GLB_JOINT_BONES = {
+    spine: 'spine001', chest: 'spine003', neck: 'spine005',
+    shoulderL: 'upper_armL', elbowL: 'forearmL', wristL: 'handL',
+    shoulderR: 'upper_armR', elbowR: 'forearmR', wristR: 'handR',
+    hipL: 'thighL', kneeL: 'shinL', ankleL: 'footL',
+    hipR: 'thighR', kneeR: 'shinR', ankleR: 'footR'
+  };
+  // 关节组父子关系（与 JOINT_GROUPS 的层级一致）
+  var GLB_JOINT_PARENTS = {
+    spine: 'hipsY', chest: 'spine', neck: 'chest', head: 'neck',
+    shoulderL: 'chest', elbowL: 'shoulderL', wristL: 'elbowL',
+    shoulderR: 'chest', elbowR: 'shoulderR', wristR: 'elbowR',
+    hipL: 'hipsY', kneeL: 'hipL', ankleL: 'kneeL',
+    hipR: 'hipsY', kneeR: 'hipR', ankleR: 'kneeR'
+  };
+
   // ==== PUPPET_GEOMETRY_BEGIN ====
   // 人偶体型：关节层级相同。躯干用一条侧轮廓控制点列 profile 描述（[y, rx, rz, zOffset]，
   // y 为相对髋节高度，zOffset 为该高度截面的前移量），构建时沿轮廓密排椭球切片平滑混合成
   // 一体成型身体曲线（苹果/沙漏等），不再用大椭球穿插或另贴胸球/肚球。
   var BODY_TYPES = {
     man: {
-      label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036,
+      label: '男人', hipH: 0.92, labelY: 2.00, jointR: 0.036, useGlb: true,
       headR: 0.116, headScale: [1, 1.04, 0.98], jaw: 0.74,
       neckR: 0.040, neckH: 0.085, neckY: 0.235,
       spineY: 0.12, chestJointY: 0.13,
@@ -74,7 +120,7 @@
     },
     fat: {
       label: '胖子', hipH: 0.86, labelY: 1.88, jointR: 0.042,
-      headR: 0.118, headScale: [1.08, 1.02, 1.06], jaw: 0.86, doubleChin: true,
+      headR: 0.118, headScale: [1.08, 1.02, 1.06], jaw: 0.86,
       neckR: 0.050, neckH: 0.055, neckY: 0.215,
       spineY: 0.13, chestJointY: 0.145,
       profile: [
@@ -109,6 +155,7 @@
     shoulderL: 1, shoulderR: 1, elbowL: 1, elbowR: 1, wristL: 1, wristR: 1,
     hipL: 1, hipR: 1, kneeL: 1, kneeR: 1, ankleL: 1, ankleR: 1
   };
+
   var BODY_TYPE_ORDER = ['man', 'woman', 'child', 'fat', 'thin'];
 
   function getBodyType(key) {
@@ -276,7 +323,6 @@
   // ============ 工具 ============
 
   function deg2rad(d) { return d * Math.PI / 180; }
-  function rad2deg(r) { return r * 180 / Math.PI; }
   function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
   function fmt(n) { return (Math.round(n * 10) / 10).toFixed(1); }
   function esc(v) { return window.escapeHtml ? window.escapeHtml(String(v == null ? '' : v)) : String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -298,20 +344,240 @@
 
   // ============ 人偶骨骼构建 ============
 
-  function buildPuppetRig(colorHex, bodyTypeKey) {
+  // 用 male_base_mesh.glb 构建男人体型人偶：克隆蒙皮模型 → 归一化（面向 +Z、
+  // 身高 1.75m、脚底 y=0）→ 新增"头骨"并转移 spine.005 的头侧权重（原模型无头骨，
+  // 不补头骨则头部无法跟随"头部"关节）→ 按 GLB_JOINT_BONES 把各段骨骼链的顶骨
+  // 用 attach() 重挂到镜像关节组下（attach 保持世界变换，关节滑块的欧拉角语义与
+  // 程序化人偶完全一致，姿态预设/时间轴/关节球选中等全部复用）。
+  function buildGlbPuppetRig(colorHex, t) {
+    var R = (typeof window !== 'undefined') ? window.DirectorStageRendering : null;
+    var materialBundle = R ? R.createResinMaterials(colorHex, null) : null;
+    var mat = materialBundle ? materialBundle.body
+      : new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0 });
+    var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
+
+    var rig = {
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, markerBaseMat],
+      materialBundle: materialBundle,
+      bodyType: normalizeBodyType('man'), rootYOffset: 0
+    };
+
+    var model = THREE.SkeletonUtils.clone(maleBaseMeshGltf.scene);
+    model.updateMatrixWorld(true); // 此刻 matrixWorld == 原始 metarig 空间 == 几何局部空间
+
+    var skinned = null;
+    model.traverse(function (o) { if (o.isSkinnedMesh) skinned = o; });
+    if (!skinned) throw new Error('male_base_mesh.glb 缺少 SkinnedMesh');
+    // r128 的蒙皮由 material.skinning 开关控制（程序参数 skinning: material.skinning，
+    // 非自动检测），自定义材质必须显式打开，否则渲染为绑定姿态（T-pose 不动）。
+    mat.skinning = true;
+    // skinIndex 要做头骨增权手术，几何必须独立副本，避免污染共享缓存
+    skinned.geometry = skinned.geometry.clone();
+    skinned.frustumCulled = false;
+    skinned.castShadow = true;   // 与程序化人偶一致：实时投影（GLB 蒙皮阴影走 skinning 深度路径）
+    skinned.receiveShadow = true;
+    skinned.material = mat;
+    rig.bodyMeshes.push(skinned);
+
+    function findBone(name) {
+      var found = null;
+      model.traverse(function (o) { if (o.isBone && o.name === name) found = o; });
+      return found;
+    }
+
+    // —— 头骨手术：原模型脊柱链终止于 spine005，头颈权重全在它身上 ——
+    var spine5 = findBone('spine005');
+    if (!spine5) throw new Error('male_base_mesh.glb 缺少 spine005 骨骼');
+    var skeleton = skinned.skeleton;
+    var s5Idx = -1;
+    skeleton.bones.forEach(function (b, i) { if (b === spine5) s5Idx = i; });
+    var posAttr = skinned.geometry.attributes.position;
+    var headTopRaw = -Infinity;
+    for (var vi = 0; vi < posAttr.count; vi++) headTopRaw = Math.max(headTopRaw, posAttr.getY(vi));
+    // 权重切分点用原始几何空间（geometry 未被归一化动过）
+    var neckBaseRaw = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld).y;
+    var cut = neckBaseRaw + (headTopRaw - neckBaseRaw) * 0.30; // 颈根向上 30% 头颈区
+    // 注意：headBone 的世界位置在下方"注册"时按最终坐标系计算——此刻模型还没进
+    // 归一化容器，raw 空间的坐标不能直接用。
+    var headBone = new THREE.Bone();
+    headBone.name = 'head.glb';
+    // 此处只做头骨增权。绑定逆矩阵不在 raw 空间重算：渲染循环活在归一化后的
+    // 坐标系，且 GLB 路径保持原始绑定逆矩阵，不做 calculateInverses。
+    var headIdx = skeleton.bones.length; // headBone 将追加在末尾
+    var si = skinned.geometry.attributes.skinIndex;
+    for (var wi = 0; wi < si.count; wi++) {
+      if (posAttr.getY(wi) <= cut) continue;
+      var i0 = si.getX(wi), i1 = si.getY(wi), i2 = si.getZ(wi), i3 = si.getW(wi);
+      if (i0 !== s5Idx && i1 !== s5Idx && i2 !== s5Idx && i3 !== s5Idx) continue;
+      si.setXYZW(wi,
+        i0 === s5Idx ? headIdx : i0,
+        i1 === s5Idx ? headIdx : i1,
+        i2 === s5Idx ? headIdx : i2,
+        i3 === s5Idx ? headIdx : i3
+      );
+    }
+    si.needsUpdate = true;
+
+    // —— 归一化：面向 +Z、身高 1.75m、脚底贴地、水平居中 ——
+    var container = new THREE.Group();
+    container.add(model);
+    container.rotation.y = -Math.PI / 2; // 模型原面向 +X
+    var b1 = new THREE.Box3().setFromObject(container);
+    var rawH = b1.max.y - b1.min.y;
+    var s = 1.75 / rawH;
+    container.scale.set(s, s, s);
+    container.updateMatrixWorld(true);
+    var b2 = new THREE.Box3().setFromObject(container);
+    container.position.set(-(b2.min.x + b2.max.x) / 2, -b2.min.y, -(b2.min.z + b2.max.z) / 2);
+
+    var root = new THREE.Group();
+    rig.root = root;
+    root.add(container);
+    root.updateMatrixWorld(true);
+
+    var bonePos = function (b) { return new THREE.Vector3().setFromMatrixPosition(b.matrixWorld); };
+
+    // hipsY 挂在骨盆（spine 骨骼头）高度
+    var spineBone = findBone('spine');
+    var hipH = bonePos(spineBone).y;
+    rig.hipH = hipH;
+    var hipsY = new THREE.Group();
+    hipsY.position.set(0, hipH, 0);
+    root.add(hipsY);
+    rig.hipsY = hipsY;
+    rig.labelY = 1.75 + 0.12;
+
+    function glbJoint(key, parentKey, pos) {
+      var parent = parentKey === 'hipsY' ? hipsY : rig.joints[parentKey];
+      var g = new THREE.Group();
+      g.position.copy(pos);
+      parent.add(g);
+      rig.joints[key] = g;
+      var markerMat = markerBaseMat.clone();
+      rig.materials.push(markerMat);
+      var marker = new THREE.Mesh(new THREE.SphereGeometry(Math.max(0.032, (t.jointR || 0.036) * 0.9), 10, 8), markerMat);
+      marker.visible = false;
+      marker.userData.jointKey = key;
+      g.add(marker);
+      rig.markers[key] = marker;
+      return g;
+    }
+
+    // —— 立正姿态（最终坐标系，创建关节组之前）：模型原始绑定是 T-pose（横举），
+    // 把上臂骨骼在肩点旋到体侧下垂（按实测方向算最小旋转，精确映射到 垂直微外张≈4°）。
+    // 关键：不做 calculateInverses 重绑——保持 GLB 原始绑定逆矩阵，让骨骼物理停在
+    // 立正位置（rest 时 boneMatrix≠I，蒙皮即渲染立正）；若重绑反而会让 rest 时
+    // boneMatrix=I，网格被渲染回原始 T-pose 几何。关节滑块从零位（立正）起算。
+    ['L', 'R'].forEach(function (suffix) {
+      var ua = findBone('upper_arm' + suffix);
+      if (!ua) return;
+      ua.updateWorldMatrix(true, false);
+      var pivot = new THREE.Vector3().setFromMatrixPosition(ua.matrixWorld);
+      var forearm = ua.children[0];
+      if (!forearm) return;
+      var dir = new THREE.Vector3().setFromMatrixPosition(forearm.matrixWorld).sub(pivot).normalize();
+      var outSign = suffix === 'L' ? 1 : -1; // 最终坐标系面向 +Z，左臂外侧 +X、右臂外侧 -X
+      var target = new THREE.Vector3(0, -1, 0.07 * outSign).normalize();
+      var axis = new THREE.Vector3().crossVectors(dir, target);
+      var axisLen = axis.length();
+      var angle = Math.atan2(axisLen, dir.dot(target));
+      if (axisLen > 1e-6 && angle > 1e-4) {
+        axis.normalize();
+        var rot = new THREE.Matrix4().makeRotationAxis(axis, angle);
+        var world = new THREE.Matrix4()
+          .makeTranslation(pivot.x, pivot.y, pivot.z)
+          .multiply(rot)
+          .multiply(new THREE.Matrix4().makeTranslation(-pivot.x, -pivot.y, -pivot.z))
+          .multiply(ua.matrixWorld);
+        var local = new THREE.Matrix4().copy(ua.parent.matrixWorld).invert().multiply(world);
+        local.decompose(ua.position, ua.quaternion, ua.scale);
+      }
+    });
+    root.updateMatrixWorld(true);
+
+    // 先创建全部关节组（位置=对应骨骼头的"相对父组的局部偏移"），再统一重挂骨骼链顶骨。
+    // 注意组是嵌套的：bonePos 是世界坐标，必须减去父组世界位置（静止时旋转均为 0，直接相减）。
+    // 组位置取自上方立正姿态下的骨骼头，因此关节球/轴向指示器落在立正解剖位置。
+    var attachPlan = [];
+    var order = ['spine', 'chest', 'neck', 'head',
+      'shoulderL', 'elbowL', 'wristL', 'shoulderR', 'elbowR', 'wristR',
+      'hipL', 'kneeL', 'ankleL', 'hipR', 'kneeR', 'ankleR'];
+    var groupWorld = { hipsY: new THREE.Vector3(0, hipH, 0) };
+    var i, key;
+    for (i = 0; i < order.length; i++) {
+      key = order[i];
+      var targetBone = key === 'head' ? headBone : findBone(GLB_JOINT_BONES[key]);
+      if (!targetBone) throw new Error('male_base_mesh.glb 缺少骨骼: ' + GLB_JOINT_BONES[key]);
+      var headW = bonePos(targetBone);
+      var parentKey = GLB_JOINT_PARENTS[key];
+      var parentW = groupWorld[parentKey];
+      var local = headW.clone().sub(parentW);
+      glbJoint(key, parentKey, local);
+      groupWorld[key] = headW;
+      attachPlan.push([key, targetBone]);
+    }
+    root.updateMatrixWorld(true);
+    for (i = 0; i < attachPlan.length; i++) {
+      rig.joints[attachPlan[i][0]].attach(attachPlan[i][1]);
+    }
+
+    // —— 头骨注册：headBone 的世界位置必须按最终坐标系计算（此刻已进归一化容器），
+    // 早前在 raw 空间算好再 add 会带上容器旋转/缩放，把头拽飞（用户看到"头不见了"）。
+    // boneInverses 与缓存共享且 init() 按 bones.length 分配矩阵槽位，先拷贝追加再重建。
+    // 不做全量 calculateInverses（保留 GLB 原始绑定，立正靠骨骼物理姿态而非重绑）。
+    var spine5World = new THREE.Vector3().setFromMatrixPosition(spine5.matrixWorld);
+    var headTopWorld = new THREE.Vector3(0, headTopRaw, 0).applyMatrix4(container.matrixWorld).y;
+    var cutWorld = spine5World.y + (headTopWorld - spine5World.y) * 0.30;
+    model.add(headBone);
+    headBone.position.copy(model.worldToLocal(new THREE.Vector3(
+      spine5World.x,
+      cutWorld + (headTopWorld - cutWorld) * 0.25,
+      spine5World.z
+    )));
+    skeleton.bones.push(headBone);
+    root.updateMatrixWorld(true);
+    // 逆矩阵必须与 GLB 其余骨骼的原始绑定空间一致（GLTFLoader 的 IBM 以 raw 模型
+    // 空间为基准，蒙皮时 meshWorld⁻¹ 会约掉容器变换）。若用最终坐标系的世界逆矩阵，
+    // 头部顶点会被二次容器变换拽飞（头消失+飞出几何在地面投下"手影"）。
+    // headBone 此刻无旋转/缩放，raw 空间绑定矩阵即模型局部平移。
+    skeleton.boneInverses = skeleton.boneInverses.slice();
+    var headBindRaw = new THREE.Matrix4().compose(headBone.position, headBone.quaternion, headBone.scale);
+    skeleton.boneInverses.push(headBindRaw.invert());
+    skeleton.init();
+    root.updateMatrixWorld(true);
+    return rig;
+  }
+
+  function buildPuppetRig(colorHex, bodyTypeKey, renderer) {
     var t = getBodyType(bodyTypeKey);
-    // 哑光木偶材质（接近参考图质感）；关节球用体色加深，模拟人偶关节接缝
-    var mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.6, metalness: 0.0 });
-    var seamMat = new THREE.MeshStandardMaterial({
+    // 男人体型优先使用 GLB 人台；未就绪/构建失败自动回退程序化人偶
+    if (t.useGlb === true && MALE_BASE_MESH_STATE === 'ready' && maleBaseMeshGltf && maleBaseMeshGltf.scene) {
+      try {
+        return buildGlbPuppetRig(colorHex, t);
+      } catch (e) {
+        console.warn('导演台：GLB 人偶构建失败，已回退程序化人偶。', e);
+      }
+    }
+    // 分部位 PBR 树脂材质；无渲染模块时保留 StandardMaterial 回退。
+    var materialBundle = null;
+    if (typeof window !== 'undefined' && window.DirectorStageRendering) {
+      materialBundle = window.DirectorStageRendering.createResinMaterials(colorHex, renderer);
+    }
+    var mat = materialBundle ? materialBundle.body : new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.0 });
+    var torsoMat = materialBundle ? materialBundle.torso : mat;
+    var headMat = materialBundle ? materialBundle.head : mat;
+    var seamMat = materialBundle ? materialBundle.seam : new THREE.MeshStandardMaterial({
       color: new THREE.Color(colorHex).multiplyScalar(0.8), roughness: 0.55, metalness: 0.0
     });
     var markerBaseMat = new THREE.MeshBasicMaterial({ color: 0xffd54f, transparent: true, opacity: 0.95 });
-    var eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a1d26 });
 
     var rig = {
-      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat, eyeMat],
+      joints: {}, markers: {}, bodyMeshes: [], materials: [mat, seamMat, markerBaseMat],
+      materialBundle: materialBundle,
       hipH: t.hipH, labelY: t.labelY, bodyType: normalizeBodyType(bodyTypeKey)
     };
+    if (torsoMat !== mat) rig.materials.push(torsoMat);
+    if (headMat !== mat && headMat !== torsoMat) rig.materials.push(headMat);
 
     // 人偶网格几乎都是缩放球体，rig 内共享同一个单位球几何体
     var unitSphere = new THREE.SphereGeometry(1, 24, 18);
@@ -328,14 +594,28 @@
       rig.bodyMeshes.push(m);
       return m;
     }
+    function armorPlate(rx, ry, rz, radius, m2) {
+      var geo = materialBundle ? window.DirectorStageRendering.roundedJoint(rx * 2, ry * 2, rz * 2, radius) : null;
+      if (!geo) return ellip(rx, ry, rz, m2);
+      var mesh = new THREE.Mesh(geo, m2 || mat);
+      rig.bodyMeshes.push(mesh);
+      return mesh;
+    }
     function joint(key, parent, x, y, z) {
       var g = new THREE.Group();
       g.position.set(x, y, z);
       parent.add(g);
       rig.joints[key] = g;
-      // 四肢关节球：体色加深、半埋进肢体，只露一圈接缝
+      // 仿生咬合关节：同色关节球（半径略大于肢体端径）+ 深色细咬合环，
+      // 呈"承口"结构而非生硬卡球
       if (LIMB_JOINTS[key]) {
-        g.add(ball(t.jointR, seamMat));
+        g.add(ball(t.jointR * 1.06, mat));
+        var biteRing = new THREE.Mesh(
+          new THREE.TorusGeometry(t.jointR * 0.98, t.jointR * 0.15, 8, 18),
+          seamMat,
+        );
+        biteRing.rotation.x = Math.PI / 2; // 环面法线沿肢体延伸轴（局部 -Y）
+        g.add(biteRing);
       }
       var markerMat = markerBaseMat.clone();
       rig.materials.push(markerMat);
@@ -406,8 +686,8 @@
     var spine = joint('spine', hipsY, 0, t.spineY, 0);
     var chest = joint('chest', spine, 0, t.chestJointY, 0);
 
-    // 躯干：按 profile 轮廓（[y, rx, rz, zOffset]，y 相对髋节）生成 3 段 lathe 平滑曲面，
-    // 分别挂 hipsY/spine/chest 关节，分段处互相嵌入，弯腰/转胸时分段联动不脱节。
+    // 躯干：按 profile 轮廓（[y, rx, rz, zOffset]，y 相对髋节）生成三段连续内芯与对应外甲。
+    // 内芯挂 hipsY/spine/chest 并互相嵌入；外甲按骨盆/腹/胸分件，弯腰/转胸时随各自关节联动。
     var spineAbs = t.spineY;
     var chestAbs = t.spineY + t.chestJointY;
     var prof = t.profile;
@@ -424,10 +704,10 @@
       return { rx: a[1] + (b[1] - a[1]) * f, rz: a[2] + (b[2] - a[2]) * f, z: a[3] + (b[3] - a[3]) * f };
     }
 
-    // 生成躯干段：owned 区 [y0,y1]（相对 hipsY）内为完整轮廓半径，
-    // 两端延伸段（extDown/extUp）从分界处开始连续收细到轴心并伸入相邻段内部——
-    // 重叠区始终是"外段全径 / 内段收细"的包含关系，只在分界线留下一圈接缝，不会平行重叠产生条纹。
-    function torsoPart(y0, y1, extDown, extUp, parent, baseY) {
+    // 躯干段同时用于深色内芯与外侧装甲。内芯的延伸段互相嵌入，保证弯腰/转胸时不断裂；
+    // 装甲不设延伸段，以真实窄缝分件。armor 模式压平前后面并略向外抬，形成硬壳而非肌肉轮廓。
+    function torsoPart(y0, y1, extDown, extUp, parent, baseY, shellScale, shellMat, armor) {
+      var radialScale = shellScale || 1;
       function taper(y) {
         var f = 1;
         if (y < y0 && extDown > 0) f = (y - (y0 - extDown)) / extDown;
@@ -440,19 +720,44 @@
       var N = 40;
       for (var k = 0; k <= N; k++) {
         var y = ya + (yb - ya) * k / N;
-        pts.push(new THREE.Vector2(Math.max(0.0035, profileAt(y).rz * taper(y)), y - baseY));
+        pts.push(new THREE.Vector2(Math.max(0.0035, profileAt(y).rz * taper(y) * radialScale), y - baseY));
       }
       var geo = new THREE.LatheGeometry(pts, 28);
       var pos = geo.attributes.position;
       for (var v = 0; v < pos.count; v++) {
-        var pr = profileAt(pos.getY(v) + baseY);
+        var yAbs = pos.getY(v) + baseY;
+        var pr = profileAt(yAbs);
         var ratio = pr.rz > 0.0001 ? pr.rx / pr.rz : 1;
         pos.setX(v, pos.getX(v) * ratio);
-        pos.setZ(v, pos.getZ(v) + pr.z);
+        var localZ = pos.getZ(v);
+        if (armor) {
+          var plateV = clamp((yAbs - y0) / Math.max(0.001, y1 - y0), 0, 1);
+          var front = clamp(localZ / Math.max(0.001, pr.rz * radialScale), -1, 1);
+          var curve = Math.abs(front);
+          var xScale = 1, yShift = 0;
+          if (armor === 'chest') {
+            // 胸甲上宽下窄，底缘向前/后下方弯成弧面；最小宽度也必须大于内芯。
+            yShift = -0.042 * curve * Math.pow(1 - plateV, 3);
+            xScale = (0.94 + 0.18 * plateV) * (1 - 0.02 * Math.pow(1 - plateV, 2));
+          } else if (armor === 'abdomen') {
+            // 腹甲两端随胸甲/骨盆甲弯曲，中间宽、上下窄，形成独立椭圆甲片。
+            yShift = -0.012 * curve * Math.pow(1 - plateV, 3) - 0.035 * curve * Math.pow(plateV, 3);
+            xScale = 1 - 0.08 * Math.pow(Math.abs(plateV - 0.5) * 2, 2);
+          } else if (armor === 'pelvis') {
+            // 骨盆甲上宽下窄，前侧向下延伸成护裆，顶部弧线与腹甲保持窄缝。
+            yShift = -0.040 * Math.max(0, front) * Math.pow(1 - plateV, 3) - 0.006 * curve * Math.pow(plateV, 3);
+            xScale = 1.06 - 0.12 * (1 - plateV);
+          }
+          pos.setX(v, pos.getX(v) * xScale);
+          pos.setY(v, pos.getY(v) + yShift);
+          localZ = localZ * 0.86 + (localZ >= 0 ? 0.012 : -0.012);
+        }
+        pos.setZ(v, localZ + pr.z);
       }
+      if (armor && materialBundle) window.DirectorStageRendering.ensureUv2(geo);
       geo.computeVertexNormals();
       weldLatheSeam(geo, 28);
-      var mesh = new THREE.Mesh(geo, mat);
+      var mesh = new THREE.Mesh(geo, shellMat || mat);
       rig.bodyMeshes.push(mesh);
       parent.add(mesh);
       return mesh;
@@ -460,13 +765,15 @@
 
     var waistSplit = spineAbs * 0.55;                 // 髋/腰分段高度
     var chestSplit = spineAbs + t.chestJointY * 0.55; // 腰/胸分段高度
-    torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0);
-    torsoPart(waistSplit, chestSplit, 0.07, 0.11, spine, spineAbs);
-    torsoPart(chestSplit, prof[prof.length - 1][0], 0.07, 0.045, chest, chestAbs);
-    // 肩线：横跨两肩的圆顶，与手臂三角肌衔接
-    var shoulderBar = ellip(t.shoulderX * 0.92, t.upperArmR * 1.25, t.upperArmR * 1.1);
-    shoulderBar.position.set(0, t.shoulderY - 0.012, 0);
-    chest.add(shoulderBar);
+    // 深色内芯保持关节活动时的连续性，只在装甲窄缝中露出。
+    torsoPart(prof[0][0], waistSplit, 0.05, 0.11, hipsY, 0, 0.90, seamMat);
+    torsoPart(waistSplit, chestSplit, 0.07, 0.11, spine, spineAbs, 0.90, seamMat);
+    torsoPart(chestSplit, prof[prof.length - 1][0], 0.07, 0.045, chest, chestAbs, 0.90, seamMat);
+    // 骨盆甲 / 腹甲 / 胸甲：分件之间留 16mm 窄缝，前后壳面压平形成盔甲硬壳。
+    torsoPart(prof[0][0] + 0.006, waistSplit - 0.008, 0, 0, hipsY, 0, 1.025, torsoMat, 'pelvis');
+    torsoPart(waistSplit + 0.008, chestSplit - 0.008, 0, 0, spine, spineAbs, 1.025, torsoMat, 'abdomen');
+    torsoPart(chestSplit + 0.008, prof[prof.length - 1][0] - 0.004, 0, 0, chest, chestAbs, 1.025, torsoMat, 'chest');
+    // 只保留上述结构分件，不再叠加腰线/胸线/腹肌线/锁骨等装饰椭球。
 
     var neck = joint('neck', chest, 0, t.neckY, 0);
     var neckMesh = ellip(t.neckR * 1.25, t.neckH * 0.7, t.neckR * 1.2);
@@ -474,59 +781,143 @@
     neck.add(neckMesh);
 
     var head = joint('head', neck, 0, t.neckH * 0.8, 0);
-    var headSY = t.headScale ? t.headScale[1] : 1;
-    var headCY = t.headR * headSY * 0.82;
-    var headMesh = ball(t.headR);
-    if (t.headScale) headMesh.scale.set(t.headR * t.headScale[0], t.headR * t.headScale[1], t.headR * t.headScale[2]);
-    headMesh.position.y = headCY;
-    head.add(headMesh);
-    // 下颌/脸部：下半张脸略收窄，与颅球融合出脸型（jaw 越小脸越尖）
-    var jawF = t.jaw || 0.7;
-    var jaw = ellip(t.headR * 0.88 * jawF, t.headR * 0.62 * jawF, t.headR * 0.80 * jawF);
-    jaw.position.set(0, headCY - t.headR * 0.40, t.headR * 0.16);
-    head.add(jaw);
-    if (t.doubleChin) {
-      var chin = ellip(t.headR * 0.50, t.headR * 0.24, t.headR * 0.38);
-      chin.position.set(0, headCY - t.headR * 0.55, t.headR * 0.18);
-      head.add(chin);
+    var headScale = t.headScale || [1, 1, 1];
+    var headCY = t.headR * headScale[1] * 0.82;
+    // 无五官连续头型：头顶、太阳穴、下颌由一条连续轮廓成型，面部/后脑由下方
+    // 同一网格的顶点处理区分朝向，不叠加任何五官小件。男人体型默认改用 GLB 人台
+    //（见 buildGlbPuppetRig），本程序化头型服务于其余体型与 GLB 未就绪时的回退。
+    var jawWidth = 0.82 + (t.jaw || 0.74) * 0.18;
+    var headProfile = [
+      [-1.02, 0.004], [-0.98, 0.26 * jawWidth], [-0.86, 0.58 * jawWidth],
+      [-0.62, 0.80 * jawWidth], [-0.30, 0.93 * jawWidth], [0.05, 0.99],
+      [0.38, 1.00], [0.66, 0.91], [0.85, 0.70], [0.97, 0.36], [1.02, 0.004]
+    ];
+    var headPoints = smoothProfile(headProfile, 48).map(function (p) {
+      return new THREE.Vector2(Math.max(0.003, p[1]), p[0]);
+    });
+    var headGeo = new THREE.LatheGeometry(headPoints, 32);
+    var headPos = headGeo.attributes.position;
+    for (var hi = 0; hi < headPos.count; hi++) {
+      var hx = headPos.getX(hi), hy = headPos.getY(hi), hz = headPos.getZ(hi);
+      if (hz >= 0) {
+        // 面部是平缓硬平面；五官全部由下方独立硬表面小件拼出，绝不用噪声位移软化轮廓。
+        var facePlane = 0.74 + 0.06 * (hy + 0.1);
+        var faceZone = clamp((0.95 - hy) / 0.25, 0, 1) * clamp((hy + 0.92) / 0.25, 0, 1);
+        if (hz > facePlane) hz = facePlane + (hz - facePlane) * (1 - 0.80 * faceZone);
+        var chinWeight = Math.exp(-Math.pow((hy + 0.68) / 0.22, 2));
+        hz += 0.10 * chinWeight * Math.max(0, 1 - Math.abs(hx));
+      } else {
+        // 枕部向后鼓起、下脑后收，侧面形成明确的后脑勺轮廓。
+        var occiput = Math.exp(-Math.pow((hy - 0.18) / 0.62, 2));
+        hz *= 1 + 0.18 * occiput;
+      }
+      headPos.setXYZ(hi, hx, hy, hz);
     }
-    // 鼻梁微凸
-    var nose = ellip(t.headR * 0.10, t.headR * 0.15, t.headR * 0.11);
-    nose.position.set(0, headCY - t.headR * 0.08, t.headR * 0.90);
-    head.add(nose);
-    var eyeRad = t.headR * 0.11;
-    var eyeL = new THREE.Mesh(new THREE.SphereGeometry(eyeRad, 10, 8), eyeMat);
-    eyeL.position.set(t.headR * 0.32, headCY + t.headR * 0.10, t.headR * 0.88);
-    head.add(eyeL);
-    var eyeRight = eyeL.clone();
-    eyeRight.position.x = -t.headR * 0.32;
-    head.add(eyeRight);
+    if (materialBundle) window.DirectorStageRendering.ensureUv2(headGeo);
+    headGeo.computeVertexNormals();
+    weldLatheSeam(headGeo, 32);
+    var headMesh = new THREE.Mesh(headGeo, headMat);
+    headMesh.scale.set(t.headR * headScale[0], t.headR * headScale[1], t.headR * headScale[2]);
+    headMesh.position.y = headCY;
+    rig.bodyMeshes.push(headMesh);
+    head.add(headMesh);
+    // 小巧人耳贴近头侧并略靠后；不旋转、不外伸，避免牛角般的横向轮廓。
+    [-1, 1].forEach(function (side) {
+      var ear = ellip(t.headR * 0.085, t.headR * 0.20, t.headR * 0.105, headMat);
+      ear.position.set(
+        side * t.headR * headScale[0] * 0.98,
+        headCY - t.headR * 0.08,
+        -t.headR * headScale[2] * 0.06
+      );
+      head.add(ear);
+    });
 
+    // 肩甲只覆盖肩部上外侧，不再用完整球体充当三角肌。
+    var pauldronGeo = new THREE.SphereGeometry(1, 24, 14, 0, Math.PI * 2, 0, Math.PI * 0.64);
     function buildArm(side) {
       var s = side === 'L' ? 1 : -1;
-      var sh = joint('shoulder' + side, chest, s * t.shoulderX, t.shoulderY, 0);
-      // 三角肌圆头，与肩线衔接
-      var delt = ellip(t.upperArmR * 1.5, t.upperArmR * 1.75, t.upperArmR * 1.4);
-      delt.position.set(s * t.upperArmR * 0.2, -t.upperArmR * 0.5, 0);
-      sh.add(delt);
       var uaH = t.upperArmH, uaR = t.upperArmR;
+      var sh = joint('shoulder' + side, chest, s * t.shoulderX * 0.90, t.shoulderY, 0);
+      // 肩胸柔性连接芯：从胸甲内部伸到肩关节，随肩部一起转动，外露部分尽量短。
+      var shoulderLink = new THREE.Mesh(
+        new THREE.CylinderGeometry(uaR * 0.72, uaR * 0.82, t.shoulderX * 0.42, 16),
+        seamMat
+      );
+      shoulderLink.rotation.z = Math.PI / 2;
+      shoulderLink.position.set(-s * t.shoulderX * 0.21, 0, 0);
+      rig.bodyMeshes.push(shoulderLink);
+      sh.add(shoulderLink);
+      var pauldron = new THREE.Mesh(pauldronGeo, mat);
+      pauldron.scale.set(uaR * 1.70, uaR * 1.55, uaR * 1.50);
+      pauldron.position.set(s * uaR * 0.10, -uaR * 0.22, 0);
+      pauldron.rotation.z = -s * 0.20;
+      rig.bodyMeshes.push(pauldron);
+      sh.add(pauldron);
       limbSeg(sh, [
         [0.015, uaR * 1.0], [-uaH * 0.12, uaR * 1.26], [-uaH * 0.38, uaR * 1.16],
         [-uaH * 0.72, uaR * 0.92], [-uaH + 0.012, uaR * 0.82], [-uaH - 0.01, uaR * 0.5]
       ]);
       var elbow = joint('elbow' + side, sh, 0, -uaH, 0);
       var laH = t.lowerArmH, laR = t.lowerArmR;
+      // 肘甲使用带倒角的硬壳，与关节球/咬合环组成清晰的护甲结构。
+      var elbowCap = armorPlate(uaR * 0.70, uaR * 0.82, uaR * 0.30, uaR * 0.22, mat);
+      elbowCap.position.set(0, -uaR * 0.05, laR * 0.95);
+      elbow.add(elbowCap);
       limbSeg(elbow, [
         [0.012, laR * 0.9], [-laH * 0.18, laR * 1.22], [-laH * 0.5, laR * 0.98],
         [-laH + 0.012, laR * 0.72], [-laH - 0.01, laR * 0.5]
       ]);
       var wrist = joint('wrist' + side, elbow, 0, -laH, 0);
-      var hand = ellip(t.hand[0], t.hand[1], t.hand[2]);
-      hand.position.y = -t.hand[1] * 0.55;
-      wrist.add(hand);
+      // 手部 v3：掌体 + 分节四指（有指节轮廓，中指最长）+ 拇指
+      var palm = ellip(t.hand[0], t.hand[1] * 0.70, t.hand[2] * 1.12);
+      palm.position.y = -t.hand[1] * 0.28;
+      wrist.add(palm);
+      var fr = t.hand[0] * 0.185;
+      var fingerLens = [0.44, 0.62, 0.58, 0.50];
+      for (var fi = 0; fi < 4; fi++) {
+        var fl = t.hand[1] * fingerLens[fi];
+        var fx = s * (fi - 1.5) * fr * 2.05;
+        var fseg = new THREE.Mesh(new THREE.CylinderGeometry(fr * 0.80, fr, fl, 8), mat);
+        fseg.position.set(fx, -t.hand[1] * 0.58 - fl * 0.5, 0.002);
+        wrist.add(fseg);
+        var ftip = ball(fr * 0.80);
+        ftip.position.set(fx, -t.hand[1] * 0.58 - fl, 0.002);
+        wrist.add(ftip);
+      }
+      var thumb = ellip(t.hand[0] * 0.36, t.hand[1] * 0.44, t.hand[0] * 0.36);
+      thumb.position.set(-s * t.hand[0] * 0.42, -t.hand[1] * 0.16, t.hand[2] * 0.62);
+      thumb.rotation.x = 0.55;
+      thumb.rotation.z = s * 0.3;
+      wrist.add(thumb);
     }
     buildArm('L');
     buildArm('R');
+
+    // 脚型与身体同向（脚尖 +Z）：后跟窄、前掌宽、脚背有起伏、底面压平。
+    // 不再用鞋底/鞋身/踝领等多个椭球叠罗汉，避免圆饼脚和前后不分。
+    var footProfile = [
+      [-1.00, 0.04], [-0.96, 0.34], [-0.82, 0.66], [-0.52, 0.82],
+      [-0.12, 0.90], [0.30, 0.98], [0.66, 1.00], [0.88, 0.88],
+      [1.00, 0.56], [1.06, 0.04]
+    ];
+    var footPoints = smoothProfile(footProfile, 32).map(function (p) {
+      return new THREE.Vector2(Math.max(0.003, p[1]), p[0]);
+    });
+    var footGeo = new THREE.LatheGeometry(footPoints, 28);
+    footGeo.rotateX(Math.PI / 2); // 原 Y 轴轮廓转为 Z 轴，正端为脚尖
+    var footPos = footGeo.attributes.position;
+    for (var fi = 0; fi < footPos.count; fi++) {
+      var fy = footPos.getY(fi), fz = footPos.getZ(fi);
+      if (fy < -0.55) fy = -0.55 + (fy + 0.55) * 0.15;
+      if (fy > 0) {
+        fy *= 1 - 0.18 * clamp((fz - 0.25) / 0.65, 0, 1); // 前掌低于脚踝脚背
+        fy *= 1 + 0.10 * Math.exp(-Math.pow((fz + 0.15) / 0.45, 2));
+      }
+      footPos.setY(fi, fy);
+    }
+    footGeo.computeVertexNormals();
+    weldLatheSeam(footGeo, 28);
+    footGeo.computeBoundingBox();
 
     function buildLeg(side) {
       var s = side === 'L' ? 1 : -1;
@@ -538,23 +929,33 @@
       ]);
       var knee = joint('knee' + side, hip, 0, -ulH, 0);
       var llH = t.lowerLegH, llR = t.lowerLegR;
+      // 膝甲为前侧独立倒角硬壳，关节球只负责咬合与转动。
+      var kneeCap = armorPlate(ulR * 0.82, ulR * 0.95, ulR * 0.34, ulR * 0.26, mat);
+      kneeCap.position.set(0, -ulR * 0.12, llR * 0.96);
+      knee.add(kneeCap);
       limbSeg(knee, [
         [0.012, llR * 0.92], [-llH * 0.22, llR * 1.14], [-llH * 0.55, llR * 0.86],
         [-llH + 0.010, llR * 0.60], [-llH - 0.008, llR * 0.42]
       ]);
       var ankle = joint('ankle' + side, knee, 0, -t.lowerLegH, 0);
-      // 鞋形脚：跟部 + 前掌两块拼合
-      var heel = ellip(t.foot[0] * 0.88, t.foot[1], t.foot[2] * 0.55);
-      heel.position.set(0, -t.foot[1] * 0.3, -t.foot[2] * 0.12);
-      ankle.add(heel);
-      var toe = ellip(t.foot[0], t.foot[1] * 0.82, t.foot[2] * 0.62);
-      toe.position.set(0, -t.foot[1] * 0.42, t.foot[2] * 0.40);
-      ankle.add(toe);
+      var ankleH = t.hipH + t.hipJointY - t.upperLegH - t.lowerLegH;
+      var foot = new THREE.Mesh(footGeo, mat);
+      foot.scale.set(t.foot[0], t.foot[1], t.foot[2] * 1.02);
+      foot.position.set(
+        0,
+        -ankleH - footGeo.boundingBox.min.y * t.foot[1],
+        t.foot[2] * 0.18
+      );
+      rig.bodyMeshes.push(foot);
+      ankle.add(foot);
     }
     buildLeg('L');
     buildLeg('R');
 
-    rig.bodyMeshes.forEach(function (m) { m.castShadow = false; m.receiveShadow = false; });
+    rig.bodyMeshes.forEach(function (m) {
+      m.castShadow = m.material !== seamMat;
+      m.receiveShadow = true;
+    });
     return rig;
   }
   // ==== PUPPET_GEOMETRY_END ====
@@ -800,6 +1201,12 @@
           '<canvas id="dsPipCanvas"></canvas>' +
         '</div>' +
         '<div class="ds-selection-tip" id="dsSelectionTip"></div>' +
+        '<div class="ds-chat-note" id="dsChatNote" style="display:none;"></div>' +
+        '<div class="ds-chatbar" id="dsChatBar">' +
+          '<select class="ds-chat-model" id="dsChatModel" title="对话模型"></select>' +
+          '<input class="ds-chat-input" id="dsChatInput" type="text" maxlength="300" placeholder="对话调整机位，如：把机位移到人偶正面稍高处" />' +
+          '<button class="ds-chat-send" id="dsChatSend">发送</button>' +
+        '</div>' +
         '<div class="ds-add-pop" id="dsAddPop">' +
           '<div class="ds-add-pop-head"><span>添加人偶</span><button class="ds-puppet-del" id="dsAddPopClose" style="font-size:16px;">✕</button></div>' +
           '<div class="ds-add-pop-body" id="dsAddPopBody"></div>' +
@@ -836,25 +1243,54 @@
   // ---------- 场景初始化 ----------
 
   DirectorEditor.prototype.initScene = function () {
+    var R = window.DirectorStageRendering || null;
+    this.rendering = R;
+    this.mainPipeline = null;
+    this.pipPipeline = null;
+    this.studioEnvironment = null;
+    this.studioLights = null;
+    // 预览与快照固定完整分辨率；优化 SSAO 不得降低 Beauty 清晰度。
+    this.pipPreviewQuality = 1;
+
     var canvas = this.$('dsCanvas');
     this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.outputEncoding = THREE.sRGBEncoding;
+    if (R) R.configureRenderer(this.renderer, { pixelRatio: Math.min(window.devicePixelRatio || 1, 2) });
+    else {
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      this.renderer.outputEncoding = THREE.sRGBEncoding;
+    }
+
+    // 驱动级规避：部分显卡驱动的 ANGLE 非 D3D11 后端编译 阴影+带贴图材质 的组合即整进程
+    // 崩溃且不可恢复；风险环境从第一帧起关闭阴影（PBR 材质/SSAO/环境光全部保留）。
+    this._driverShadowDisabled = false;
+    if (R && R.detectDriverShaderRisk && R.detectDriverShaderRisk(this.renderer)) {
+      this._driverShadowDisabled = true;
+      this.renderer.shadowMap.enabled = false;
+      console.warn('导演台：当前显卡 ANGLE 后端无法安全编译阴影着色器，已自动关闭实时阴影（PBR 材质与环境光不受影响）。');
+    }
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x14161d);
 
-    // 光照（略提亮，让木偶关节球和体型轮廓更清楚）
-    this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 1.05));
-    var key = new THREE.DirectionalLight(0xffffff, 0.95);
-    key.position.set(4, 7, 5);
-    this.scene.add(key);
-    var fill = new THREE.DirectionalLight(0x88aaff, 0.32);
-    fill.position.set(-5, 3, -4);
-    this.scene.add(fill);
-    var rim = new THREE.DirectionalLight(0xc5d4ff, 0.22);
-    rim.position.set(-2, 4, -6);
-    this.scene.add(rim);
+    if (R) {
+      this.studioEnvironment = R.createStudioEnvironment(this.renderer, this.scene);
+      this.studioLights = R.createThreePointLights(this.scene);
+    } else {
+      // 无渲染模块时保留旧灯光和原始渲染路径。
+      this.scene.add(new THREE.HemisphereLight(0xb8c6dc, 0x1a1d26, 0.95));
+      var key = new THREE.DirectionalLight(0xffffff, 0.9);
+      key.position.set(4, 7, 5);
+      this.scene.add(key);
+      var fill = new THREE.DirectionalLight(0x88aaff, 0.30);
+      fill.position.set(-5, 3, -4);
+      this.scene.add(fill);
+      var rim = new THREE.DirectionalLight(0xc5d4ff, 0.6);
+      rim.position.set(-3, 5, -7);
+      this.scene.add(rim);
+      var rim2 = new THREE.DirectionalLight(0xffffff, 0.35);
+      rim2.position.set(6, 3, -6);
+      this.scene.add(rim2);
+    }
 
     // 地面
     var ground = new THREE.Mesh(
@@ -863,6 +1299,7 @@
     );
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.005;
+    ground.receiveShadow = true;
     this.scene.add(ground);
     this.groundPlane = ground;
 
@@ -873,6 +1310,7 @@
     );
     disc.rotation.x = -Math.PI / 2;
     disc.position.y = 0.001;
+    disc.receiveShadow = true;
     this.scene.add(disc);
     this.groundDisc = disc;
 
@@ -900,7 +1338,10 @@
     var res = SNAPSHOT_RES[ratio];
     this.pipRenderer = new THREE.WebGLRenderer({ canvas: this.$('dsPipCanvas'), antialias: true, preserveDrawingBuffer: true });
     this.pipRenderer.setSize(res[0], res[1], false);
-    this.pipRenderer.outputEncoding = THREE.sRGBEncoding;
+    if (R) R.configureRenderer(this.pipRenderer, { pixelRatio: 1 });
+    else this.pipRenderer.outputEncoding = THREE.sRGBEncoding;
+    // configureRenderer 会打开阴影；风险后端必须与主渲染器一致关闭，避免编译阴影程序
+    if (this._driverShadowDisabled) this.pipRenderer.shadowMap.enabled = false;
     this.virtualCam = new THREE.PerspectiveCamera(this.virtualCamCfg.fov, res[0] / res[1], 0.1, 100);
     this.$('dsRatioText').textContent = '画幅 ' + ratio;
 
@@ -913,6 +1354,25 @@
     // （焦点标记就在这个范围内，导致无法选中）。收窄到 5cm。
     this.raycaster.params.Line.threshold = 0.05;
     this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+    function makePipeline(renderer, camera, quality) {
+      if (R) return R.createComposer(renderer, self.scene, camera, { pixelRatio: quality });
+      return {
+        supported: false,
+        render: function () { renderer.render(self.scene, camera); },
+        setSize: function () {},
+        setQuality: function () {},
+        dispose: function () {}
+      };
+    }
+    var self = this;
+    if (R) R.prepareSceneColors(this.scene);
+    var wrap = this.$('dsViewportWrap');
+    this.renderer.setSize(wrap.clientWidth || 800, wrap.clientHeight || 600, false);
+    this.viewCam.aspect = (wrap.clientWidth || 800) / (wrap.clientHeight || 600);
+    this.viewCam.updateProjectionMatrix();
+    this.mainPipeline = makePipeline(this.renderer, this.viewCam, this.renderer.getPixelRatio());
+    this.pipPipeline = makePipeline(this.pipRenderer, this.virtualCam, this.pipPreviewQuality);
   };
 
   DirectorEditor.prototype.layoutPip = function (ratio) {
@@ -1203,7 +1663,10 @@
     rig.root.traverse(function (obj) {
       if (obj.geometry) obj.geometry.dispose();
     });
-    rig.materials.forEach(function (m) { m.dispose(); });
+    if (rig.materialBundle) rig.materialBundle.dispose();
+    rig.materials.forEach(function (m) {
+      if (!rig.materialBundle || rig.materialBundle.materials.indexOf(m) === -1) m.dispose();
+    });
   }
 
   DirectorEditor.prototype.setStatus = function (text) {
@@ -1721,7 +2184,7 @@
     this.colorIndex++;
     var bodyType = normalizeBodyType(pd.bodyType || this._pendingBodyType || 'man');
 
-    var rig = buildPuppetRig(color, bodyType);
+    var rig = buildPuppetRig(color, bodyType, this.renderer);
     var puppet = {
       id: pd.id || ('p' + Date.now().toString(36) + Math.floor(Math.random() * 1000)),
       name: pd.name || ('人偶 ' + this.puppetSeq),
@@ -1826,7 +2289,7 @@
     disposeRig(p.rig);
     if (p.label && p.label.userData._texture) p.label.userData._texture.dispose();
     p.bodyType = bodyType;
-    p.rig = buildPuppetRig(p.color, bodyType);
+    p.rig = buildPuppetRig(p.color, bodyType, this.renderer);
     var self = this;
     p.rig.bodyMeshes.forEach(function (m) { m.userData.puppetId = p.id; });
     p.label = makeLabelSprite(p.name);
@@ -1849,13 +2312,46 @@
     p.rig.hipsY.position.y = ((p.rig.hipH || HIP_H) + p.rootYOffset);
   };
 
+  // 选中人偶后，方向键按当前观察方向在地面平移；Shift 加速。
+  DirectorEditor.prototype.nudgeSelectedPuppet = function (key, fast) {
+    var p = this.getPuppet(this.selectedPuppetId);
+    if (!p) return false;
+    var direction = {
+      ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1]
+    }[key];
+    if (!direction) return false;
+    if (this.tl && this.tl.playing && typeof this.pauseTimeline === 'function') this.pauseTimeline();
+
+    var theta = this.orbit && isFinite(this.orbit.theta) ? this.orbit.theta : 0;
+    var forwardX = -Math.sin(theta), forwardZ = -Math.cos(theta);
+    var rightX = Math.cos(theta), rightZ = -Math.sin(theta);
+    var step = fast ? 0.25 : 0.05;
+    var moveX = (direction[0] * rightX + direction[1] * forwardX) * step;
+    var moveZ = (direction[0] * rightZ + direction[1] * forwardZ) * step;
+    p.x = clamp(p.x + moveX, -GROUND_LIMIT, GROUND_LIMIT);
+    p.z = clamp(p.z + moveZ, -GROUND_LIMIT, GROUND_LIMIT);
+
+    this.applyPuppetTransform(p);
+    this.updateAxisGizmo();
+    this.syncPuppetAxisSliders(p);
+    this.markDirty();
+    this.setStatus('已平移「' + p.name + '」' + (fast ? '（加速）' : ''));
+    return true;
+  };
+
   DirectorEditor.prototype.getPuppetWorldScale = function (p) {
     var s = (p && p.scale ? p.scale : 1) * this.getEnvSceneScale();
     return s > 1e-6 ? s : 1;
   };
 
   DirectorEditor.prototype.getPuppetGizmoOrigin = function (p) {
-    // hipsY 在已缩放的 root 下，世界高度 = 地面 + (髋高+离地) * scale
+    // 有胸部关节时把轴向指示器锚在胸口（比髋部/裆部高，避免停在敏感位置），
+    // 拖拽轴向的数学同样以该点为基准；旧人偶无 chest 关节时回退髋部。
+    if (p.rig && p.rig.joints && p.rig.joints.chest) {
+      var chestPos = new THREE.Vector3();
+      p.rig.joints.chest.getWorldPosition(chestPos);
+      return chestPos;
+    }
     var s = this.getPuppetWorldScale(p);
     var localH = ((p.rig && p.rig.hipH) ? p.rig.hipH : HIP_H) + (p.rootYOffset || 0);
     return new THREE.Vector3(p.x, this.getEnvGroundY() + localH * s, p.z);
@@ -2352,6 +2848,147 @@
     this.virtualCamCfg.target.fromArray(preset.target);
     this.virtualCamCfg.fov = preset.fov;
     this.setStatus('机位：' + preset.label);
+  };
+
+  // ---------- 对话改机位（/api/video-workflow/camera-chat） ----------
+
+  DirectorEditor.prototype._showChatNote = function (text, kind) {
+    var note = this.$('dsChatNote');
+    if (!note) return;
+    note.style.display = 'block';
+    note.textContent = text;
+    note.className = 'ds-chat-note is-' + (kind || 'info');
+    clearTimeout(this._chatNoteTimer);
+    if (kind !== 'error') {
+      this._chatNoteTimer = setTimeout(function () { note.style.display = 'none'; }, 6000);
+    }
+  };
+
+  DirectorEditor.prototype.loadChatModels = function () {
+    var self = this;
+    var sel = this.$('dsChatModel');
+    if (!sel) return;
+    var headers = {};
+    if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+    if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+    Promise.all([
+      fetch('/api/models?scene=llm.script_split', { headers: headers })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .catch(function () { return {}; }),
+      fetch('/api/vendors', { headers: headers })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .catch(function () { return {}; }),
+    ]).then(function (results) {
+      var models = (results[0] && results[0].success && results[0].models) || [];
+      var vendors = (results[1] && results[1].success && results[1].vendors) || [];
+      var vendorNames = {};
+      vendors.forEach(function (v) { vendorNames[v.id] = v.vendor_name || v.name || ('供应商' + v.id); });
+      self._chatModels = models.map(function (m) {
+        return {
+          model: m.name || m.model || '',
+          model_id: m.model_id || m.id,
+          vendor_id: m.vendor_id,
+          vendor_name: vendorNames[m.vendor_id] || '',
+        };
+      }).filter(function (m) { return m.model && m.model_id != null; });
+      sel.innerHTML = '';
+      self._chatModels.forEach(function (m, i) {
+        var opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = m.model + (m.vendor_name ? ' · ' + m.vendor_name : '');
+        sel.appendChild(opt);
+      });
+      // 恢复上次选择
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem('ds_chat_model') || 'null'); } catch (e) { saved = null; }
+      if (saved) {
+        for (var i = 0; i < self._chatModels.length; i++) {
+          if (self._chatModels[i].model_id === saved.model_id && self._chatModels[i].vendor_id === saved.vendor_id) {
+            sel.value = String(i);
+            break;
+          }
+        }
+      }
+    });
+  };
+
+  DirectorEditor.prototype.sendCameraChat = function () {
+    var self = this;
+    if (this._chatBusy) return;
+    var input = this.$('dsChatInput');
+    var send = this.$('dsChatSend');
+    if (!input || !send) return;
+    var message = (input.value || '').trim();
+    if (!message) return;
+    var sel = this.$('dsChatModel');
+    var model = (this._chatModels || [])[parseInt(sel && sel.value, 10)];
+    if (!model) {
+      this.setStatus('请先选择对话模型');
+      this._showChatNote('请先选择对话模型', 'error');
+      return;
+    }
+
+    var cfg = this.virtualCamCfg;
+    var entities = this.puppets.map(function (p) {
+      return { name: p.name, kind: 'actor', x: p.x, z: p.z, facing: p.rotY };
+    });
+
+    this._chatBusy = true;
+    send.disabled = true;
+    input.disabled = true;
+    send.textContent = '思考中…';
+    this._showChatNote('正在根据指令计算新机位…', 'info');
+
+    var headers = { 'Content-Type': 'application/json' };
+    if (typeof getAuthToken === 'function') headers['Authorization'] = getAuthToken();
+    if (typeof getUserId === 'function') headers['X-User-Id'] = getUserId();
+
+    fetch('/api/video-workflow/camera-chat', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        message: message,
+        current_camera: {
+          eye: [cfg.pos.x, cfg.pos.y, cfg.pos.z],
+          target: [cfg.target.x, cfg.target.y, cfg.target.z],
+          fov: cfg.fov,
+        },
+        entities: entities,
+        model: model.model,
+        model_id: model.model_id,
+        vendor_id: model.vendor_id,
+      }),
+    }).then(function (resp) { return resp.json().catch(function () { return {}; }); })
+      .then(function (data) {
+        // 服务端返回扁平 {success, eye, target, fov, reason}；兼容嵌套 camera:{} 形态
+        var cam = data && (data.camera || data);
+        if (data && data.success && cam && cam.eye && cam.target) {
+          var pos = Array.isArray(cam.eye) ? cam.eye : [cam.eye.x, cam.eye.y, cam.eye.z];
+          var tgt = Array.isArray(cam.target) ? cam.target : [cam.target.x, cam.target.y, cam.target.z];
+          // 与滑杆同范围约束，保持 UI 一致
+          cfg.pos.set(clamp(num(pos[0]), -30, 30), clamp(num(pos[1]), 0.2, 8), clamp(num(pos[2]), -30, 30));
+          cfg.target.set(clamp(num(tgt[0]), -9.5, 9.5), clamp(num(tgt[1]), 0, 4), clamp(num(tgt[2]), -9.5, 9.5));
+          cfg.fov = clamp(num(cam.fov), 15, 90);
+          self.updateCamHelper();
+          self.renderPropsPanel();
+          self.markDirty();
+          try { localStorage.setItem('ds_chat_model', JSON.stringify(model)); } catch (e) { /* ignore */ }
+          self._showChatNote('✓ ' + (data.reason || '机位已更新'), 'ok');
+          input.value = '';
+          self.setStatus('机位：对话调整');
+        } else {
+          self._showChatNote((data && data.error) || '机位调整失败，请重试', 'error');
+        }
+      })
+      .catch(function (err) {
+        self._showChatNote((err && err.message) || '机位调整失败，请重试', 'error');
+      })
+      .then(function () {
+        self._chatBusy = false;
+        send.disabled = false;
+        input.disabled = false;
+        send.textContent = '发送';
+      });
   };
 
   // ---------- 多机位（机位列表） ----------
@@ -2998,6 +3635,7 @@
         self.renderer.setSize(w, h, false);
         self.viewCam.aspect = w / h;
         self.viewCam.updateProjectionMatrix();
+        if (self.mainPipeline) self.mainPipeline.setSize(w, h);
       }
     });
     this.roObserver.observe(wrap);
@@ -3137,10 +3775,15 @@
 
   DirectorEditor.prototype.renderSnapshotDataUrl = function () {
     this.setHelpersVisible(false);
-    this.pipRenderer.render(this.scene, this.virtualCam);
-    var dataUrl = this.pipRenderer.domElement.toDataURL('image/jpeg', 0.92);
-    this.setHelpersVisible(true);
-    return dataUrl;
+    try {
+      // 预览和快照都使用完整采样率，避免 SSAO 后处理造成画面模糊。
+      if (this.pipPipeline.supported) this.pipPipeline.setQuality(1);
+      this.pipPipeline.render();
+      return this.pipRenderer.domElement.toDataURL('image/jpeg', 0.92);
+    } finally {
+      if (this.pipPipeline.supported) this.pipPipeline.setQuality(this.pipPreviewQuality);
+      this.setHelpersVisible(true);
+    }
   };
 
   DirectorEditor.prototype.setHelpersVisible = function (visible) {
@@ -3363,12 +4006,12 @@
       }
       self.updateAxisGizmo();
 
-      self.renderer.render(self.scene, self.viewCam);
+      self.mainPipeline.render();
 
       // PiP（隐藏 helper 再渲染；环境球改跟虚拟相机，保证快照里脚也贴地）
       self.setHelpersVisible(false);
       self.syncEnvToCamera(self.virtualCam);
-      self.pipRenderer.render(self.scene, self.virtualCam);
+      self.pipPipeline.render();
       self.setHelpersVisible(true);
     }
     this.rafId = requestAnimationFrame(frame);
@@ -3378,7 +4021,7 @@
 
   DirectorEditor.prototype.open = function () {
     if (!window.THREE) {
-      if (typeof showToast === 'function') showToast('导演台组件(three.js)加载失败，请刷新页面重试', 'error');
+      if (typeof showToast === 'function') showToast('导演台 3D 组件加载失败，请刷新页面重试', 'error');
       return false;
     }
     this.injectDom();
@@ -3420,14 +4063,29 @@
       if (self._recorder) self.stopRecording();
       else self.startRecording();
     });
+    // 对话改机位（与故事板 3D 预览同款交互，走 /api/video-workflow/camera-chat）
+    this.on(this.$('dsChatSend'), 'click', function () { self.sendCameraChat(); });
+    this.on(this.$('dsChatInput'), 'keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        self.sendCameraChat();
+      }
+    });
+    this.loadChatModels();
     // 必须用原生 'keydown'。'keydown.directorStage' 不会被 addEventListener 识别，
     // 监听从未挂上，Delete/Backspace 会冒泡到画布并删掉仍处于选中态的导演台节点。
     this.on(document, 'keydown', function (e) {
       if (!self.overlay || !self.overlay.classList.contains('show')) return;
       var tag = document.activeElement && document.activeElement.tagName;
-      var inField = tag === 'INPUT' || tag === 'TEXTAREA' ||
+      var inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
         (document.activeElement && document.activeElement.isContentEditable);
       if (e.key === 'Escape') {
+        // 输入框聚焦时 Esc 仅退出聚焦（对话输入条内不应关闭整个导演台）
+        if (inField && document.activeElement && document.activeElement.blur) {
+          document.activeElement.blur();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         self.close(true);
@@ -3438,6 +4096,16 @@
         e.preventDefault();
         e.stopPropagation();
         self.undo();
+        return;
+      }
+      if (e.key.indexOf('Arrow') === 0) {
+        if (inField) return;
+        // 方向键平移选中的人偶：按当前观察方向移动，Shift 加速。
+        // 仅在确实移动成功时阻止默认行为，未选中人偶时不拦截画布等其它监听。
+        if (self.nudgeSelectedPuppet(e.key, e.shiftKey)) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
         return;
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -3477,7 +4145,11 @@
     this.bound = [];
     this.clearPuppets();
 
-    // dispose renderer
+    // 先释放后处理、灯光与环境，再释放两个 renderer，避免反复打开导演台累积 GPU 资源。
+    if (this.mainPipeline) this.mainPipeline.dispose();
+    if (this.pipPipeline) this.pipPipeline.dispose();
+    if (this.studioLights) this.studioLights.dispose();
+    if (this.studioEnvironment) this.studioEnvironment.dispose();
     try { this.renderer.dispose(); } catch (e) { /* noop */ }
     try { this.pipRenderer.dispose(); } catch (e) { /* noop */ }
     if (this.camSelectRing && this.camSelectRing.parent) this.camSelectRing.parent.remove(this.camSelectRing);
@@ -3548,6 +4220,10 @@
     if (env && env.url) ed.setupEnvironment(env);
     else ed.removeEnvironment();
   }
+
+  // GLTFLoader 在 video_workflow.html 中先于本模块加载，此处预载男性人台，
+  // 用户打开导演台时通常已就绪；未就绪/失败时 buildPuppetRig 自动回退程序化人偶。
+  preloadMaleBaseMesh();
 
   window.DirectorStageEditor = {
     open: openDirectorStageEditor,

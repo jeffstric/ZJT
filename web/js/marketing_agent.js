@@ -5,6 +5,16 @@
             // ========== 状态 ==========
             const messages = ref([]);
             const inputText = ref('');
+            // 发送快捷键：默认 Enter 发送，可点击输入栏切换按钮改为 Ctrl+Enter
+            //（macOS 下 Cmd+Enter 等效）；偏好持久化 localStorage，跨会话保持
+            const SEND_SHORTCUT_STORAGE_KEY = 'marketing_send_shortcut';
+            const sendShortcutMode = ref(
+                localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'ctrl_enter' ? 'ctrl_enter' : 'enter'
+            );
+            function toggleSendShortcut() {
+                sendShortcutMode.value = sendShortcutMode.value === 'ctrl_enter' ? 'enter' : 'ctrl_enter';
+                localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, sendShortcutMode.value);
+            }
             const isLoading = ref(false);
             const isInitializing = ref(true);
             const errorMessage = ref('');
@@ -57,6 +67,12 @@
             const selectedVideoModelName = ref('');
             // 是否处理人脸（仅 seedance2.0 系列商业版生效，默认不勾选）
             const processFace = ref(false);
+            // 生成次数（图片/视频直连模式批量生成，1-4，与后端 count 参数对齐，跨会话持久化）
+            const GENERATION_COUNT_STORAGE_KEY = 'marketing_generation_count';
+            const generationCountOptions = [1, 2, 3, 4];
+            const persistedGenerationCount = parseInt(localStorage.getItem(GENERATION_COUNT_STORAGE_KEY), 10);
+            const generationCount = ref(generationCountOptions.includes(persistedGenerationCount) ? persistedGenerationCount : 1);
+            const showCountPanel = ref(false);
             // 图生视频模型偏好（页面加载时预取，上传图片后使用）
             const savedImg2VidModelKey = ref('');
             const savedImg2VidModelName = ref('');
@@ -368,13 +384,19 @@
                 return `<button class="publish-result-btn" data-publish-tool-id="${escapeHtml(aiToolId)}" data-publish-title="${escapeHtml(title || '')}">发布</button>`;
             }
 
+            // 「入库」按钮：把生成图加入共享资产库（弹窗走 web/js/asset_library.js）
+            function buildAddToAssetLibraryButton(sourceUrl) {
+                if (!sourceUrl || !window.AssetLibrary) return '';
+                return `<button class="publish-result-btn" data-asset-add-src="${escapeHtml(sourceUrl)}" title="${window.t('add_to_asset_library')}">${window.t('add_to_asset_library')}</button>`;
+            }
+
             function buildGeneratedMediaRowsHtml(type, rows) {
                 if (type === 'image') {
                     return rows.map(row => {
                         const url = row.result_url || '';
                         const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
-                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
+                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}${buildAddToAssetLibraryButton(url)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
@@ -697,6 +719,13 @@
             const powerConfirmThresholdInput = ref(35);
             const powerConfirmDefault = ref(35);
             const powerConfirmIsCustom = ref(false);
+
+            // 用户级单次任务算力上限（power budget，0=不限制；对营销/剧本
+            // 智能体任务统一生效，见 script_writer_core/agents/power_budget.py）
+            const powerBudgetLimit = ref(0);
+            const powerBudgetLimitInput = ref(0);
+            const powerBudgetDefault = ref(0);
+            const powerBudgetIsCustom = ref(false);
 
             const aspectRatioMap = {
                 'auto':  { label: window.t('ratio_smart'), value: 'auto', w: 20, h: 20 },
@@ -1116,6 +1145,7 @@
                 stopComputingPowerRefresh();
                 document.removeEventListener('click', onDocumentClick);
                 document.removeEventListener('click', _closeMenuHandler);
+                document.removeEventListener('paste', handleDocumentPaste);
                 cleanup();
             });
 
@@ -1235,14 +1265,129 @@
                 }
             }
 
-            // @ 引用可选项
-            const mentionableItems = Vue.computed(() => {
-                return mediaItems.value.filter(m => m.fileUrl && !m.uploading && !m.uploadFailed).map(m => ({
-                    id: m.id,
-                    displayName: m.displayName,
-                    type: m.type,
-                    thumbnailUrl: m.thumbnailUrl
+            // @ 引用可选项：本地上传媒体（平面）+ 共享资产库（目录逐级懒加载）
+            // 资产条目 isAsset=true，插入 `@资产:{id}` token（提交时由
+            // AssetLibrary.resolveMentionTokens 还原为 markdown 图片）。
+            // 模式（mentionAssetView.mode）：
+            //   root   — 一级固定两项：「全部资产」（所有资产分页）+「资产目录」；
+            //   groups — 资产目录层：各分组列表（目录多时不污染一级菜单）；
+            //   assets — 某个分组（或全部）内的资产，滚动到底自动翻页（lite 接口）；
+            //   search — @ 后输入了关键字，跨组搜索，同样翻页。
+            // assets 记录 returnMode（root/groups），返回条回到进入前的层级。
+            const mentionGroups = Vue.ref({ loaded: false, loading: false, groups: [], ungroupedCount: 0 });
+            const mentionAssetView = Vue.ref({ mode: 'root', groupId: null, groupName: '', page: 0, items: [], hasMore: false, loading: false, returnMode: 'root' });
+            let mentionSearchTimer = null;
+
+            function ensureMentionGroups() {
+                if (!window.AssetLibrary) return;
+                if (mentionGroups.value.loaded || mentionGroups.value.loading) return;
+                mentionGroups.value.loading = true;
+                window.AssetLibrary.fetchMentionGroups().then(res => {
+                    mentionGroups.value.groups = res.groups;
+                    mentionGroups.value.ungroupedCount = res.ungroupedCount;
+                    mentionGroups.value.loaded = true;
+                }).finally(() => { mentionGroups.value.loading = false; });
+            }
+
+            function resetMentionAssetView(mode, groupId = null, groupName = '', returnMode = 'root') {
+                mentionAssetView.value = { mode, groupId, groupName, page: 0, items: [], hasMore: false, loading: false, returnMode };
+            }
+
+            function loadMentionAssetPage(nextPage) {
+                const view = mentionAssetView.value;
+                if (view.loading || (view.page >= 1 && !view.hasMore)) return;
+                view.loading = true;
+                const snapshot = view;  // 防竞态：模式已切走时丢弃过期响应
+                const req = view.mode === 'search'
+                    ? window.AssetLibrary.fetchMentionItemsPaged({ keyword: mentionDropdown.value.query, page: nextPage, pageSize: 30 })
+                    : window.AssetLibrary.fetchMentionItemsPaged({ groupId: view.groupId, page: nextPage, pageSize: 30 });
+                req.then(res => {
+                    if (mentionAssetView.value !== snapshot) return;
+                    view.items = view.items.concat(res.items);
+                    view.page = nextPage;
+                    view.hasMore = res.hasMore;
+                }).finally(() => {
+                    if (mentionAssetView.value === snapshot) view.loading = false;
+                });
+            }
+
+            function enterMentionGroup(groupId, groupName) {
+                if (groupId === '__folders__') {
+                    // 「资产目录」：进入分组列表层
+                    resetMentionAssetView('groups');
+                    ensureMentionGroups();
+                    return;
+                }
+                const returnMode = groupId === null ? 'root' : 'groups';
+                resetMentionAssetView('assets', groupId, groupName, returnMode);
+                loadMentionAssetPage(1);
+            }
+
+            function backToMentionGroups(item) {
+                const target = (item && item.target) || 'groups';
+                if (target === 'root') {
+                    resetMentionAssetView('root');
+                    return;
+                }
+                resetMentionAssetView('groups');
+                ensureMentionGroups();
+            }
+
+            // @ 后输入关键字：300ms 防抖后切 search 模式拉取；清空关键字回到一级
+            function scheduleMentionSearch(query) {
+                if (mentionSearchTimer) clearTimeout(mentionSearchTimer);
+                if (!query) {
+                    if (mentionAssetView.value.mode === 'search') resetMentionAssetView('root');
+                    return;
+                }
+                mentionSearchTimer = setTimeout(() => {
+                    resetMentionAssetView('search');
+                    loadMentionAssetPage(1);
+                }, 300);
+            }
+
+            // 下拉滚到近底部时翻下一页（assets/search 模式）
+            function onMentionDropdownScroll(e) {
+                const el = e.target;
+                const view = mentionAssetView.value;
+                if (view.mode === 'root' || view.mode === 'groups' || !view.hasMore || view.loading) return;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight > 60) return;
+                loadMentionAssetPage(view.page + 1);
+            }
+
+            // 当前模式的扁平可选项（键盘 ↑↓/Enter 与鼠标共用同一顺序）
+            const mentionFlatItems = Vue.computed(() => {
+                const view = mentionAssetView.value;
+                const q = (mentionDropdown.value.query || '').toLowerCase();
+                const local = mediaItems.value
+                    .filter(m => m.fileUrl && !m.uploading && !m.uploadFailed)
+                    .filter(m => !q || m.displayName.toLowerCase().includes(q))
+                    .map(m => ({ id: m.id, kind: 'media', displayName: m.displayName, type: m.type, thumbnailUrl: m.thumbnailUrl }));
+                if (view.mode === 'root') {
+                    // 一级固定两项：全部资产（点开即所有资产）+ 资产目录（点开才见分组）
+                    const directories = [
+                        { id: 'group-all', kind: 'group', groupId: null, groupName: window.t('mention_all_assets'), count: null },
+                        { id: 'group-folders', kind: 'group', groupId: '__folders__', groupName: window.t('mention_asset_folders'), count: null },
+                    ];
+                    return local.concat(directories);
+                }
+                if (view.mode === 'groups') {
+                    const back = [{ id: 'mention-back', kind: 'back', target: 'root' }];
+                    const directories = [
+                        { id: 'group-ungrouped', kind: 'group', groupId: 'ungrouped', groupName: window.t('mention_ungrouped'), count: mentionGroups.value.ungroupedCount },
+                    ].concat(mentionGroups.value.groups.map(g => ({
+                        id: `group-${g.id}`, kind: 'group', groupId: g.id, groupName: g.name, count: g.assetCount
+                    })));
+                    return back.concat(directories);
+                }
+                const assets = view.items.map(a => ({
+                    id: `asset-${a.id}`, kind: 'asset', assetId: a.id, displayName: a.name,
+                    type: 'asset', thumbnailUrl: a.thumb, isAsset: true
                 }));
+                const back = view.mode === 'assets'
+                    ? [{ id: 'mention-back', kind: 'back', target: view.returnMode || 'root' }]
+                    : [];
+                return back.concat(local, assets);
             });
 
             const hasPendingAgentImages = Vue.computed(() => {
@@ -1419,14 +1564,7 @@
                 return parts.join('\n\n');
             }
 
-            const filteredMentionItems = Vue.computed(() => {
-                if (!mentionDropdown.value.query) return mentionableItems.value;
-                const q = mentionDropdown.value.query.toLowerCase();
-                return mentionableItems.value.filter(item =>
-                    item.displayName.toLowerCase().includes(q) ||
-                    (item.type === 'image' ? window.t('type_image') : item.type === 'video' ? window.t('type_video') : window.t('type_audio')).includes(q)
-                );
-            });
+            const filteredMentionItems = mentionFlatItems;
 
             // 是否显示视频模式按钮（视频模式 + 有图片/媒体时）
             const showVideoModeBtn = Vue.computed(() => {
@@ -1969,6 +2107,19 @@
                         );
                         return;
                     }
+                    // 「入库」按钮：加入共享资产库（弹窗由公共模块提供）
+                    const addAssetBtn = e.target.closest('[data-asset-add-src]');
+                    if (addAssetBtn) {
+                        const src = addAssetBtn.getAttribute('data-asset-add-src') || '';
+                        const card = addAssetBtn.closest('[data-tool-title]');
+                        if (src && window.AssetLibrary) {
+                            window.AssetLibrary.promptAdd({
+                                sourceUrl: src,
+                                name: ((card && card.getAttribute('data-tool-title')) || '').slice(0, 60)
+                            });
+                        }
+                        return;
+                    }
                     const zoomTarget = e.target.closest('img[data-full-src], [data-modal-src]');
                     if (!zoomTarget) return;
                     const src = zoomTarget.getAttribute('data-full-src')
@@ -1976,6 +2127,53 @@
                     const toolId = zoomTarget.getAttribute('data-tool-id');
                     showImageModal(src, toolId || null, zoomTarget.getAttribute('data-tool-title') || '');
                 });
+            }
+
+            // ============ 历史存量生成图卡片补「入库」按钮 ============
+            // 背景：「入库」按钮上线前生成的消息以旧 HTML 存库，回放时生成图卡片只有
+            // 「发布」。渲染后扫描聊天 DOM，为缺按钮的生成图卡片补齐（幂等）；点击行为
+            // 复用上方 data-asset-add-src 全局委托，弹窗与权限校验由 AssetLibrary 提供。
+
+            // 从卡片 img 的 src 还原入库源地址：/api/proxy-image?url=ENC 反解出原始外链
+            // （入库直连图床，避免服务端 aiohttp 自请求带鉴权的代理接口），本站路径
+            // （/upload/...）原样返回（后端直接复制本地文件）；data:/blob: 不可入库。
+            function resolveAssetSourceFromImgSrc(src) {
+                const raw = String(src || '').trim();
+                if (!raw || /^(data|blob):/i.test(raw)) return '';
+                const m = raw.match(/^\/api\/proxy-image\?url=([^&]+)/);
+                if (!m) return raw;
+                try { return decodeURIComponent(m[1]); } catch (e) { return ''; }
+            }
+
+            function augmentGeneratedImageCards(root) {
+                if (!root || !window.AssetLibrary) return;
+                root.querySelectorAll('.generated-image-wrapper').forEach(wrapper => {
+                    if (wrapper.querySelector('[data-asset-add-src]')) return;
+                    const img = wrapper.querySelector('img.generated-image') || wrapper.querySelector('img');
+                    if (!img) return;
+                    const sourceUrl = resolveAssetSourceFromImgSrc(img.getAttribute('src'));
+                    if (!sourceUrl) return;
+                    let actions = wrapper.querySelector('.generated-result-actions');
+                    if (!actions) {
+                        actions = document.createElement('div');
+                        actions.className = 'generated-result-actions';
+                        wrapper.appendChild(actions);
+                    }
+                    actions.insertAdjacentHTML('beforeend', buildAddToAssetLibraryButton(sourceUrl));
+                });
+            }
+
+            // 聊天容器随视图切换 v-if 销毁重建：watch template ref，容器出现/重建后重挂
+            // Observer。回调直接同步扫描（幂等）——rAF 在后台标签页会被节流，导致
+            // 切走期间完成的生成结果延迟补按钮。
+            function bindGeneratedImageCardAugmenter() {
+                Vue.watch(chatMessages, (el) => {
+                    if (!el || el.__cardAugmenterBound) return;
+                    el.__cardAugmenterBound = true;
+                    const observer = new MutationObserver(() => augmentGeneratedImageCards(el));
+                    observer.observe(el, { childList: true, subtree: true });
+                    augmentGeneratedImageCards(el);
+                }, { immediate: true });
             }
 
             function previewMedia(src, mediaType) {
@@ -2368,9 +2566,15 @@
 
             // 发送消息
             async function handleSend() {
-                const text = inputText.value.trim();
+                let text = inputText.value.trim();
                 if (!text || (isLoading.value && !pendingVerificationId.value)) return;
                 isLoading.value = true;
+
+                // 共享资产库 @引用 token（`@资产:{id}`）提交前还原为 markdown 图片，
+                // 使图片 URL 进入生成上下文（文生图参考图提取 / LLM 均可消费）
+                if (window.AssetLibrary && text.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+                    text = await window.AssetLibrary.resolveMentionTokens(text);
+                }
 
                 // ===== 发送前：统一等待图片/视频上传完成 =====
                 if (selectedType.value === 'agent') {
@@ -2510,7 +2714,7 @@
                         // 图片编辑/图生图
                         form.append('image', uploadedImageFile.value);
                         form.append('ratio', selectedRatio.value);
-                        form.append('count', '1');
+                        form.append('count', String(generationCount.value));
                         if (selectedResolution.value && selectedResolution.value !== 'auto') {
                             const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                             const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
@@ -2528,7 +2732,7 @@
                     } else {
                         // 文生图
                         form.append('aspect_ratio', selectedRatio.value);
-                        form.append('count', '1');
+                        form.append('count', String(generationCount.value));
                         if (selectedResolution.value && selectedResolution.value !== 'auto') {
                             const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
                             const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
@@ -2651,13 +2855,22 @@
                     console.error('generation status polling error:', err);
                     const failures = recordTaskError(errorKey);
                     if (failures >= MAX_CONSECUTIVE_TASK_ERRORS) {
-                        clearDirectGenerationTask(task);
+                        // 不判死：任务仍在服务端生成（直连轮询常见瞬时 401/网络抖动），
+                        // 气泡转中性提示，高频 interval 降频后继续探测，恢复后照常展示结果。
+                        // 与 Agent 轮询路径（pollAgentVideoStatus）错误兜底语义对齐。
+                        resetTaskErrorCount(errorKey);
                         const currentMsgIdx = messages.value.findIndex(m => m._uid === task.msgUid);
                         if (currentMsgIdx !== -1) {
-                            messages.value[currentMsgIdx].content = window.t('request_timeout') || '请求超时，请稍后重试。';
+                            messages.value[currentMsgIdx].content = window.t('generating_placeholder') || '生成中...';
                             scrollToBottom();
                         }
-                        resetTaskErrorCount(errorKey);
+                        if (task.intervalId) {
+                            trackedClearInterval(task.intervalId);
+                            const checkFn = task.type === 'image' ? checkImageStatus : checkVideoStatus;
+                            task.intervalId = trackedSetInterval(() => checkFn(task), TASK_ERROR_BACKOFF_INTERVAL);
+                            if (task.type === 'image') imageStatusInterval.value = task.intervalId;
+                            else videoStatusInterval.value = task.intervalId;
+                        }
                     }
                 }
             }
@@ -3024,7 +3237,7 @@
                     form.append('auth_token', authToken.value);
                     form.append('ratio', selectedRatio.value);
                     form.append('duration_seconds', String(resolveSelectedDurationForSubmission()));
-                    form.append('count', '1');
+                    form.append('count', String(generationCount.value));
                     const videoResolution = ensureSelectedVideoResolution();
                     if (videoResolution) {
                         form.append('resolution', videoResolution);
@@ -3304,6 +3517,7 @@
                     image_mode: videoImageMode.value,
                     model_name: model?.name || selectedVideoModelName.value || savedModelName || undefined,
                     task_id: taskId || undefined,
+                    count: generationCount.value,
                     // 是否处理人脸（仅图生视频 + seedance2.0 商业版生效）
                     enable_face_mask: useImageToVideo && processFace.value === true
                 };
@@ -3410,7 +3624,8 @@
                     // 构建图片偏好（auto 分辨率不传）
                     const imagePreferences = {
                         ratio: selectedRatio.value,
-                        model_name: selectedImageModel.value
+                        model_name: selectedImageModel.value,
+                        count: generationCount.value
                     };
                     const imageCategory = validImageUrls.length > 0 ? 'image_edit' : 'text_to_image';
                     const imageTaskId = window.TaskConfig?.getTaskIdByKey
@@ -3880,6 +4095,78 @@
                     }
                 } catch (e) {
                     console.warn('[算力确认] 恢复默认失败:', e);
+                }
+            }
+
+            async function loadPowerBudgetSettings() {
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    const limit = Number(payload.limit);
+                    const fallback = Number(payload.default_limit);
+                    powerBudgetDefault.value = Number.isFinite(fallback) ? fallback : 0;
+                    powerBudgetLimit.value = Number.isFinite(limit) ? limit : powerBudgetDefault.value;
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 加载设置失败:', e);
+                }
+            }
+
+            async function savePowerBudgetLimit() {
+                const parsed = parseInt(powerBudgetLimitInput.value, 10);
+                if (!Number.isFinite(parsed) || parsed < 0) {
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    return;
+                }
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken.value}`
+                        },
+                        body: JSON.stringify({ limit: parsed })
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    if (data.code !== 0) {
+                        throw new Error(data.message || data.detail || 'save failed');
+                    }
+                    const payload = data.data || {};
+                    powerBudgetLimit.value = Number(payload.limit);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                    if (payload.default_limit != null) {
+                        powerBudgetDefault.value = Number(payload.default_limit);
+                    }
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 保存失败:', e);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                }
+            }
+
+            async function resetPowerBudgetLimit() {
+                try {
+                    const resp = await fetch('/api/user/power-budget', {
+                        method: 'DELETE',
+                        headers: { 'Authorization': `Bearer ${authToken.value}` }
+                    });
+                    if (!checkAuthResponse(resp)) return;
+                    const data = await resp.json();
+                    const payload = data.data || {};
+                    powerBudgetLimit.value = Number(payload.limit);
+                    powerBudgetLimitInput.value = powerBudgetLimit.value;
+                    powerBudgetIsCustom.value = !!payload.is_custom;
+                    if (payload.default_limit != null) {
+                        powerBudgetDefault.value = Number(payload.default_limit);
+                    }
+                } catch (e) {
+                    console.warn('[单次任务算力上限] 恢复默认失败:', e);
                 }
             }
 
@@ -4640,8 +4927,14 @@
                 // 点击空白处关闭菜单
                 document.addEventListener('click', _closeMenuHandler);
 
+                // 剪贴板粘贴图片：全局监听（含输入框聚焦时），纯文本粘贴不受影响
+                document.addEventListener('paste', handleDocumentPaste);
+
                 // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
                 bindGeneratedMediaDelegation();
+
+                // 历史存量生成图卡片补「入库」按钮（见 augmentGeneratedImageCards）
+                bindGeneratedImageCardAugmenter();
 
                 // 获取服务器配置（图片大小限制 / 意见反馈等）
                 try {
@@ -4709,6 +5002,7 @@
                 await loadComputingPower();
                 startComputingPowerRefresh();
                 await loadPowerConfirmSettings();
+                await loadPowerBudgetSettings();
 
                 // 从后端加载会话列表
                 const backendSessions = await loadSessionsFromBackend();
@@ -5298,8 +5592,14 @@
                 }
             }
 
+            // 文件选择入口：统一委托 processSelectedFiles（粘贴/选择共用同一校验链路）
             function handleFileChange(e) {
-                const files = e.target.files;
+                processSelectedFiles(e.target.files);
+                if (fileInputRef.value) fileInputRef.value.value = '';
+            }
+
+            // 统一处理用户选择的媒体文件（图片/视频/音频）：文件选择、拖拽、剪贴板粘贴共用
+            function processSelectedFiles(files) {
                 if (!files || files.length === 0) return;
                 // Agent 对话模式：支持多图 + 多视频上传
                 const isAgentChatMode = selectedType.value === 'agent' && mediaType.value !== 'video';
@@ -5437,7 +5737,6 @@
                         }
                     }
 
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 其他模式只取第一个文件
@@ -5446,14 +5745,12 @@
                 // 校验：接受图片、视频和音频
                 if (!file.type.startsWith('image/') && !file.type.startsWith('video/') && !file.type.startsWith('audio/')) {
                     showError(window.t('please_upload_image'));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 图片生成模式：只允许上传图片
                 if (selectedType.value === 'image') {
                     if (!file.type.startsWith('image/')) {
                         showError(window.t('image_mode_only_images'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                 }
@@ -5461,7 +5758,6 @@
                 if (file.type.startsWith('video/')) {
                     if (file.size > maxVideoSizeMB.value * 1024 * 1024) {
                         showError(window.t('video_size_limit', {size: maxVideoSizeMB.value}));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     (async () => {
@@ -5482,7 +5778,6 @@
                         }
                         processVideoFile(file, fileDuration);
                     })();
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 音频文件：走 processAudioFile 流程
@@ -5490,12 +5785,10 @@
                     // 图片生成模式不允许音频
                     if (selectedType.value === 'image') {
                         showError(window.t('image_mode_only_images'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     if (file.size > 20 * 1024 * 1024) {
                         showError(window.t('audio_size_limit'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     (async () => {
@@ -5515,7 +5808,6 @@
                         }
                         processAudioFile(file, fileDuration);
                     })();
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 以下为图片处理逻辑
@@ -5524,13 +5816,11 @@
                 const imgExt = '.' + (file.name.split('.').pop() || '').toLowerCase();
                 if (!ALLOWED_IMAGE_EXTENSIONS_SINGLE.includes(imgExt)) {
                     showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 前端预检查文件大小
                 if (file.size > maxImageSizeMB.value * 1024 * 1024) {
                     showError(window.t('image_size_limit', { size: maxImageSizeMB.value }));
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 const isVideoModeVal = selectedType.value === 'video' ||
@@ -5540,7 +5830,6 @@
                     const imageCount = mediaItems.value.filter(m => m.type === 'image').length;
                     if (imageCount >= 1) {
                         showError(window.t('single_image_no_tail'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                 }
@@ -5548,7 +5837,6 @@
                 if (isVideoModeVal && videoImageMode.value === 'first_last_frame' && hasUploadedImage.value) {
                     if (referenceImageFiles.value.length >= 1) {
                         showError(window.t('first_last_max_2'));
-                        if (fileInputRef.value) fileInputRef.value.value = '';
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
@@ -5561,7 +5849,6 @@
                         agentImageItem: imgItem
                     });
                     if (!imgItem) addMediaItem(file, 'image', refUrl);
-                    if (fileInputRef.value) fileInputRef.value.value = '';
                     return;
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
@@ -6268,6 +6555,12 @@
                     mentionDropdown.value.query = atMatch[1];
                     mentionDropdown.value.queryStart = cursorPos - atMatch[0].length;
                     mentionDropdown.value.selectedIndex = 0;
+                    // 每次 @ 唤起都回到一级（全部资产/资产目录），不保留上次浏览层级；
+                    // 搜索中（query 有值）不重置，等防抖搜索继续
+                    if (mentionAssetView.value.mode !== 'search') {
+                        resetMentionAssetView('root');
+                    }
+                    scheduleMentionSearch(atMatch[1]);
                 } else {
                     mentionDropdown.value.visible = false;
                 }
@@ -6287,7 +6580,14 @@
                     } else if (e.key === 'Enter' || e.key === 'Tab') {
                         if (filteredMentionItems.value.length > 0) {
                             e.preventDefault();
-                            insertMention(filteredMentionItems.value[mentionDropdown.value.selectedIndex]);
+                            const item = filteredMentionItems.value[mentionDropdown.value.selectedIndex];
+                            if (item && item.kind === 'group') {
+                                enterMentionGroup(item.groupId, item.groupName);
+                            } else if (item && item.kind === 'back') {
+                                backToMentionGroups(item);
+                            } else if (item) {
+                                insertMention(item);
+                            }
                         }
                         return;
                     } else if (e.key === 'Escape') {
@@ -6298,19 +6598,26 @@
                     return;
                 }
 
-                // mention dropdown 不可见时，Enter（不带 Shift）发送消息
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    // 如果有待回答的 verification，提交自定义回答
-                    if (pendingVerificationId.value) {
-                        const text = inputText.value.trim();
-                        if (text) {
-                            inputText.value = '';
-                            autoResize();
-                            submitVerificationAnswer(pendingVerificationId.value, text);
+                // mention dropdown 不可见时，按当前快捷键模式发送消息
+                //（默认 Enter 发送；用户可切换为 Ctrl+Enter，见 sendShortcutMode）
+                if (e.key === 'Enter') {
+                    // Safari 组词确认 Enter：isComposing=false 且 keyCode=229
+                    if (e.isComposing || e.keyCode === 229) return;
+                    const ctrlEnterMode = sendShortcutMode.value === 'ctrl_enter';
+                    const shouldSend = ctrlEnterMode ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
+                    if (shouldSend) {
+                        e.preventDefault();
+                        // 如果有待回答的 verification，提交自定义回答
+                        if (pendingVerificationId.value) {
+                            const text = inputText.value.trim();
+                            if (text) {
+                                inputText.value = '';
+                                autoResize();
+                                submitVerificationAnswer(pendingVerificationId.value, text);
+                            }
+                        } else {
+                            handleSend();
                         }
-                    } else {
-                        handleSend();
                     }
                 }
             }
@@ -6325,7 +6632,11 @@
                 const end = start + 1 + mentionDropdown.value.query.length;
                 const before = inputText.value.substring(0, start);
                 const after = inputText.value.substring(end);
-                const insertText = `@${item.displayName}`;
+                // 资产库条目插入 `@资产:{id}` token，提交时还原为 markdown 图片；
+                // 本地媒体沿用 @名称 文本
+                const insertText = item.isAsset && window.AssetLibrary
+                    ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
+                    : `@${item.displayName}`;
 
                 inputText.value = before + insertText + ' ' + after;
                 mentionDropdown.value.visible = false;
@@ -6355,6 +6666,7 @@
                 mentionDropdown.value.query = '';
                 mentionDropdown.value.queryStart = actualAtPos;
                 mentionDropdown.value.selectedIndex = 0;
+                resetMentionAssetView('root');
 
                 nextTick(() => {
                     const newCursorPos = actualAtPos + 1;
@@ -6680,6 +6992,66 @@
                     showError(window.t('upload_error_retry'));
                 });
             }
+
+            // 剪贴板图片扩展名白名单（与上传校验的 ALLOWED_IMAGE_EXTENSIONS 一致）
+            const PASTE_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+            // MIME→扩展名映射：截图/聊天工具复制的媒体 File 常缺少文件名/扩展名，
+            // 而图片上传校验按文件名扩展名判断，故按 MIME 重建带扩展名的 File
+            const PASTE_MIME_EXT = {
+                'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp',
+                'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov', 'video/x-msvideo': 'avi',
+                'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/webm': 'webm', 'audio/mp4': 'm4a', 'audio/aac': 'aac', 'audio/ogg': 'ogg'
+            };
+
+            // 从剪贴板提取媒体文件（图片/视频/音频，后续模式校验与上传链路同文件选择）。
+            // Chromium 在 Windows 从文件管理器复制多文件时，文件列表只在 clipboardData.files
+            // 暴露而 items 可能为空（chromium:41071856），故合并两个来源并按 名字|大小|修改时间 去重；
+            // 图片按扩展名白名单、音视频按"缺扩展名"判断是否需要按 MIME 重建文件名
+            function extractClipboardMediaFiles(clipboardData) {
+                if (!clipboardData) return [];
+                const candidates = [];
+                if (clipboardData.files) candidates.push(...clipboardData.files);
+                if (clipboardData.items) {
+                    for (const item of clipboardData.items) {
+                        if (item.kind !== 'file') continue;
+                        let itemFile = null;
+                        try { itemFile = item.getAsFile(); } catch (e) { itemFile = null; }
+                        if (itemFile) candidates.push(itemFile);
+                    }
+                }
+                const files = [];
+                const seen = new Set();
+                for (const file of candidates) {
+                    if (!file || !file.type) continue;
+                    const isImage = file.type.startsWith('image/');
+                    const isVideo = file.type.startsWith('video/');
+                    const isAudio = file.type.startsWith('audio/');
+                    if (!isImage && !isVideo && !isAudio) continue;
+                    const key = (file.name || '') + '|' + file.size + '|' + file.lastModified;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
+                    const needsRename = isImage
+                        ? (PASTE_MIME_EXT[file.type] && !PASTE_IMAGE_EXTENSIONS.includes(ext))
+                        : (PASTE_MIME_EXT[file.type] && !file.name.includes('.'));
+                    if (needsRename) {
+                        const newName = 'clipboard_' + Date.now() + '_' + (files.length + 1) + '.' + PASTE_MIME_EXT[file.type];
+                        files.push(new File([file], newName, { type: file.type }));
+                    } else {
+                        files.push(file);
+                    }
+                }
+                return files;
+            }
+
+            // 剪贴板粘贴：含媒体文件时拦截默认行为并走统一上传链路；纯文本/富文本粘贴不干预
+            function handleDocumentPaste(e) {
+                const files = extractClipboardMediaFiles(e.clipboardData);
+                if (files.length === 0) return;
+                e.preventDefault();
+                processSelectedFiles(files);
+            }
+
             function selectType(type) {
                 const prevType = selectedType.value;
                 selectedType.value = type.key;
@@ -6978,6 +7350,7 @@
                 showModelPanel.value = false;
                 showRatioPanel.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             function toggleModelPanel() {
@@ -6985,6 +7358,7 @@
                 showDropdown.value = false;
                 showRatioPanel.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             function toggleRatioPanel() {
@@ -6994,6 +7368,21 @@
                 showSettingsPanel.value = false;
                 showModelSelect.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
+            }
+
+            function toggleCountPanel() {
+                showCountPanel.value = !showCountPanel.value;
+                showDropdown.value = false;
+                showModelPanel.value = false;
+                showRatioPanel.value = false;
+                showDurationPanel.value = false;
+            }
+
+            function selectGenerationCount(count) {
+                generationCount.value = count;
+                localStorage.setItem(GENERATION_COUNT_STORAGE_KEY, String(count));
+                showCountPanel.value = false;
             }
 
             function toggleSettingsPanel() {
@@ -7036,6 +7425,7 @@
                 showModelSelect.value = false;
                 showLLMModelSelect.value = false;
                 showDurationPanel.value = false;
+                showCountPanel.value = false;
             }
 
             // 组件卸载时清理定时器
@@ -7224,12 +7614,18 @@
             return {
                 messages,
                 inputText,
+                sendShortcutMode,
+                toggleSendShortcut,
                 isLoading,
                 isInitializing,
                 errorMessage,
                 searchQuery,
                 activeView,
                 switchView,
+                sharedAssetLibraryTitle: window.t('nav_shared_asset_library'),
+                openSharedAssetLibrary() {
+                    if (window.AssetLibrary) window.AssetLibrary.openModal();
+                },
                 assetItems,
                 assetsLoading,
                 assetsPage,
@@ -7241,6 +7637,13 @@
                 formatAssetType,
                 formatAssetDate,
                 useAssetForVideo,
+                addHistoryAssetToLibrary(asset) {
+                    if (!window.AssetLibrary || !asset || !asset.result_url) return;
+                    window.AssetLibrary.promptAdd({
+                        sourceUrl: asset.result_url,
+                        name: (asset.prompt || '').slice(0, 60)
+                    });
+                },
                 publishAsset,
 
                 sessions,
@@ -7305,6 +7708,11 @@
                 powerConfirmIsCustom,
                 savePowerConfirmThreshold,
                 resetPowerConfirmThreshold,
+                powerBudgetLimitInput,
+                powerBudgetDefault,
+                powerBudgetIsCustom,
+                savePowerBudgetLimit,
+                resetPowerBudgetLimit,
                 verificationOptionClass,
                 toggleModelSelect,
                 toggleLLMModelSelect,
@@ -7313,6 +7721,11 @@
                 showSettingsPanel,
                 showVideoModePanel,
                 showDurationPanel,
+                generationCount,
+                generationCountOptions,
+                showCountPanel,
+                toggleCountPanel,
+                selectGenerationCount,
                 autoMode,
                 showModelSelect,
                 isVideoMode,
@@ -7404,8 +7817,11 @@
                 mediaItems,
                 mediaCounters,
                 mentionDropdown,
-                mentionableItems,
+                mentionAssetView,
                 filteredMentionItems,
+                enterMentionGroup,
+                backToMentionGroups,
+                onMentionDropdownScroll,
                 showVideoModeBtn,
                 supportsLastFrame,
                 maxImageCount,

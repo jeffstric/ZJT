@@ -11,6 +11,7 @@
 | 1 | gemini-2.5-flash-image | Gemini 2.5 Flash 图片生成 |
 | 7 | gemini-3-pro-image-preview | Gemini 3 Pro 图片生成 |
 | 17 | gemini-3.1-flash-image-preview | Gemini 3.1 Flash 图片生成 |
+| 51 | gemini-nano-banana-2.1 | Nano Banana 2.1 图片生成 |
 
 ## 特性
 

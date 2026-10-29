@@ -15,14 +15,23 @@
         historyLoading: false,
         historyPage: 1,
         historyTotal: 0,
-        timelineAiToolId: null
+        timelineAiToolId: null,
+        // 参数 schema（来自 task-configs 的 params_schema）与当前选中值（key -> value）
+        paramsSchema: [],
+        paramValues: {},
+        // 算力预估：按选中视频时长吸附档位后从 task-configs 计算（与服务端计费口径一致）
+        estimateTier: null,
+        estimatePower: null,
+        durationNote: '',
+        durationTooLong: false
       }
     },
     mounted() {
       this.authToken = localStorage.getItem('auth_token') || '';
+      this.loadParamsSchema();
     },
     computed: {
-      canSubmit() { return !!this.file && !this.loading },
+      canSubmit() { return !!this.file && !this.loading && !this.durationTooLong },
       statusText() {
         switch(this.status) {
           case 'submitted': return this.$t('video_enhance_status_submitted') || '任务已提交，等待处理...';
@@ -35,8 +44,72 @@
       }
     },
     methods: {
-      onFile(e){ this.file = e.target.files[0] || null; },
-      
+      onFile(e){
+        this.file = e.target.files[0] || null;
+        this.estimateTier = null;
+        this.estimatePower = null;
+        this.durationNote = '';
+        this.durationTooLong = false;
+        if (this.file) this.probeDuration(this.file);
+      },
+
+      // 读取本地视频时长并预估算力：时长吸附口径与服务端
+      // _snap_duration_to_enhance_tier 一致（向上取整、下限 4 秒、上限 15 秒，
+      // 上限见 config/constant.py VIDEO_ENHANCE_MAX_DURATION_SECONDS）；
+      // 档位算力取 task-configs 的 video_enhance.computing_power（同服务端计费表）。
+      // TaskConfig.load 有 promise 缓存，重复调用安全（loadParamsSchema 与本方法可能并发触发）。
+      async probeDuration(file){
+        const url = URL.createObjectURL(file);
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        const clearUrl = () => { try { URL.revokeObjectURL(url); } catch (_) {} };
+        video.onloadedmetadata = async () => {
+          clearUrl();
+          const dur = video.duration;
+          if (!dur || !isFinite(dur) || dur <= 0) {
+            this.durationNote = this.$t('video_enhance_duration_unknown') || '无法读取视频时长，将以服务端探测为准';
+            return;
+          }
+          const tier = Math.max(4, Math.ceil(dur));
+          if (tier > 15) {
+            this.durationTooLong = true;
+            return;
+          }
+          this.estimateTier = tier;
+          try { await TaskConfig.load(); } catch (_) {}
+          const power = TaskConfig.getComputingPower('video_enhance', tier);
+          this.estimatePower = power > 0 ? power : null;
+        };
+        video.onerror = () => {
+          clearUrl();
+          this.durationNote = this.$t('video_enhance_duration_unknown') || '无法读取视频时长，将以服务端探测为准';
+        };
+        video.src = url;
+      },
+
+      // 从 task-configs 加载 video_enhance 的参数 schema（配置驱动渲染参数表单）。
+      // 取不到 schema 时保持现状（不显示参数区、不传 params），保证向后兼容。
+      async loadParamsSchema(){
+        try {
+          await TaskConfig.load();
+          const task = TaskConfig.getTaskByKey('video_enhance');
+          const schema = (task && Array.isArray(task.params_schema)) ? task.params_schema : [];
+          // 本期只支持 select 类型控件
+          this.paramsSchema = schema.filter(p => p && p.key && p.type === 'select');
+          this.paramValues = {};
+          this.paramsSchema.forEach(p => { this.paramValues[p.key] = p.default; });
+        } catch (e) {
+          console.error('加载视频修复参数配置失败:', e);
+          this.paramsSchema = [];
+          this.paramValues = {};
+        }
+      },
+
+      // schema 字段名属不可信内容，渲染必须走 window.escapeHtml（web/js/escape.js）
+      paramLabelHtml(label){
+        return window.escapeHtml(label);
+      },
+
       async submit(){
         if(!this.canSubmit) return;
 
@@ -58,6 +131,11 @@
             form.append('auth_token', this.authToken);
           }
 
+          // 用户选择的参数（key->value，键值均来自后端 schema）；服务端仍会按 schema 再校验
+          if (this.paramsSchema.length) {
+            form.append('params', JSON.stringify(this.paramValues));
+          }
+
           const res = await axios.post('/api/video-enhance', form, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
@@ -76,20 +154,20 @@
       
       async checkStatus() {
         if (!this.projectId) return;
-        
+
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/runninghub-status/${this.projectId}`, { params });
-          const payload = res?.data;
-          
+          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
+          const payload = res?.data?.tasks?.[0];
+
           if (!payload || typeof payload.status === 'undefined') {
             console.error('Invalid status response:', payload);
             return;
           }
-          
+
           this.status = payload.status;
-          
+
           if (payload.status === 'SUCCESS') {
             this.results = payload.results || [];
             this.loading = false;
@@ -188,7 +266,7 @@
               user_id: parseInt(userId, 10),
               page: this.historyPage,
               page_size: 20,
-              type: 4,
+              type: 5,  // TaskTypeId.VIDEO_ENHANCE（视频高清修复）
             },
             headers: { Authorization: 'Bearer ' + (authToken || '') }
           });
@@ -260,6 +338,23 @@
             <label class="label">{{ $t('upload_video') || '上传视频' }}</label>
             <input type="file" @change="onFile" accept="video/*" class="input" :disabled="loading">
           </div>
+
+          <div class="field" v-for="param in paramsSchema" :key="param.key">
+            <label class="label" v-html="paramLabelHtml(param.label)"></label>
+            <select class="input" v-model="paramValues[param.key]" :disabled="loading">
+              <option v-for="opt in (param.options || [])" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field" v-if="estimatePower !== null">
+            <div style="color: #60a5fa; font-size: 13px;">
+              {{ $t('video_enhance_estimate_power') || '预计消耗算力' }}：{{ estimatePower }}（{{ estimateTier }}{{ $t('video_enhance_estimate_tier_suffix') || ' 秒档' }}）
+            </div>
+          </div>
+          <div class="field" v-if="durationTooLong">
+            <div class="status danger">{{ $t('video_enhance_duration_too_long') || '视频时长超过 15 秒上限，请截取后再上传' }}</div>
+          </div>
+          <div class="field" v-if="durationNote" style="color: #9ca3af; font-size: 12px;">{{ durationNote }}</div>
 
           <div class="field">
             <div class="row">

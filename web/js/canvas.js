@@ -108,6 +108,33 @@
       setZoom(state.zoom - 0.1);
     }
 
+    // 适合屏幕：缩放并平移画布使全部节点可见（缩放菜单用）
+    function zoomToFit(){
+      if(!state.nodes.length){
+        setZoom(1);
+        return;
+      }
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for(const node of state.nodes){
+        const size = getNodeSize(node);
+        minX = Math.min(minX, node.x);
+        minY = Math.min(minY, node.y);
+        maxX = Math.max(maxX, node.x + size.w);
+        maxY = Math.max(maxY, node.y + size.h);
+      }
+      const rect = canvasContainer.getBoundingClientRect();
+      const PAD = 60; // 内容世界坐标四周留白
+      const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+        Math.min(rect.width / (maxX - minX + PAD * 2), rect.height / (maxY - minY + PAD * 2))));
+      state.zoom = zoom;
+      state.panX = Math.min(0, 20 - (minX - PAD) * zoom);
+      state.panY = Math.min(0, 20 - (minY - PAD) * zoom);
+      applyTransform();
+      updateZoomLevel();
+      if(typeof scheduleConnectionsRender === 'function') scheduleConnectionsRender();
+      scheduleMinimapRender();
+    }
+
     function setSelected(id){
       state.selectedNodeId = id;
       state.selectedNodeIds = id ? [id] : [];

@@ -770,5 +770,7 @@
     "title_voiceover_progress": "配音进度",
     "video_type_dh": "对口型",
     "video_type_image": "图片",
-    "video_type_video": "视频"
+    "video_type_video": "视频",
+    "option_director_stage": "生成3D空间",
+    "hint_director_stage": "为每镜生成 3D 空间，用于 3D 空间预览与工作流导演台"
 }

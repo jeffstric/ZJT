@@ -27,6 +27,8 @@
   <link rel="stylesheet" href="/css/image_doodle_editor.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/pannellum.css" />
   <link rel="stylesheet" href="/css/director_stage.css" />
+  <link rel="stylesheet" href="/css/asset_library.css?v=__VERSION__" />
+  <link rel="stylesheet" href="/css/node_asset_panel.css?v=__VERSION__&cb=node-panel" />
   <!-- i18n 支持 -->
   <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
   <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -87,6 +89,12 @@
             </div>
           </div>
           <div class="world-selector-actions">
+            <button class="mini-btn icon-only" id="assetLibraryBtn" type="button" data-i18n="asset_library_entry:title" aria-label="资产库" style="display: inline-flex; align-items: center; justify-content: center;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 7V5a2 2 0 0 1 2-2h2l2 2h8a2 2 0 0 1 2 2v2"/>
+                <rect x="3" y="7" width="18" height="13" rx="2"/>
+              </svg>
+            </button>
             <button class="mini-btn icon-only" id="createWorkflowBtn" type="button" data-i18n="create_canvas:title" aria-label="新建画布" style="display: inline-flex; align-items: center; justify-content: center;">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -333,6 +341,12 @@
               </svg>
               <span class="add-menu-text" data-i18n="prop">道具</span>
             </div>
+            <div class="add-menu-item" id="menuAddAssetLibrary">
+              <svg class="add-menu-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              </svg>
+              <span class="add-menu-text" data-i18n="menu_add_asset_library">资产库</span>
+            </div>
           </div>
         </div>
       </div>
@@ -343,10 +357,31 @@
       <button class="conn-delete-btn" id="connDeleteBtn" title="删除连接线" data-i18n="delete_connection:title">×</button>
       <div class="zoom-controls">
         <button class="zoom-btn" id="autoArrangeBtn" title="自动排列节点" data-i18n="auto_arrange_nodes:title" data-i18n-content="auto_arrange">排</button>
-        <button class="zoom-btn" id="zoomInBtn" title="放大" data-i18n="zoom_in:title">+</button>
-        <div class="zoom-level" id="zoomLevel">100%</div>
-        <button class="zoom-btn" id="zoomOutBtn" title="缩小" data-i18n="zoom_out:title">−</button>
+        <div class="zoom-menu-wrap">
+          <button class="zoom-btn zoom-menu-btn" id="zoomMenuBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="缩放">
+            <span id="zoomLevel">100%</span>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M7 9l5-5 5 5"/><path d="M7 15l5 5 5-5"/>
+            </svg>
+          </button>
+          <div class="zoom-menu" id="zoomMenu" role="menu" aria-hidden="true">
+            <button type="button" class="zoom-menu-item" data-zoom-action="in" role="menuitem" data-i18n="zoom_in">放大</button>
+            <button type="button" class="zoom-menu-item" data-zoom-action="out" role="menuitem" data-i18n="zoom_out">缩小</button>
+            <button type="button" class="zoom-menu-item" data-zoom-action="fit" role="menuitem" data-i18n="zoom_fit">适合屏幕</button>
+            <div class="zoom-menu-sep" role="separator"></div>
+            <button type="button" class="zoom-menu-item" data-zoom-action="50" role="menuitem" data-i18n="zoom_to_50">缩放至50%</button>
+            <button type="button" class="zoom-menu-item" data-zoom-action="100" role="menuitem" data-i18n="zoom_to_100">缩放至100%</button>
+            <button type="button" class="zoom-menu-item" data-zoom-action="200" role="menuitem" data-i18n="zoom_to_200">缩放至200%</button>
+          </div>
+        </div>
       </div>
+      <button class="minimap-asset-entry" id="nodeAssetPanelBtn" type="button" data-i18n="node_asset_panel_btn:title" title="节点管理" aria-label="节点管理">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <line x1="9" y1="4" x2="9" y2="20"/>
+        </svg>
+        <span data-i18n="node_asset_panel_btn">节点管理</span>
+      </button>
       <div class="minimap" id="minimap">
         <div class="minimap-content" id="minimapContent"></div>
       </div>
@@ -1229,6 +1264,8 @@
   <div id="workflowTourPortal" aria-hidden="true"></div>
 
   <script src="/js/escape.js"></script>
+  <!-- 共享资产库（入库/浏览/@引用，见 web/js/asset_library.js） -->
+  <script src="/js/asset_library.js?v=__VERSION__"></script>
   <!-- @ 下拉条目悬停大图预览（图生视频节点/分镜节点提示词下拉共用） -->
   <script src="/js/hover_preview.js?v=__VERSION__"></script>
   <!-- 火山TTS音色库共享API（text_to_speech_node 引擎切换使用） -->
@@ -1544,9 +1581,24 @@
   <script src="/js/vendor/pannellum.min.js"></script>
   <script src="/js/panorama_node.js"></script>
   <script src="/assets/vendor/three.min.js?v=__VERSION__"></script>
+  <!-- 导演台渲染管线：与 three.min.js 同为 r128 的本地 UMD 示例组件 -->
+  <script src="/assets/vendor/three-examples/shaders/CopyShader.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/postprocessing/EffectComposer.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/postprocessing/ShaderPass.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/postprocessing/RenderPass.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/math/SimplexNoise.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/shaders/SSAOShader.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/postprocessing/SSAOPass.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/shaders/GammaCorrectionShader.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/environments/RoomEnvironment.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/geometries/RoundedBoxGeometry.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/loaders/GLTFLoader.js?v=__VERSION__"></script>
+  <script src="/assets/vendor/three-examples/utils/SkeletonUtils.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_rendering.js?v=__VERSION__&cb=ssao-graze"></script>
   <script src="/js/director_stage_timeline.js?v=__VERSION__"></script>
-  <script src="/js/director_stage_editor.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_editor.js?v=__VERSION__&cb=puppet-trim"></script>
   <script src="/js/director_stage_node.js?v=__VERSION__"></script>
+  <script src="/js/director_stage_from_storyboard.js?v=__VERSION__"></script>
   <script src="/js/shot_frame_generator.js?v=__VERSION__"></script>
   <script src="/js/voice_reference.js?v=__VERSION__"></script>
   <script src="/js/video_model_compat.js?v=__VERSION__"></script>
@@ -1559,6 +1611,7 @@
   <script src="/js/events.js?v=__VERSION__"></script>
   <script src="/js/canvas_drop.js?v=__VERSION__"></script>
   <script src="/js/workflow_layout.js?v=__VERSION__"></script>
+  <script src="/js/node_asset_panel.js?v=__VERSION__&cb=node-panel"></script>
 
   <script>
     // i18n 初始化

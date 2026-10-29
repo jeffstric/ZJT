@@ -336,6 +336,12 @@ async function generateShotFrameVideo(nodeId, node){
     const userId = localStorage.getItem('user_id') || '1';
     const authToken = localStorage.getItem('auth_token') || '';
 
+    // 共享资产库 @资产:{id} token 提交前还原为 markdown 图片（见
+    // web/js/asset_library.js），使资产图片进入视频生成上下文
+    if (window.AssetLibrary && videoPrompt.indexOf(window.AssetLibrary.MENTION_PREFIX) >= 0) {
+      videoPrompt = await window.AssetLibrary.resolveMentionTokens(videoPrompt);
+    }
+
     // === 构建公共字段 ===
     const form = new FormData();
     form.append('prompt', videoPrompt);

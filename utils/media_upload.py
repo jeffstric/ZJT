@@ -103,6 +103,20 @@ def max_upload_size_for_ext(ext: str) -> int:
     return MediaUploadSafetyConstants.MAX_AUDIO_SIZE
 
 
+def check_media_magic(ext: str, head: bytes) -> bool:
+    """校验文件头部魔数是否与扩展名相符（供已持有文件内容的调用方复用）。
+
+    Args:
+        ext: 已通过 resolve_media_extension 白名单校验的扩展名（含点号）
+        head: 文件前 MAGIC_SCAN_BYTES 字节
+
+    Returns:
+        魔数匹配返回 True；扩展名无对应魔数表或校验失败返回 False
+    """
+    check = _MAGIC_CHECKS.get(ext)
+    return check is not None and check(head)
+
+
 def save_upload_chunked(upload_file, file_path: str, ext: str) -> int:
     """分块读取上传文件写盘，带魔数校验与大小上限。
 

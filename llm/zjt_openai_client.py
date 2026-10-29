@@ -13,9 +13,11 @@ class ZJTOpenAIClient(OpenAIBaseClient):
     """ZJT API OpenAI 兼容格式 LLM 客户端"""
 
     # model 表友好名称 -> 实际 API endpoint model ID 映射
+    # 260215 lite 快照已被方舟下线（2026-10-24 前后），同步改为 260428；
+    # 本渠道 site_0 当前未配置 key，无法实测，启用前须先验证映射可用
     _MODEL_NAME_MAP = {
         'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
-        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',
+        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260428',
     }
 
     def _refresh_config(self):

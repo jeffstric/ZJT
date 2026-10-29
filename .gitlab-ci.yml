@@ -15,6 +15,7 @@ stages:
   - lint
   - test
   - e2e
+  - review
 
 # 同一分支已经创建 MR 后只保留 MR Pipeline，避免一次 push 重复跑两套测试。
 # schedule 规则必须放最前：定时流水线同样带 CI_COMMIT_BRANCH，放后面会被分支规则拦截（有开放 MR 时甚至被整条抑制）。
@@ -414,3 +415,40 @@ frontend_tests:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
+
+# =============================================================================
+# MR 大模型代码审查
+# 经 jeffS7:4000 会话路由器调用 qwen3.8:27b（分流 jeffS7:8000 / jeffS10:8000），
+# 把审查意见写到 MR 评论。needs: [] 让它和 lint 同时开跑，不占用 test/e2e 的阶段门闩。
+# allow_failure：模型超时、路由不可达都不把流水线打红。
+# 审查成功但评论发不出去（未配置 AI_REVIEW_GITLAB_TOKEN 时 CI_JOB_TOKEN 会被拒），
+# 脚本只告警并退出 0，审查正文保留在 job 日志里，job 不失败。
+# 要在 MR 页面看到评论，在 CI/CD Variables 配置
+# AI_REVIEW_GITLAB_TOKEN（项目 Access Token，api 范围）。详见 docs/ci/ai_code_review.md。
+# =============================================================================
+ai_code_review:
+  stage: review
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  timeout: 20m
+  interruptible: true
+  allow_failure: true
+  needs: []
+  variables:
+    VLLM_BASE_URL: "http://192.168.10.112:4000"
+    VLLM_MODEL: "qwen3.8:27b"
+    # CI_JOB_TOKEN 不能访问 MR diffs API。加深检出，便于本地 git 找到 merge base。
+    GIT_DEPTH: "200"
+  before_script:
+    - |
+      if ! command -v git >/dev/null 2>&1; then
+        if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+          sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources
+        fi
+        apt-get update
+        apt-get install -y --no-install-recommends git ca-certificates
+        rm -rf /var/lib/apt/lists/*
+      fi
+  script:
+    - python scripts/ai_code_review.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

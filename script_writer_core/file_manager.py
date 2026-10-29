@@ -18,6 +18,8 @@ from config.constant import (
     StoryType,
     UploadPathConstants,
     ENTITY_PROTECTED_META_FIELDS,
+    ENTITY_NAME_INVALID_CHARS_PATTERN,
+    ENTITY_NAME_MAX_LENGTH,
     CHARACTER_IMAGE_HISTORY_FIELD,
     CHARACTER_IMAGE_HISTORY_MAX_ENTRIES,
     WORLD_IMPORT_MAX_TOTAL_UNCOMPRESSED_BYTES,
@@ -26,6 +28,24 @@ from config.constant import (
 from utils.project_path import get_project_root
 
 logger = logging.getLogger(__name__)
+
+
+class EntityNameValidationError(ValueError):
+    """实体名称不满足跨平台文件名规则。"""
+
+
+def validate_entity_name(name: str, label: str) -> str:
+    """校验并返回去除首尾空格后的实体名称。"""
+    if not isinstance(name, str) or not name.strip():
+        raise EntityNameValidationError(f'{label}不能为空')
+    if re.search(ENTITY_NAME_INVALID_CHARS_PATTERN, name):
+        raise EntityNameValidationError(f'{label}不能包含 < > : " / \\ | ? * 或控制字符')
+    stripped = name.strip()
+    if name.endswith((' ', '.')) or stripped in ('.', '..'):
+        raise EntityNameValidationError(f'{label}不能是 . 或 ..，也不能以空格或点号结尾')
+    if len(stripped) > ENTITY_NAME_MAX_LENGTH:
+        raise EntityNameValidationError(f'{label}不能超过 {ENTITY_NAME_MAX_LENGTH} 个字符')
+    return stripped
 
 
 class FileManager:
@@ -109,7 +129,8 @@ class FileManager:
     def _safe_write_entity_json(self, entity_dir: Path, file_prefix: str,
                                 name_arg: str, content: str,
                                 name_field: str = "name",
-                                user_id: str = "0", world_id: str = "0") -> bool:
+                                user_id: str = "0", world_id: str = "0",
+                                name_label: Optional[str] = None) -> bool:
         """
         安全写入实体 JSON 文件（character/location/prop 通用），保证文件名与内容 name 一致、
         元数据字段不丢失。调用前需确保 entity_dir 已存在。
@@ -117,7 +138,8 @@ class FileManager:
         - 文件名以 content 内的 name 为准（由 name_field 指定字段名），保证"文件名 == 内容 name"；
         - 调用方传入的 name_arg 与内容 name 不一致时，自动清理旧名文件（安全重命名）；
         - 保留并补全 world_id/user_id/created_at/updated_at 等元数据字段；
-        - content 非 JSON 时退化为原样写入（兼容历史非 JSON 调用）。
+        - content 非 JSON 时退化为原样写入（兼容历史非 JSON 调用）；
+        - name_label 非空时，按对应实体的跨平台文件名规则校验名称。
         """
         # 1. 解析 content
         #    - 看起来像 JSON（以 { 或 [ 开头）但解析失败 → 拒绝写入（避免坏 JSON 落盘成垃圾文件）
@@ -133,7 +155,8 @@ class FileManager:
 
         if not isinstance(data, dict):
             # 非 JSON：原样写入，文件名沿用 name_arg（兼容历史调用，不做一致性/元数据保护）
-            file_path = entity_dir / f"{file_prefix}{name_arg}.json"
+            safe_name_arg = validate_entity_name(name_arg, name_label) if name_label else name_arg
+            file_path = entity_dir / f"{file_prefix}{safe_name_arg}.json"
             try:
                 file_path.write_text(content, encoding='utf-8')
                 logger.warning(f"非JSON内容按原样写入（未做一致性/元数据保护）: {file_path}")
@@ -146,7 +169,7 @@ class FileManager:
         real_name = data.get(name_field)
         if not isinstance(real_name, str) or not real_name.strip():
             real_name = name_arg if isinstance(name_arg, str) else str(name_arg)
-        real_name = real_name.strip()
+        real_name = validate_entity_name(real_name, name_label) if name_label else real_name.strip()
         data[name_field] = real_name
 
         file_path = entity_dir / f"{file_prefix}{real_name}.json"
@@ -514,7 +537,10 @@ class FileManager:
         """
         self._ensure_directories(user_id, world_id)
         characters_dir = self._get_user_world_path(user_id, world_id) / "characters"
-        return self._safe_write_entity_json(characters_dir, "character_", character_name, content, "name", user_id, world_id)
+        return self._safe_write_entity_json(
+            characters_dir, "character_", character_name, content, "name", user_id, world_id,
+            name_label="角色名称",
+        )
     
     def delete_character(self, character_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """
@@ -691,6 +717,14 @@ class FileManager:
             title = content_data.get('title', script_name)
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
+
+        if isinstance(content_data, dict):
+            title = validate_entity_name(title, '剧本标题')
+            content_data['title'] = title
+            if episode_number is None:
+                script_name = validate_entity_name(script_name, '剧本标题')
+        else:
+            script_name = validate_entity_name(script_name, '剧本标题')
 
         # 确定文件名：优先使用 episode_number
         if episode_number is not None:
@@ -869,7 +903,10 @@ class FileManager:
         """保存场景"""
         self._ensure_directories(user_id, world_id)
         locations_dir = self._get_user_world_path(user_id, world_id) / "locations"
-        return self._safe_write_entity_json(locations_dir, "location_", location_name, content, "name", user_id, world_id)
+        return self._safe_write_entity_json(
+            locations_dir, "location_", location_name, content, "name", user_id, world_id,
+            name_label="场景名称",
+        )
     
     def delete_location(self, location_name: str, user_id: str = "0", world_id: str = "0") -> bool:
         """删除场景"""

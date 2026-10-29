@@ -1719,6 +1719,9 @@
 
         // 刷新生图模型
         if (modelEl && window.TaskConfig) {
+          if (node.data.model && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
           if (imageOptions.length > 0) {
             modelEl.innerHTML = '';
@@ -1825,6 +1828,9 @@
 
         // 刷新生图模型
         if (modelEl) {
+          if (node.data.model && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
           if (imageOptions.length > 0) {
             const currentModel = node.data.model;
@@ -2054,6 +2060,20 @@
         if(data.nodes && Array.isArray(data.nodes)){
           for(const nodeData of data.nodes){
             restoreNode(nodeData);
+          }
+        }
+
+        // 导演台按钮双状态文案：帧节点恢复先于导演台节点（创建顺序），
+        // 帧恢复时无法判定关联，全量恢复后统一按存活关联翻转为「打开导演台」
+        if(window.shotFrameDirectorLinked){
+          for(const node of state.nodes){
+            if(node.type !== 'shot_frame' || !node.data.directorStageNodeId) continue;
+            if(!window.shotFrameDirectorLinked(node)) continue;
+            const nodeEl = document.querySelector(`.node[data-node-id="${node.id}"] .shot-frame-open-director-btn`);
+            if(nodeEl){
+              const _t = window.t ? window.t('shot_frame_open_director_btn') : null;
+              nodeEl.textContent = (_t && _t !== 'shot_frame_open_director_btn') ? _t : '🎬 打开导演台（3D 空间）';
+            }
           }
         }
         
@@ -3055,6 +3075,9 @@
           const drawCountLabel = el.querySelector('.image-draw-count-label');
           const titleEl = el.querySelector('.node-title');
           
+          if (node.data.model && window.TaskConfig && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           if(promptEl) promptEl.value = node.data.prompt;
           if(modelEl) modelEl.value = node.data.model;
           // 根据模型动态更新比例选项
@@ -3971,6 +3994,10 @@
 
           // 恢复分镜模型选择器（确保已保存的值在下拉框中可见）
           const modelEl = nodeEl.querySelector('.shot-frame-model');
+          if (nodeData.data.model && window.TaskConfig && window.TaskConfig.canonicalModelKey) {
+            nodeData.data.model = window.TaskConfig.canonicalModelKey(nodeData.data.model);
+            node.data.model = nodeData.data.model;
+          }
           if(modelEl && nodeData.data.model){
             ensureSelectHasSavedOption(modelEl, nodeData.data.model);
             modelEl.value = nodeData.data.model;

@@ -519,6 +519,9 @@ body {
     font-weight: 500;
     transition: all 0.2s;
     cursor: default;
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
 }
 
 .computing-power-display .power-icon {
@@ -1557,6 +1560,25 @@ body {
     font-size: 11px;
     color: var(--text-muted);
     margin-top: 8px;
+}
+
+/* 发送快捷键切换（Enter / Ctrl+Enter），状态行右侧 */
+.send-shortcut-toggle {
+    margin-left: auto;
+    background: none;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1px 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color 0.2s, border-color 0.2s;
+}
+
+.send-shortcut-toggle:hover {
+    color: var(--text-color);
+    border-color: var(--primary-color, #00a8e6);
 }
 
 .status-item {
@@ -4865,4 +4887,54 @@ body {
 
 @keyframes image-generating-spin {
     to { transform: rotate(360deg); }
+}
+
+/* ===== 单次任务算力上限（模型设置卡片内） ===== */
+.power-budget-item {
+    /* 自定义上限出现「恢复默认」后卡片可能溢出到右侧算力余额上；
+       抬高层级避免点击落到 computing-power-display 打开日志弹窗。 */
+    position: relative;
+    z-index: 3;
+    flex-shrink: 0;
+}
+
+.power-budget-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* 宽度自适应内容（输入框 + 恢复默认按钮），不继承 .model-select-wrapper 的固定宽度 */
+    width: fit-content;
+    flex-shrink: 0;
+}
+
+.power-budget-input {
+    width: 72px;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid var(--border-color, #e0e0e0);
+    border-radius: 6px;
+    background: var(--bg-primary, #fff);
+    color: var(--text-primary, #1f2937);
+}
+
+.power-budget-input:focus {
+    outline: none;
+    border-color: #6366f1;
+}
+
+.power-budget-reset {
+    font-size: 11px;
+    color: #6366f1;
+    background: #f8f9fa;
+    border: none;
+    cursor: pointer;
+    white-space: nowrap;
+    padding: 2px 6px;
+    border-radius: 4px;
+    position: relative;
+    z-index: 4;
+}
+
+.power-budget-reset:hover {
+    text-decoration: underline;
 }

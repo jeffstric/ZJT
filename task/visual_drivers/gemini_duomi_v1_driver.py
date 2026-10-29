@@ -1,6 +1,6 @@
 """
 Gemini 多米供应商 v1 版本驱动实现
-支持多个 Gemini 模型：标准版(2.5)、3.1 Flash
+支持多个 Gemini 模型：标准版(2.5)、3.1 Flash、Nano Banana 2.1
 """
 from typing import Dict, Any, Optional
 import traceback
@@ -21,6 +21,7 @@ class GeminiDuomiV1Driver(BaseVideoDriver):
         TaskTypeId.GEMINI_2_5_FLASH_IMAGE: "gemini-2.5-flash-image",
         TaskTypeId.GEMINI_3_1_FLASH_IMAGE: "gemini-3.1-flash-image-preview",
         TaskTypeId.GEMINI_3_PRO_IMAGE: "gemini-3-pro-image-preview",
+        TaskTypeId.NANO_BANANA_2_1_IMAGE: "gemini-nano-banana-2.1",
     }
     
     # 默认模型

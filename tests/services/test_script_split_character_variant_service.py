@@ -1,15 +1,21 @@
 """角色形象变化变体服务测试（纯函数 + ensure 推进逻辑 mock）。"""
+import json
 from types import SimpleNamespace
+
+import pytest
 
 from services.script_split_character_variant_service import (
     EFFECTIVE_CHANGES_FIELD,
     PLAN_METADATA_KEY,
+    backfill_variant_reference_selections,
     build_character_variant_summary,
     build_variant_prompt,
     collect_appearance_change_specs,
+    collect_pending_variant_map,
     collect_ready_variant_map,
     ensure_character_variants,
     sanitize_and_propagate_appearance_changes,
+    settle_pending_character_variant_references,
 )
 
 
@@ -224,6 +230,205 @@ def test_ready_map_and_summary_only_include_ready_entries():
     assert summary["failed"] == 1
     assert summary["skipped"] == 1
     assert all("url" not in item for item in summary["items"])
+
+
+def test_collect_pending_map_only_includes_pending_and_submitted():
+    """发布待回填映射只收 pending/submitted；ready/failed/skipped 不记。"""
+    final_result = {
+        "metadata": {
+            PLAN_METADATA_KEY: [
+                {"character_db_id": 11, "label": "晚礼服", "status": "ready",
+                 "url": "http://img/a.png"},
+                {"character_db_id": 22, "label": "战斗形态", "status": "submitted"},
+                {"character_db_id": 33, "label": "雨衣", "status": "pending"},
+                {"character_db_id": 44, "label": "失败造型", "status": "failed"},
+                {"character_db_id": 55, "label": "跳过造型", "status": "skipped"},
+            ]
+        }
+    }
+    assert collect_pending_variant_map(final_result) == {
+        "22": {"战斗形态"}, "33": {"雨衣"},
+    }
+
+
+def test_collect_pending_map_empty_plan_returns_empty():
+    assert collect_pending_variant_map({"metadata": {}}) == {}
+    assert collect_pending_variant_map({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# 终态回填（backfill_variant_reference_selections / settle_*）
+# ---------------------------------------------------------------------------
+def _scene_row(scene_id, prompt):
+    return {"id": scene_id, "prompt_json": json.dumps(prompt, ensure_ascii=False)}
+
+
+def _install_fake_scenes(monkeypatch, rows):
+    """挡板 StoryboardSceneModel：list 返回固定行，update 捕获写回的 prompt_json。"""
+    updated = {}
+    monkeypatch.setattr(
+        "model.storyboard_scene.StoryboardSceneModel.list_prompt_json_by_world",
+        staticmethod(lambda world_id, prompt_key: list(rows)),
+    )
+
+    def _update(record_id, **kwargs):
+        updated[record_id] = kwargs["prompt_json"]
+        return 1
+
+    monkeypatch.setattr(
+        "model.storyboard_scene.StoryboardSceneModel.update",
+        staticmethod(_update),
+    )
+    return updated
+
+
+def test_backfill_success_writes_url_only_for_matching_scenes(monkeypatch):
+    """成功回填只动 (db_id, label) 均匹配的分镜：写 {url,label} 并删该 pending。"""
+    rows = [
+        _scene_row(101, {
+            "pending_reference_selections": {
+                "schema_version": 1, "characters": {"11": {"label": "晚礼服"}}}}),
+        # 102 label 不匹配：不动
+        _scene_row(102, {
+            "pending_reference_selections": {
+                "schema_version": 1, "characters": {"11": {"label": "运动服"}}}}),
+        # 103 角色 id 不匹配：不动
+        _scene_row(103, {
+            "pending_reference_selections": {
+                "schema_version": 1, "characters": {"22": {"label": "晚礼服"}}}}),
+    ]
+    updated = _install_fake_scenes(monkeypatch, rows)
+
+    result = backfill_variant_reference_selections(
+        3, 11, "晚礼服", url="http://img/v1.png")
+
+    assert result == {"filled": 1, "cleared": 1}
+    prompt = updated[101]
+    assert prompt["reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"11": {"url": "http://img/v1.png", "label": "晚礼服"}},
+    }
+    assert "pending_reference_selections" not in prompt
+    assert 102 not in updated and 103 not in updated
+
+
+def test_backfill_does_not_overwrite_manual_selection(monkeypatch):
+    """该角色已有人工 reference_selections 选择：只删 pending，不覆盖 URL。"""
+    rows = [_scene_row(201, {
+        "reference_selections": {
+            "schema_version": 1,
+            "characters": {"11": {"url": "http://img/manual.png", "label": "手工选的"}}},
+        "pending_reference_selections": {
+            "schema_version": 1, "characters": {"11": {"label": "晚礼服"}}},
+    })]
+    updated = _install_fake_scenes(monkeypatch, rows)
+
+    result = backfill_variant_reference_selections(
+        3, 11, "晚礼服", url="http://img/v1.png")
+
+    assert result == {"filled": 0, "cleared": 1}
+    prompt = updated[201]
+    assert prompt["reference_selections"]["characters"]["11"] == {
+        "url": "http://img/manual.png", "label": "手工选的"}
+    assert "pending_reference_selections" not in prompt
+
+
+def test_backfill_failure_only_clears_pending(monkeypatch):
+    """失败终态（url 为空）：只删匹配 pending，不写 URL，其他角色 pending 保留。"""
+    rows = [_scene_row(301, {
+        "pending_reference_selections": {
+            "schema_version": 1,
+            "characters": {"11": {"label": "晚礼服"}, "22": {"label": "战斗形态"}}},
+    })]
+    updated = _install_fake_scenes(monkeypatch, rows)
+
+    result = backfill_variant_reference_selections(3, 11, "晚礼服")
+
+    assert result == {"filled": 0, "cleared": 1}
+    prompt = updated[301]
+    assert "reference_selections" not in prompt
+    assert prompt["pending_reference_selections"]["characters"] == {
+        "22": {"label": "战斗形态"}}
+
+
+def test_backfill_merges_into_existing_selections_and_keeps_other_pending(monkeypatch):
+    """同一分镜已有其他角色的 reference_selections 时合并不覆盖；pending 同理。"""
+    rows = [_scene_row(501, {
+        "reference_selections": {
+            "schema_version": 1,
+            "characters": {"22": {"url": "http://img/a.png", "label": "战斗形态"}}},
+        "pending_reference_selections": {
+            "schema_version": 1,
+            "characters": {"11": {"label": "晚礼服"}, "33": {"label": "雨衣"}}},
+    })]
+    updated = _install_fake_scenes(monkeypatch, rows)
+
+    result = backfill_variant_reference_selections(
+        3, 11, "晚礼服", url="http://img/v1.png")
+
+    assert result == {"filled": 1, "cleared": 1}
+    prompt = updated[501]
+    assert set(prompt["reference_selections"]["characters"]) == {"22", "11"}
+    assert prompt["reference_selections"]["characters"]["11"] == {
+        "url": "http://img/v1.png", "label": "晚礼服"}
+    assert prompt["pending_reference_selections"]["characters"] == {
+        "33": {"label": "雨衣"}}
+
+
+def test_backfill_without_pending_is_noop(monkeypatch):
+    """变体在落库前已完成（发布直接写成 reference_selections）：回填 no-op。"""
+    rows = [_scene_row(401, {
+        "reference_selections": {
+            "schema_version": 1,
+            "characters": {"11": {"url": "http://img/a.png", "label": "晚礼服"}}}})]
+    updated = _install_fake_scenes(monkeypatch, rows)
+
+    result = backfill_variant_reference_selections(
+        3, 11, "晚礼服", url="http://img/v1.png")
+
+    assert result == {"filled": 0, "cleared": 0}
+    assert not updated
+
+
+def test_settle_by_item_name_resolves_character_and_backfills(monkeypatch):
+    """item_type=7 终态入口：item_name("角色名|label") → 角色库解析 → 回填。"""
+    rows = [_scene_row(601, {
+        "pending_reference_selections": {
+            "schema_version": 1, "characters": {"11": {"label": "晚礼服"}}}})]
+    updated = _install_fake_scenes(monkeypatch, rows)
+    resolved = []
+
+    def _get_by_name(world_id, name):
+        resolved.append((world_id, name))
+        return SimpleNamespace(id=11)
+
+    monkeypatch.setattr(
+        "model.character.CharacterModel.get_by_name",
+        staticmethod(_get_by_name),
+    )
+
+    result = settle_pending_character_variant_references(
+        3, "小林_Xiaolin|晚礼服", url="http://img/v1.png")
+
+    assert resolved == [(3, "小林_Xiaolin")]
+    assert result == {"filled": 1, "cleared": 1}
+    assert updated[601]["reference_selections"]["characters"]["11"]["url"] == (
+        "http://img/v1.png")
+
+
+def test_settle_by_item_name_noop_when_character_missing(monkeypatch):
+    """角色按名查不到：不可能命中 pending（按 db_id 匹配），不触发扫描。"""
+    monkeypatch.setattr(
+        "model.character.CharacterModel.get_by_name",
+        staticmethod(lambda world_id, name: None),
+    )
+    monkeypatch.setattr(
+        "model.storyboard_scene.StoryboardSceneModel.list_prompt_json_by_world",
+        staticmethod(lambda *args, **kwargs: pytest.fail("不应触发场景扫描")),
+    )
+
+    result = settle_pending_character_variant_references(3, "不存在|晚礼服", url="http://x")
+    assert result == {"filled": 0, "cleared": 0}
 
 
 class _FakeCharacter:

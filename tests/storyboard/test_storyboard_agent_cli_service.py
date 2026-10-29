@@ -1940,6 +1940,51 @@ def test_grid_fallback_submit_failure_marks_item_failed(patched_storyboard_cli, 
     assert "批次快照未锁定" in item["error_message"]
 
 
+def test_grid_fallback_degrades_to_t2i_when_snapshot_lacks_image_edit(patched_storyboard_cli, monkeypatch):
+    """text_to_image 批的快照未锁 image.image_edit：降级提交退化为纯文生图，放弃前一幕参考图。
+
+    否则带 previous_group_reference_url 的 item 强制走 image_edit，必被
+    generate_image 以 MODEL_MODE_UNSUPPORTED 拒收，退回到整链级联判死。
+    """
+    module = patched_storyboard_cli.module
+    job, items = _make_grid_fallback_job_items()
+    job["mode"] = "text_to_image"
+    t2i_snapshots = {
+        "image.text_to_image": {"schema_version": 1, "task_id": 26, "model_key": "gpt-image-2"},
+    }
+    job["extra_json"]["generation_snapshots"] = t2i_snapshots
+    items[180]["extra_json"]["generation_snapshots"] = t2i_snapshots
+    _patch_grid_fallback_models(monkeypatch, module, job, items)
+
+    class FakeGridService:
+        def __init__(self, counts_updater=None):
+            self.counts_updater = counts_updater
+
+        def process_job(self, job_arg):
+            return {"submitted_count": 0, "updated_counts": True}
+
+    monkeypatch.setattr(module, "StoryboardFirstFrameGridService", FakeGridService)
+    generate_calls = []
+
+    def fake_generate(scene_id, user_id, **kwargs):
+        generate_calls.append(kwargs)
+        return {"project_ids": [777], "asset_ids": [888], "selected_asset_id": None}
+
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_image = fake_generate
+
+    service._process_one_image_batch_job(job)
+
+    assert len(generate_calls) == 1
+    kwargs = generate_calls[0]
+    assert kwargs["mode"] == "text_to_image"
+    assert kwargs["source_image"] is None
+    assert kwargs["generation_snapshots"]["image.text_to_image"]["task_id"] == 26
+    item = items[180]
+    assert item["status"] == module.StoryboardAutoGenerateConstants.BATCH_ITEM_STATUS_RUNNING
+    assert item["reference_url"] is None
+
+
 def test_grid_fallback_prepares_only_once(patched_storyboard_cli, monkeypatch):
     """已带降级标记的 FAILED item 不会被再次转回 PENDING（每 item 仅降级一次）。"""
     module = patched_storyboard_cli.module

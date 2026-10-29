@@ -117,6 +117,16 @@ class StoryboardAgentVideoToolExecutor:
                 args["duration_seconds"] = int(preferences["duration"])
             if tool_name == "image_to_video" and preferences.get("image_mode"):
                 args["image_mode"] = preferences["image_mode"]
+            # 生成次数按「已由系统注入」语义（mcp_tool schema 已声明无需 LLM 传入）：
+            # 界面视频偏好 count 强制覆盖，委托层 video_tools 会透传给 /ai-app-run。
+            # 会话级 preferences 不走 _get_video_preferences 的 DB 路径，必须在 wrapper 注入。
+            pref_count = preferences.get("count")
+            try:
+                parsed_count = int(pref_count)
+            except (TypeError, ValueError):
+                parsed_count = 0
+            if 1 <= parsed_count <= 4:
+                args["count"] = parsed_count
 
             # 与 marketing_agent 一致：任务快照里的 task_id 强制覆盖 Agent/LLM
             # 传入的 task_type，避免 list_video_models 自选或中途改模型后落到旧偏好。

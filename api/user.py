@@ -12,7 +12,11 @@ import logging
 
 from model.users import UsersModel
 from model.user_tokens import UserTokensModel
-from model.user_preferences import PREF_TYPE_POWER_CONFIRM, UserPreferencesModel
+from model.user_preferences import (
+    PREF_TYPE_POWER_BUDGET,
+    PREF_TYPE_POWER_CONFIRM,
+    UserPreferencesModel,
+)
 from config.constant import PREF_WORLD_ID_GLOBAL, NICKNAME_MAX_LEN
 from model.implementation_power import ImplementationPowerModel
 from model.implementation_stats_cache import ImplementationStatsCacheModel
@@ -395,3 +399,58 @@ async def update_nickname(
 
     data = await asyncio.to_thread(apply_nickname_change, user_id, request.nickname or '')
     return {"code": 0, "data": data}
+
+
+class PowerBudgetRequest(BaseModel):
+    limit: int
+
+
+def _power_budget_payload(user_id: int) -> Dict:
+    from script_writer_core.agents.power_budget import (
+        _resolve_platform_default,
+        resolve_user_power_budget,
+    )
+
+    limit, is_custom = resolve_user_power_budget(str(user_id))
+    return {
+        "limit": limit,
+        "is_custom": is_custom,
+        "default_limit": _resolve_platform_default(),
+    }
+
+
+@router.get("/power-budget")
+async def get_power_budget(auth_token: str = Header(None, alias="Authorization")):
+    """获取当前用户的单次任务算力上限。"""
+    user_id = _require_user_id(auth_token)
+    return {"code": 0, "data": _power_budget_payload(user_id)}
+
+
+@router.put("/power-budget")
+async def set_power_budget(
+    request: PowerBudgetRequest,
+    auth_token: str = Header(None, alias="Authorization"),
+):
+    """设置当前用户的单次任务算力上限（0 表示不限制）。"""
+    from script_writer_core.agents.power_budget import validate_power_budget_limit
+
+    user_id = _require_user_id(auth_token)
+    try:
+        limit = validate_power_budget_limit(request.limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    UserPreferencesModel.upsert(
+        str(user_id),
+        PREF_WORLD_ID_GLOBAL,
+        PREF_TYPE_POWER_BUDGET,
+        {"limit": limit},
+    )
+    return {"code": 0, "data": _power_budget_payload(user_id)}
+
+
+@router.delete("/power-budget")
+async def delete_power_budget(auth_token: str = Header(None, alias="Authorization")):
+    """删除用户自定义的单次任务算力上限，回退平台默认。"""
+    user_id = _require_user_id(auth_token)
+    UserPreferencesModel.delete(str(user_id), PREF_WORLD_ID_GLOBAL, PREF_TYPE_POWER_BUDGET)
+    return {"code": 0, "data": _power_budget_payload(user_id)}

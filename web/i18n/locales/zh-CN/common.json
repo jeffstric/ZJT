@@ -74,7 +74,7 @@
   "txn_refund_id_label": "退回单号",
   "nav_inspiration": "灵感",
   "nav_generate": "生成",
-  "nav_assets": "资产",
+  "nav_assets": "已生成",
   "back_to_home": "返回首页",
   "in_development": "开发中",
   "view_timeline": "查看生成状态时间轴",

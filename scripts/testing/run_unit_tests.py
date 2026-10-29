@@ -155,6 +155,7 @@ class TestRunner:
             'enterprise': {'passed': 0, 'failed': 0, 'errors': 0},
             'model': {'passed': 0, 'failed': 0, 'errors': 0},
             'task': {'passed': 0, 'failed': 0, 'errors': 0},
+            'frontend': {'passed': 0, 'failed': 0, 'errors': 0},
             'total': {'passed': 0, 'failed': 0, 'errors': 0}
         }
         # 收集所有失败测试的详细信息
@@ -612,6 +613,19 @@ class TestRunner:
         self.test_results['task']['errors'] = errors
 
         print()
+
+    def run_frontend_tests(self):
+        """执行前端源码扫描式回归测试（tests/frontend，读 web/ 源码断言关键结构）"""
+        print("=" * 60)
+        print("前端源码扫描测试")
+        print("=" * 60)
+
+        passed, failed, errors = self._discover_and_run('frontend')
+        self.test_results['frontend']['passed'] = passed
+        self.test_results['frontend']['failed'] = failed
+        self.test_results['frontend']['errors'] = errors
+
+        print()
         return errors == 0 and failed == 0
 
     def generate_junit_xml(self):
@@ -623,7 +637,7 @@ class TestRunner:
         for category in ['db_connection', 'crud', 'driver', 'utils', 'config',
                          'drivers', 'driver_integration', 'llm',
                          'agents', 'services', 'script_writer_core', 'enterprise',
-                         'model', 'task']:
+                         'model', 'task', 'frontend']:
             results = self.test_results[category]
             total = results['passed'] + results['failed'] + results['errors']
 
@@ -823,6 +837,7 @@ class TestRunner:
             self.args.enterprise_only,
             self.args.model_only,
             self.args.task_only,
+            self.args.frontend_only,
         ])
 
         # 步骤 2: CDN 专项测试
@@ -897,6 +912,10 @@ class TestRunner:
         if self.args.task_only or not has_only_flag:
             self.run_task_tests()
 
+        # 步骤 19: 前端源码扫描测试
+        if self.args.frontend_only or not has_only_flag:
+            self.run_frontend_tests()
+
         # 步骤 17: 输出摘要
         return_code = self.print_summary()
 
@@ -953,6 +972,7 @@ def main():
     parser.add_argument('--enterprise-only', action='store_true', help='只执行企业版测试')
     parser.add_argument('--model-only', action='store_true', help='只执行数据模型测试')
     parser.add_argument('--task-only', action='store_true', help='只执行任务测试')
+    parser.add_argument('--frontend-only', action='store_true', help='只执行前端源码扫描测试（tests/frontend）')
     parser.add_argument('--verbose', '-v', action='store_true', help='显示详细输出')
     parser.add_argument('--failfast', '-x', action='store_true', help='遇到失败立即停止')
     parser.add_argument('--coverage', action='store_true', help='生成覆盖率报告')

@@ -195,6 +195,67 @@ MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
     4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13,
     11: 14, 12: 16, 13: 17, 14: 18, 15: 20,
 }
+# AI 视频高清修复按时长算力：MiniMax H3 梯度（4-15 档，与数字人表同表）
+# 的 **2 倍**——高清放大消耗约为 H3 生成的两倍算力。RunningHub 高清放大
+# AI App 时长上限 15 秒，ffprobe 探测时长后向上取整到档位计费。
+VIDEO_ENHANCE_COMPUTING_POWER = {
+    seconds: power * 2 for seconds, power in MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER.items()
+}
+
+# AI 视频高清修复「用户可选参数」schema（配置驱动，前端按此渲染参数表单）。
+# 这是参数的唯一事实来源：
+# - GET /api/system/task-configs 把它挂在 video_enhance 任务配置的 params_schema 字段透出；
+# - /api/video-enhance 的 params 字段按它校验（validate_video_enhance_params，非法即拒绝）；
+# - video_enhance_runninghub_v1 驱动按 node_id/field_name 把值映射进 RunningHub 节点。
+# 新增参数：只需在下方列表加一项（key/label/type/options/default + node_id/field_name），
+# 前端表单、接口校验、驱动映射即自动生效。node 108（模型）与 instanceType 不开放：
+# 108 合法值未确认；plus 是 2026-10-28 SeedVR2 爆显存事故后写死的（见驱动文件注释）。
+VIDEO_ENHANCE_PARAMS_SCHEMA = [
+    {
+        "key": "max_resolution",
+        "label": "最大输出分辨率",
+        "type": "select",
+        "options": [
+            {"value": "720", "label": "720P"},
+            {"value": "1080", "label": "1080P"},
+            {"value": "1440", "label": "1440P"},
+            {"value": "1920", "label": "1920P"},
+        ],
+        "default": "1920",
+        # 映射到 RunningHub 节点
+        "node_id": "112",
+        "field_name": "value",
+    },
+]
+
+
+def validate_video_enhance_params(raw_params: Dict[str, Any]) -> Dict[str, str]:
+    """按 VIDEO_ENHANCE_PARAMS_SCHEMA 校验接口透传的用户参数（非法即拒绝）。
+
+    Args:
+        raw_params: 接口解析 params JSON 后的对象
+
+    Raises:
+        ValueError: 参数名不在 schema 中，或值不在 options 白名单中
+
+    Returns:
+        校验通过的 {key: str(value)}；只含实际提交的合法项，不补默认值
+        （缺省回落 schema default 由驱动侧完成，库数据保持干净）
+    """
+    if not isinstance(raw_params, dict):
+        raise ValueError('params 必须是 JSON 对象，如 {"max_resolution":"1080"}')
+    schema_by_key = {item["key"]: item for item in VIDEO_ENHANCE_PARAMS_SCHEMA}
+    validated: Dict[str, str] = {}
+    for key, value in raw_params.items():
+        item = schema_by_key.get(key)
+        if item is None:
+            allowed_keys = sorted(schema_by_key)
+            raise ValueError(f"不支持的参数: {key}（可选: {allowed_keys}）")
+        allowed = [opt["value"] for opt in item.get("options", [])]
+        if value not in allowed:
+            raise ValueError(f"参数 {key} 的值不合法: {value}（可选: {allowed}）")
+        validated[key] = str(value)
+    return validated
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -539,6 +600,7 @@ class UnifiedTaskConfig:
     model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
     variant_label: str = ''  # 仅区分同能力下的同名任务条目
     legacy_names: List[str] = field(default_factory=list)  # 兼容旧的用户可见名称
+    legacy_keys: List[str] = field(default_factory=list)  # 兼容旧 key / short_key，供工作流重载
     driver_name: Optional[str] = None
     implementation: Optional[str] = None  # 默认实现方
     implementations: List[str] = field(default_factory=list)  # 可选实现方列表，注意，如果不配置，无法支持多实现方切换
@@ -573,6 +635,10 @@ class UnifiedTaskConfig:
     # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
     supports_voice_input: bool = False
 
+    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA。
+    # 非空时在 to_frontend_dict 中作为 params_schema 透出，接口/驱动按此校验与映射。
+    params_schema: List[Dict[str, Any]] = field(default_factory=list)
+
     def get_model_name(self) -> str:
         """获取统一的用户可见模型名。
 
@@ -600,6 +666,7 @@ class UnifiedTaskConfig:
             self.name,
             self.get_model_name(),
             *(self.legacy_names or []),
+            *(self.legacy_keys or []),
         }
         return candidate in {str(alias).strip() for alias in aliases if alias not in (None, '')}
 
@@ -722,6 +789,7 @@ class UnifiedTaskConfig:
             'id': self.id,
             'key': self.key,
             'short_key': self.short_key or self.key,
+            'legacy_keys': list(self.legacy_keys or []),
             'name': self.name,
             'model_name': self.get_model_name(),
             'variant_label': self.variant_label,
@@ -772,6 +840,10 @@ class UnifiedTaskConfig:
 
         # 是否允许营销视频克隆（单一事实来源：VIDEO_CLONE_DRIVER_KEYS）
         result['supports_video_clone'] = self.key in VIDEO_CLONE_DRIVER_KEYS
+
+        # 用户可选参数 schema（非空才下发；前端据此动态渲染参数表单）
+        if self.params_schema:
+            result['params_schema'] = self.params_schema
 
         # 添加算力修饰符
         if self.power_modifiers:
@@ -974,8 +1046,14 @@ class UnifiedConfigRegistry:
     
     @classmethod
     def get_by_key(cls, key: str) -> Optional[UnifiedTaskConfig]:
-        """按 key 获取配置"""
-        return cls._configs.get(key)
+        """按 key 获取配置。未命中时再查 legacy_keys，供旧 short_key 重载。"""
+        found = cls._configs.get(key)
+        if found or not key:
+            return found
+        for config in cls._configs.values():
+            if key in (config.legacy_keys or []):
+                return config
+        return None
     
     @classmethod
     def get_by_category(cls, category: str) -> List[UnifiedTaskConfig]:
@@ -1293,6 +1371,9 @@ class DriverImplementation:
     # 视频去水印
     VIDEO_WATERMARK_RUNNINGHUB_V1 = 'video_watermark_runninghub_v1'
 
+    # 视频高清修复（RunningHub OpenAPI v2 AI App）
+    VIDEO_ENHANCE_RUNNINGHUB_V1 = 'video_enhance_runninghub_v1'
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
@@ -1360,6 +1441,9 @@ class DriverImplementation:
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
+
+    # qwenimage2.1（RunningHub AI App 实现，图片编辑 + 文生图）
+    RUNNINGHUB_AI_APP_IMAGE_V1 = 'runninghub_ai_app_image_v1'
 
     # Grok
     GROK_DUOMI_V1 = 'grok_duomi_v1'
@@ -1519,6 +1603,13 @@ class DriverImplementationId:
     # MiniMax H3 首帧参考混合生视频（参考模式点名 @首帧图/@尾帧图 时提交，不进下拉）
     MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 100
 
+    # qwenimage2.1（RunningHub AI App 图片）。未登记时落库 implementation=0，
+    # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
+    RUNNINGHUB_AI_APP_IMAGE_V1 = 101
+
+    # 视频高清修复（RunningHub OpenAPI v2 AI App）
+    VIDEO_ENHANCE_RUNNINGHUB_V1 = 102
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1547,6 +1638,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_VOLCENGINE_V1,
     'seedance_2_0_mini_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
+    'runninghub_ai_app_image_v1': DriverImplementationId.RUNNINGHUB_AI_APP_IMAGE_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
     'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
     'gpt_image_common_site0_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE0_V1,
@@ -1621,6 +1713,7 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_2_5_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,
     'gpt_image_2_5_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,
     'video_watermark_runninghub_v1': DriverImplementationId.VIDEO_WATERMARK_RUNNINGHUB_V1,
+    'video_enhance_runninghub_v1': DriverImplementationId.VIDEO_ENHANCE_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1679,6 +1772,7 @@ class DriverKey:
     GEMINI_IMAGE_EDIT = 'gemini_image_edit'
     GEMINI_IMAGE_EDIT_PRO = 'gemini_image_edit_pro'
     GEMINI_3_1_FLASH_IMAGE_EDIT = 'gemini_3_1_flash_image_edit'
+    NANO_BANANA_2_1_IMAGE_EDIT = 'nano_banana_2_1_image_edit'
 
     # VEO3 相关
     VEO3_IMAGE_TO_VIDEO = 'veo3_image_to_video'
@@ -1711,11 +1805,17 @@ class DriverKey:
     # 视频去水印
     VIDEO_WATERMARK_REMOVE = 'video_watermark_remove'
 
+    # 视频高清修复
+    VIDEO_ENHANCE = 'video_enhance'
+
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
 
     # Qwen Image Edit
     QWEN_IMAGE_EDIT = 'qwen_image_edit'
+
+    # qwenimage2.1（同一工作流支持图片编辑与文生图）
+    QWEN_2_1_IMAGE = 'qwen_2_1_image'
 
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
@@ -1858,6 +1958,11 @@ LLM_ARREARS_BREAKER_ENABLED = True
 LLM_ARREARS_BREAKER_THRESHOLD = 1  # 余额低于该值时拒绝发起新的 LLM 调用（与 Agent 循环阈值一致）
 AGENT_POWER_CONFIRM_THRESHOLD = 35  # 用户未自定义时的软阈值：本次/本轮累计超过才确认
 AGENT_POWER_CONFIRM_HARD_THRESHOLD = 200  # 「本次对话不再询问」后仍强制确认的硬阈值
+# 单次任务算力消耗上限（PowerBudget）：任务启动时快照余额，PM/专家循环逐迭代核对，
+# 累计消耗达到上限自动暂停任务（充值或调高上限后发送新消息可继续）。
+# 背景见 docs/backend/incidents/2026-09-01 与 2026-09-26：无人应答时
+# ask_user「提问→300s 超时→LLM 重试」可无限空转扣费，余额熔断（阈值 1）兜底太晚。
+AGENT_POWER_BUDGET_DEFAULT = 200  # 用户未自定义时的默认上限；0 表示不限制
 
 
 # ============ 任务类型 ID 常量 ============
@@ -1868,11 +1973,13 @@ class TaskTypeId:
         'GEMINI_2_5_FLASH_IMAGE': 'Gemini 2.5 Flash 图片编辑',
         'GEMINI_3_PRO_IMAGE': 'Gemini 3 Pro 图片编辑',
         'GEMINI_3_1_FLASH_IMAGE': 'Gemini 3.1 Flash 图片编辑',
+        'NANO_BANANA_2_1_IMAGE': 'Nano Banana 2.1 图片编辑',
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
+        'QWEN_2_1_IMAGE': 'qwenimage2.1',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
@@ -1919,11 +2026,13 @@ class TaskTypeId:
     GEMINI_2_5_FLASH_IMAGE = 1
     GEMINI_3_PRO_IMAGE = 7
     GEMINI_3_1_FLASH_IMAGE = 17
+    NANO_BANANA_2_1_IMAGE = 51
     SEEDREAM_TEXT_TO_IMAGE = 16
     SEEDREAM_4_5_IMAGE = 18
     SEEDREAM_5_0_PRO = 33
     QWEN_MULTI_ANGLE_IMAGE = 24
     QWEN_IMAGE_EDIT = 38
+    QWEN_2_1_IMAGE = 52
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
@@ -2073,6 +2182,42 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
+        id=TaskTypeId.NANO_BANANA_2_1_IMAGE,
+        key='gemini-nano-banana-2.1',
+        short_key='nano-banana-2.1',
+        name='nano-banana-2.1',
+        model_name='nano-banana 2.1',
+        legacy_names=['nano-banana-2.1'],
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.NANO_BANANA_2_1_IMAGE_EDIT,
+        implementation=DriverImplementation.GEMINI_DUOMI_V1,
+        implementations=[
+            DriverImplementation.GEMINI_DUOMI_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,
+            DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,
+        ],
+        computing_power=2,
+        supported_ratios=['9:16', '16:9', '1:1', '3:4', '4:3', '21:9', '1:4', '4:1', '1:8', '8:1'],
+        supported_sizes=['1K', '2K', '4K'],
+        default_ratio='9:16',
+        default_size='1K',
+        sort_order=13,
+        supports_grid_image=True,  # 支持宫格生图
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={'1K': 1.0, '2K': 2.0, '4K': 2.5},
+                default=1.0,
+            ),
+        ],
+    ),
+    UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,
         key='seedream-5.0',
         short_key='seedream-5.0',
@@ -2161,6 +2306,35 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         hidden=True,  # 隐藏，前端不显示
     ),
     UnifiedTaskConfig(
+        # qwenimage2.1。模型标识是 TaskTypeId.QWEN_2_1_IMAGE / DriverKey.QWEN_2_1_IMAGE，
+        # 数字 id 仍是 52。实现方仍是 RunningHub AI App（ai-app 2113539132868874242），
+        # 类名与 implementation 字符串不改。同一工作流同时支持图片编辑
+        # （nodeId 17-22 传 1-6 张图）与文生图（图片全填 None）。两种模式都按所选
+        # 比例和分辨率写节点 28。编辑开启「原图无偏移」后画布跟随图 1，所以上传前
+        # 把图 1 缩到所选画布；「使用图片尺寸」关闭。
+        # 旧 key 放在 legacy_keys，已保存工作流重载仍能对上。
+        id=TaskTypeId.QWEN_2_1_IMAGE,
+        key='qwenimage2.1',
+        short_key='qwenimage2.1',
+        name='qwenimage2.1',
+        model_name='qwenimage2.1',
+        legacy_names=['RunningHub AI App 图片', 'RunningHub AI App'],
+        legacy_keys=['runninghub-ai-app-image', 'runninghub-ai-app'],
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.QWEN_2_1_IMAGE,
+        implementation=DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,
+        computing_power=2,
+        supported_ratios=['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'],
+        supported_sizes=['1K', '2K', '4K'],  # 映射为工作流 megapixels 1/2/4（百万像素）
+        default_ratio='1:1',
+        default_size='2K',
+        sort_order=18,
+        supports_grid_image=False,
+        max_multi_ref_images=6,  # 工作流图片节点 17-22 共 6 个
+    ),
+    UnifiedTaskConfig(
         id=TaskTypeId.QWEN_IMAGE_EDIT,
         key='qwen-image-edit',
         short_key='qwen-image-edit',
@@ -2181,6 +2355,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=16,
         supports_grid_image=False,
         max_multi_ref_images=3,  # 对齐官方 I2I 1–3 张参考图
+        # 下拉框只保留可用的 qwenimage2.1（任务 52）。本空壳仍可用 task_id=38 显式调用。
+        hidden=True,
     ),
 
     # ==================== 文生图/图片编辑 ====================
@@ -3202,9 +3378,17 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI视频高清修复',
         model_name='AI 视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
-        provider=TaskProvider.LOCAL,
-        implementation='local_video_enhance',
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.VIDEO_ENHANCE,
+        implementation=DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,
+        implementations=[DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1],
+        # 按视频秒数计费（4-15 档），表见 VIDEO_ENHANCE_COMPUTING_POWER
+        computing_power=VIDEO_ENHANCE_COMPUTING_POWER,
+        supported_durations=sorted(VIDEO_ENHANCE_COMPUTING_POWER),
+        default_duration=5,
         sort_order=51,
+        # 用户可选参数 schema（唯一事实来源在模块顶部，见 VIDEO_ENHANCE_PARAMS_SCHEMA）
+        params_schema=VIDEO_ENHANCE_PARAMS_SCHEMA,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDEO_WATERMARK_REMOVE,
@@ -3865,6 +4049,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(
+        name=DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,
+        display_name='RunningHub',
+        driver_class='RunninghubAiAppImageV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='qwenimage2.1 图片接口（图片编辑 + 文生图）',
+        sort_order=7510.0,
+        required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
         name='digital_human_runninghub_v1',
         display_name='RunningHub',
         driver_class='DigitalHumanRunninghubV1Driver',
@@ -3986,6 +4180,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub 视频去水印，按时长计费，算力与 MiniMax H3 720P 一致',
         sort_order=7100.0,
+        required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
+        name='video_enhance_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='VideoEnhanceRunninghubV1Driver',
+        default_computing_power=VIDEO_ENHANCE_COMPUTING_POWER,
+        enabled=True,
+        description='RunningHub 视频高清修复（OpenAPI v2 AI App），按时长计费，算力为 MiniMax H3 的 2 倍',
+        sort_order=7110.0,
         required_config_keys=['runninghub.api_key']
     ),
 

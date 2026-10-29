@@ -1,9 +1,13 @@
-"""火山方舟 404（InvalidEndpointOrModel.NotFound）错误翻译测试。
+"""火山方舟 404/400（NotFound / ClosedEndpoint）错误翻译测试。
 
-背景（2026-09-12 线上事故）：火山账号未开通 deepseek-v4-flash，vendor_model
+背景一（2026-09-12 线上事故）：火山账号未开通 deepseek-v4-flash，vendor_model
 关联仍存在，任务创建成功但 LLM 调用持续 404；上层只见英文 404，用户无从
 知道该换供应商或去方舟控制台开通。VolcengineOpenAIClient 覆写
 _humanize_api_error 把该错误翻译为可操作的中文提示后上抛。
+
+背景二（2026-10-25 线上事故）：方舟下线 doubao-seed-2-0-lite-260215 快照，
+调用持续 400 InvalidEndpoint.ClosedEndpoint，营销 PM agent 全量失败；
+映射改为实测可用的 260428，并把该错误码同样翻译为中文提示。
 """
 import os
 import sys
@@ -22,6 +26,14 @@ ARK_404 = Exception(
     "Error code: 404 - {'error': {'code': 'InvalidEndpointOrModel.NotFound', "
     "'message': 'The model or endpoint deepseek-v4-flash does not exist or you "
     "do not have access to it.', 'type': 'Not Found'}}"
+)
+
+# 2026-10-25 线上事故：方舟下线 doubao-seed-2-0-lite-260215 快照，
+# 调用返回 400 InvalidEndpoint.ClosedEndpoint，营销 PM agent 100% 失败
+ARK_CLOSED = Exception(
+    "Error code: 400 - {'error': {'code': 'InvalidEndpoint.ClosedEndpoint', "
+    "'message': 'The request targeted an endpoint that is currently closed or "
+    "temporarily unavailable. Request id: 02179301507751448', 'type': 'Bad Request'}}"
 )
 
 
@@ -58,6 +70,16 @@ class TestVolcengineModelNameMap(unittest.TestCase):
             client._resolve_model_name("doubao-seed-2-0-pro"), "doubao-seed-2-0-pro-260215"
         )
 
+    def test_doubao_lite_maps_to_live_snapshot(self):
+        """260215 快照已被方舟下线（2026-10-24 前后，ClosedEndpoint 400），
+        映射目标须为生产 key 实测 200 的快照（2026-10-26 实测 260428 可用）。
+        """
+        client = VolcengineOpenAIClient.__new__(VolcengineOpenAIClient)
+        self.assertEqual(
+            client._resolve_model_name("doubao-seed-2-0-lite"),
+            "doubao-seed-2-0-lite-260428",
+        )
+
 
 class TestVolcengineHumanizeApiError(unittest.TestCase):
     def _client(self):
@@ -74,6 +96,14 @@ class TestVolcengineHumanizeApiError(unittest.TestCase):
         self.assertIn("deepseek-v4-flash", humanized)
         self.assertIn("InvalidEndpointOrModel.NotFound", humanized)
         self.assertIn("火山方舟", humanized)
+
+    def test_closed_endpoint_translated_with_model_name(self):
+        humanized = self._client()._humanize_api_error(ARK_CLOSED, model="doubao-seed-2-0-lite")
+        self.assertIsNotNone(humanized)
+        self.assertIn("doubao-seed-2-0-lite", humanized)
+        self.assertIn("InvalidEndpoint.ClosedEndpoint", humanized)
+        self.assertIn("_MODEL_NAME_MAP", humanized)
+        self.assertIn("已被官方下线", humanized)
 
     def test_other_errors_passthrough(self):
         client = self._client()

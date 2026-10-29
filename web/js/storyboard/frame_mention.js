@@ -7,6 +7,9 @@
 
 const FIRST_MENTION_RE = /@首帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])/g;
 const LAST_MENTION_RE = /@尾帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])/g;
+// 共享资产库引用 token：`@资产:{asset_id}`（数字 id 见 asset_library.id；
+// 提交前由前端还原为 markdown 图片，服务端不解析、按图片 URL 消费）
+const ASSET_MENTION_RE = /@资产:(\d+)(?!\d)/g;
 
 const FRAME_TOKEN_RES = [
     { key: 'first', re: FIRST_MENTION_RE },
@@ -36,7 +39,8 @@ export function promptHasFrameMention(prompt) {
     return flags.wantsFirst || flags.wantsLast;
 }
 
-/** 扫描提示词里的首尾帧标记（含 :id 后缀），返回 {key, token, start, end}（按出现序）。 */
+/** 扫描提示词里的首尾帧标记（含 :id 后缀），返回 {key, token, start, end}（按出现序）。
+ *  资产引用（key='asset'）额外携带 assetId，胶囊层据此查缩略图与名称。 */
 export function scanFrameMentionTokenRanges(text) {
     const value = text == null ? '' : String(text);
     const found = [];
@@ -47,6 +51,17 @@ export function scanFrameMentionTokenRanges(text) {
             found.push({ key, token: m[0], start: m.index, end: m.index + m[0].length });
         }
     });
+    ASSET_MENTION_RE.lastIndex = 0;
+    let am;
+    while ((am = ASSET_MENTION_RE.exec(value)) !== null) {
+        found.push({
+            key: 'asset',
+            assetId: Number(am[1]),
+            token: am[0],
+            start: am.index,
+            end: am.index + am[0].length,
+        });
+    }
     return found.sort((a, b) => a.start - b.start);
 }
 

@@ -484,6 +484,15 @@
             if (typeof showError === 'function') showError(t('error_file_content_empty', '文件内容不能为空'));
             return true;
         }
+        var entityNameConfig = {
+            characters: { value: parsed.name, labelKey: 'label_character_name', fallback: '角色名称' },
+            locations: { value: parsed.name, labelKey: 'label_scene_name', fallback: '场景名称' },
+            scripts: { value: parsed.title, labelKey: 'label_script_title', fallback: '剧本标题' }
+        }[fileType];
+        if (entityNameConfig && typeof validateEntityName === 'function') {
+            var typeLabel = t(entityNameConfig.labelKey, entityNameConfig.fallback);
+            if (!validateEntityName(entityNameConfig.value, typeLabel)) return true;
+        }
         var method = 'PUT';
         var url = detailUrl(fileType, edit.id);
         var body = parsed;

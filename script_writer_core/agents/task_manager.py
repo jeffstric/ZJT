@@ -12,6 +12,10 @@ from config.constant import FilePathConstants
 from model.agent_tasks import AgentTasksModel, AgentTaskEntity
 from model.agent_task_messages import AgentTaskMessagesModel
 from model.agent_verifications import AgentVerificationsModel, AgentVerificationEntity
+from script_writer_core.agents.power_confirm import (
+    VERIFICATION_TYPE_POWER_CONFIRM,
+    confirm_state_from_approvals,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,12 +211,14 @@ class AgentTask:
 class TaskManager:
     """任务管理器 - 管理后台任务的生命周期"""
     
-    def __init__(self):
+    def __init__(self, power_confirm_approval_loader=None):
         self.tasks: Dict[str, AgentTask] = {}
         self.task_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.Lock()
-        # session_id -> {skip: bool, unconfirmed_cost: int}
+        # 仅本进程副本：本次同意后、确认记录尚未被其他进程读到时的兜底。
+        # 已同意单价和免打扰的跨进程真相在 agent_verifications。
         self._power_confirm_state: Dict[str, Dict[str, Any]] = {}
+        self._power_confirm_approval_loader = power_confirm_approval_loader
         logger.info("TaskManager initialized")
     
     def create_task(
@@ -492,44 +498,76 @@ class TaskManager:
         thread.start()
         logger.info(f"Task {task.task_id} thread started")
     
-    def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
-        """读取会话级算力确认状态（skip / 本轮未授权累计）。"""
-        if not session_id:
-            return {"skip": False, "unconfirmed_cost": 0}
+    def _blank_power_confirm_state(self) -> Dict[str, Any]:
+        return {"skip": False, "approved_ceiling": 0}
+
+    def _local_power_confirm_state(self, session_id: str) -> Dict[str, Any]:
         with self._lock:
             state = self._power_confirm_state.get(session_id) or {}
             return {
                 "skip": bool(state.get("skip")),
-                "unconfirmed_cost": int(state.get("unconfirmed_cost") or 0),
+                "approved_ceiling": int(state.get("approved_ceiling") or 0),
             }
+
+    def _load_power_confirm_approvals(self, session_id: str):
+        if self._power_confirm_approval_loader is not None:
+            return self._power_confirm_approval_loader(session_id)
+        return AgentVerificationsModel.list_approved_by_session(
+            session_id,
+            VERIFICATION_TYPE_POWER_CONFIRM,
+        )
+
+    def get_power_confirm_state(self, session_id: Optional[str]) -> Dict[str, Any]:
+        """读取会话级算力确认状态（skip / 已同意最高单笔）。
+
+        已同意单价和免打扰来自本会话已提交的算力确认记录，所有 worker 都能读到。
+        读库失败时不沿用本进程记忆，继续询问。
+        """
+        if not session_id:
+            return self._blank_power_confirm_state()
+        local = self._local_power_confirm_state(session_id)
+        try:
+            shared = confirm_state_from_approvals(
+                self._load_power_confirm_approvals(session_id)
+            )
+        except Exception as e:
+            logger.warning(
+                "读取会话算力确认记录失败，本次继续询问 session_id=%s: %s",
+                session_id,
+                e,
+            )
+            return {
+                "skip": False,
+                "approved_ceiling": 0,
+            }
+        return {
+            "skip": bool(shared["skip"] or local["skip"]),
+            "approved_ceiling": max(
+                int(shared["approved_ceiling"] or 0),
+                local["approved_ceiling"],
+            ),
+        }
 
     def set_power_confirm_skip(self, session_id: Optional[str], skip: bool = True) -> None:
         if not session_id:
             return
         with self._lock:
             state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
+                session_id, self._blank_power_confirm_state()
             )
             state["skip"] = bool(skip)
 
-    def add_unconfirmed_power_cost(self, session_id: Optional[str], cost: int) -> int:
+    def raise_approved_ceiling(self, session_id: Optional[str], cost: int) -> int:
+        """把本会话已同意的最高单笔抬到不少于 cost。"""
         if not session_id:
             return 0
+        amount = max(0, int(cost or 0))
         with self._lock:
             state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
+                session_id, self._blank_power_confirm_state()
             )
-            state["unconfirmed_cost"] = int(state.get("unconfirmed_cost") or 0) + max(0, int(cost or 0))
-            return state["unconfirmed_cost"]
-
-    def clear_unconfirmed_power_cost(self, session_id: Optional[str]) -> None:
-        if not session_id:
-            return
-        with self._lock:
-            state = self._power_confirm_state.setdefault(
-                session_id, {"skip": False, "unconfirmed_cost": 0}
-            )
-            state["unconfirmed_cost"] = 0
+            state["approved_ceiling"] = max(int(state.get("approved_ceiling") or 0), amount)
+            return state["approved_ceiling"]
 
     def create_verification(
         self,

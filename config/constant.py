@@ -24,6 +24,7 @@ from config.unified_config import (
     UnifiedTaskConfig,
     AGENT_POWER_CONFIRM_THRESHOLD,
     AGENT_POWER_CONFIRM_HARD_THRESHOLD,
+    AGENT_POWER_BUDGET_DEFAULT,
     USER_MODULE_RUNTIME_CONFIG,
 )
 
@@ -514,6 +515,9 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
+# 单次任务算力上限：优先读 user_preferences.power_budget，
+# 未设置时回退动态配置 agent.power_budget_default，再回退 AGENT_POWER_BUDGET_DEFAULT
+# （AGENT_POWER_BUDGET_DEFAULT 已在文件顶部从 unified_config 导入）。
 PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 sentinel world_id
 
 # ---------------------------------------------------------------------------
@@ -1029,6 +1033,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
         DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
     ],
+    DriverKey.NANO_BANANA_2_1_IMAGE_EDIT: [
+        DriverImplementation.GEMINI_DUOMI_V1,       # 使用多米供应商的 Nano Banana 2.1 版本
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE0_V1,  # 智剧通API官方站点
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE1_V1,  # API聚合器站点 1
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE2_V1,  # API聚合器站点 2
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE3_V1,  # API聚合器站点 3
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE4_V1,  # API聚合器站点 4
+        DriverImplementation.GEMINI_IMAGE_PREVIEW_SITE5_V1,  # API聚合器站点 5
+    ],
 
     # VEO3 相关驱动
     DriverKey.VEO3_IMAGE_TO_VIDEO: [
@@ -1056,6 +1069,8 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
     DriverKey.DIGITAL_HUMAN_MINIMAX_H3: DriverImplementation.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 数字人
     DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
+    DriverKey.VIDEO_ENHANCE: DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,  # RunningHub 视频高清修复（OpenAPI v2 AI App）
+    DriverKey.QWEN_2_1_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,  # qwenimage2.1（图片编辑 + 文生图）
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -1220,6 +1235,16 @@ RUNNINGHUB_TASK_TYPES = TaskTypeRegistry.get_by_provider(TaskProvider.RUNNINGHUB
 # RunningHub 服务端在账号并发达上限时返回该 errorCode，判定为「上游拥堵」可重试错误，
 # 触发自动延迟重试（不消耗用户重试次数、不退算力）
 RUNNINGHUB_QUEUE_LIMIT_ERROR_CODE = '421'
+
+# ==================== 视频高清修复（RunningHub OpenAPI v2 AI App） ====================
+# AI App「视频高清放大」的 app id 与节点参数常量在驱动文件内维护
+# （task/visual_drivers/video_enhance_runninghub_v1_driver.py，仅驱动使用）。
+# 时长档位边界与 ffprobe 探测超时由提交端点与驱动共用，保留在此：
+# ffprobe 探测后向上取整吸附到 [4, 15] 档，算力随档位递增
+VIDEO_ENHANCE_MIN_DURATION_SECONDS = 4
+VIDEO_ENHANCE_MAX_DURATION_SECONDS = 15
+# ffprobe 探测视频时长的超时（秒），本地文件与远程 URL 共用
+VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS = 15
 
 # RunningHub 上游拥堵自动重试的默认延迟（秒）
 # 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
@@ -1710,6 +1735,14 @@ class ScriptSplitConstants:
     CHARACTER_VARIANT_ASPECT_RATIO = "16:9"
     # 发布阶段变体生成的子阶段 phase（前端进度步骤归入「发布分镜」）
     PHASE_CHARACTER_VARIANT = "character_variant"
+
+    # ---- 3D 导演台（three.js 空间代码）----
+    # 请求参数 enable_director_stage 的服务端默认值：效果模式拆分时是否为每镜
+    # 生成 three_scene_code（three.js 空间代码）。该数据是故事板「3D 空间预览」
+    # 与视频工作流「导演台」节点的唯一数据源；关闭后拆分仍保留 spatial_layout
+    # 空间一致性约束（画面构图用），但不产出任何 3D 导演台数据。
+    # 注意：仅效果模式（quality）会生成 three_scene_code，速度/均衡模式天然无此产物。
+    ENABLE_DIRECTOR_STAGE_DEFAULT = False
     # 效果模式按段并发生成的批次上限。单个批次仍受 worker watchdog 保护。
     QUALITY_SEGMENT_PARALLELISM = 3
     # 运行时 spatial handoff JSON 序列化字节上限（超出时压缩软描述字段，见设计文档 §9.3）
@@ -2338,6 +2371,10 @@ ENTITY_PROTECTED_META_FIELDS = (
     'updated_at', 'update_time',
 )
 
+# 角色/场景/剧本名称会参与跨平台文件名构造，统一拒绝路径分隔符及 Windows 非法字符。
+ENTITY_NAME_MAX_LENGTH = 200
+ENTITY_NAME_INVALID_CHARS_PATTERN = r'[<>:"/\\|?*\x00-\x1f]'
+
 # 实体类型 -> JSON 文件名前缀映射（文件名规则：{prefix}{name}.json）
 ENTITY_FILE_PREFIX_MAP = {
     'character': 'character_',
@@ -2423,6 +2460,7 @@ class UploadPathConstants:
     CHARACTER_VOICE_DIR = "character/voice"
     FACE_MASK_DIR = "face_mask"     # 人脸遮盖视频结果目录
     BRANDING_DIR = "branding"      # 品牌定制资源目录（Logo / Favicon / 用户手册，永久存放）
+    ASSET_LIBRARY_DIR = "asset_library"  # 资产库目录（永久存放，不受媒体缓存清理策略影响）
 
     # 文件名前缀
     MEDIA_PREFIX = "media"      # 媒体文件前缀（图生视频上传）
@@ -2432,6 +2470,75 @@ class UploadPathConstants:
     # Agent 模式上传数量限制
     AGENT_IMAGE_MAX_COUNT = 9   # Agent 模式最多上传图片数
     AGENT_VIDEO_MAX_COUNT = 3   # Agent 模式最多上传视频数
+
+
+class AssetLibraryConstants:
+    """资产库相关常量（见 docs/backend/asset_library.md）
+
+    资产库与媒体缓存（utils/media_cache.py）是两套独立的存储生命周期：
+    资产文件永久存放（不受存储容量限制、不被清理任务删除），
+    但按用户维度记录已用容量（asset_library_quota），由管理员逐人控制配额。
+    """
+
+    # ===== 权限可见性枚举（asset_library.view_permission / edit_permission）=====
+    PERMISSION_PRIVATE = "private"      # 仅自己
+    PERMISSION_SPECIFIED = "specified"  # 指定成员
+    PERMISSION_PUBLIC = "public"        # 所有人（登录用户）
+    PERMISSION_CHOICES = (PERMISSION_PRIVATE, PERMISSION_SPECIFIED, PERMISSION_PUBLIC)
+
+    # ===== 指定成员权限类型（asset_permission_member.perm_type）=====
+    PERM_TYPE_VIEW = "view"             # 可看
+    PERM_TYPE_EDIT = "edit"             # 可编辑
+    PERM_TYPE_CHOICES = (PERM_TYPE_VIEW, PERM_TYPE_EDIT)
+
+    # ===== 资产类型（当前仅图片，预留视频/音频）=====
+    ASSET_TYPE_IMAGE = "image"
+    ASSET_TYPE_VIDEO = "video"   # 预留
+    ASSET_TYPE_AUDIO = "audio"   # 预留
+    ASSET_TYPE_CHOICES = (ASSET_TYPE_IMAGE, ASSET_TYPE_VIDEO, ASSET_TYPE_AUDIO)
+    ASSET_TYPE_EXTENSIONS = {
+        ASSET_TYPE_IMAGE: ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'),
+    }
+
+    # ===== 容量配额（asset_library_quota）=====
+    # 默认单人资产库容量 2GB；quota_bytes=0 表示不限制（管理员可逐人调整）
+    DEFAULT_QUOTA_BYTES = 2 * 1024 * 1024 * 1024
+    QUOTA_UNLIMITED = 0
+
+    # 单个资产文件大小上限（50MB，图片足够；视频/音频接入时再评估调整）
+    MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024
+
+    # ===== 列表分页 =====
+    DEFAULT_PAGE_SIZE = 24
+    MAX_PAGE_SIZE = 100
+
+    # ===== 文件名 / 引用 token =====
+    FILENAME_PREFIX = "asset"
+    # @ 引用 token：`@资产:{id}`（id 为 asset_library.id）。
+    # 前端提及菜单插入该字面 token，提交前由 window.AssetLibrary.resolveMentionTokens
+    # 解析为 markdown 图片注入上下文；服务端见到该 token 同样按资产 URL 还原。
+    MENTION_TOKEN_PREFIX = "@资产:"
+
+    # ===== 下载/写盘超时（加入资产库时把远程 URL 持久化到本地）=====
+    DOWNLOAD_CONNECT_TIMEOUT_SECONDS = 10
+    DOWNLOAD_TOTAL_TIMEOUT_SECONDS = 120
+    DOWNLOAD_WRITE_CHUNK_TIMEOUT_SECONDS = 30
+    DOWNLOAD_IO_CHUNK_BYTES = 65536
+
+    # ===== 分组 =====
+    GROUP_NAME_MAX_LENGTH = 50
+    ASSET_NAME_MAX_LENGTH = 200
+    # 用户搜索（指定成员选择）返回上限
+    MEMBER_SEARCH_LIMIT = 20
+
+    # ===== 功能开关（system_config，管理员在 admin「资产管理」配置）=====
+    # get_dynamic_config_value('asset_library', <key>) 读取；写入走
+    # SystemConfigModel.upsert + invalidate_dynamic_cache
+    CONFIG_KEY_ENABLED = 'enabled'              # bool，默认 False：总开关
+    CONFIG_KEY_TOTAL_QUOTA_GB = 'total_quota_gb'  # number，默认 0=不限：全站总磁盘上限
+    CONFIG_KEY_ALLOW_ALL_USERS = 'allow_all_users'  # bool，默认 False：全员可用（关闭则逐用户 quota.enabled）
+    CONFIG_NAMESPACE = 'asset_library'
+    GLOBAL_QUOTA_EXCEEDED_MSG = '资产库总容量已满，请联系管理员调整'
 
 
 class MediaConstants:
@@ -2723,6 +2830,10 @@ RECHARGE_PACKAGES = [
 # 商户产品参数（协议模板ID / V2密钥等）见 config/subscription_config.py（临时 hardcode）。
 class SubscriptionConstants:
     """月度订阅业务常量"""
+    # 开发联调验签旁路的显式确认串：pay.wxpay.dev_skip_callback_sign 的值
+    # 必须精确等于本串才生效（填 true/1/随手字符串均不放行），防止管理台
+    # 误配置绕过微信回调验签。生产环境严禁配置该键。
+    DEV_CALLBACK_SIGN_BYPASS_PHRASE = 'DEV-OK-I-KNOW-THE-RISK'
     # HTTP 调用微信支付接口的超时（秒）
     HTTP_TIMEOUT_SECONDS = 30
     # 订阅周期长度（天）：每月=30天
@@ -3442,6 +3553,22 @@ DS_ENV_FIT_ALLOWED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 # 预览图压缩（asyncio.to_thread 执行）与 VL 请求（wait_for 整体超时 = LLM_TIMEOUT + 10）的超时（秒）
 DS_ENV_FIT_COMPRESS_TIMEOUT = 15
 DS_ENV_FIT_LLM_TIMEOUT = 60
+
+# ── 故事板 3D 预览「对话改机位」（单轮 LLM 参数提取，仿导演台 env_fit 轻量模式）──
+# 机位参数模型与 spatial_3d_preview.js setCamera(ex,ey,ez,tx,ty,tz,fov) 一致：Y-up 米制，地面 y=0
+SB_CAMERA_CHAT_LLM_TIMEOUT = 60             # LLM 请求超时（秒），wait_for 整体兜底 = LLM_TIMEOUT + 15
+SB_CAMERA_CHAT_MAX_MESSAGE_CHARS = 300      # 用户指令最大长度
+SB_CAMERA_CHAT_MAX_ENTITIES = 40            # 注入 prompt 的空间对象清单上限
+SB_CAMERA_CHAT_POS_ABS_MAX = 30.0           # eye/target 任意分量绝对值上限（米）
+SB_CAMERA_CHAT_EYE_Y_MIN = 0.05
+SB_CAMERA_CHAT_EYE_Y_MAX = 12.0
+SB_CAMERA_CHAT_TARGET_Y_MIN = -2.0
+SB_CAMERA_CHAT_TARGET_Y_MAX = 12.0
+SB_CAMERA_CHAT_FOV_DEFAULT = 50
+SB_CAMERA_CHAT_FOV_MIN = 15
+SB_CAMERA_CHAT_FOV_MAX = 120
+SB_CAMERA_CHAT_TEMPERATURE = 0.2
+SB_CAMERA_CHAT_MAX_TOKENS = 400
 
 # ── 图文抓取（article_to_video，公众号/小红书 → 营销视频脚本）──
 # 公众号：mp.weixin.qq.com 服务端渲染页免登录可抓（2026-09 实测）；图片 mmbiz.qpic.cn 服务端下载无防盗链拦截，仍统一带 Referer 保险
