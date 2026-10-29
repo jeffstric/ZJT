@@ -46,7 +46,7 @@ worker 进程池 fork→spawn、槽位对账回收、admin 每日统计等。
 
 | 文件 | 守护点 |
 |---|---|
-| `auto_test/e2e/test_script_split.py`（+2 例，ci_smoke p0） | 前置校验（889bd923a）：短剧本 4xx（script_content_insufficient，不建任务不耗 LLM）、无场景 world 4xx（world_no_scene） |
+| `tests/storyboard/test_script_split_preconditions.py`（12 例，后端单测） | 前置校验（889bd923a）：短剧本/空串 script_content_insufficient、world_no_scene / world_no_scene_image、world_id 缺失跳过、create_split_task 创建前拦截（不触达 create_or_get_active）、契约快照在幂等键后注入。曾误放 auto_test/e2e（parse-script 端点流程中前置校验位于外部算力检查之后，e2e 容器内认证不可用时永远到不了该分支，CI 必失败），已移除并迁移到单元层 |
 | `auto_test/e2e/test_storyboard.py`（新建 3 例，ci_smoke p0） | 互转端点守卫（d957af0ed 落库行为此前零自动化）：空/不存在画布 4xx、不存在 storyboard 404、未登录 401 |
 | `auto_test/e2e/test_audio.py`（+2 例，p1） | 预置音色 ≥100 且 voice_desc 回填率>90%（no_152）、mock TTS 产物 /upload/ 下载可达（25f67a9a1 302 签名/代理） |
 | `auto_test/e2e/test_script_writer_api.py`（+2 例） | 会话列表跨用户枚举不泄露（34e987ce6）、未知任务 404 自愈契约 |
