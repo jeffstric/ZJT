@@ -7,28 +7,33 @@ import copy
 import importlib.util
 import unittest
 
-def _has_enterprise_spatial() -> bool:
+def _detect_enterprise_spatial() -> bool:
+    """探测 three_scene 模块是否可导入。
+
+    find_spec 带点路径会先导入父包：enterprise 整体缺失时抛
+    ModuleNotFoundError 而非返回 None（Community CI 无 enterprise 目录
+    即此场景）；父包 __init__ 或其依赖在部分精简镜像下也可能抛异常。
+    模块级异常会让 unittest 收集直接报 _FailedTest，必须降级为 False，
+    让用例干净跳过。
+    """
     try:
-        return (
-            importlib.util.find_spec(
-                "enterprise.services.storyboard_spatial.three_scene"
-            )
-            is not None
+        if (
+            importlib.util.find_spec("enterprise.services.storyboard_spatial.three_scene")
+            is None
+        ):
+            return False
+        from enterprise.services.storyboard_spatial.three_scene import (
+            audit_spatial_layout,
+            build_three_scene,
         )
-    except (ImportError, AttributeError, ValueError):
-        # find_spec 会先导入父包：enterprise 整体缺失时抛 ModuleNotFoundError
-        # 而非返回 None（Community CI 无 enterprise 目录即此场景），
-        # 模块级异常会让 unittest 收集直接报 _FailedTest，必须降级为 False
+        globals()["audit_spatial_layout"] = audit_spatial_layout
+        globals()["build_three_scene"] = build_three_scene
+        return True
+    except Exception:
         return False
 
 
-_HAS_ENTERPRISE_SPATIAL = _has_enterprise_spatial()
-
-if _HAS_ENTERPRISE_SPATIAL:
-    from enterprise.services.storyboard_spatial.three_scene import (
-        audit_spatial_layout,
-        build_three_scene,
-    )
+_HAS_ENTERPRISE_SPATIAL = _detect_enterprise_spatial()
 
 
 def _cabin_layout():
