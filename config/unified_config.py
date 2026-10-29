@@ -195,6 +195,12 @@ MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
     4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13,
     11: 14, 12: 16, 13: 17, 14: 18, 15: 20,
 }
+# AI 视频高清修复按时长算力：MiniMax H3 梯度（4-15 档，与数字人表同表）
+# 的 **2 倍**——高清放大消耗约为 H3 生成的两倍算力。RunningHub 高清放大
+# AI App 时长上限 15 秒，ffprobe 探测时长后向上取整到档位计费。
+VIDEO_ENHANCE_COMPUTING_POWER = {
+    seconds: power * 2 for seconds, power in MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER.items()
+}
 
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
@@ -1302,6 +1308,9 @@ class DriverImplementation:
     # 视频去水印
     VIDEO_WATERMARK_RUNNINGHUB_V1 = 'video_watermark_runninghub_v1'
 
+    # 视频高清修复（RunningHub OpenAPI v2 AI App）
+    VIDEO_ENHANCE_RUNNINGHUB_V1 = 'video_enhance_runninghub_v1'
+
     # Vidu
     VIDU_DEFAULT = 'vidu_default'
     VIDU_Q2 = 'vidu_q2'
@@ -1535,6 +1544,9 @@ class DriverImplementationId:
     # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
     RUNNINGHUB_AI_APP_IMAGE_V1 = 101
 
+    # 视频高清修复（RunningHub OpenAPI v2 AI App）
+    VIDEO_ENHANCE_RUNNINGHUB_V1 = 102
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1638,6 +1650,7 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_2_5_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,
     'gpt_image_2_5_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,
     'video_watermark_runninghub_v1': DriverImplementationId.VIDEO_WATERMARK_RUNNINGHUB_V1,
+    'video_enhance_runninghub_v1': DriverImplementationId.VIDEO_ENHANCE_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
@@ -1728,6 +1741,9 @@ class DriverKey:
 
     # 视频去水印
     VIDEO_WATERMARK_REMOVE = 'video_watermark_remove'
+
+    # 视频高清修复
+    VIDEO_ENHANCE = 'video_enhance'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
@@ -3299,8 +3315,14 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         name='AI视频高清修复',
         model_name='AI 视频高清修复',
         category=TaskCategory.VISUAL_ENHANCE,
-        provider=TaskProvider.LOCAL,
-        implementation='local_video_enhance',
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.VIDEO_ENHANCE,
+        implementation=DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,
+        implementations=[DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1],
+        # 按视频秒数计费（4-15 档），表见 VIDEO_ENHANCE_COMPUTING_POWER
+        computing_power=VIDEO_ENHANCE_COMPUTING_POWER,
+        supported_durations=sorted(VIDEO_ENHANCE_COMPUTING_POWER),
+        default_duration=5,
         sort_order=51,
     ),
     UnifiedTaskConfig(
@@ -4093,6 +4115,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='RunningHub 视频去水印，按时长计费，算力与 MiniMax H3 720P 一致',
         sort_order=7100.0,
+        required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
+        name='video_enhance_runninghub_v1',
+        display_name='RunningHub',
+        driver_class='VideoEnhanceRunninghubV1Driver',
+        default_computing_power=VIDEO_ENHANCE_COMPUTING_POWER,
+        enabled=True,
+        description='RunningHub 视频高清修复（OpenAPI v2 AI App），按时长计费，算力为 MiniMax H3 的 2 倍',
+        sort_order=7110.0,
         required_config_keys=['runninghub.api_key']
     ),
 

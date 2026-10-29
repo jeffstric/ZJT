@@ -1087,6 +1087,63 @@ svg.connections path.reference-line.selected{
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
 }
 
+/* ---- 缩放合并入口：单个按钮显示当前百分比，点击向上弹出菜单 ---- */
+.zoom-menu-wrap{
+  position: relative;
+  display: flex;
+}
+.zoom-menu-btn{
+  width: auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.zoom-menu-btn svg{
+  color: var(--muted);
+}
+.zoom-menu{
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 132px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  z-index: 46;
+  display: none;
+  flex-direction: column;
+}
+.zoom-menu.open{
+  display: flex;
+}
+.zoom-menu-item{
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.zoom-menu-item:hover{
+  background: var(--panel-hover);
+}
+.zoom-menu-sep{
+  height: 1px;
+  margin: 5px 6px;
+  background: var(--border);
+}
+
 .minimap{
   position: absolute;
   left: 12px;

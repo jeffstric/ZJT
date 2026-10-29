@@ -32,6 +32,8 @@ CATEGORY_PATTERNS: Dict[str, List[str]] = {
     'enterprise': ['enterprise'],
     'model': ['model'],
     'task': ['task'],
+    # 前端源码扫描式回归（tests/frontend：读 web/ 源码断言关键结构，非浏览器）
+    'frontend': ['frontend'],
     # 特殊：db_connection 不使用目录遍历
     'db_connection': [],
 }
@@ -97,6 +99,7 @@ def get_category_display_name(category: str) -> str:
         'script_writer_core': 'Script Writer Core',
         'model': 'Model',
         'task': 'Task',
+        'frontend': 'Frontend Source Scan',
         'db_connection': 'DB Connection',
     }
     return display_names.get(category, category)

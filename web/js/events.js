@@ -1514,16 +1514,49 @@
       }
     });
 
-    // 缩放按钮事件
-    zoomInBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      zoomIn();
-    });
+    // 缩放合并入口：单按钮弹出菜单（放大/缩小/适合屏幕/固定缩放档）
+    const zoomMenuBtn = document.getElementById('zoomMenuBtn');
+    const zoomMenu = document.getElementById('zoomMenu');
 
-    zoomOutBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      zoomOut();
-    });
+    function setZoomMenuOpen(open){
+      if(!zoomMenu) return;
+      zoomMenu.classList.toggle('open', open);
+      zoomMenu.setAttribute('aria-hidden', open ? 'false' : 'true');
+      if(zoomMenuBtn) zoomMenuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    if(zoomMenuBtn){
+      zoomMenuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setZoomMenuOpen(!zoomMenu.classList.contains('open'));
+      });
+    }
+
+    if(zoomMenu){
+      zoomMenu.addEventListener('click', (e) => {
+        const item = e.target.closest('.zoom-menu-item');
+        if(!item) return;
+        e.stopPropagation();
+        const action = item.dataset.zoomAction;
+        if(action === 'in') zoomIn();
+        else if(action === 'out') zoomOut();
+        else if(action === 'fit') zoomToFit();
+        else if(action === '50') setZoom(0.5);
+        else if(action === '100') setZoom(1);
+        else if(action === '200') setZoom(2);
+        setZoomMenuOpen(false);
+      });
+
+      // 点击菜单外或按 Esc 关闭
+      document.addEventListener('click', (e) => {
+        if(!zoomMenu.classList.contains('open')) return;
+        if(e.target.closest('#zoomMenu') || e.target.closest('#zoomMenuBtn')) return;
+        setZoomMenuOpen(false);
+      });
+      document.addEventListener('keydown', (e) => {
+        if(e.key === 'Escape') setZoomMenuOpen(false);
+      });
+    }
 
     // 缩略图点击导航
     minimap.addEventListener('mousedown', (e) => {

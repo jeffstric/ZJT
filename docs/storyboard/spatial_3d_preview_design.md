@@ -243,6 +243,9 @@ three.js）把该镜空间映射为导演台人偶与机位，首次点击自动
   `ensureMannequinTemplate`（three.min.js → GLTFLoader/SkeletonUtils
   懒注入 → GLB 拉取），失败返回 null 且允许下次重试；
   `getReadyMannequinTemplate` 同步读就绪模板（沙箱 makeActor 无法 await）。
+  本模块静态 `import { loadThree } from './spatial_3d_preview.js'`，
+  `loadThree` 必须带 `export`，否则 ES Module 链接期 SyntaxError，
+  `bootstrap.js` 整条模块图失败，故事板详情永久卡在「正在打开故事板...」。
 - **构建**（`buildGlbMannequin`，静态立正简版，不含导演台的关节组重挂
   与头骨手术）：SkeletonUtils.clone 共享模板 → 染色树脂材质
   （MeshPhysicalMaterial 同导演台 body 参数，r128 显式 `skinning=true`）→
@@ -258,5 +261,5 @@ three.js）把该镜空间映射为导演台人偶与机位，首次点击自动
   编辑辅助不进镜头画面。
 - **入口预载**：3D 预览弹窗打开会先 `ensureMannequinTemplate`，
   保证 GLB 形象一致。
-- 测试：`web/tests/spatial_mannequin_glb.test.js`（vitest 9 例：模板加载
-  幂等/失败重试、构建归一化/立正/子树标记、预览链路接线）。
+- 测试：`web/tests/spatial_mannequin_glb.test.js`（vitest：模板加载
+  幂等/失败重试、构建归一化/立正/子树标记、预览链路接线、`loadThree` 必须 export）。

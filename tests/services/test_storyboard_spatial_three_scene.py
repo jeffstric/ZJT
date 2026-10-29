@@ -10,9 +10,11 @@ import unittest
 def _detect_enterprise_spatial() -> bool:
     """探测 three_scene 模块是否可导入。
 
-    find_spec 带点路径会先导入父包；父包 __init__ 或其依赖在部分环境
-    （如社区 CI 的精简镜像）下可能抛异常，必须兜住，否则整个测试模块
-    以 _FailedTest 形式报错而不是干净跳过。
+    find_spec 带点路径会先导入父包：enterprise 整体缺失时抛
+    ModuleNotFoundError 而非返回 None（Community CI 无 enterprise 目录
+    即此场景）；父包 __init__ 或其依赖在部分精简镜像下也可能抛异常。
+    模块级异常会让 unittest 收集直接报 _FailedTest，必须降级为 False，
+    让用例干净跳过。
     """
     try:
         if (

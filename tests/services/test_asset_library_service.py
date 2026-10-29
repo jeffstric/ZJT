@@ -275,7 +275,7 @@ def _prepare_local_source(monkeypatch, content: bytes):
 
 
 def _mock_models(monkeypatch, reserve_ok=True, feature=None):
-    calls = {'create': None, 'reserve': [], 'release': [], 'members': []}
+    calls = {'create': None, 'reserve': [], 'release': [], 'members': [], 'deleted': []}
     monkeypatch.setattr(svc, 'get_feature_config', lambda: feature or {
         'enabled': True, 'allow_all_users': True, 'total_quota_bytes': 0})
     monkeypatch.setattr(svc.AssetGroupModel, 'get_by_id',
@@ -292,6 +292,8 @@ def _mock_models(monkeypatch, reserve_ok=True, feature=None):
                         staticmethod(lambda aid: AssetItem(id=aid, user_id=1, name='t',
                                                            file_path=calls['create']['file_path'],
                                                            file_size=calls['create']['file_size'])))
+    monkeypatch.setattr(svc.AssetLibraryModel, 'delete',
+                        staticmethod(lambda aid: calls['deleted'].append(aid)))
     monkeypatch.setattr(svc.AssetPermissionMemberModel, 'replace_for_asset',
                         staticmethod(lambda *a, **k: calls['members'].append(a)))
     return calls
@@ -349,6 +351,27 @@ def test_add_asset_quota_exceeded_rolls_back_file(monkeypatch, asset_tmp_dir):
     user_dir = asset_tmp_dir / '1'
     leftovers = list(user_dir.glob('asset_1_*')) + list(user_dir.glob('.tmp_*')) if user_dir.exists() else []
     assert leftovers == []              # 临时文件已清理
+
+
+def test_add_asset_members_failure_rolls_back_quota_and_row(monkeypatch, asset_tmp_dir):
+    """落库后写成员失败：删除已插入行并释放配额，避免重试重复扣配额。"""
+    payload = b'ROLLBACK' * 4
+    url = _prepare_local_source(monkeypatch, payload)
+    calls = _mock_models(monkeypatch)
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError('members fail')
+
+    monkeypatch.setattr(svc.AssetPermissionMemberModel, 'replace_for_asset', boom)
+    with pytest.raises(AssetLibraryError) as ei:
+        asyncio.run(svc.add_asset(user_id=1, source_url=url, name='x'))
+    assert ei.value.code == 'add_failed'
+    assert calls['reserve'] == [(1, len(payload))]
+    assert calls['release'] == [(1, len(payload))]
+    assert calls['deleted'] == [1]
+    user_dir = asset_tmp_dir / '1'
+    leftovers = list(user_dir.glob('asset_1_*')) + list(user_dir.glob('.tmp_*')) if user_dir.exists() else []
+    assert leftovers == []
 
 
 def test_add_asset_rejects_relative_upload_path_when_missing(monkeypatch):

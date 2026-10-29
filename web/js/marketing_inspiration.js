@@ -1258,7 +1258,7 @@ async function initPage() {
       this.style.height = Math.min(this.scrollHeight, 200) + 'px';
     });
     promptInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         if (sendBtn) sendBtn.click();
       }

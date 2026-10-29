@@ -76,20 +76,20 @@
       
       async checkStatus() {
         if (!this.projectId) return;
-        
+
         try {
           const authToken = localStorage.getItem('auth_token');
           const params = authToken ? { auth_token: authToken } : {};
-          const res = await axios.get(`/api/runninghub-status/${this.projectId}`, { params });
-          const payload = res?.data;
-          
+          const res = await axios.get(`/api/get-status/${this.projectId}`, { params });
+          const payload = res?.data?.tasks?.[0];
+
           if (!payload || typeof payload.status === 'undefined') {
             console.error('Invalid status response:', payload);
             return;
           }
-          
+
           this.status = payload.status;
-          
+
           if (payload.status === 'SUCCESS') {
             this.results = payload.results || [];
             this.loading = false;
@@ -188,7 +188,7 @@
               user_id: parseInt(userId, 10),
               page: this.historyPage,
               page_size: 20,
-              type: 4,
+              type: 5,  // TaskTypeId.VIDEO_ENHANCE（视频高清修复）
             },
             headers: { Authorization: 'Bearer ' + (authToken || '') }
           });

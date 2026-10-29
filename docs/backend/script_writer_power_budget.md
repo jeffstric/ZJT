@@ -36,6 +36,8 @@
 
 「模型设置」卡片新增「本次任务算力上限」数字输入：加载时回填当前生效值，修改即保存；清空提交或点击「恢复默认」回退平台默认；悬停图标显示说明（含平台默认值）。词条见 `web/i18n/locales/{zh-CN,en}/index.json` 的 `power_budget_*`。
 
+顶栏较窄时「恢复默认」可能画到右侧算力余额徽章上：`.power-budget-item` / `.power-budget-reset` 的 z-index 高于 `.computing-power-display`，避免点击落到余额层打开算力日志。
+
 ## 适用范围
 
 `MarketingPMAgent` 继承 `PMAgent.execute`，营销链路同样启用（2026-09-01 事故遗留风险的修复）。执行顺序：任务启动 → 快照 → 循环核对 → 超限暂停 → 用户发送新消息开启新任务（重新快照）继续。

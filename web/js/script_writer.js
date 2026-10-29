@@ -610,7 +610,8 @@
 
                 messageInput.addEventListener('keydown', function(e) {
                     if (e.key !== 'Enter') return;
-                    if (e.isComposing) return; // 输入法组词中不触发发送
+                    // Safari 组词确认 Enter：isComposing=false 且 keyCode=229
+                    if (e.isComposing || e.keyCode === 229) return;
                     const mode = getSendShortcutMode();
                     if (mode === 'enter') {
                         // 旧习惯：Enter 发送，Shift+Enter 换行
