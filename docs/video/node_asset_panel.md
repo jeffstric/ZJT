@@ -2,9 +2,9 @@
 
 ## 概述
 
-节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与删除，底部实时统计节点总数。入口为画布左下角小地图上方的「节点管理」按钮（与「资产库」无关，仅管理画布节点）。
+节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与更多操作（下载/删除），底部实时统计节点总数。入口为画布左下角小地图上方的「节点管理」按钮（与「资产库」无关，仅管理画布节点）。
 
-纯前端能力：数据只读自 `state.nodes`（页面内存），不发起任何网络请求；节点缩略图复用节点自身的资源 URL。
+数据只读自 `state.nodes`（页面内存）；下载经 `/api/download` 服务端重签名通道（复用 `downloadWithAuth`，登录 token 走 Authorization 头不进 URL）；节点缩略图复用节点自身的资源 URL。
 
 ## 入口
 
@@ -22,7 +22,9 @@
 | 搜索 | 按标题或类型名实时过滤（大小写不敏感） |
 | 类型筛选 | 下拉只列出画布上实际存在的类型；当前选中类型在画布上消失时自动重置为「全部类型」 |
 | 定位 | 点击行（或行内 ◎ 按钮）调用 `focusOnNode` 居中该节点并闪烁高亮，行保留 active 状态 |
-| 删除 | 行内删除按钮 → 确认弹窗（`showConfirmModal`）→ `removeNode`，列表与统计随之刷新 |
+| 更多菜单 | 行内 "..." 按钮弹出 下载/删除 下拉菜单；单例菜单挂 `document.body`（避免被面板 overflow 裁剪），右对齐按钮、视口边缘自动翻到上方；点击菜单外 / Esc / 列表滚动 / 面板关闭时收起 |
+| 下载 | 有媒体文件（图片/视频，音频节点取 `data.url`）走 `downloadWithAuth`（`/api/download` 重签名，跨域 302 不丢 `download` 属性），文件名「节点标题.扩展名」；剧本节点导出 `标题.txt`；无文件节点 toast 提示 |
+| 删除 | 菜单内删除 → 确认弹窗（`showConfirmModal`）→ `removeNode`，列表与统计随之刷新 |
 | 统计 | 底部「共 N 节点」；过滤时显示「M / N」（悬浮 title 保留总数） |
 | 刷新 | 头部刷新按钮手动重建列表（节点标题在画布上被改名后可同步） |
 
@@ -61,6 +63,6 @@
 
 ## i18n 词条
 
-`node_asset_panel_btn`（节点管理）、`node_asset_panel_title`（节点管理）、`node_asset_search_placeholder`、`node_asset_filter_all`、`node_asset_total`（共 {n} 节点）、`node_asset_total_filtered`、`node_asset_empty`、`node_asset_no_match`、`node_asset_locate`、`node_asset_delete`、`node_asset_delete_confirm`、`node_asset_refresh`、`node_asset_close`。
+`node_asset_panel_btn`（节点管理）、`node_asset_panel_title`（节点管理）、`node_asset_search_placeholder`、`node_asset_filter_all`、`node_asset_total`（共 {n} 节点）、`node_asset_total_filtered`、`node_asset_empty`、`node_asset_no_match`、`node_asset_locate`、`node_asset_delete_confirm`、`node_asset_refresh`、`node_asset_close`、`node_asset_more`、`node_asset_menu_download`、`node_asset_menu_delete`、`node_asset_download_no_file`、`node_asset_download_failed`。
 
 节点类型展示名复用既有词条（image / video / image_to_video / shot_frame_group 等），新类型未收录时回退显示类型标识。

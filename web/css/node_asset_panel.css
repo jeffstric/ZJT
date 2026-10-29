@@ -269,9 +269,51 @@ body.tour-generate-video-locked .minimap-asset-entry{
   background: var(--info-bg);
   color: var(--info);
 }
-.nap-icon-btn.nap-delete:hover{
+.nap-icon-btn.nap-more:hover{
+  background: var(--hover-bg);
+  color: var(--text);
+}
+
+/* ---- 更多菜单（单例，挂 document.body，参考 canvas-context-menu） ---- */
+.nap-menu{
+  position: fixed;
+  z-index: 3000;
+  min-width: 128px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  display: none;
+}
+.nap-menu.show{
+  display: block;
+}
+.nap-menu-item{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 7px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.nap-menu-item svg{
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.nap-menu-item:hover{
+  background: var(--panel-hover);
+}
+.nap-menu-item.nap-menu-danger{
+  color: #ef4444;
+}
+.nap-menu-item.nap-menu-danger:hover{
   background: var(--danger-bg);
-  color: var(--danger);
 }
 
 /* ---- 空状态 ---- */

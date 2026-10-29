@@ -11,7 +11,8 @@
  *  - 列表：画布全部节点（标题字典序），缩略图 + 标题 + 类型徽标
  *  - 搜索：按标题/类型名过滤；类型筛选下拉只列出画布上实际存在的类型
  *  - 定位：点击行聚焦画布节点（focusOnNode，带闪烁高亮）
- *  - 删除：行内删除按钮，确认弹窗后 removeNode
+ *  - 更多：行内 "..." 按钮，下拉菜单提供 下载（downloadWithAuth 服务端重签名通道 /
+ *    剧本节点导出 .txt）与 删除（确认弹窗后 removeNode）
  *  - 统计：底部"共 N 节点"；过滤时显示"M / N"
  *
  * 数据只读自 state.nodes（本地内存），不发起网络请求；节点增删通过
@@ -60,6 +61,9 @@
   var refreshRafId = null;
   var thumbObserver = null;
   var activeRowId = null;
+  // 更多菜单（下载/删除）：单例挂 document.body，打开时记录目标节点 id
+  var menuEl = null;
+  var menuNodeId = null;
 
   function esc(value) {
     return window.escapeHtml ? window.escapeHtml(value) : String(value == null ? '' : value);
@@ -135,6 +139,8 @@
   var ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
   var ICON_SEARCH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
   var ICON_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>';
+  var ICON_MORE = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+  var ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
   function ensurePanel() {
     if (panelEl) return panelEl;
@@ -171,7 +177,7 @@
     searchInput.addEventListener('input', renderList);
     typeSelect.addEventListener('change', renderList);
 
-    // 行点击代理：定位 / 删除
+    // 行点击代理：定位 / 更多菜单
     listEl.addEventListener('click', function (e) {
       var item = e.target.closest('.nap-item');
       if (!item) return;
@@ -179,12 +185,16 @@
       var node = getNodes().find(function (n) { return n.id === nodeId; });
       if (!node) { renderList(); return; }
 
-      if (e.target.closest('.nap-delete')) {
-        deleteNodeWithConfirm(node);
+      var moreBtn = e.target.closest('.nap-more');
+      if (moreBtn) {
+        toggleMenu(node, moreBtn);
         return;
       }
+      hideMenu();
       locateNode(nodeId);
     });
+    // 列表滚动后菜单锚点位置失效，直接收起
+    listEl.addEventListener('scroll', hideMenu, { passive: true });
 
     if ('IntersectionObserver' in window) {
       thumbObserver = new IntersectionObserver(function (entries) {
@@ -238,6 +248,8 @@
 
   function renderList() {
     if (!panelEl) return;
+    // 列表重建后行内 "..." 锚点已失效，收起可能开着的菜单
+    hideMenu();
     var nodes = getNodes();
     renderTypeOptions(nodes);
 
@@ -297,7 +309,7 @@
         '</div>' +
         '<div class="nap-item-actions">' +
           '<button type="button" class="nap-icon-btn nap-locate" title="' + esc(tr('node_asset_locate', '定位节点')) + '" aria-label="' + esc(tr('node_asset_locate', '定位节点')) + '">' + ICON_LOCATE + '</button>' +
-          '<button type="button" class="nap-icon-btn nap-delete" title="' + esc(tr('node_asset_delete', '删除节点')) + '" aria-label="' + esc(tr('node_asset_delete', '删除节点')) + '">' + ICON_TRASH + '</button>' +
+          '<button type="button" class="nap-icon-btn nap-more" title="' + esc(tr('node_asset_more', '更多')) + '" aria-label="' + esc(tr('node_asset_more', '更多')) + '">' + ICON_MORE + '</button>' +
         '</div>' +
       '</div>'
     );
@@ -363,6 +375,7 @@
 
   function closePanel() {
     if (!panelEl) return;
+    hideMenu();
     panelEl.classList.remove('open');
     panelEl.setAttribute('aria-hidden', 'true');
     syncEntryBtn(false);
@@ -401,6 +414,105 @@
     }
   }
 
+  // ============ 更多菜单（下载 / 删除） ============
+  // 单例菜单挂 document.body（参考 canvas_context_menu.js），避免被面板
+  // overflow 裁剪；打开时记录目标节点 id，点击菜单项时对 state.nodes 重新解析节点。
+
+  function ensureMenu() {
+    if (menuEl) return menuEl;
+    menuEl = document.createElement('div');
+    menuEl.className = 'nap-menu';
+    menuEl.innerHTML =
+      '<div class="nap-menu-item" data-action="download">' + ICON_DOWNLOAD +
+        '<span>' + esc(tr('node_asset_menu_download', '下载')) + '</span></div>' +
+      '<div class="nap-menu-item nap-menu-danger" data-action="delete">' + ICON_TRASH +
+        '<span>' + esc(tr('node_asset_menu_delete', '删除')) + '</span></div>';
+    document.body.appendChild(menuEl);
+
+    menuEl.addEventListener('click', function (e) {
+      var item = e.target.closest('.nap-menu-item');
+      if (!item) return;
+      var node = getNodes().find(function (n) { return n.id === menuNodeId; });
+      hideMenu();
+      if (!node) return;
+      if (item.dataset.action === 'download') downloadNodeAsset(node);
+      else if (item.dataset.action === 'delete') deleteNodeWithConfirm(node);
+    });
+    return menuEl;
+  }
+
+  function toggleMenu(node, anchorBtn) {
+    if (menuEl && menuEl.classList.contains('show') && menuNodeId === node.id) {
+      hideMenu();
+      return;
+    }
+    var menu = ensureMenu();
+    menuNodeId = node.id;
+    menu.classList.add('show');
+    var rect = anchorBtn.getBoundingClientRect();
+    var menuRect = menu.getBoundingClientRect();
+    // 右对齐 "..." 按钮；下方放不下时翻到按钮上方
+    var left = rect.right - menuRect.width;
+    var top = rect.bottom + 4;
+    if (top + menuRect.height > window.innerHeight - 8) {
+      top = rect.top - menuRect.height - 4;
+    }
+    menu.style.left = Math.max(4, left) + 'px';
+    menu.style.top = Math.max(8, top) + 'px';
+  }
+
+  function hideMenu() {
+    if (menuEl) menuEl.classList.remove('show');
+    menuNodeId = null;
+  }
+
+  // 下载节点资产：有媒体文件（图片/视频，音频节点取 data.url）走 downloadWithAuth
+  // 服务端重签名通道（带 Authorization 头，跨域 302 不丢 download 属性）；剧本节点
+  // 回退导出剧本文本为 .txt；其余无文件节点提示不可下载。
+  function downloadNodeAsset(node) {
+    var title = sanitizeFilename(node.title) || ('node_' + node.id);
+    var d = node.data || {};
+    var thumb = getNodeThumb(node);
+    var mediaUrl = thumb.url || (node.type === 'audio' ? String(d.url || '') : '');
+    if (mediaUrl) {
+      if (typeof window.downloadWithAuth !== 'function') return;
+      var kind = thumb.url ? thumb.kind : 'audio';
+      var ext = extFromUrl(mediaUrl) || (kind === 'video' ? 'mp4' : kind === 'audio' ? 'mp3' : 'png');
+      var target = typeof window.unwrapMediaUrl === 'function' ? window.unwrapMediaUrl(mediaUrl) : mediaUrl;
+      window.downloadWithAuth(target, title + '.' + ext).catch(function (err) {
+        if (typeof showToast === 'function') {
+          showToast((err && err.message) || tr('node_asset_download_failed', '下载失败'), 'error');
+        }
+      });
+      return;
+    }
+    var text = typeof d.scriptContent === 'string' ? d.scriptContent.trim() : '';
+    if (text) {
+      var blobUrl = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+      // downloadWithAuth 对 blob: 链接直接 a[download] 触发保存，不发网络请求
+      window.downloadWithAuth(blobUrl, title + '.txt');
+      setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 1000);
+      return;
+    }
+    if (typeof showToast === 'function') {
+      showToast(tr('node_asset_download_no_file', '该节点没有可下载的文件'), 'info');
+    }
+  }
+
+  function sanitizeFilename(name) {
+    return String(name == null ? '' : name)
+      .replace(/[\\/:*?"<>|\r\n]+/g, '_')
+      .trim()
+      .slice(0, 80);
+  }
+
+  function extFromUrl(url) {
+    var path = String(url || '').split('#')[0].split('?')[0];
+    var m = /\.([A-Za-z0-9]{1,5})$/.exec(path);
+    return m ? m[1].toLowerCase() : '';
+  }
+
+
   // ============ 画布联动刷新 ============
   // 只监听画布子节点增删（.node 挂载/移除），覆盖所有节点创建与工作流重载路径
 
@@ -436,8 +548,18 @@
     if (!btn) return;
     btn.addEventListener('click', togglePanel);
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && isPanelOpen()) closePanel();
+      if (e.key !== 'Escape') return;
+      // 优先收起更多菜单，再关闭面板
+      if (menuEl && menuEl.classList.contains('show')) { hideMenu(); return; }
+      if (isPanelOpen()) closePanel();
     });
+    // 点击菜单外（且非 "..." 按钮本身，其由 click 事件 toggle）/ 缩放视口时收起菜单
+    document.addEventListener('mousedown', function (e) {
+      if (!menuEl || !menuEl.classList.contains('show')) return;
+      if (e.target.closest && (e.target.closest('.nap-menu') || e.target.closest('.nap-more'))) return;
+      hideMenu();
+    }, true);
+    window.addEventListener('resize', hideMenu);
   }
 
   if (document.readyState === 'loading') {
