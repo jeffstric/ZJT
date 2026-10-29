@@ -6,7 +6,11 @@ RunningHub 视频高清修复驱动
 参数注入节点：
   - 视频       → nodeId 46  fieldName=video（VHS 加载，传上传后的 fileName 或公网 URL）
   - 模型切换   → nodeId 108 fieldName=select（"1"）
-  - 最大分辨率 → nodeId 112 fieldName=value（1920，不建议超过）
+  - 最大分辨率 → nodeId 112 fieldName=value（用户可选，白名单外回落 schema default）
+
+用户可选参数由 VIDEO_ENHANCE_PARAMS_SCHEMA（config/unified_config.py）定义：
+透传到 extra_config["params"]，驱动按 schema 逐项校验（不信任库数据，
+非法值回落 default）后经 node_id/field_name 映射到节点值。
 
 算力：按视频秒数 4-15 档计费，为 MiniMax H3 梯度的 2 倍
 （表 VIDEO_ENHANCE_COMPUTING_POWER；档位由提交端点 ffprobe 探测后落库 duration）。
@@ -14,15 +18,20 @@ RunningHub 视频高清修复驱动
 状态查询：v2 提交的任务用 v1 /task/openapi/status + /task/openapi/outputs 轮询
 （与视频去水印一致，两端点同任务池已验证）。
 """
-from typing import Any, Dict, List, Optional
+import json
 import traceback
+from typing import Any, Dict, List, Optional
 
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
 )
-from config.unified_config import TaskTypeId, VIDEO_ENHANCE_COMPUTING_POWER
+from config.unified_config import (
+    TaskTypeId,
+    VIDEO_ENHANCE_COMPUTING_POWER,
+    VIDEO_ENHANCE_PARAMS_SCHEMA,
+)
 from utils.file_storage import RunningHubFileStorage
 from utils.runninghub_error import is_upstream_congested_error
 from utils.sentry_util import AlertLevel, SentryUtil
@@ -36,6 +45,7 @@ VIDEO_ENHANCE_VIDEO_NODE_ID = '46'
 VIDEO_ENHANCE_MODEL_SWITCH_NODE_ID = '108'
 VIDEO_ENHANCE_MODEL_SWITCH_VALUE = '1'
 VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID = '112'
+# 最大分辨率缺省回落值；用户可选值由 VIDEO_ENHANCE_PARAMS_SCHEMA 定义（unified_config）
 VIDEO_ENHANCE_MAX_RESOLUTION_VALUE = '1920'
 # default=24G 显存 / plus=48G / ultra=84G。SeedVR2 视频超分实测 default 必爆显存
 # （torch.OutOfMemoryError，2026-10-28 任务 2115435158520954881），须用 plus（48G）
@@ -104,6 +114,45 @@ class VideoEnhanceRunninghubV1Driver(BaseVideoDriver):
             self.logger.warning("视频高清修复收到多个视频，仅使用第一个")
         return parts[0]
 
+    def _parse_extra_config(self, ai_tool) -> Dict[str, Any]:
+        """解析 ai_tools.extra_config（兼容 JSON 字符串与字典；解析失败按空处理）。"""
+        raw = getattr(ai_tool, "extra_config", None)
+        if not raw:
+            return {}
+        try:
+            config = raw if isinstance(raw, dict) else json.loads(raw)
+            return config if isinstance(config, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            self.logger.warning(f"无法解析 extra_config: {raw}")
+            return {}
+
+    def _resolve_schema_params(self, ai_tool) -> Dict[str, str]:
+        """按 VIDEO_ENHANCE_PARAMS_SCHEMA 逐项解析用户参数（列表驱动，不信任库数据）。
+
+        缺省回落 schema default；值不在 options 白名单内的非法值告警后回落 default。
+        """
+        raw_params = self._parse_extra_config(ai_tool).get("params") or {}
+        if not isinstance(raw_params, dict):
+            self.logger.warning(f"extra_config.params 不是对象，忽略: {raw_params}")
+            raw_params = {}
+        resolved: Dict[str, str] = {}
+        for item in VIDEO_ENHANCE_PARAMS_SCHEMA:
+            key = item.get("key")
+            default = item.get("default")
+            value = raw_params.get(key, default)
+            allowed = {
+                opt.get("value") for opt in item.get("options", []) if isinstance(opt, dict)
+            }
+            if value not in allowed:
+                if value != default:
+                    self.logger.warning(
+                        f"视频高清修复参数 {key}={value} 不在白名单 {sorted(allowed)}，"
+                        f"回落 default={default}"
+                    )
+                value = default
+            resolved[key] = value
+        return resolved
+
     async def _upload_video(self, video_path: str) -> str:
         self.logger.info(f"准备上传视频到 RunningHub: {video_path}")
         result = await self._storage.upload_file("", video_path)
@@ -146,6 +195,7 @@ class VideoEnhanceRunninghubV1Driver(BaseVideoDriver):
     async def build_create_request(self, ai_tool) -> Dict[str, Any]:
         video_path = self._resolve_video_path(getattr(ai_tool, "video_path", None))
         duration = self._resolve_duration(getattr(ai_tool, "duration", None))
+        schema_params = self._resolve_schema_params(ai_tool)
         uploaded_video = await self._upload_video(video_path)
 
         node_info_list = [
@@ -164,11 +214,16 @@ class VideoEnhanceRunninghubV1Driver(BaseVideoDriver):
             {
                 "nodeId": VIDEO_ENHANCE_MAX_RESOLUTION_NODE_ID,
                 "fieldName": "value",
-                "fieldValue": VIDEO_ENHANCE_MAX_RESOLUTION_VALUE,
+                "fieldValue": schema_params.get(
+                    "max_resolution", VIDEO_ENHANCE_MAX_RESOLUTION_VALUE
+                ),
                 "description": "最大分辨率",
             },
         ]
-        self.logger.info(f"视频高清修复请求参数: duration={duration}s 档")
+        self.logger.info(
+            f"视频高清修复请求参数: duration={duration}s 档, "
+            f"max_resolution={schema_params.get('max_resolution')}"
+        )
         return {
             "url": f"{self._host}/openapi/v2/run/ai-app/{self._webapp_id}",
             "method": "POST",

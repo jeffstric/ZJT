@@ -202,6 +202,61 @@ VIDEO_ENHANCE_COMPUTING_POWER = {
     seconds: power * 2 for seconds, power in MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER.items()
 }
 
+# AI 视频高清修复「用户可选参数」schema（配置驱动，前端按此渲染参数表单）。
+# 这是参数的唯一事实来源：
+# - GET /api/system/task-configs 把它挂在 video_enhance 任务配置的 params_schema 字段透出；
+# - /api/video-enhance 的 params 字段按它校验（validate_video_enhance_params，非法即拒绝）；
+# - video_enhance_runninghub_v1 驱动按 node_id/field_name 把值映射进 RunningHub 节点。
+# 新增参数：只需在下方列表加一项（key/label/type/options/default + node_id/field_name），
+# 前端表单、接口校验、驱动映射即自动生效。node 108（模型）与 instanceType 不开放：
+# 108 合法值未确认；plus 是 2026-10-28 SeedVR2 爆显存事故后写死的（见驱动文件注释）。
+VIDEO_ENHANCE_PARAMS_SCHEMA = [
+    {
+        "key": "max_resolution",
+        "label": "最大输出分辨率",
+        "type": "select",
+        "options": [
+            {"value": "720", "label": "720P"},
+            {"value": "1080", "label": "1080P"},
+            {"value": "1440", "label": "1440P"},
+            {"value": "1920", "label": "1920P"},
+        ],
+        "default": "1920",
+        # 映射到 RunningHub 节点
+        "node_id": "112",
+        "field_name": "value",
+    },
+]
+
+
+def validate_video_enhance_params(raw_params: Dict[str, Any]) -> Dict[str, str]:
+    """按 VIDEO_ENHANCE_PARAMS_SCHEMA 校验接口透传的用户参数（非法即拒绝）。
+
+    Args:
+        raw_params: 接口解析 params JSON 后的对象
+
+    Raises:
+        ValueError: 参数名不在 schema 中，或值不在 options 白名单中
+
+    Returns:
+        校验通过的 {key: str(value)}；只含实际提交的合法项，不补默认值
+        （缺省回落 schema default 由驱动侧完成，库数据保持干净）
+    """
+    if not isinstance(raw_params, dict):
+        raise ValueError('params 必须是 JSON 对象，如 {"max_resolution":"1080"}')
+    schema_by_key = {item["key"]: item for item in VIDEO_ENHANCE_PARAMS_SCHEMA}
+    validated: Dict[str, str] = {}
+    for key, value in raw_params.items():
+        item = schema_by_key.get(key)
+        if item is None:
+            allowed_keys = sorted(schema_by_key)
+            raise ValueError(f"不支持的参数: {key}（可选: {allowed_keys}）")
+        allowed = [opt["value"] for opt in item.get("options", [])]
+        if value not in allowed:
+            raise ValueError(f"参数 {key} 的值不合法: {value}（可选: {allowed}）")
+        validated[key] = str(value)
+    return validated
+
 # Seedance 2.0 Fast / Mini 仅支持 480P / 720P（不支持 1080P）
 SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS = [
     {'value': VideoResolution.P480, 'label': VideoResolution.P480},
@@ -580,6 +635,10 @@ class UnifiedTaskConfig:
     # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
     supports_voice_input: bool = False
 
+    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA。
+    # 非空时在 to_frontend_dict 中作为 params_schema 透出，接口/驱动按此校验与映射。
+    params_schema: List[Dict[str, Any]] = field(default_factory=list)
+
     def get_model_name(self) -> str:
         """获取统一的用户可见模型名。
 
@@ -781,6 +840,10 @@ class UnifiedTaskConfig:
 
         # 是否允许营销视频克隆（单一事实来源：VIDEO_CLONE_DRIVER_KEYS）
         result['supports_video_clone'] = self.key in VIDEO_CLONE_DRIVER_KEYS
+
+        # 用户可选参数 schema（非空才下发；前端据此动态渲染参数表单）
+        if self.params_schema:
+            result['params_schema'] = self.params_schema
 
         # 添加算力修饰符
         if self.power_modifiers:
@@ -3324,6 +3387,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_durations=sorted(VIDEO_ENHANCE_COMPUTING_POWER),
         default_duration=5,
         sort_order=51,
+        # 用户可选参数 schema（唯一事实来源在模块顶部，见 VIDEO_ENHANCE_PARAMS_SCHEMA）
+        params_schema=VIDEO_ENHANCE_PARAMS_SCHEMA,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.VIDEO_WATERMARK_REMOVE,

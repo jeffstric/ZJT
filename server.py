@@ -45,7 +45,12 @@ import uuid
 from PIL import Image
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
-from config.unified_config import UnifiedConfigRegistry, get_implementation_id, get_implementation_name
+from config.unified_config import (
+    UnifiedConfigRegistry,
+    get_implementation_id,
+    get_implementation_name,
+    validate_video_enhance_params,
+)
 from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
@@ -4738,6 +4743,7 @@ async def video_enhance(
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
     enhance_type: int = Form(5, description="（已废弃，仅兼容旧调用）任务来源：5-直接上传，6-从其他任务生成"),
+    params: Optional[str] = Form(None, description='用户可选参数（JSON 字符串，如 {"max_resolution":"1080"}），合法 key 与取值见 task-configs 的 params_schema'),
 ):
     """
     提交视频高清修复任务。只落库并入队，RunningHub 上传与 OpenAPI v2 提交由
@@ -4853,6 +4859,20 @@ async def video_enhance(
         # ===== 4. 落库并入队（上传与 v2 提交由驱动在调度进程完成）=====
         # type 统一 TaskTypeId.VIDEO_ENHANCE；旧 enhance_type 5/6 仅保留为来源标记
         extra_config = {"source": "history" if int(enhance_type) == 6 else "direct"}
+        # 用户可选参数：按 schema 校验（未知 key / 白名单外取值直接 400，不静默丢弃）；
+        # 不传则不落 params，驱动侧缺省回落 schema default（库数据保持干净）
+        if params is not None and str(params).strip():
+            try:
+                raw_params = json.loads(params)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"params 必须是 JSON 字符串，如 {{\"max_resolution\":\"1080\"}}: {exc}",
+                ) from exc
+            try:
+                extra_config["params"] = validate_video_enhance_params(raw_params)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=f"params 校验失败: {exc}") from exc
         impl_id = get_implementation_id(actual_impl) if actual_impl else 0
         ai_tool_id = await asyncio.to_thread(
             AIToolsModel.create,
