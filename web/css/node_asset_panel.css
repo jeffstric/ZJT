@@ -3,16 +3,49 @@
  * 配色全部走 video_workflow.css 的主题变量，浅色/暗色（html.theme-dark）自动适配。
  */
 
-/* ---- 入口按钮 ---- */
-.node-asset-btn{
-  display: inline-flex;
+/* ---- 入口按钮：左下角小地图正上方横条 ---- */
+.minimap-asset-entry{
+  position: absolute;
+  left: 12px;
+  bottom: 140px;   /* minimap 高 120 + bottom 12 + 间距 8 */
+  width: 180px;    /* 与 minimap 同宽对齐 */
+  height: 32px;
+  display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 14px;
-  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 40;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.node-asset-btn svg{
+.minimap-asset-entry svg{
   flex-shrink: 0;
+}
+.minimap-asset-entry:hover{
+  background: var(--panel);
+}
+.minimap-asset-entry.active{
+  border-color: var(--primary);
+  color: var(--primary-text);
+  background: var(--primary-light);
+}
+
+/* 引导锁定期间禁点（与 .minimap 同批规则） */
+body.tour-location-locked .minimap-asset-entry,
+body.tour-character-locked .minimap-asset-entry,
+body.tour-script-locked .minimap-asset-entry,
+body.tour-script-input-locked .minimap-asset-entry,
+body.tour-split-shots-locked .minimap-asset-entry,
+body.tour-generate-storyboard-locked .minimap-asset-entry,
+body.tour-generate-video-locked .minimap-asset-entry{
+  pointer-events: none;
 }
 
 /* ---- 面板主体 ---- */

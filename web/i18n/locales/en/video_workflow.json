@@ -1050,5 +1050,9 @@
   "node_asset_delete": "Delete node",
   "node_asset_delete_confirm": "Delete this node? This cannot be undone.",
   "node_asset_refresh": "Refresh list",
-  "node_asset_close": "Close"
+  "node_asset_close": "Close",
+  "zoom_fit": "Fit to Screen",
+  "zoom_to_50": "Zoom to 50%",
+  "zoom_to_100": "Zoom to 100%",
+  "zoom_to_200": "Zoom to 200%"
 }

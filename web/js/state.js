@@ -170,8 +170,6 @@
     const connectionsSvg = document.getElementById('connectionsSvg');
     const ratioSelectEl = document.getElementById('ratioSelect');
     const connDeleteBtn = document.getElementById('connDeleteBtn');
-    const zoomInBtn = document.getElementById('zoomInBtn');
-    const zoomOutBtn = document.getElementById('zoomOutBtn');
     const zoomLevelEl = document.getElementById('zoomLevel');
     const minimap = document.getElementById('minimap');
     const minimapContent = document.getElementById('minimapContent');

@@ -346,10 +346,16 @@
 
   // ============ 交互 ============
 
+  function syncEntryBtn(active) {
+    var btn = document.getElementById('nodeAssetPanelBtn');
+    if (btn) btn.classList.toggle('active', active);
+  }
+
   function openPanel() {
     ensurePanel();
     panelEl.classList.add('open');
     panelEl.setAttribute('aria-hidden', 'false');
+    syncEntryBtn(true);
     renderList();
     observeCanvas();
     searchInput.focus();
@@ -359,6 +365,7 @@
     if (!panelEl) return;
     panelEl.classList.remove('open');
     panelEl.setAttribute('aria-hidden', 'true');
+    syncEntryBtn(false);
     activeRowId = null;
     stopObservingCanvas();
     if (thumbObserver) thumbObserver.disconnect();

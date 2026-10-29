@@ -2,13 +2,13 @@
 
 ## 概述
 
-节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与删除，底部实时统计节点总数。入口为画布右上工具条的「资产管理」按钮。
+节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与删除，底部实时统计节点总数。入口为画布左下角小地图上方的「资产管理」按钮。
 
 纯前端能力：数据只读自 `state.nodes`（页面内存），不发起任何网络请求；节点缩略图复用节点自身的资源 URL。
 
 ## 入口
 
-画布右上工具条（保存 / 画风 / 快捷键 同排）→「资产管理」按钮（`#nodeAssetPanelBtn`）。
+画布左下角，小地图（minimap）正上方的「资产管理」横条按钮（`#nodeAssetPanelBtn`，与小地图同宽对齐）。
 
 - 点击开合面板（toggle），`Esc` 也可关闭。
 - 面板为画布左侧悬浮抽屉（`.node-asset-panel`），打开期间不阻塞画布操作。
@@ -49,8 +49,8 @@
 | 文件 | 职责 |
 |------|------|
 | `web/js/node_asset_panel.js` | 面板骨架（首次打开动态创建，降低主 HTML 体积）、列表渲染、过滤排序、定位/删除交互、画布联动 |
-| `web/css/node_asset_panel.css` | 面板样式；配色全部走 `video_workflow.css` 的主题变量，浅色/暗色（`html.theme-dark`）自动适配 |
-| `web/video_workflow.html` | 右上工具条入口按钮 + CSS/JS 引用 |
+| `web/css/node_asset_panel.css` | 入口按钮与面板样式；配色全部走 `video_workflow.css` 的主题变量，浅色/暗色（`html.theme-dark`）自动适配 |
+| `web/video_workflow.html` | 左下角入口按钮 + CSS/JS 引用 |
 | `web/i18n/locales/*/video_workflow.json` | `node_asset_*` 词条 |
 
 关键设计：
