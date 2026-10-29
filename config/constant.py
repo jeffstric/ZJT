@@ -673,6 +673,10 @@ SEEDANCE_R2V_AUDIO_TRIM_TIMEOUT = 30
 H3_PROMPT_OPTIMIZE_TIMEOUT = 90
 H3_PROMPT_OPTIMIZE_MAX_TOKENS = 4096
 H3_PROMPT_OPTIMIZE_TEMPERATURE = 0.3
+# 优化调用注入参考图的防御上限（与 MiniMax H3 参考生 max_multi_ref_images=9 对齐）。
+# 提交侧驱动同样按 9 截断，两侧一致保证 <picture_N> 与第 N 张参考图对应不错位。
+# DeepSeek 视觉计量每张 ≤1024 token（服务端自动缩放），9 张最坏 ~9K token。
+H3_PROMPT_OPTIMIZE_MAX_IMAGES = 9
 H3_PROMPT_OPTIMIZE_VARIANT_I2VA = "I2VA"
 H3_PROMPT_OPTIMIZE_VARIANT_FL2VA = "FL2VA"
 # 全参考（多参考图/参考视频/参考音频）生视频的提示词变体，对应官方 ref-en.txt 六段格式

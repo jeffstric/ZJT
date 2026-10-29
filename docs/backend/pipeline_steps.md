@@ -123,7 +123,9 @@ Pipeline Steps（流水线步骤）是 `ai_tools` 处理流程的扩展机制，
 
 **对白反幻觉（防 LLM 虚构台词）**：与上条对偶——原文**没有**引号台词时，user message 追加禁止虚构提示：只有原文明确写出的话语才能进入 `<d>`，严禁编造对白/歌词或"角色开口说话"的行为；音色参考仅约束开口时的音色，不代表必须说话，无台词则输出不得出现 `<d>` 标签。两个模板的详细描述规范同步写明该规则。背景：线上事故 ai_tools 231（2026-09-20），原文仅写"音频1是李卫国的音色样本，角色说话时请保持相同音色"，Ref2VA 模板 few-shot 示例（音色参考+角色说台词）诱导 deepseek-v4-flash 编造 `<d>[Chinese] 早上好，新的一天开始了。</d>` 并提交上游，成片角色凭空开口。
 
-**模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ JIEKOU 在线模型 `gemini-3.5-flash`（最终兜底；2026-08 剧本拆分默认模型切 `deepseek-v4-flash` 后与 ② 重复，故独立为在线模型）。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。
+**模型回退链**：所用聊天模型按优先级选取，每步校验 api_key 是否已配置，首个可用者胜出：① 故事板步骤参数中的对话模型 → ② `pipeline.h3_prompt_optimize_model`（默认 `deepseek-v4-flash`）→ ③ JIEKOU 在线模型 `gemini-3.5-flash`（最终兜底；2026-08 剧本拆分默认模型切 `deepseek-v4-flash` 后与 ② 重复，故独立为在线模型）。独立图生视频入口无故事板上下文，跳过第 ① 步。全部未配置则直接回退原文，不发起必败调用。**多模态口径（注入参考图时）**：先按 `require_vl=True` 走同一优先链，每级候选额外要求 model 表 `supports_vl=1` 且启用（`ModelModel.get_by_name` 只查 enabled=1）——防止把图片发给纯文本模型（400 或静默忽略图片继续臆测）；无可用 VL 模型时丢弃图片按原口径（require_vl=False）重走一遍退纯文本，纯文本优先级不变。
+
+**参考图多模态注入（防外观臆测）**：优化调用默认把任务的参考图随 user message 一起发给 VL 模型（Ref2VA/KFRef 取 `reference_images`，I2VA/FL2VA 取 `image_path` 前两张；上限 `H3_PROMPT_OPTIMIZE_MAX_IMAGES=9`，与提交侧 `max_multi_ref_images` 对齐）。图片经 `try_map_url_to_local_file` 映射本地（不下载外部图）+ `compress_local_image_to_base64(max_pixels=250_000)`（与 expert_agent 注入口径一致，DeepSeek 视觉计量每张 ≤1024 token）后以 `image_url` data URL 附在文本之后；指令同步追加防幻觉说明：subject_definitions 的外观描述必须逐项忠于对应 `<picture_N>` 的实际内容，文字与图片冲突时一律以图片为准。**任一张图映射/加载/压缩失败即整体退纯文本**（部分注入会让 `<picture_N>` 与提交给视频模型的第 N 张参考图错位）；防御性截断时 `ref_counts.images` 随实际注入数修正。实际注入张数落库 `extra_config.h3_prompt_optimize.used_reference_images`（null=旧任务，0=纯文本优化）。背景：2026-10-29 会话 5d72a44f（ai_tool 13059），纯文本优化凭"蓝色乌灵胶囊"字面把参考图角色臆测成 "round blue-and-white creature"，该文字定义压过参考图，成片角色与资产库形象完全不符。未跑 no_159 迁移（deepseek-v4-flash supports_vl=0）的环境无可用 VL 候选，自动退纯文本，行为与旧版一致，部署顺序无要求。
 
 **超时**：`H3_PROMPT_OPTIMIZE_TIMEOUT=90s`，同时作为外层 `wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）；重试 1 次，最坏约 180s 后回退原文。
 

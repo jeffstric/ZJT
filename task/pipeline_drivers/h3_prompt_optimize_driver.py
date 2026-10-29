@@ -22,7 +22,8 @@ from config.constant import (
 from model import AITool, PipelineStep
 from task.pipeline_drivers.base_pipeline_driver import BasePipelineDriver
 from task.pipeline_drivers.h3_prompt_optimize_util import (
-    build_h3_optimize_user_message,
+    build_h3_optimize_user_content,
+    collect_h3_optimize_image_data_urls,
     has_quoted_dialogue,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
@@ -40,6 +41,21 @@ _SYSTEM_PROMPT = (
     "banners, subtitles) is quoted in English double quotes inside the description, "
     "never inside <d>. Do not add explanations or markdown fences."
 )
+
+
+def _model_supports_vl(model_name: str) -> bool:
+    """model 表是否标记为视觉模型（supports_vl=1 且 enabled=1）。
+
+    多模态调用的候选过滤：把图片发给纯文本模型会 400 或被静默忽略
+    （图片丢失后 LLM 继续凭文字臆测外观，等于白改）。查库失败按 False
+    处理——宁可退纯文本，不把图发给能力未知的模型。
+    """
+    try:
+        from model.model import ModelModel
+        record = ModelModel.get_by_name(model_name)
+        return bool(record and int(getattr(record, "supports_vl", 0) or 0) == 1)
+    except Exception:
+        return False
 
 
 class H3PromptOptimizePipelineDriver(BasePipelineDriver):
@@ -66,13 +82,27 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         except (TypeError, ValueError):
             duration = 5.0
 
-        optimized, fallback, error, dialogue_flag = await self._optimize(original, variant, duration, params)
+        # 收集参考图（本地映射 + 压缩为 base64；同步 IO 放线程池）。任一张失败
+        # 整体返回 []，回退纯文本优化（现状行为），不阻断出片。
+        image_data_urls = await asyncio.to_thread(
+            collect_h3_optimize_image_data_urls, ai_tool, variant
+        )
+        if image_data_urls:
+            self.logger.info(
+                "H3 prompt optimize injecting %d reference image(s) for ai_tool %s",
+                len(image_data_urls), getattr(ai_tool, "id", "?"),
+            )
+
+        optimized, fallback, error, dialogue_flag = await self._optimize(
+            original, variant, duration, params, image_data_urls
+        )
         result_data = {
             "original_prompt": original,
             "optimized_prompt": optimized,
             "variant": variant,
             "fallback": fallback,
             "has_dialogue": dialogue_flag,
+            "used_reference_images": len(image_data_urls),
             "error": error,
         }
         # 直接写回，避免阶段完成先把任务打回 PENDING、apply_results 尚未执行就提交。
@@ -86,6 +116,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                 variant=variant,
                 fallback=fallback,
                 has_dialogue=dialogue_flag,
+                used_reference_images=len(image_data_urls),
             )
             await asyncio.to_thread(
                 AIToolsModel.update,
@@ -106,6 +137,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         variant: str,
         duration: float,
         step_params: Dict[str, Any],
+        image_data_urls: Optional[List[str]] = None,
     ) -> Tuple[str, bool, Optional[str], Optional[bool]]:
         """返回 (optimized, fallback, error, has_dialogue)。
 
@@ -129,7 +161,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         last_flag: Optional[bool] = None
         for _ in range(2):
             try:
-                raw = await self._call_llm(original, variant, duration, step_params)
+                raw = await self._call_llm(original, variant, duration, step_params, image_data_urls)
                 has_dialogue: Optional[bool] = None
                 if uses_dialogue_header:
                     cleaned, has_dialogue = parse_h3_optimize_kfref_output(raw)
@@ -165,10 +197,27 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         self.logger.warning("H3 prompt optimize fallback to original: %s", last_error)
         return original, True, last_error, last_flag
 
-    async def _call_llm(self, original: str, variant: str, duration: float, step_params: Dict[str, Any]) -> str:
+    async def _call_llm(
+        self,
+        original: str,
+        variant: str,
+        duration: float,
+        step_params: Dict[str, Any],
+        image_data_urls: Optional[List[str]] = None,
+    ) -> str:
+        images = [str(url) for url in (image_data_urls or []) if url]
         # 模型解析内部有同步查库（get_dynamic_config_value / VendorDAO.get_by_id），
-        # 放线程池执行，避免阻塞事件循环
-        model, vendor_id = await asyncio.to_thread(self.resolve_h3_optimize_model, step_params)
+        # 放线程池执行，避免阻塞事件循环。有图时先按 VL 能力过滤（supports_vl=1），
+        # 无可用 VL 模型再按原口径解析并丢弃图片退纯文本——未跑 no_159 迁移的
+        # 环境行为与现状一致。
+        model, vendor_id = await asyncio.to_thread(
+            self.resolve_h3_optimize_model, step_params, bool(images)
+        )
+        if not model and images:
+            images = []
+            model, vendor_id = await asyncio.to_thread(
+                self.resolve_h3_optimize_model, step_params, False
+            )
         if not model:
             # 所有候选模型均未配置 api_key：直接抛错，由 _optimize 回退原文，避免必败空跑。
             raise RuntimeError("no llm configured for H3 prompt optimize (all candidates missing api_key)")
@@ -186,13 +235,14 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
             )
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": build_h3_optimize_user_message(
+            {"role": "user", "content": build_h3_optimize_user_content(
                 original,
                 variant,
                 duration,
                 ref_counts=step_params.get("ref_counts"),
                 keyframe_slots=step_params.get("keyframe_slots"),
                 image_prompt_note=str(step_params.get("image_prompt_note") or ""),
+                image_data_urls=images,
             )},
         ]
 
@@ -221,7 +271,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
         return str(content)
 
     @staticmethod
-    def resolve_h3_optimize_model(step_params: Optional[Dict[str, Any]]) -> Tuple[Optional[str], Optional[int]]:
+    def resolve_h3_optimize_model(
+        step_params: Optional[Dict[str, Any]], require_vl: bool = False
+    ) -> Tuple[Optional[str], Optional[int]]:
         """按优先级返回首个已配置密钥的 (model, vendor_id)，全未配置返回 (None, None)。
 
         优先级：
@@ -232,6 +284,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
              会被 seen 去重失效，故改独立在线模型保留"deepseek 未配置时仍有可用 LLM"的兜底能力）
 
         每步用 is_llm_client_configured 校验 api_key，避免对未配置供应商发起必败调用。
+        require_vl=True 时额外要求 model 表 supports_vl=1 且启用（no_159 迁移把
+        deepseek-v4-flash 置为 VL）：多模态调用防止把图片发给纯文本模型
+        （400 或静默忽略图片继续臆测）。纯文本口径（require_vl=False）优先级不变。
         """
         from llm.llm_client_factory import get_llm_client, is_llm_client_configured
 
@@ -267,6 +322,8 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                 continue
             seen.add(cand_model)
             try:
+                if require_vl and not _model_supports_vl(cand_model):
+                    continue
                 if is_llm_client_configured(get_llm_client(cand_model, vendor_id=cand_vendor_id)):
                     return cand_model, cand_vendor_id
             except Exception:
