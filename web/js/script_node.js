@@ -208,6 +208,13 @@
                 </select>
               </div>
               <div class="field field-always-visible">
+                <label class="script-inline-check" title="${st('script_enable_director_stage_hint', '效果模式下为每镜生成 3D 空间，用于 3D 空间预览与导演台')}" style="cursor: pointer;">
+                  <input type="checkbox" class="script-enable-director-stage" style="cursor: pointer;" />
+                  <span data-i18n="script_enable_director_stage">${st('script_enable_director_stage', '生成 3D 导演台')}</span>
+                </label>
+                <div class="gen-meta script-director-stage-hint" style="margin-top: 4px; font-size: 11px; color: #666;"></div>
+              </div>
+              <div class="field field-always-visible">
                 <div class="label" data-i18n="script_split_model_label">${st('script_split_model_label', '拆分模型')}</div>
                 <select class="script-split-model" style="width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; background: white;">
                   <option value="" data-i18n="script_loading">${st('script_loading', '加载中...')}</option>
@@ -399,6 +406,8 @@
       const noBgMusicEl = el.querySelector('.script-no-bg-music');
       const splitMultiDialogueEl = el.querySelector('.script-split-multi-dialogue');
       const sequenceModeSelectEl = el.querySelector('.script-sequence-mode');
+      const enableDirectorStageEl = el.querySelector('.script-enable-director-stage');
+      const directorStageHintEl = el.querySelector('.script-director-stage-hint');
       const enableSplitQcEl = el.querySelector('.script-enable-split-qc');
       const qcRoundsFieldEl = el.querySelector('.script-qc-rounds-field');
       const qcMaxRoundsSelectEl = el.querySelector('.script-qc-max-rounds');
@@ -1034,6 +1043,21 @@
         }
       }
 
+      // 「生成 3D 导演台」仅效果模式消费（three_scene_code 仅效果模式产出）：
+      // 非效果模式禁用勾选并提示；勾选值持久化在 node.data.enableDirectorStage
+      // （默认关闭，随工作流保存）。
+      function syncDirectorStageUi() {
+        if(!enableDirectorStageEl) return;
+        const quality = (node.data.sequenceMode || 'balanced') === 'quality';
+        enableDirectorStageEl.checked = node.data.enableDirectorStage === true;
+        enableDirectorStageEl.disabled = !quality;
+        if(directorStageHintEl) {
+          directorStageHintEl.textContent = quality
+            ? st('script_director_stage_hint_quality', '效果模式：为每镜生成 3D 空间，用于 3D 空间预览与导演台')
+            : st('script_director_stage_hint_need_quality', '仅效果模式下生效');
+        }
+      }
+
       // 绑定参数分组折叠
       el.querySelectorAll('.script-param-group').forEach((groupEl) => {
         const key = groupEl.dataset.scriptGroup;
@@ -1058,6 +1082,7 @@
 
       if(sequenceModeSelectEl) {
         syncSequenceModeUi();
+        syncDirectorStageUi();
         sequenceModeSelectEl.addEventListener('change', () => {
           const next = sequenceModeSelectEl.value;
           if(next === 'quality' && !isEnterpriseEdition()) {
@@ -1068,6 +1093,18 @@
           if(['speed', 'balanced', 'quality'].includes(next)) {
             node.data.sequenceMode = next;
           }
+          syncDirectorStageUi();
+        });
+      }
+
+      if(enableDirectorStageEl) {
+        enableDirectorStageEl.addEventListener('change', () => {
+          // 仅效果模式消费该开关；非效果模式渲染期已禁用，兜底再拦一次
+          if((node.data.sequenceMode || 'balanced') !== 'quality') {
+            enableDirectorStageEl.checked = node.data.enableDirectorStage === true;
+            return;
+          }
+          node.data.enableDirectorStage = enableDirectorStageEl.checked;
         });
       }
 

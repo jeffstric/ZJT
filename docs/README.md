@@ -426,6 +426,7 @@ AppArmor 修复依旧保留：容器与宿主共享同一内核，`usr.sbin.mysq
 | [Windows启动开发说明.md](Windows启动开发说明.md) | Windows 启动流程详解 |
 | [database_migration.md](database_migration.md) | 数据库迁移指南 |
 | [test_mode_guide.md](test_mode_guide.md) | 测试模式使用指南 |
+| [ci/ai_code_review.md](ci/ai_code_review.md) | MR 流水线大模型代码审查（vLLM jeffS7/jeffS10，失败不阻塞） |
 | [debug_mode.md](debug_mode.md) | Debug 模式说明 |
 | [mysql_startup.md](mysql_startup.md) | MySQL 启动说明 |
 | [bin_path_config.md](bin_path_config.md) | 二进制路径配置 |

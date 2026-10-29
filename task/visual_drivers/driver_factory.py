@@ -808,6 +808,15 @@ def register_all_drivers():
         logger.warning(f"Failed to import VideoWatermarkRunninghubV1Driver: {e}")
 
     try:
+        from .video_enhance_runninghub_v1_driver import VideoEnhanceRunninghubV1Driver
+        VideoDriverFactory.register_driver(
+            DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,
+            VideoEnhanceRunninghubV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import VideoEnhanceRunninghubV1Driver: {e}")
+
+    try:
         from .vidu_default_driver import ViduDefaultDriver
         # 注册 Vidu 默认驱动
         VideoDriverFactory.register_driver(DriverImplementation.VIDU_DEFAULT, ViduDefaultDriver)
@@ -901,6 +910,13 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.QWEN_MULTI_ANGLE_RUNNINGHUB_V1, QwenMultiAngleRunninghubV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import QwenMultiAngleRunninghubV1Driver: {e}")
+
+    try:
+        from .runninghub_ai_app_image_v1_driver import RunninghubAiAppImageV1Driver
+        # 注册 qwenimage2.1（RunningHub AI App 图片 v1，图片编辑 + 文生图）
+        VideoDriverFactory.register_driver(DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1, RunninghubAiAppImageV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import RunninghubAiAppImageV1Driver: {e}")
 
     # Grok 通用聚合站点驱动注册（无条件注册，配置检查在运行时进行）
     try:

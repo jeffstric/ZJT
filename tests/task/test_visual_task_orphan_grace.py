@@ -47,13 +47,13 @@ def _patch_orphan_dependencies(monkeypatch, grace_seconds=300):
 
 
 def test_orphan_reset_skipped_within_grace_window(monkeypatch):
-    """update_time 距今 30s（< 300s 宽限）：不得重置，返回 True 避免重试计数。"""
+    """update_time 距今 30s（< 300s 宽限）：不得重置，返回 IN_FLIGHT 避免重试计数。"""
     updates = _patch_orphan_dependencies(monkeypatch)
     ai_tool = _make_ai_tool(datetime.now() - timedelta(seconds=30))
 
     result = asyncio.run(visual_task._check_task_status(ai_tool))
 
-    assert result is True
+    assert result == visual_task.PROCESS_RESULT_IN_FLIGHT
     assert updates == []
 
 
@@ -64,7 +64,7 @@ def test_orphan_reset_still_fires_after_grace_expires(monkeypatch):
 
     result = asyncio.run(visual_task._check_task_status(ai_tool))
 
-    assert result is True
+    assert result == visual_task.PROCESS_RESULT_IN_FLIGHT
     assert len(updates) == 2  # AIToolsModel.update + TasksModel.update_by_task_id
     assert updates[0][1].get("status") == visual_task.AI_TOOL_STATUS_PENDING
 
@@ -76,7 +76,7 @@ def test_orphan_reset_immediate_when_grace_disabled(monkeypatch):
 
     result = asyncio.run(visual_task._check_task_status(ai_tool))
 
-    assert result is True
+    assert result == visual_task.PROCESS_RESULT_IN_FLIGHT
     assert len(updates) == 2
 
 
@@ -87,5 +87,5 @@ def test_orphan_reset_fires_when_update_time_missing(monkeypatch):
 
     result = asyncio.run(visual_task._check_task_status(ai_tool))
 
-    assert result is True
+    assert result == visual_task.PROCESS_RESULT_IN_FLIGHT
     assert len(updates) == 2

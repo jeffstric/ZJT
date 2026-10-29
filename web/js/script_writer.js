@@ -165,7 +165,37 @@
             const key = `story_type_${normalized}`;
             return window.t ? window.t(key) : (STORY_TYPE_LABELS[normalized] || STORY_TYPE_LABELS.dialogue);
         }
+
+        const ENTITY_NAME_MAX_LENGTH = 200;
+        const INVALID_ENTITY_NAME_CHARS = /[<>:"/\\|?*\x00-\x1F]/;
+
+        function getEntityNameValidationError(name, typeLabel) {
+            const value = String(name ?? '');
+            const trimmed = value.trim();
+            const translate = (key, fallback) => window.t ? window.t(key, { type: typeLabel }) : fallback;
+            if (!trimmed) {
+                return translate('error_entity_name_empty', `${typeLabel}不能为空`);
+            }
+            if (INVALID_ENTITY_NAME_CHARS.test(value)) {
+                return translate('error_entity_name_invalid_chars', `${typeLabel}不能包含 < > : " / \\ | ? * 或控制字符`);
+            }
+            if (value.endsWith(' ') || value.endsWith('.') || trimmed === '.' || trimmed === '..') {
+                return translate('error_entity_name_invalid_ending', `${typeLabel}不能是 . 或 ..，也不能以空格或点号结尾`);
+            }
+            if (trimmed.length > ENTITY_NAME_MAX_LENGTH) {
+                return translate('error_entity_name_too_long', `${typeLabel}不能超过 200 个字符`);
+            }
+            return '';
+        }
+
+        function validateEntityName(name, typeLabel) {
+            const error = getEntityNameValidationError(name, typeLabel);
+            if (error) showError(error);
+            return !error;
+        }
+
         let isCommunityEdition = false;  // 默认为商业版，页面初始化时通过API更新
+        let isSharedSpace = false;  // 是否共享空间模式（/api/edition 返回），仅共享模式下管理员侧栏才展示全部用户世界
         let currentFileType = 'worlds';
         let currentEditFile = { fileType: '', fileName: '' };
         let currentEditWorld = { id: '', name: '', description: '', story_type: 'dialogue' };
@@ -480,12 +510,13 @@
             // 画风识别：初始化模型下拉监听 + 拖放区（区块仅「世界」tab 可见，首次切到时懒加载模型）
             initStyleModelSelectListener();
             initStyleDropZone();
-            // 获取版本信息，用于社区版功能标注（如 Ollama / 画风识别「限时免费」）
+            // 获取版本信息，用于社区版功能标注（如 Ollama / 画风识别「限时免费」）及共享空间判断
             try {
                 const editionResp = await fetch('/api/edition');
                 const editionResult = await editionResp.json();
                 if (editionResult.code === 0 && editionResult.data) {
                     isCommunityEdition = editionResult.data.mode === 'community';
+                    isSharedSpace = editionResult.data.shared_space === true;
                 }
             } catch (e) {
                 isCommunityEdition = true;
@@ -498,6 +529,7 @@
             await loadTextToImageModels();
             await loadComputingPower();
             await loadCurrentUserRole();
+            loadPowerBudgetPreference();
             await loadUserWorlds();
             bindWorldSearchEvents();
             // 加载任务配置（用于多角度图生成）
@@ -545,12 +577,70 @@
                     syncSendBtnLayout();
                 });
 
+                // 发送快捷键：默认 Ctrl+Enter 发送（Enter 换行），
+                // 用户可点击状态栏切换按钮改回 Enter 发送；偏好持久化 localStorage
+                const SEND_SHORTCUT_STORAGE_KEY = 'script_writer_send_shortcut';
+                const sendShortcutI18n = (key, fallback) => {
+                    // ZJTi18n.t 对缺失 key 返回键本身，需显式识别后走 fallback
+                    let value = null;
+                    try {
+                        value = window.ZJTi18n && ZJTi18n.t(key);
+                    } catch (e) {
+                        value = null;
+                    }
+                    return (value && value !== key) ? value : fallback;
+                };
+                const getSendShortcutMode = () =>
+                    localStorage.getItem(SEND_SHORTCUT_STORAGE_KEY) === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+                const applySendShortcutUI = () => {
+                    const mode = getSendShortcutMode();
+                    const toggleBtn = document.getElementById('send-shortcut-toggle');
+                    if (toggleBtn) {
+                        toggleBtn.textContent = mode === 'enter'
+                            ? sendShortcutI18n('send_shortcut_enter', 'Enter 发送')
+                            : sendShortcutI18n('send_shortcut_ctrl_enter', 'Ctrl+Enter 发送');
+                    }
+                    const input = document.getElementById('message-input');
+                    if (input) {
+                        input.placeholder = mode === 'enter'
+                            ? sendShortcutI18n('placeholder_message', '输入消息... (Shift+Enter 换行，Enter 发送)')
+                            : sendShortcutI18n('placeholder_message_ctrl_enter', '输入消息... (Enter 换行，Ctrl+Enter 发送)');
+                    }
+                };
+
                 messageInput.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        sendMessage();
+                    if (e.key !== 'Enter') return;
+                    // Safari 组词确认 Enter：isComposing=false 且 keyCode=229
+                    if (e.isComposing || e.keyCode === 229) return;
+                    const mode = getSendShortcutMode();
+                    if (mode === 'enter') {
+                        // 旧习惯：Enter 发送，Shift+Enter 换行
+                        if (!e.shiftKey) {
+                            e.preventDefault();
+                            sendMessage();
+                        }
+                    } else {
+                        // 默认：Ctrl+Enter / Cmd+Enter（macOS）发送，Enter / Shift+Enter 换行
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            sendMessage();
+                        }
                     }
                 });
+
+                applySendShortcutUI();
+                const shortcutToggleBtn = document.getElementById('send-shortcut-toggle');
+                if (shortcutToggleBtn) {
+                    shortcutToggleBtn.addEventListener('click', () => {
+                        const next = getSendShortcutMode() === 'enter' ? 'ctrl_enter' : 'enter';
+                        localStorage.setItem(SEND_SHORTCUT_STORAGE_KEY, next);
+                        applySendShortcutUI();
+                    });
+                }
+                // 语言切换后刷新按钮与 placeholder 文案
+                if (window.ZJTi18n && typeof ZJTi18n.on === 'function') {
+                    ZJTi18n.on('locale-changed', applySendShortcutUI);
+                }
                 // 首屏：单行居中
                 syncSendBtnLayout();
             }
@@ -2531,6 +2621,153 @@
                 if (powerValue) {
                     powerValue.textContent = '--';
                 }
+            }
+        }
+
+        // ===== 单次任务算力上限（PowerBudget） =====
+        let powerBudgetDefault = null;
+        let powerBudgetIsCustom = false;
+        // 最近一次从服务端成功加载/保存的生效值，保存失败时据此回显输入框
+        let powerBudgetCurrent = null;
+
+        function updatePowerBudgetResetVisibility() {
+            const resetBtn = document.getElementById('power-budget-reset');
+            if (resetBtn) resetBtn.style.display = powerBudgetIsCustom ? '' : 'none';
+        }
+
+        function applyPowerBudgetHint(defaultLimit) {
+            const icon = document.getElementById('power-budget-icon');
+            const input = document.getElementById('power-budget-input');
+            if (!icon && !input) return;
+            const hint = window.t
+                ? window.t('power_budget_hint', { value: defaultLimit ?? '--' })
+                : `单次任务累计消耗达到该上限时自动暂停，发送消息可继续。平台默认 ${defaultLimit ?? '--'}，0 表示不限制`;
+            if (icon) icon.title = hint;
+            if (input) input.title = hint;
+        }
+
+        async function loadPowerBudgetPreference() {
+            try {
+                const response = await fetch('/api/user/power-budget', {
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json();
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                const payload = data?.data || {};
+                const input = document.getElementById('power-budget-input');
+                if (input && typeof payload.limit === 'number') {
+                    input.value = payload.limit;
+                }
+                powerBudgetCurrent = typeof payload.limit === 'number' ? payload.limit : null;
+                powerBudgetDefault = typeof payload.default_limit === 'number' ? payload.default_limit : null;
+                powerBudgetIsCustom = !!payload.is_custom;
+                updatePowerBudgetResetVisibility();
+                applyPowerBudgetHint(powerBudgetDefault);
+            } catch (error) {
+                console.error('加载单次任务算力上限失败:', error);
+            }
+        }
+
+        async function savePowerBudgetLimit(limit) {
+            const response = await fetch('/api/user/power-budget', {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${AUTH_TOKEN}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ limit })
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok) {
+                const detail = data?.detail || data?.error || `HTTP ${response.status}`;
+                const error = new Error(detail);
+                error.status = response.status;
+                error.data = data;
+                throw error;
+            }
+            return data;
+        }
+
+        async function onPowerBudgetChange() {
+            const input = document.getElementById('power-budget-input');
+            if (!input) return;
+            const raw = (input.value || '').trim();
+            // 清空输入框 = 删除自定义偏好，回退平台默认
+            if (raw === '') {
+                await resetPowerBudget();
+                return;
+            }
+            const limit = Number(raw);
+            if (!Number.isInteger(limit) || limit < 0) {
+                showError('⚠ ' + (window.t ? window.t('power_budget_invalid') : '算力上限必须是非负整数（0 表示不限制）'));
+                input.value = powerBudgetCurrent ?? '';
+                return;
+            }
+            try {
+                const data = await savePowerBudgetLimit(limit);
+                if (checkTokenExpired(data)) {
+                    return;
+                }
+                if (data?.code === 0) {
+                    const payload = data.data || {};
+                    powerBudgetIsCustom = !!payload.is_custom;
+                    if (typeof payload.limit === 'number') {
+                        input.value = payload.limit;
+                        powerBudgetCurrent = payload.limit;
+                    }
+                    updatePowerBudgetResetVisibility();
+                    updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
+                } else {
+                    showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
+                    input.value = powerBudgetCurrent ?? '';
+                }
+            } catch (error) {
+                if (error?.status === 401) {
+                    checkTokenExpired(error.data, { status: 401 });
+                    return;
+                }
+                console.error('保存单次任务算力上限失败:', error);
+                const detail = error?.message ? `：${error.message}` : '';
+                showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败') + detail);
+                // 保存失败时回显为上次生效值，避免误以为修改已生效
+                input.value = powerBudgetCurrent ?? '';
+            }
+        }
+
+        async function resetPowerBudget() {
+            const input = document.getElementById('power-budget-input');
+            try {
+                const response = await fetch('/api/user/power-budget', {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${AUTH_TOKEN}`
+                    }
+                });
+                const data = await response.json().catch(() => null);
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
+                if (response.ok && data?.code === 0) {
+                    const payload = data.data || {};
+                    powerBudgetIsCustom = false;
+                    if (input && typeof payload.limit === 'number') {
+                        input.value = payload.limit;
+                        powerBudgetCurrent = payload.limit;
+                    }
+                    updatePowerBudgetResetVisibility();
+                    applyPowerBudgetHint(powerBudgetDefault);
+                    updateStatus('✓ ' + (window.t ? window.t('power_budget_saved') : '已保存本次任务算力上限'));
+                } else {
+                    const detail = data?.detail ? `：${data.detail}` : '';
+                    showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败') + detail);
+                }
+            } catch (error) {
+                console.error('恢复默认算力上限失败:', error);
+                showError('⚠ ' + (window.t ? window.t('power_budget_save_failed') : '保存失败'));
             }
         }
 
@@ -5665,10 +5902,16 @@
                 generateSection.style.display = 'none';
             }
 
-            // 显示/隐藏「重新生成形象图 / 历史形象图」区域（仅角色）
+            // 显示/隐藏「重新生成形象图 / 历史形象图 / 资产库」区域（角色完整功能；道具仅资产库按钮）
             const regenerateSection = document.getElementById('preview-regenerate-section');
             if (regenerateSection) {
-                regenerateSection.style.display = previewImageFileType === 'characters' ? 'block' : 'none';
+                const isCharacter = previewImageFileType === 'characters';
+                const isProp = previewImageFileType === 'props';
+                regenerateSection.style.display = (isCharacter || isProp) ? 'block' : 'none';
+                ['preview-regenerate-image-btn', 'preview-image-history-btn', 'preview-regenerate-status'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = isCharacter ? '' : 'none';
+                });
             }
 
             // 显示/隐藏「设为当前形象图」恢复区（仅角色历史视图；恢复的是当前选中大图）
@@ -5922,6 +6165,7 @@
         function resetPreviewHistoryViewState() {
             previewViewingHistory = false;
             previewCurrentImages = [];
+            resetRestoreStatus();
             const historyBtn = document.getElementById('preview-image-history-btn');
             if (historyBtn) {
                 const label = historyBtn.querySelector('span:last-child');
@@ -5930,9 +6174,24 @@
             }
         }
 
+        // 「设为当前形象图」状态文案复位：上次恢复操作的「正在恢复…」若残留
+        // （如请求期间关闭弹窗），再次进入历史视图会吓到用户——每次进出历史
+        // 视图都重置回默认引导提示，并解除按钮禁用态。
+        function resetRestoreStatus() {
+            const statusEl = document.getElementById('preview-restore-status');
+            if (statusEl) {
+                statusEl.textContent = window.t
+                    ? window.t('restore_history_image_hint')
+                    : '在下方缩略图中选择后，当前大图将被恢复为角色形象图';
+            }
+            const restoreBtn = document.getElementById('preview-restore-image-btn');
+            if (restoreBtn) restoreBtn.disabled = false;
+        }
+
         function enterPreviewHistoryView(historyUrls) {
             previewCurrentImages = previewImages.slice();
             previewViewingHistory = true;
+            resetRestoreStatus();
             previewImages = historyUrls.map((url, idx) => ({ url, label: idx === 0 ? '最近归档' : `历史 ${idx + 1}` }));
             previewImageIndex = 0;
             document.getElementById('preview-image').src = previewImages[0].url;
@@ -6059,6 +6318,90 @@
                 if (btn) btn.disabled = false;
             }
         }
+
+        // 将当前预览大图加入资产库；切换缩略图后始终使用当前选中的图片。
+        function addPreviewImageToAssetLibrary() {
+            const currentImage = previewImages[previewImageIndex];
+            if (!currentImage || !currentImage.url) {
+                showError(window.t ? window.t('add_preview_image_unavailable') : '当前没有可加入资产库的图片');
+                return;
+            }
+            const sourceUrl = currentImage.url.trim();
+            if (/^(data|blob):/i.test(sourceUrl)) {
+                showError(window.t ? window.t('add_preview_image_local_unsupported') : '本地临时图片暂不支持加入资产库，请先上传或生成图片');
+                return;
+            }
+            if (!window.AssetLibrary || typeof window.AssetLibrary.promptAdd !== 'function') {
+                showError(window.t ? window.t('asset_library_unavailable') : '资产库功能暂不可用');
+                return;
+            }
+            const name = [previewImageFileName, currentImage.label].filter(Boolean).join('-').slice(0, 200);
+            window.AssetLibrary.promptAdd({ sourceUrl, name });
+        }
+        window.addPreviewImageToAssetLibrary = addPreviewImageToAssetLibrary;
+
+        // 从资产库选择图片并设为当前预览对象（角色/道具）的形象图（reference_image）。
+        // 复用各自保存接口；形象图统一存相对路径（AI/生图消费链对相对/绝对均认）。
+        function pickPreviewImageFromAssetLibrary() {
+            if (!window.AssetLibrary || (previewImageFileType !== 'characters' && previewImageFileType !== 'props')) return;
+            window.AssetLibrary.openModal({
+                title: window.t ? window.t('pick_image_from_asset_library_title') : '从资产库选择形象图',
+                onPick: function (asset) {
+                    if (asset && asset.file_url) applyAssetAsPreviewImage(asset.file_url);
+                }
+            });
+        }
+
+        async function applyAssetAsPreviewImage(url) {
+            const fileType = previewImageFileType;
+            const fileName = previewImageFileName;
+            if ((fileType !== 'characters' && fileType !== 'props') || !fileName) return;
+            const apiBase = fileType === 'characters' ? '/api/characters-files' : '/api/props-files';
+            const entityKey = fileType === 'characters' ? 'character' : 'prop';
+            const typeLabel = fileType === 'characters' ? '角色卡' : '道具';
+            try {
+                const resp = await fetch(`${apiBase}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
+                    headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
+                });
+                const data = await resp.json();
+                if (checkTokenExpired(data, resp)) return;
+                if (!data.success) {
+                    throw new Error(data.error || (window.t ? window.t('error_unknown') : '未知错误'));
+                }
+                let jsonData = data[entityKey]?.json_data || {};
+                if (!jsonData || Object.keys(jsonData).length === 0) {
+                    const content = data[entityKey]?.content || '';
+                    jsonData = content.trim() ? JSON.parse(content) : {};
+                }
+                if ((jsonData.reference_image || '') === url) {
+                    showInfo(window.t ? window.t('restore_image_already_current') : '该图已是当前形象图');
+                    return;
+                }
+                jsonData.reference_image = url;
+                const saveResp = await fetch(`${apiBase}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${AUTH_TOKEN}` },
+                    body: JSON.stringify({
+                        content: JSON.stringify(jsonData),
+                        user_id: USER_ID,
+                        world_id: WORLD_ID,
+                        auth_token: AUTH_TOKEN
+                    })
+                });
+                const saveData = await saveResp.json();
+                if (checkTokenExpired(saveData, saveResp)) return;
+                if (!saveResp.ok || !saveData.success) {
+                    throw new Error(saveData.error || saveData.message || `HTTP ${saveResp.status}`);
+                }
+                showSuccess(window.t ? window.t('restore_image_success') : '已恢复为当前形象图');
+                closeImagePreviewModal();
+                loadFiles(fileType);
+                notifyAgentAssetUpdated(`系统通知：${typeLabel} "${fileName}" 的形象图已被用户从资产库设置，请重新读取最新内容。`);
+            } catch (error) {
+                showError((window.t ? window.t('restore_image_failed', {error: error.message}) : '设置形象图失败: ' + error.message));
+            }
+        }
+        window.pickPreviewImageFromAssetLibrary = pickPreviewImageFromAssetLibrary;
 
         // 生成场景多角度图片（90°, 180°, 270°）
         // 多角度生图任务轮询状态
@@ -6770,6 +7113,27 @@
             }
         }
 
+        /**
+         * 从共享资产库选择图片，回填参考图输入框（角色/道具编辑表单通用）。
+         * 资产库列表仅返回当前用户可见的图片资产（自己的/公开的/被指派的，
+         * 见 services/asset_library_service.py _visible_where），满足引用权限要求。
+         */
+        function pickImageFromAssetLibrary(inputId) {
+            if (!window.AssetLibrary) return;
+            window.AssetLibrary.openModal({
+                title: '从资产库选择图片',
+                onPick: function (asset) {
+                    if (!asset || !asset.file_url) return;
+                    const inputEl = document.getElementById(inputId);
+                    if (inputEl) inputEl.value = asset.file_url;
+                    showImagePreview(inputId, window.AssetLibrary.absoluteUrl(asset.file_url));
+                }
+            });
+        }
+
+        // 暴露给内联 onclick（IIFE 内函数默认全局可见，显式挂 window 保险）
+        window.pickImageFromAssetLibrary = pickImageFromAssetLibrary;
+
         function removeImagePreview(inputId) {
             const inputEl = document.getElementById(inputId);
             if (inputEl) inputEl.value = '';
@@ -7341,6 +7705,16 @@
             const fileType = currentEditFile.fileType;
             const fileName = currentEditFile.fileName;
             if (!fileType || !fileName) return;
+            const editedNameFields = {
+                characters: ['char-name', 'label_character_name', '角色名称'],
+                locations: ['loc-name', 'label_scene_name', '场景名称'],
+                scripts: ['script-title', 'label_script_title', '剧本标题']
+            };
+            const nameField = editedNameFields[fileType];
+            if (nameField) {
+                const typeLabel = window.t ? window.t(nameField[1]) : nameField[2];
+                if (!validateEntityName(document.getElementById(nameField[0]).value, typeLabel)) return;
+            }
             isSavingEditedFile = true;
             let newContent = '';
 
@@ -7954,8 +8328,8 @@
         async function loadUserWorlds() {
             try {
                 const visibility = worldListMode === 'deleted' ? 'deleted' : 'active';
-                // 管理员可见全部用户的世界（后端对非管理员自动回退 user 范围）
-                const scopeParam = isAdminUser() ? '&scope=all' : '';
+                // 仅共享空间模式下管理员才拉取全部用户的世界（后端独立空间模式同样会强制回退 user 范围）
+                const scopeParam = (isAdminUser() && isSharedSpace) ? '&scope=all' : '';
                 const response = await fetch(
                     `/api/worlds?page=1&page_size=100&visibility=${encodeURIComponent(visibility)}${scopeParam}`,
                     {
@@ -8389,6 +8763,8 @@
                 showError(window.t ? window.t('error_enter_script_title') : '请输入剧本标题');
                 return;
             }
+            const scriptTitleLabel = window.t ? window.t('label_script_title') : '剧本标题';
+            if (!validateEntityName(title, scriptTitleLabel)) return;
             if (!episodeValue || isNaN(episode) || episode < 1) {
                 showError(window.t ? window.t('error_invalid_episode_num') : '请输入有效的集数（正整数）');
                 return;
@@ -8460,6 +8836,14 @@
             const hint = document.getElementById('char-name-hint');
             const value = nameInput.value.trim();
             if (!value) { hint.style.display = 'none'; return; }
+            const typeLabel = window.t ? window.t('label_character_name') : '角色名称';
+            const nameError = getEntityNameValidationError(value, typeLabel);
+            if (nameError) {
+                hint.style.display = 'block';
+                hint.style.color = 'var(--error-color, #e74c3c)';
+                hint.textContent = nameError;
+                return;
+            }
             if (existingCharacters.includes(value)) {
                 hint.style.display = 'block';
                 hint.style.color = 'var(--error-color, #e74c3c)';
@@ -8490,6 +8874,8 @@
         async function createNewCharacter() {
             const name = document.getElementById('new-char-name').value.trim();
             if (!name) { showError(window.t ? window.t('error_enter_character_name') : '请输入角色名称'); return; }
+            const characterNameLabel = window.t ? window.t('label_character_name') : '角色名称';
+            if (!validateEntityName(name, characterNameLabel)) return;
             if (existingCharacters.includes(name)) { showError(window.t ? window.t('error_character_exists', {name: name}) : `角色"${name}"已存在`); return; }
 
             try {
@@ -8546,6 +8932,14 @@
             const hint = document.getElementById('loc-name-hint');
             const value = nameInput.value.trim();
             if (!value) { hint.style.display = 'none'; return; }
+            const typeLabel = window.t ? window.t('label_scene_name') : '场景名称';
+            const nameError = getEntityNameValidationError(value, typeLabel);
+            if (nameError) {
+                hint.style.display = 'block';
+                hint.style.color = 'var(--error-color, #e74c3c)';
+                hint.textContent = nameError;
+                return;
+            }
             if (existingLocations.includes(value)) {
                 hint.style.display = 'block';
                 hint.style.color = 'var(--error-color, #e74c3c)';
@@ -8578,6 +8972,8 @@
         async function createNewLocation() {
             const name = document.getElementById('new-loc-name').value.trim();
             if (!name) { showError(window.t ? window.t('error_enter_scene_name') : '请输入场景名称'); return; }
+            const locationNameLabel = window.t ? window.t('label_scene_name') : '场景名称';
+            if (!validateEntityName(name, locationNameLabel)) return;
             if (existingLocations.includes(name)) { showError(window.t ? window.t('error_scene_exists', {name: name}) : `场景"${name}"已存在`); return; }
 
             try {

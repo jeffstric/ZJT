@@ -7,6 +7,7 @@ Agent 生成工具算力确认门。
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -70,7 +71,6 @@ class PowerEstimate:
 class ConfirmDecision:
     need_confirm: bool
     reason: str
-    projected_total: int
 
 
 def get_platform_thresholds() -> tuple[int, int]:
@@ -151,22 +151,56 @@ def validate_threshold(raw: Any) -> int:
 
 def should_confirm(
     cost: int,
-    unconfirmed_cost: int,
     skip_session: bool,
     soft_threshold: int,
     hard_threshold: int,
     unknown: bool = False,
+    approved_ceiling: int = 0,
 ) -> ConfirmDecision:
-    """判定本次生成是否需要弹出确认。"""
-    projected = max(0, int(unconfirmed_cost or 0)) + max(0, int(cost or 0))
-    if unknown:
-        return ConfirmDecision(True, "unknown", projected)
+    """判定本次生成是否需要弹出确认。只看单笔，不做多笔累计
+    （进程内累计在多 worker 下不可靠已移除；连续小额的失控由
+    单次任务算力上限按真实余额兜底）。
 
-    limit = hard_threshold if skip_session else soft_threshold
-    if cost > limit or projected > limit:
-        reason = "over_hard" if skip_session else "over_soft"
-        return ConfirmDecision(True, reason, projected)
-    return ConfirmDecision(False, "below_threshold", projected)
+    - 点过「确认生成」后，会话记下已同意的最高单笔。不超过这个价格不再问；
+      更贵（更长时长、更高分辨率、更大数量）再问一次。
+    - 点过「本次对话不再询问」后，本会话不再弹确认。
+    """
+    cost = max(0, int(cost or 0))
+    ceiling = max(0, int(approved_ceiling or 0))
+    if unknown:
+        return ConfirmDecision(True, "unknown")
+
+    if skip_session:
+        if cost > hard_threshold:
+            return ConfirmDecision(False, "single_item_over_hard_allowed")
+        return ConfirmDecision(False, "below_threshold")
+
+    if ceiling > 0 and cost <= ceiling:
+        return ConfirmDecision(False, "within_approved_ceiling")
+
+    if cost > soft_threshold:
+        return ConfirmDecision(True, "over_soft")
+    return ConfirmDecision(False, "below_threshold")
+
+
+def generation_is_budget_authorized(
+    reason: str,
+    cost: int,
+    soft_threshold: int,
+    user_confirmed: bool = False,
+) -> bool:
+    """这笔生成是否应从任务预算的未授权消耗里划出。
+
+    用户刚点确认、或本笔不低于软阈值且已落在同意过的单价内、
+    或免打扰后放行的单笔高价，都算已授权。低于软阈值的小额自动放行仍计入预算。
+    """
+    if user_confirmed:
+        return True
+    if reason == "single_item_over_hard_allowed":
+        return True
+    if reason == "within_approved_ceiling" and max(0, int(cost or 0)) > int(soft_threshold or 0):
+        return True
+    return False
 
 
 def parse_confirm_answer(user_input: Optional[str]) -> ConfirmAnswer:
@@ -195,10 +229,58 @@ def parse_confirm_answer(user_input: Optional[str]) -> ConfirmAnswer:
     return ConfirmAnswer.REJECT
 
 
+def _json_object(value: Any) -> Dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
+def _positive_cost(value: Any) -> int:
+    if isinstance(value, bool) or value is None:
+        return 0
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def confirm_state_from_approvals(rows: Any) -> Dict[str, Any]:
+    """从已同意的算力确认记录还原本会话状态。
+
+    只认「确认生成」和「本次对话不再询问」。取消也常被写成 approved，
+    必须看 user_input，不能只看状态。超时和无法识别的回答不抬价。
+    """
+    ceiling = 0
+    skip = False
+    if not rows:
+        return {"skip": False, "approved_ceiling": 0}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        context = _json_object(row.get("context"))
+        result = _json_object(row.get("result"))
+        user_input = result.get("user_input")
+        answer = parse_confirm_answer(user_input if isinstance(user_input, str) else None)
+        if answer == ConfirmAnswer.REJECT:
+            continue
+        if answer == ConfirmAnswer.SKIP_SESSION:
+            skip = True
+        cost = _positive_cost(context.get("estimated_cost"))
+        if cost > ceiling:
+            ceiling = cost
+    return {"skip": skip, "approved_ceiling": ceiling}
+
+
 def build_confirm_description(
     estimate: PowerEstimate,
     balance: Optional[int],
-    unconfirmed_cost: int,
     soft_threshold: int,
 ) -> str:
     lines = [
@@ -222,8 +304,6 @@ def build_confirm_description(
             unit_hint = f"（单条 {estimate.unit_cost} × {estimate.count}）"
         lines.append(f"预计消耗：{estimate.cost} 算力{unit_hint}")
 
-    if unconfirmed_cost:
-        lines.append(f"本轮已用未确认：{unconfirmed_cost}")
     if balance is not None:
         lines.append(f"当前余额：{balance}")
     lines.append(f"您的自动确认上限：{soft_threshold}")

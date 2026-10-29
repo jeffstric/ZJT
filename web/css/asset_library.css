@@ -1,0 +1,792 @@
+/**
+ * asset_library.css — 资产库公共样式（marketing_agent / video_workflow / storyboard 三页共用）。
+ * 弹窗由 web/js/asset_library.js 动态生成，类名统一 al- 前缀。
+ */
+
+/* ============ 遮罩与弹窗骨架 ============ */
+.al-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: inherit;
+}
+
+.al-modal {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+    width: min(960px, calc(100vw - 48px));
+    max-height: calc(100vh - 64px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.al-modal--compact {
+    width: min(520px, calc(100vw - 48px));
+}
+
+.al-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid #eee;
+    flex: none;
+}
+
+.al-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1f2329;
+    margin: 0;
+}
+
+.al-close {
+    border: none;
+    background: none;
+    font-size: 20px;
+    color: #8f959e;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.al-close:hover {
+    background: #f2f3f5;
+    color: #1f2329;
+}
+
+.al-body {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+}
+
+.al-footer {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid #eee;
+}
+
+/* ============ 通用控件 ============ */
+.al-btn {
+    border: 1px solid #dcdfe6;
+    background: #fff;
+    color: #1f2329;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.al-btn:hover {
+    border-color: #3370ff;
+    color: #3370ff;
+}
+
+.al-btn--primary {
+    background: #3370ff;
+    border-color: #3370ff;
+    color: #fff;
+}
+
+.al-btn--primary:hover {
+    background: #2558e8;
+    color: #fff;
+}
+
+.al-btn--primary:disabled {
+    background: #a8c1ff;
+    border-color: #a8c1ff;
+    cursor: not-allowed;
+}
+
+.al-btn--danger {
+    color: #f54a45;
+    border-color: #f54a45;
+}
+
+.al-btn--small {
+    padding: 3px 10px;
+    font-size: 12px;
+}
+
+.al-input,
+.al-select {
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    padding: 7px 10px;
+    font-size: 13px;
+    color: #1f2329;
+    box-sizing: border-box;
+    outline: none;
+}
+
+.al-input:focus,
+.al-select:focus {
+    border-color: #3370ff;
+}
+
+.al-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+}
+
+.al-label {
+    font-size: 13px;
+    color: #646a73;
+    font-weight: 500;
+}
+
+.al-hint {
+    font-size: 12px;
+    color: #8f959e;
+}
+
+.al-error {
+    color: #f54a45;
+    font-size: 12px;
+    min-height: 16px;
+    margin-top: 4px;
+}
+
+/* ============ 加入/编辑资产弹窗（表单型，两栏） ============ */
+.al-modal--form {
+    width: min(760px, calc(100vw - 48px));
+}
+
+/* 表单型弹窗内容贴边会被圆角裁切（overflow:hidden），留出内边距 */
+.al-modal--form .al-body {
+    padding: 18px 20px 4px;
+}
+
+.al-add-layout {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+}
+
+.al-add-preview {
+    flex: none;
+    width: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #f5f6f8;
+    border-radius: 10px;
+    padding: 10px;
+    min-height: 220px;
+}
+
+.al-add-preview img {
+    max-width: 100%;
+    max-height: 300px;
+    border-radius: 6px;
+    object-fit: contain;
+}
+
+/* 编辑弹窗用的小号预览 */
+.al-add-preview--sm {
+    width: 180px;
+    min-height: 180px;
+    padding: 8px;
+    align-self: flex-start;
+}
+
+.al-add-preview--sm img {
+    max-height: 200px;
+}
+
+.al-add-form {
+    flex: 1;
+    min-width: 0;
+}
+
+/* 窄屏回退单栏 */
+@media (max-width: 720px) {
+    .al-add-layout {
+        flex-direction: column;
+    }
+
+    .al-add-preview {
+        width: 100%;
+        min-height: 140px;
+    }
+
+    .al-add-preview--sm {
+        min-height: 120px;
+    }
+
+    .al-add-preview img {
+        max-height: 200px;
+    }
+}
+
+/* ============ 权限设置 ============ */
+.al-perm-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.al-perm-opt {
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #646a73;
+    background: #fff;
+}
+
+.al-perm-opt.is-active {
+    border-color: #3370ff;
+    color: #3370ff;
+    background: rgba(51, 112, 255, 0.06);
+}
+
+.al-member-box {
+    border: 1px solid #eee;
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.al-member-inputrow {
+    display: flex;
+    gap: 6px;
+}
+
+.al-member-inputrow .al-member-search {
+    flex: 1;
+    min-width: 0;
+}
+
+.al-member-msg {
+    min-height: 18px;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.al-member-msg.is-ok {
+    color: #16a34a;
+}
+
+.al-member-msg.is-error {
+    color: #f54a45;
+}
+
+.al-member-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.al-member-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(51, 112, 255, 0.08);
+    color: #3370ff;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 12px;
+}
+
+.al-member-tag button {
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+}
+
+/* ============ 浏览弹窗布局 ============ */
+.al-browse {
+    display: flex;
+    height: 100%;
+    min-height: 420px;
+}
+
+.al-browse-side {
+    flex: none;
+    width: 200px;
+    border-right: 1px solid #eee;
+    padding: 10px 8px;
+    overflow: auto;
+}
+
+.al-browse-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.al-toolbar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #eee;
+    flex-wrap: wrap;
+}
+
+.al-toolbar .al-input {
+    width: 180px;
+}
+
+.al-scope-tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.al-scope-tab {
+    border: none;
+    background: none;
+    font-size: 12px;
+    color: #646a73;
+    padding: 4px 10px;
+    border-radius: 12px;
+    cursor: pointer;
+}
+
+.al-scope-tab.is-active {
+    background: rgba(51, 112, 255, 0.1);
+    color: #3370ff;
+    font-weight: 500;
+}
+
+.al-quota {
+    margin-left: auto;
+    font-size: 12px;
+    color: #8f959e;
+}
+
+/* 分组侧栏 */
+.al-group-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    width: 100%;
+    box-sizing: border-box;
+    border: none;
+    background: none;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: #1f2329;
+    cursor: pointer;
+    text-align: left;
+    user-select: none;
+}
+
+.al-group-item:focus-visible {
+    outline: 2px solid rgba(51, 112, 255, 0.5);
+    outline-offset: -2px;
+}
+
+.al-group-item:hover {
+    background: #f2f3f5;
+}
+
+.al-group-item.is-active {
+    background: rgba(51, 112, 255, 0.1);
+    color: #3370ff;
+    font-weight: 500;
+}
+
+.al-group-item .al-group-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.al-group-item .al-group-count {
+    flex: none;
+    font-size: 11px;
+    color: #8f959e;
+}
+
+/* 悬停时以操作按钮替换数量徽标，避免宽度不足把按钮挤换行 */
+.al-group-item:hover .al-group-count {
+    display: none;
+}
+
+.al-group-item .al-group-ops {
+    display: none;
+    flex: none;
+    gap: 2px;
+}
+
+.al-group-item:hover .al-group-ops {
+    display: inline-flex;
+}
+
+.al-group-ops button {
+    border: none;
+    background: none;
+    color: #8f959e;
+    cursor: pointer;
+    padding: 2px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.al-group-ops button:hover {
+    color: #3370ff;
+    background: rgba(51, 112, 255, 0.08);
+}
+
+.al-new-group {
+    margin-top: 8px;
+    width: 100%;
+    border: 1px dashed #dcdfe6;
+    background: none;
+    border-radius: 6px;
+    color: #8f959e;
+    font-size: 12px;
+    padding: 6px;
+    cursor: pointer;
+}
+
+.al-new-group:hover {
+    border-color: #3370ff;
+    color: #3370ff;
+}
+
+/* ============ 资产网格 ============ */
+.al-grid-wrap {
+    flex: 1;
+    overflow: auto;
+    padding: 14px;
+    min-height: 0;
+}
+
+.al-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 12px;
+}
+
+.al-card {
+    border: 1px solid #eee;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+}
+
+.al-card-thumb {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: #f5f6f8 center/cover no-repeat;
+    cursor: pointer;
+}
+
+.al-card-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.al-card-thumb video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    pointer-events: none;
+}
+
+.al-card-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    background: rgba(31, 35, 41, 0.7);
+    color: #fff;
+    font-size: 10px;
+    border-radius: 4px;
+    padding: 2px 6px;
+    max-width: 80%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.al-card-missing {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: rgba(245, 74, 69, 0.92);
+    color: #fff;
+    font-size: 10px;
+    border-radius: 4px;
+    padding: 2px 6px;
+}
+
+.al-card-info {
+    padding: 8px 10px 6px;
+    min-width: 0;
+}
+
+.al-card-name {
+    font-size: 12px;
+    color: #1f2329;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.al-card-meta {
+    font-size: 11px;
+    color: #8f959e;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.al-card-actions {
+    display: flex;
+    gap: 6px;
+    padding: 0 10px 10px;
+}
+
+.al-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: #8f959e;
+    font-size: 13px;
+    padding: 48px 0;
+}
+
+/* 分页 */
+.al-pager {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 10px;
+    border-top: 1px solid #eee;
+    font-size: 12px;
+    color: #646a73;
+}
+
+/* ============ toast ============ */
+.al-toast {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(31, 35, 41, 0.92);
+    color: #fff;
+    font-size: 13px;
+    border-radius: 8px;
+    padding: 9px 18px;
+    z-index: 10100;
+    max-width: 70vw;
+}
+
+.al-toast--error {
+    background: rgba(245, 74, 69, 0.94);
+}
+
+/* ============ 提及菜单条目（供各页 @ 菜单复用） ============ */
+.al-mention-item-thumb {
+    width: 30px;
+    height: 30px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex: none;
+}
+
+/* ============ 暗色主题适配（html.theme-dark，video_workflow 主题切换） ============ */
+html.theme-dark .al-overlay {
+    background: rgba(0, 0, 0, 0.65);
+}
+
+html.theme-dark .al-modal {
+    background: #1e1e1e;
+    box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+}
+
+html.theme-dark .al-title {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-header,
+html.theme-dark .al-footer {
+    border-color: #333;
+}
+
+html.theme-dark .al-close {
+    color: #9ca3af;
+}
+
+html.theme-dark .al-close:hover {
+    background: #2f2f2f;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-btn {
+    background: #2a2a2a;
+    border-color: #444;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-btn:hover {
+    border-color: #4c8bf5;
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-btn--primary {
+    background: #2f5fe0;
+    border-color: #2f5fe0;
+    color: #fff;
+}
+
+html.theme-dark .al-btn--primary:hover {
+    background: #3a6ceb;
+}
+
+html.theme-dark .al-btn--primary:disabled {
+    background: #24406e;
+    border-color: #24406e;
+}
+
+html.theme-dark .al-btn--danger {
+    color: #f87171;
+    border-color: #f87171;
+}
+
+html.theme-dark .al-input,
+html.theme-dark .al-select {
+    background: #262626;
+    border-color: #444;
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-label {
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-hint {
+    color: #8a8a8a;
+}
+
+html.theme-dark .al-error {
+    color: #f87171;
+}
+
+html.theme-dark .al-perm-opt {
+    background: #262626;
+    border-color: #444;
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-perm-opt.is-active {
+    border-color: #4c8bf5;
+    color: #7aa8ff;
+    background: rgba(76, 139, 245, 0.12);
+}
+
+html.theme-dark .al-member-box {
+    border-color: #3a3a3a;
+}
+
+html.theme-dark .al-member-tag {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-member-msg.is-ok {
+    color: #4ade80;
+}
+
+html.theme-dark .al-member-msg.is-error {
+    color: #f87171;
+}
+
+html.theme-dark .al-browse-side {
+    border-color: #333;
+}
+
+html.theme-dark .al-toolbar {
+    border-color: #333;
+}
+
+html.theme-dark .al-scope-tab {
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-scope-tab.is-active {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-group-item {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-group-item:hover {
+    background: #2a2a2a;
+}
+
+html.theme-dark .al-group-item.is-active {
+    background: rgba(76, 139, 245, 0.16);
+    color: #7aa8ff;
+}
+
+html.theme-dark .al-card {
+    background: #232323;
+    border-color: #3a3a3a;
+}
+
+html.theme-dark .al-card-name {
+    color: #e8e8e8;
+}
+
+html.theme-dark .al-card-thumb {
+    background-color: #2a2a2a;
+}
+
+html.theme-dark .al-pager {
+    border-color: #333;
+    color: #b0b0b0;
+}
+
+html.theme-dark .al-new-group {
+    border-color: #444;
+    color: #8a8a8a;
+}
+
+html.theme-dark .al-toast {
+    background: rgba(50, 50, 52, 0.95);
+}
+
+html.theme-dark .al-add-preview {
+    background: #262626;
+}

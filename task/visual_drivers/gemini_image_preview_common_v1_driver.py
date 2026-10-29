@@ -7,6 +7,7 @@ Gemini Image Preview 通用供应商 v1 版本驱动实现
 - gemini-2.5-flash-image:generateContent
 - gemini-3-pro-image-preview:generateContent
 - gemini-3.1-flash-image-preview:generateContent
+- gemini-nano-banana-2.1:generateContent
 
 该驱动适用于兼容 Gemini 原生 API 格式的中转站
 """
@@ -43,7 +44,8 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
     SUPPORTED_DRIVER_KEYS = [
         'gemini_image_edit',
         'gemini_image_edit_pro', 
-        'gemini_3_1_flash_image_edit'
+        'gemini_3_1_flash_image_edit',
+        'nano_banana_2_1_image_edit'
     ]
 
     # 模型映射：task_id -> 模型名称
@@ -51,6 +53,7 @@ class GeminiImagePreviewCommonV1Driver(BaseVideoDriver):
         TaskTypeId.GEMINI_2_5_FLASH_IMAGE: "gemini-2.5-flash-image",
         TaskTypeId.GEMINI_3_PRO_IMAGE: "gemini-3-pro-image-preview",
         TaskTypeId.GEMINI_3_1_FLASH_IMAGE: "gemini-3.1-flash-image-preview",
+        TaskTypeId.NANO_BANANA_2_1_IMAGE: "gemini-nano-banana-2.1",
     }
 
     # 默认模型

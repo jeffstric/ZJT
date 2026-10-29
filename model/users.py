@@ -224,6 +224,61 @@ class UsersModel:
             logger.error(f"Failed to find users by nickname like: {e}")
             raise
         return [int(row["id"]) for row in like_rows]
+
+    @staticmethod
+    def find_ids_by_nickname(query: str, limit: int = 20) -> List[int]:
+        """仅按昵称找用户 id（不含手机号/邮箱通道）。
+
+        供普通用户侧的成员搜索（资产库指定成员等）：账号精确匹配可被用于
+        枚举注册用户（逐个试探手机号），昵称搜索无此风险。
+        """
+        text = (query or "").strip()
+        try:
+            capped = int(limit)
+        except (TypeError, ValueError):
+            capped = 20
+        if capped <= 0 or not text:
+            return []
+        capped = min(capped, 50)
+        exact_sql = "SELECT id FROM users WHERE nickname = %s ORDER BY id ASC LIMIT %s"
+        try:
+            exact_rows = execute_query(exact_sql, (text, capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname: {e}")
+            raise
+        if exact_rows:
+            return [int(row["id"]) for row in exact_rows]
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like_sql = "SELECT id FROM users WHERE nickname LIKE %s ORDER BY id ASC LIMIT %s"
+        try:
+            like_rows = execute_query(like_sql, (f"%{escaped}%", capped), fetch_all=True) or []
+        except Exception as e:
+            logger.error(f"Failed to find users by nickname like (nickname-only): {e}")
+            raise
+        return [int(row["id"]) for row in like_rows]
+
+    @staticmethod
+    def find_id_by_exact_account(account: str) -> Optional[int]:
+        """按完整账号精确查找唯一用户（手机号 / 邮箱 / 昵称全等，不做模糊联想）。
+
+        资产库指定成员场景：必须完整输入后查找，避免模糊联想误加/枚举。
+        昵称可重，理论上命中多条时返回 id 最小的一个。
+        """
+        text = (account or "").strip()
+        if not text:
+            return None
+        sql = """
+            SELECT id FROM users
+            WHERE phone = %s OR LOWER(email) = LOWER(%s) OR nickname = %s
+            ORDER BY id ASC
+            LIMIT 1
+        """
+        try:
+            rows = execute_query(sql, (text, text, text), fetch_all=True) or []
+            return int(rows[0]["id"]) if rows else None
+        except Exception as e:
+            logger.error(f"Failed to find user by exact account: {e}")
+            raise
     
     @staticmethod
     def get_by_phone(phone: str) -> Optional[User]:

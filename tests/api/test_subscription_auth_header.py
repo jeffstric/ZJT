@@ -109,3 +109,29 @@ def test_plans_anonymous_treated_as_new_user(client, monkeypatch):
     # 401 时跳过断言，只在放行的部署形态下校验默认值
     if resp.status_code == 200:
         assert resp.json()['subscription']['first_bonus_eligible'] is True
+
+
+# ==================== 属主绑定（审计 BUG-R2-S2-A1-H3，IDOR） ====================
+
+def test_status_rejects_foreign_user_id(client):
+    """IDOR：自己的 token 查他人 user_id → 403（曾可枚举全站订阅者/解约他人合约）"""
+    resp = client.get('/api/subscription/status', params={'user_id': 2}, headers=AUTH)
+    assert resp.status_code == 403
+    assert '不一致' in resp.json()['detail']
+
+
+def test_status_accepts_own_user_id(client):
+    """本人 user_id 与 token 属主一致 → 200"""
+    resp = client.get('/api/subscription/status', params={'user_id': 1}, headers=AUTH)
+    assert resp.status_code == 200
+    assert resp.json()['success'] is True
+
+
+def test_cancel_rejects_foreign_user_id(client):
+    """IDOR：自己的 token 解约他人订阅 → 403（曾可静默终止他人微信自动续费合约）"""
+    resp = client.post(
+        '/api/subscription/cancel',
+        json={'user_id': 2, 'auth_token': 'valid-token'},
+        headers=AUTH,
+    )
+    assert resp.status_code == 403

@@ -1258,7 +1258,7 @@ async function initPage() {
       this.style.height = Math.min(this.scrollHeight, 200) + 'px';
     });
     promptInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
         e.preventDefault();
         if (sendBtn) sendBtn.click();
       }
@@ -1368,6 +1368,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (e) {
     console.warn('i18n init failed:', e);
+  }
+
+  // 左侧 nav「资产库」入口：打开共享资产库浏览弹窗（内部自带功能开关/权限校验）
+  const sharedLibraryNav = document.getElementById('sharedAssetLibraryNav');
+  if (sharedLibraryNav) {
+    sharedLibraryNav.addEventListener('click', () => {
+      if (window.AssetLibrary) window.AssetLibrary.openModal();
+    });
   }
 
   await initPage();

@@ -283,6 +283,23 @@ sequenceDiagram
 
 > **注意**：主调度器通过 `tasks.status IN (0, 1)` 查询，因此 WAITING_PARAM_PREPARE(4)、WAITING_BEFORE_FINISH(5)、SYNC_QUEUED(3) 的任务**不会**被主调度器拾取。它们由各自的专用处理器推进。
 
+### 7.1 主调度器 process_func 返回值契约
+
+`process_task_with_retry` 依据 process_func（`process_generate_video`）的返回值统计与调度（常量定义于 `task/visual_task.py` 模块级）：
+
+| 返回值 | 含义 | 调度循环行为 |
+|---|---|---|
+| `PROCESS_RESULT_SUCCESS` | 任务到达成功终态（COMPLETED/DOWNLOADING） | 计入 `success_count`，打 `Task completed successfully` |
+| `PROCESS_RESULT_FAILED` | 已被 `_handle_task_failure` 处理为终态失败（社区版标 FAILED+退费，或企业版接管进入重试流水线） | 不干预、不再安排退避重试 |
+| `PROCESS_RESULT_IN_FLIGHT` | 提交/流转成功但在途（pipeline 转入/sync 提交/异步提交/拥堵重排队/轮询宽限/孤儿重置） | 不干预，处理函数已自行维护状态与 `next_trigger` |
+| `False` / `None` | transient 失败或仍在轮询（RUNNING/未知状态） | `try_count+1` 并按退避延迟再调度 |
+| `True`（遗留兼容） | 旧调用点 | 按成功计（新代码勿再返回裸 `True`） |
+
+> 事故背景：此前 `_handle_task_failure` 处理完的终态失败、提交成功在途、pipeline 流转、
+> 轮询宽限/孤儿重置全部返回裸 `True`，调度循环把 `True` 一律当成功——失败任务
+> （如 driver 创建失败已标 FAILED+退款）打 `Task completed successfully` 且 Summary
+> 的 succeeded 虚高；对已 FAILED 任务还会虚增 `try_count` 并打 `RETRY_SCHEDULED` 假重试日志。
+
 ## 8. 核心代码路径索引
 
 | 场景 | 文件 | 函数 |

@@ -3,7 +3,8 @@
 ## 目标
 
 应用日志不得记录完整手机号、邮箱、验证码、密码、Bearer Token、JWT、
-API Token、API Key、Secret 或 Authorization 凭据。
+API Token、API Key、Secret、auth_token（会话 token，含 URL query 形态）
+或 Authorization 凭据。
 
 脱敏只影响日志文本，不改变接口参数、数据库字段和业务返回。
 
@@ -26,7 +27,17 @@ API Token、API Key、Secret 或 Authorization 凭据。
 tester@example.com   -> t***r@example.com
 验证码：123456       -> 验证码：<redacted>
 Bearer abcdef...     -> Bearer <redacted>
+auth_token=<64hex>   -> auth_token=<redacted>
 ```
+
+## auth_token 键（2026-10-23，审计 BUG-R2-S2-A8-H4）
+
+会话 token（user_tokens 64 位 hex）曾以 `?auth_token=` query 形式出现在
+请求行并被默认开启的 access log 原样落盘——裸 hex 不匹配 Bearer/JWT 模式，
+`_SENSITIVE_KEY_VALUE_PATTERN` 的 key 清单也已补入 `auth[_-]?token`，
+请求行/参数化日志中的该键一律脱敏。存量前端（index_app.js 订阅 5 处 GET）
+已同步迁移到 Authorization 头（红线14）；`pages/*.js` 轮询器与
+`permission.py` 的 query 兜底为遗留兼容路径，由脱敏兜底，后续分批收口。
 
 ## 历史日志
 

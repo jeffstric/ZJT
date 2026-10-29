@@ -47,6 +47,10 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
             self.driver.MODEL_MAPPING[TaskTypeId.GEMINI_3_1_FLASH_IMAGE],
             'gemini-3.1-flash-image-preview'
         )
+        self.assertEqual(
+            self.driver.MODEL_MAPPING[TaskTypeId.NANO_BANANA_2_1_IMAGE],
+            'gemini-nano-banana-2.1'
+        )
 
     def test_build_create_request_text_only(self):
         """测试构建创建任务请求参数 - 仅文本"""
@@ -122,6 +126,22 @@ class TestGeminiImagePreviewCommonDriver(BaseVideoDriverTest):
 
         # 验证 URL 包含正确的模型名称
         self.assertIn('/v1beta/models/gemini-3.1-flash-image-preview:generateContent', req['url'])
+
+    def test_build_create_request_with_nano_banana_2_1(self):
+        """测试构建创建任务请求参数 - gemini-nano-banana-2.1 模型"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=51,  # NANO_BANANA_2_1_IMAGE
+            prompt='使用 Nano Banana 2.1 模型生成图片',
+            ratio='9:16',
+            image_size='2K',
+            status=AI_TOOL_STATUS_PENDING
+        )
+
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+
+        # 验证 URL 包含正确的模型名称
+        self.assertIn('/v1beta/models/gemini-nano-banana-2.1:generateContent', req['url'])
 
     def test_build_create_request_with_image(self):
         """测试构建创建任务请求参数 - 带图片（使用 mock）"""

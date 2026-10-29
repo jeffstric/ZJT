@@ -103,6 +103,14 @@ Agent 模式下的「自定义」面板（`.marketing-settings-panel`）内容�
 
 Agent 模式为默认推荐模式，走 LLM 对话流程，后端 PM Agent 可自主调用图片/视频生成工具。图片/视频模式为直接生成模式，前端直接调用生成 API 并轮询状态。
 
+#### 生成次数（批量生成）
+
+图片/视频直连模式与 Agent 模式在输入栏提供「生成次数」选择器（×1 ~ ×4），选中值持久化在 `localStorage`（key：`marketing_generation_count`），与其他下拉（类型/模型/比例/时长）互斥弹出，点击面板外部自动关闭。按钮上只显示「×N」缩写（2026-10-28 起去掉「生成次数」文字前缀以缩短底部工具栏横向占位），含义通过 hover 提示（`title`）展示。
+
+- **直连模式**：单次提交向后端 `/api/text-to-image`、`/api/image-edit`、`/api/ai-app-run`、`/api/ai-app-run-image` 的 `count` 字段传入选定值，后端按次数循环创建多个生成任务并逐个扣费（算力按数量累计），前端轮询与结果渲染天然支持多任务/多结果。
+- **Agent 模式**：count 随 `image_preferences` / `video_preferences` 下发，后端持久化到世界偏好（图片侧经 `sync_agent_image_preferences` 的 STORABLE_PREFS，视频侧随 `/api/video-model` 整包存储），并在用户消息偏好摘要中注入「生成数量」提示。MCP 生成工具（`generate_text_to_image` / `edit_image` / `generate_text_to_video` / `image_to_video`）执行时按「已由系统注入」语义读取偏好 count 覆盖 LLM 传参（`_resolve_generation_count_from_prefs`，合法范围 1-4），不依赖 LLM 遵从提示；工具 schema 的 count 描述已同步改为系统注入语义。4 宫格生图（`is_grid=True`）跳过注入，保持固定 1 组。视频侧注入点：营销/Agent 链路在 `enterprise/tools/video_tools.py`（`_resolve_video_count_from_prefs`，算力预估前覆盖）；故事板链路由 `/scene/{scene_id}/ai-chat` 请求的 `count` 经 `_build_storyboard_agent_video_preferences` 写入任务级 preferences，再由 `services/storyboard_agent_video_tool.py` 的 wrapper 在委托前写入 `args["count"]`（合法范围 1-4，会话级 preferences 不走 DB 偏好路径）。
+- 隔离性：count 不在 `MediaGenerationPreferenceService.PROFILE_FIELDS` 白名单内，不进入 generation snapshot 槽位快照；故事板等其他 surface 的快照链路不受营销页偏好影响。
+
 #### Agent 视频意图路由（企业版）
 
 Agent 模式中的视频生成能力由 `enterprise/` 模块提供。企业版加载后，`enterprise/sops/sop-video-generation.md` 和 `enterprise/skills/marketing-video/SKILL.md` 会覆盖开源目录中的同名占位 SOP/skill，并注册 `generate_text_to_video`、`image_to_video` 工具。社区版没有视频生成工具，开源目录中的 `sop-video-generation` 只负责提示用户视频生成功能为商业版专属。
@@ -201,17 +209,18 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 | 情况 | 行为 |
 |---|---|
-| 本次及本轮累计 ≤ 用户软阈值 | 直接提交，不弹确认 |
-| 超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
+| 单笔 ≤ 用户软阈值 | 直接提交，不弹确认 |
+| 单笔超过用户软阈值 | 弹出「算力确认」卡片，选项：确认生成 / 取消本次生成 / 本次对话不再询问 |
 | 余额不足 | 不弹确认，直接告诉模型算力不足 |
-| 用户点「本次对话不再询问」 | 本会话后续低于平台硬阈值的生成不再问；超过硬阈值仍问 |
+| 用户点「确认生成」 | 同意写在该次算力确认记录里。之后任意 worker 读取本会话已同意记录的最高价，不超过不再问；更贵再问一次 |
+| 用户点「本次对话不再询问」 | 本会话后续生成不再问。免打扰同样写在确认记录里，各 worker 都能读到 |
 | 底部「图片 / 视频」直出模式 | 不走此门（用户已主动点生成） |
 
 阈值分层：
 
 1. **用户软阈值**：每人可在自定义面板「自动确认上限」自行设置，存 `user_preferences.pref_type=power_confirm`（`world_id=_global`，换对话/换世界共用）。
 2. **平台默认软阈值**：用户未设置时使用 `agent.power_confirm_threshold`，默认 35。
-3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200，只约束「本次对话不再询问」之后的放行。
+3. **平台硬阈值**：`agent.power_confirm_hard_threshold`，默认 200。仅用于免打扰后单笔超硬的放行标记（该笔生成计入任务预算的已授权消耗）。多笔小额累计触发确认的机制已移除（进程内累计在多 worker 部署下不可靠；连续小额的失控由单次任务算力上限按真实余额兜底）。
 
 企业版走 `enterprise/routes/user.py` 注册同一组接口（社区版走 `api/user.py`）。商业版不会加载社区用户路由，因此两端都要挂上。
 
@@ -223,7 +232,20 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
 
 确认不可被模型绕过：拦截点在 `ExpertAgent._execute_tool`，确认完成前不会调用 `generate_*`。模型也不应再自己用 `ask_user` 问算力。
 
+已同意单价和「不再询问」不写在对话正文上，也不放在进程内存里当唯一依据。判断前读取本会话 `agent_verifications` 中 `verification_type=computing_power_confirm` 且 `status=approved` 的记录，用 `result.user_input` 区分确认、免打扰和取消（三个按钮提交时 `approved` 都是 true）。超时取消的记录不计入。读取失败时继续询问。
+
 > **作用范围**：算力确认门仅对营销智能体（`MarketingPMAgent`，`session_type=2`）及分镜（storyboard）链路开启。剧本创作页（`script_writer.html`，`PMAgent`）已于 2026-09-01 关闭此门（`power_confirm_enabled=False`，见 `docs/backend/incidents/2026-09-01-script-writer-power-confirm-loop.md`）：生成前不弹「算力确认」，也不在系统提示中注入阈值说明。
+
+#### 单次任务算力上限（power budget）
+
+自定义面板中「自动确认上限」下方另有「单次任务算力上限」输入框（2026-10-28 起，与剧本创作页 `script_writer.html` 顶栏的「本次任务算力上限」共用同一用户级设置）。它是任务级护栏：单次任务（从发送消息到任务结束）累计消耗超过上限即自动停止并提示，0 表示不限制。营销智能体（`MarketingPMAgent` 继承 `PMAgent.execute`）与剧本智能体任务统一生效，实现见 `script_writer_core/agents/power_budget.py`。
+
+- 用户级设置存 `user_preferences.pref_type=power_budget`（`world_id=_global`）；未设置时用平台默认 `agent.power_budget_default`（常量兜底 `AGENT_POWER_BUDGET_DEFAULT`）。
+- 读写接口（社区版 `api/user.py`、企业版 `enterprise/routes/user.py` 都挂载）：
+  - `GET /api/user/power-budget` → `{ limit, is_custom, default_limit }`
+  - `PUT /api/user/power-budget` body `{ limit }`（非负整数，0=不限制）
+  - `DELETE /api/user/power-budget` 回退平台默认
+- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 复用 `.power-confirm-field` 样式（`web/css/marketing_agent.css`），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
 
 ### SSE 流式响应
 
@@ -283,13 +305,14 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - Agent 图片/视频轮询启动后均立即查询一次状态，已完成的任务可直接渲染结果，不必等待第一个轮询周期
 - 视频兜底恢复按会话绑定轮询结果，异步返回时如果用户已切换到其他会话，不会把结果写入当前对话；历史加载时会过滤空 AI 气泡和重复的视频结果（`normalizeLoadedMessages` 以归一化 URL——解出代理内层 URL、解码、去签名——为去重 key，同一视频即使签名不同也只保留最早一条），避免切换会话后重复显示
 - 直接发起模式（`checkDirectGenerationStatus`）的轮询在每次 `await` 获取状态返回后，会再次校验 `currentSessionId` 是否仍等于任务实例的 `task.sessionId`：任务进行中切换会话时，旧轮询回调立即停止并清理，不再向当前（已切换的）`messages` 或全局 `imageResults/videoResults` 写入，杜绝"视频生成失败/图片生成失败"提示串到其他对话
+- 直接发起模式的轮询错误兜底与 Agent 路径对齐：连续 `MAX_CONSECUTIVE_TASK_ERRORS`（3）次错误后**不判死**——占位气泡转中性「生成中...」（`generating_placeholder`），高频 interval 降频为 `TASK_ERROR_BACKOFF_INTERVAL`（30s）继续探测；任一次轮询成功后照常走结果/失败分支。修复前此处是显示「请求超时，请稍后重试」并彻底停掉轮询，页面不刷新就永远拿不到结果（2026-10-28 事故，会话 3941fc69：视频服务端已生成完成，前端轮询已死，结果未回传对话）
 - `handleImageTaskSubmitted` / `handleVideoTaskSubmitted` 支持显式 `explicitSessionId` 入参；由 SSE 流派发任务时传入该流的 `streamSessionId`，使轮询与结果持久化归属发起会话，而非事件被处理时的"当前会话"
 
 #### 任务恢复机制
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
 
-1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
+1. **`__PENDING_TASK__` 标记**：后端在 `chat_messages` 表中保存 `__PENDING_TASK__:{type}:{project_ids}` 标记（`message_type='pending_task'`）。写入方有两处——pm_agent 后端落库，以及前端直连模式经 `POST /session/{id}/message` 追加（该接口对 `__PENDING_TASK__` 开头内容统一存为 `pending_task`，与 pm_agent 路径一致；修复前存为 `normal`，导致 `replace_pending_task` 永远匹配 0 行只能 append 兜底）。这是内部恢复用行，前端解析后标为 `_isPendingTask`，模板不渲染；切回会话时不会把 `__PENDING_TASK__` 交给 Markdown（否则两侧 `__` 会被收成加粗的 `PENDING_TASK`）
 2. **`recoverPendingTasks()`**：加载历史后先恢复 pending 轮询，再跑工作总结文本兜底，避免同一 `project_ids` 再插一条「生成中」。完成时优先替换 pending 消息（通过 `PUT /session/{id}/message/{message_id}`），替换失败则 fallback 追加新消息。追加前有服务端判重兜底：`POST /session/{id}/replace-pending-task` 未找到 pending 行时，由 `ChatMessagesModel.has_generated_result` 检查会话历史中是否已含该批 project 的结果卡片（匹配 `data-publish-tool-id="{pid}"` 属性或 `{pid}_` 文件名片段），命中则返回 `duplicate: true`，前端视为已处理、跳过追加，防止跨页签双写或恢复流程重复触发时重复写入"视频已生成"消息
 3. **`sessionActiveTaskId` 注册表**：记录每个 session 的活跃 Agent task_id，切换回来时检查任务状态并重连 SSE
 4. **`directGenerationTasks` / Agent 轮询注册表**：直接生成任务在内存中按任务实例跟踪 project_ids；Agent 图片/视频轮询按 `sessionId:type:project_ids` 去重，支持会话内恢复和并发任务隔离
@@ -403,6 +426,8 @@ Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文�
 | 图片 | 9 张 | 10MB（可配置） | - | 上传到 `/api/upload-agent-image` 获取 HTTP URL |
 | 视频 | 3 个 | 100MB（可配置） | 15 秒（可配置） | 前端按 480px 目标短边和 409600 最低总像素转码后上传到 `/api/upload-agent-video` |
 | 音频 | 5 个 | 20MB | 15 秒（可配置） | 上传到 `/api/upload-agent-audio` |
+
+除文件选择和拖拽外，支持直接粘贴剪贴板媒体文件（截图/视频/音频，文件管理器多选复制后可一次粘贴多张/多个，Agent 对话模式按各自上限累积：图片 9 张、视频 3 个、音频 5 个）。实现要点：`marketing_agent.js` 在 `document` 上全局监听 `paste` 事件（`handleDocumentPaste`），由 `extractClipboardMediaFiles` 从 `clipboardData` 提取 `kind === 'file'` 且 MIME 为 `image/*`/`video/*`/`audio/*` 的文件；因 Chromium 在 Windows 从文件管理器复制多文件时文件列表只在 `files` 暴露而 `items` 可能为空（chromium:41071856），提取时合并 `files` 与 `items` 两个来源并按 名字|大小|修改时间 去重；截图等来源的 File 常缺少文件名扩展名，图片按扩展名白名单、音视频按"名字无扩展名"判断，命中时按 MIME 映射重建带扩展名的 File（`clipboard_<时间戳>_<序号>.<ext>`）。提取到媒体时拦截默认粘贴行为并走统一上传链路 `processSelectedFiles`（与文件选择/拖拽共用的校验与上传逻辑，数量、格式、大小、时长限制一致；非 Agent 模式按既有规则只取第一个文件）；剪贴板无媒体文件时不干预，纯文本/富文本粘贴行为不变。注意系统剪贴板同一时刻只保存最后一次复制的内容：逐个复制的文件需逐个粘贴累积，"一次粘贴多个"依赖源端一次性放入多文件（如文件管理器多选复制）。视频粘贴同样经过压缩（Canvas+MediaRecorder）与上传链路，要求页面处于前台（浏览器对后台标签页会暂停视频播放导致压缩失败，与文件选择上传行为一致）。页面卸载时随 `onUnmounted` 移除监听。
 
 #### Agent 视频模式
 

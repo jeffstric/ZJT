@@ -160,3 +160,4 @@ def test_storyboard_video_agent_builds_task_scoped_preferences_without_persistin
     assert "video_preferences=video_preferences" in route_source
     assert "video_task_id=video_task_id" in route_source
     assert "enable_face_mask=" in route_source
+    assert "count=data.get('count')" in route_source

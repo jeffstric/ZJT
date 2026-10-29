@@ -16,6 +16,7 @@ from config.unified_config import TaskTypeId
 GEMINI_IMAGE_TO_VIDEO_TYPE = TaskTypeId.GEMINI_2_5_FLASH_IMAGE
 GEMINI_PRO_IMAGE_TO_VIDEO_TYPE = TaskTypeId.GEMINI_3_PRO_IMAGE
 GEMINI_3_1_FLASH_IMAGE = TaskTypeId.GEMINI_3_1_FLASH_IMAGE
+NANO_BANANA_2_1_IMAGE = TaskTypeId.NANO_BANANA_2_1_IMAGE
 
 
 class TestGeminiDuomiWithDB(BaseVideoDriverTest):
@@ -399,6 +400,24 @@ class TestGeminiDuomiWithDB(BaseVideoDriverTest):
 
         # 验证 model 为 Gemini 3.1 Flash 模型
         self.assertEqual(req['json']['model'], 'gemini-3.1-flash-image-preview')
+
+    def test_build_create_request_nano_banana_2_1(self):
+        """测试构建创建任务请求参数 - Nano Banana 2.1 模型"""
+        task_id = self.create_test_ai_tool(
+            ai_tool_type=NANO_BANANA_2_1_IMAGE,
+            prompt='测试 Nano Banana 2.1 提示词',
+            image_path='https://example.com/test.jpg',
+            ratio='9:16',
+            image_size='2K',
+            status=AI_TOOL_STATUS_PENDING
+        )
+
+        tool = self.get_ai_tool_from_db(task_id)
+        req = self.driver.build_create_request(tool)
+
+        # 验证 model 为 Nano Banana 2.1 模型
+        self.assertEqual(req['json']['model'], 'gemini-nano-banana-2.1')
+        self.assertEqual(req['json']['image_size'], '2K')
 
     def test_gemini_pro_submit_task_success(self):
         """测试提交任务 - 成功 - Gemini Pro 模型"""

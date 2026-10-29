@@ -196,6 +196,11 @@
                   </div>
                 </div>
               </div>
+              ${window.shotFrameHasSpatialCode && window.shotFrameHasSpatialCode(node) ? `
+              <div class="field field-always-visible" style="margin-top: 4px;">
+                <button class="mini-btn shot-frame-open-director-btn" type="button" style="width: 100%; padding: 5px 8px; font-size: 11px; background: #fdf6ec; color: #9a6b2f; border: 1px solid #e8d5b5; border-radius: 6px;">${(window.shotFrameDirectorLinked && window.shotFrameDirectorLinked(node)) ? (window.t ? window.t('shot_frame_open_director_btn') : '🎬 打开导演台（3D 空间）') : (window.t ? window.t('shot_frame_create_director_btn') : '🎬 创建导演台（3D 空间）')}</button>
+              </div>
+              ` : ''}
               <div class="field field-always-visible">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                   <div class="label" style="margin: 0;" data-i18n="shot_frame_video_first_frame_label">${window.t ? window.t('shot_frame_video_first_frame_label') : '视频首帧'}</div>
@@ -371,6 +376,8 @@
       const imageSelectorContainer = el.querySelector('.shot-frame-image-selector-container');
       const imageSelectorBtn = el.querySelector('.shot-frame-image-selector-btn');
       const imageSelectorCaret = imageSelectorContainer ? imageSelectorContainer.querySelector('.gen-btn-caret') : null;
+      // 打开导演台（故事板 3D 空间转换入口，见 director_stage_from_storyboard.js）
+      const openDirectorBtn = el.querySelector('.shot-frame-open-director-btn');
       const imageMenu = el.querySelector('.shot-frame-image-menu');
       const firstFramePort = el.querySelector('.first-frame-port');
       const lastFramePort = el.querySelector('.last-frame-port');
@@ -393,6 +400,9 @@
         modelEl.innerHTML = '';
         let firstImageModelValue = 'gpt-image-2';
         if(window.TaskConfig && window.TaskConfig.isLoaded()) {
+          if (node.data.model && window.TaskConfig.canonicalModelKey) {
+            node.data.model = window.TaskConfig.canonicalModelKey(node.data.model);
+          }
           const options = window.TaskConfig.getModelOptionsForCategory('image_edit');
           const gptImage2 = options.find(o => o.value === 'gpt-image-2');
           if(gptImage2) {
@@ -2026,6 +2036,17 @@
         e.stopPropagation();
         removeNode(id);
       });
+
+      if (openDirectorBtn) {
+        openDirectorBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (window.openDirectorStageFromShotFrame) {
+            window.openDirectorStageFromShotFrame(id);
+          } else {
+            showToast('导演台转换模块未加载，请刷新页面', 'error');
+          }
+        });
+      }
 
       el.addEventListener('mousedown', (e) => {
         e.stopPropagation();

@@ -441,6 +441,53 @@ def test_build_scenes_without_variants_keeps_prompt_unchanged():
     assert all("reference_selections" not in scene["prompt"] for scene in scenes)
 
 
+def test_build_scenes_records_pending_character_variants():
+    """未终态变体记入 pending_reference_selections（无 URL），与 ready 注入互补。"""
+    variants = {"17": {"晚礼服": "http://img/evening.png"}}
+    pending = {"28": {"战斗形态"}}
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        character_variants=variants,
+        pending_character_variants=pending,
+    )
+
+    # s001：小林 ready → reference_selections；阿珍未终态 → pending（同一镜头可共存）
+    assert scenes[0]["prompt"]["reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"17": {"url": "http://img/evening.png", "label": "晚礼服"}},
+    }
+    assert scenes[0]["prompt"]["pending_reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"28": {"label": "战斗形态"}},
+    }
+    # s002：无形象变化 → 两块都不写
+    assert "reference_selections" not in scenes[1]["prompt"]
+    assert "pending_reference_selections" not in scenes[1]["prompt"]
+
+
+def test_build_scenes_only_pending_map_writes_pending_block_only():
+    """只有未终态变体时：只写 pending，不写 reference_selections（生图用主图）。"""
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        pending_character_variants={"28": {"战斗形态"}},
+    )
+
+    assert "reference_selections" not in scenes[0]["prompt"]
+    assert scenes[0]["prompt"]["pending_reference_selections"] == {
+        "schema_version": 1,
+        "characters": {"28": {"label": "战斗形态"}},
+    }
+
+
+def test_build_scenes_without_pending_map_writes_no_pending_block():
+    scenes = storyboard_api.build_storyboard_scenes_from_parsed_script(
+        _variant_parsed(), style="",
+        character_variants={"17": {"晚礼服": "http://img/evening.png"}},
+    )
+    assert all(
+        "pending_reference_selections" not in scene["prompt"] for scene in scenes)
+
+
 def test_build_scenes_packs_shots_in_reference_mode():
     parsed = {
         "shot_groups": [
@@ -483,3 +530,82 @@ def test_build_scenes_packs_shots_in_reference_mode():
     )
     assert len(first_frame) == 3
 
+
+
+def test_generate_from_script_passes_and_persists_enable_director_stage(monkeypatch):
+    """「生成 3D 导演台」开关：透传拆分任务 request_config 并持久化到 config_json。
+
+    - 显式 true → request_config['enable_director_stage'] is True，config_json
+      记录 directorStageGenerated=True；
+    - 缺省（不传）→ False（默认关闭）。
+    """
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import api.script_split as script_split_api
+    import llm.llm_client_factory as llm_client_factory
+    import perseids_server.utils.permission as permission_utils
+
+    app = FastAPI()
+    app.include_router(storyboard_api.router)
+    client = TestClient(app)
+
+    storyboard = SimpleNamespace(
+        id=44,
+        user_id=7,
+        world_id=2,
+        episode_number=1,
+        script_id=55,
+        style="pixar",
+        workflow_ratio="16:9",
+    )
+    script = SimpleNamespace(id=55, content="故事正文，足够长度的剧本内容。")
+    captured = {"request_config": None, "patch": None}
+
+    async def fake_create_split_task(**kwargs):
+        captured["request_config"] = kwargs.get("request_config")
+        return 9001, True
+
+    monkeypatch.setattr(storyboard_api, "ensure_resource_access", lambda *args, **kwargs: None)
+    monkeypatch.setattr(storyboard_api, "get_user_id_from_header", lambda user_id: 7)
+    # require_permission 装饰器内的真实鉴权会查 user_tokens 表；测试环境无 DB，旁路掉
+    async def fake_resolve_authorization_user_id(auth_value):
+        return 7, None
+    monkeypatch.setattr(
+        permission_utils,
+        "resolve_authorization_user_id",
+        fake_resolve_authorization_user_id,
+    )
+    monkeypatch.setattr(
+        llm_client_factory,
+        "normalize_model_selection_refs",
+        lambda model_id=None, vendor_id=None: (None, None),
+    )
+    monkeypatch.setattr(storyboard_api.StoryboardModel, "get_by_id", lambda storyboard_id: storyboard)
+    monkeypatch.setattr(storyboard_api.StoryboardSceneModel, "list_by_storyboard", lambda storyboard_id: [])
+    monkeypatch.setattr(storyboard_api.ScriptModel, "get_by_id", lambda script_id: script)
+    monkeypatch.setattr(script_split_api, "create_split_task", fake_create_split_task)
+    monkeypatch.setattr(
+        storyboard_api.StoryboardModel,
+        "patch_config_json",
+        lambda storyboard_id, patch: captured.update({"patch": dict(patch)}),
+    )
+
+    response = client.post(
+        "/api/storyboard/44/generate-from-script",
+        headers={"Authorization": "Bearer token", "X-User-Id": "7"},
+        json={"max_group_duration": 15, "enable_director_stage": True},
+    )
+    assert response.status_code == 202
+    assert captured["request_config"]["enable_director_stage"] is True
+    assert captured["patch"]["directorStageGenerated"] is True
+
+    captured["request_config"] = None
+    captured["patch"] = None
+    response = client.post(
+        "/api/storyboard/44/generate-from-script",
+        headers={"Authorization": "Bearer token", "X-User-Id": "7"},
+        json={"max_group_duration": 15},
+    )
+    assert response.status_code == 202
+    assert captured["request_config"]["enable_director_stage"] is False
+    assert captured["patch"]["directorStageGenerated"] is False

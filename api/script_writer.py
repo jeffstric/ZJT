@@ -99,7 +99,7 @@ from services.vl_gateway import image_url_to_base64 as _vl_image_url_to_base64
 # 导入智能体系统
 from script_writer_core.agents import TaskManager, TaskStatus, ToolExecutor
 from script_writer_core.chat_session import ChatSession
-from script_writer_core.file_manager import FileManager
+from script_writer_core.file_manager import EntityNameValidationError, FileManager
 from script_writer_core.skill_loader import SkillLoader
 from utils.file_storage import get_file_storage
 from utils.conversation_history import append_message_if_not_duplicate
@@ -1229,6 +1229,7 @@ def sync_agent_image_preferences(user_id: str, world_id: str, prefs: Dict[str, A
     STORABLE_PREFS = [
         ('ratio', '图片比例'),
         ('resolution', '分辨率'),
+        ('count', '生成数量'),
     ]
 
     pref_parts: List[str] = []
@@ -1822,7 +1823,10 @@ async def append_session_message(request: Request, session_id: str, message_requ
         # 判断消息类型
         message_type = "normal"
         if role == "assistant" and content and content.startswith('__PENDING_TASK__'):
-            message_type = "normal"  # pending task 标记也作为普通 assistant 消息
+            # 与 pm_agent 路径（script_writer_core/agents/pm_agent.py）保持一致存为
+            # pending_task，否则后端 replace_pending_task（只匹配 pending_task）
+            # 永远命中 0 行，轮询完成时只能 append 兜底 + 事后清理，无法原位替换
+            message_type = "pending_task"
 
         # 显式 idempotency_key：避免同一分钟内相同内容被吞掉
         import uuid as _uuid
@@ -1878,6 +1882,18 @@ async def clean_pending_tasks(request: Request, session_id: str):
             body = await request.json()
         except Exception:
             pass  # 无 body 时兼容旧调用
+
+        # 属主断言：非本人会话一律 404（防枚举），与 /session/{id}/history 同规则
+        from model.chat_sessions import ChatSessionsModel
+        owner_session = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not owner_session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(owner_session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         task_type = body.get('task_type')
         project_ids = body.get('project_ids')
@@ -1990,6 +2006,18 @@ async def replace_pending_task(request: Request, session_id: str):
                 'error': 'task_type, project_ids and content are required'
             }, status_code=400)
 
+        # 属主断言：非本人会话一律 404（防枚举），与 /session/{id}/history 同规则
+        from model.chat_sessions import ChatSessionsModel
+        owner_session = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not owner_session:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(owner_session.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         from model.chat_messages import ChatMessagesModel
         affected = await asyncio.to_thread(
             ChatMessagesModel.replace_pending_task,
@@ -2035,6 +2063,12 @@ async def get_latest_task_for_session(request: Request, session_id: str):
                 'success': False,
                 'error': '没有任务'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举）——与 /session/{id}/history、
+        # /task/{task_id}/status 同规则；agent_tasks 行自带 user_id，直接比对
+        owner_error = ensure_owner(task.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         return JSONResponse({
             'success': True,
@@ -4494,6 +4528,8 @@ async def create_agent_task(request: Request, session_id: str, task_request: Tas
                 v_pref_parts.append(f"图片模式: {v_prefs['image_mode']}")
             if v_prefs.get('resolution'):
                 v_pref_parts.append(f"视频分辨率: {v_prefs['resolution']}")
+            if v_prefs.get('count'):
+                v_pref_parts.append(f"视频生成数量: {v_prefs['count']}（系统会自动按此数量提交，无需在工具参数中传 count）")
             # 添加视频模型名称（优先从前端传入，其次从 task_id 解析）
             v_model_display = v_prefs.get('model_name')
             if not v_model_display and v_config:
@@ -5095,6 +5131,8 @@ async def save_character(request: Request, character_name: str, file_request: Fi
             'success': success,
             'message': f'角色卡已保存: {character_name}' if success else '保存失败'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存角色卡失败: {str(e)}')
         return JSONResponse({
@@ -5192,6 +5230,8 @@ async def save_script(request: Request, script_name: str, file_request: FileCont
             'success': success,
             'message': f'剧本已保存: {script_name}' if success else '保存失败'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存剧本失败: {str(e)}')
         return JSONResponse({
@@ -5295,6 +5335,8 @@ async def save_location(request: Request, location_name: str, file_request: File
             'success': True,
             'message': f'场景已保存: {location_name}'
         })
+    except EntityNameValidationError as e:
+        return JSONResponse({'success': False, 'error': str(e)}, status_code=400)
     except Exception as e:
         logger.error(f'保存场景失败: {str(e)}')
         return JSONResponse({

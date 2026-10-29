@@ -538,6 +538,48 @@ def _should_repair_spatial_layout(
     return int((segment_context or {}).get("spatial_state_version") or 0) != 1
 
 
+# 效果模式 three.js 空间代码硬约束（每镜 three_scene_code 字段）。
+# 沙箱 API 与 web/js/storyboard/spatial_3d_preview.js replaySequence 注入的
+# helper 一一对应，两端需同步修改。
+THREE_SCENE_CODE_REQUIREMENTS = """
+
+**【效果模式 · three.js 3D 空间代码（每镜必须输出，质检硬校验）】**
+每个镜头必须输出 `three_scene_code` 字符串字段——用 three.js 代码表达该镜的完整空间状态。代码在受控沙箱内顺序执行（从空间序列首镜重放到本镜），可用变量与 API：
+
+- `THREE`：three.js 命名空间；`scene`：当前场景；`camera`：本镜相机；`actors` / `props` / `stage`：已注册对象表（如 `actors.林晓`）。
+- `startScene('场景名')`：开始新的空间序列（清空并重建）。
+- `makeStage('名字', 宽, 深, x, z, {h, y, color})`：场景体块（桌/车/沙发/墙），默认落地。
+- `makeActor('角色名', x, z, {facing})`：创建角色站位（人偶）；facing 为朝向角度（度，0=+Z 朝镜头，90=+X 朝右）。
+- `makeProp('道具名', x, z, {y})`：创建道具。
+- `moveActor('角色名', x, z, {facing})`：人物运动（后续镜修改已有角色位置/朝向）。
+- `moveProp('道具名', x, z)`：道具移动。
+- `setCamera(eyeX, eyeY, eyeZ, targetX, targetY, targetZ, fov)`：**每镜必须调用**，确定镜头位置与朝向（fov 默认 50）。
+
+必须遵守：
+1. **空间序列首镜**（本段第一镜且上一镜与它同场景连续时不适用；剧本第一镜、场景切换后的第一镜、或下方给出「上一镜代码」但剧情硬切换场景时）：必须以 `startScene(...)` 开头，用 `makeStage` 构建极简场景（体块即可，不要求精细），用 `makeActor` 给出**全部在场角色的站位**，最后 `setCamera`。
+2. **空间关系保持的后续镜**：**禁止** `startScene`、禁止重建同名对象；只写增量调整——人物运动用 `moveActor(...)`，道具移动用 `moveProp(...)`，新角色入场用 `makeActor(...)`；然后必须 `setCamera(...)`（即使机位与上一镜完全相同也要显式写出）。
+3. 坐标系：three.js 常规 Y-up，地面 y=0，单位约米；角色站位在 (x, z) 平面，x+ 为画面右、z+ 朝观众；机位高度用 eyeY 表达（站姿约 1.5、坐姿约 1.1）。
+4. 代码极简：每镜 3~12 行、只用上述 API 与对象表的 position/rotation；**禁止** import、requestAnimationFrame、DOM、window、console.log、新建 Renderer。
+5. 站位与机位必须与 spatial_layout / opening_frame_description 的空间语义一致（谁在左谁在右、机位在车内还是车外）。
+6. `three_scene_code` 是 JSON 字符串字段，换行用 \\n 转义；角色名/道具名与剧本一致（中文原名）。
+
+正例（空间序列首镜，面包车双人对话）：
+```
+startScene('面包车驾驶室');
+makeStage('车壳', 2.4, 1.5, 0, 0, {h: 1.6, color: 0x8a8f98});
+makeStage('中控台', 0.5, 1.2, 0, -0.1, {h: 0.7, y: 0.35});
+makeActor('奶酪', -0.55, 0.3, {facing: 90});
+makeActor('奶昔', 0.55, 0.2, {facing: -90});
+setCamera(-1.8, 1.2, 0.5, 0, 0.9, 0, 55);
+```
+正例（后续镜，奶酪下车走向车尾，机位切到车尾）：
+```
+moveActor('奶酪', -1.2, 1.6, {facing: 180});
+setCamera(0, 1.6, 3.2, -0.8, 1.0, 1.2, 45);
+```
+"""
+
+
 def _build_incremental_spatial_prompt(
     segment_context: Dict[str, Any],
 ) -> str:
@@ -560,6 +602,17 @@ def _build_incremental_spatial_prompt(
         ensure_ascii=False,
         indent=2,
     )
+    previous_three_code = str(
+        segment_context.get("previous_three_scene_code") or ""
+    ).strip()
+    previous_three_block = ""
+    if previous_three_code:
+        previous_three_block = f"""
+【上一镜 three.js 空间代码（本段首镜若空间关系保持，必须基于它增量调整；场景切换才 startScene 重建）】
+```js
+{previous_three_code}
+```
+"""
     return f"""
 
 **【效果模式 v3 · 增量空间意图】**
@@ -596,7 +649,7 @@ def _build_incremental_spatial_prompt(
 ```json
 {previous_camera}
 ```
-"""
+{previous_three_block}"""
 
 
 def _repair_shot_spatial_layout_from_previous(
@@ -2191,6 +2244,23 @@ async def parse_script_to_shots(
 ```
 """
 
+            # three.js 空间代码硬约束（v2/v3 共用）：每镜必须输出 three_scene_code。
+            # 「生成 3D 导演台」关闭（enable_three_scene_code=False）时不注入要求，
+            # 效果模式照常保留 spatial_layout 一致性约束。
+            three_code_block = ""
+            if quality_mode and segment_context.get("enable_three_scene_code", True):
+                previous_three_code = str(
+                    segment_context.get("previous_three_scene_code") or ""
+                ).strip()
+                three_code_block = THREE_SCENE_CODE_REQUIREMENTS
+                if previous_three_code:
+                    three_code_block += f"""
+【上一镜 three_scene_code（本段首镜若空间关系保持，必须基于它增量调整，禁止重建场景；场景切换才 startScene 重建）】
+```js
+{previous_three_code}
+```
+"""
+
             segment_context_block = f"""
 
 **【分段拆分模式 · 第 {seg_idx}/{total_seg} 段 segment_id={seg_id}】**
@@ -2208,6 +2278,7 @@ async def parse_script_to_shots(
 - 若确需创建新场景，必须输出 `location_db_id=null` 且 `parent_id` 指向一个合法父场景内部 ID；严禁输出 `location_db_id=null,parent_id=null`，也严禁为绕过父场景缺失而把子场景提升为顶层；**且新场景必须是新的物理空间，不能仅是已有场景的时间版**；新场景的 id 用 `loc_tmp_xxx`。
 - 分镜编号可以是段内编号，最终由后端统一重排。
 {spatial_contract_block}
+{three_code_block}
 【已接受资产注册表（必须复用其中已有全局 ID）】
 ```json
 {registry_text}

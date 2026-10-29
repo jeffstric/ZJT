@@ -81,6 +81,31 @@ source_id 记录 ai_audio 的 task_id。
 测试：`tests/api/test_download_site_upload_url.py`（5 用例：改写后签名返回 /
 cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路径回归）。
 
+### 6. 前端 `downloadWithAuth` 本站 `/upload/` 路径改走重签名通道（2026-10，develop_f1090）
+
+**事故背景**：视频工作流图片节点，上传图点"下载"会跳转到标签页展示图片而非下载。
+上传接口返回的本站绝对 URL（`http://{host}/upload/workflow/{uid}/x.jpg`）经
+`unwrapMediaUrl` 归一为相对路径后命中 `<a download>` 直下分支；但
+`cdn_redirect_middleware` 会把该请求 302 到跨域 CDN，浏览器对跨域重定向
+丢弃 `download` 属性，直接导航展示。图片节点"生成结果"另有第二个问题：
+结果名（"生成结果1"）无扩展名，CDN `attname` 原样透传，下载出的文件无后缀。
+
+**改动**（`web/js/download_attachment.js`）：
+
+- `/upload/` 开头的同源相对路径不再 `<a download>` 直下，统一改走
+  `/api/download?format=json` 重签名通道（后端 `_rewrite_site_upload_url_to_cdn`
+  改写 CDN 域名 + attname 强制附件下载）；其余同源相对路径（如 `/files/*.pdf`）
+  保持直下不受影响
+- 进 `/api/download` 的相对路径补全为绝对 URL（后端改写分支需要 netloc）；
+  唯 `/upload/cache/` 保持相对路径——后端本地文件分支按该前缀识别，
+  FileResponse 自带 attachment 头，映射缺失时省一次全量代理
+- 新增 `ensureDownloadExtension(name, url, fallbackExt)` 并挂到 `window`：
+  文件名无图片扩展名时依次从 URL 路径段提取、按 fallback（png）兜底。
+  图片节点下载按钮已接入（`web/js/image_node.js`）
+
+测试：`web/js/download_attachment.test.js`（9 用例，vitest：通道选择 5 +
+扩展名兜底 4）。
+
 ## 生效链路
 
 ```

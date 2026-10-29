@@ -450,6 +450,7 @@ def normalize_aliyun_bailian_base_url(base_url: Optional[str], for_llm: bool) ->
 
     兼容性处理（幂等）：
     - 空值回退默认基础 URL（DASHSCOPE_BASE_URL_DEFAULT）
+    - 未填写协议时自动使用 HTTPS，显式填写的 HTTP/HTTPS 协议保持不变
     - 兼容存量旧值：已带 /compatible-mode/v1 后缀的先剥离
     - 兼容尾部带 / 与不带 /
 
@@ -461,6 +462,8 @@ def normalize_aliyun_bailian_base_url(base_url: Optional[str], for_llm: bool) ->
         规范化后的完整 base_url
     """
     url = (base_url or '').strip() or DASHSCOPE_BASE_URL_DEFAULT
+    if not url.lower().startswith(('http://', 'https://')):
+        url = f'https://{url}'
     url = url.rstrip('/')
     # 剥离存量旧值可能携带的 OpenAI 兼容模式后缀
     if url.endswith(DASHSCOPE_COMPATIBLE_MODE_SUFFIX):

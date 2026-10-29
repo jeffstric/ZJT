@@ -101,3 +101,13 @@ def repair_spatial_layout_continuity(parsed_data: Dict[str, Any]) -> Dict[str, A
     # Community edition keeps parser compatibility but does not run the
     # enterprise spatial continuity engine.
     return parsed_data
+
+
+def build_three_scene(spatial_layout, spatial_world=None):
+    # 3D 空间预览与投影审计依赖企业版空间引擎（相机投影/世界索引），
+    # 社区版无 quality 模式 spatial_layout 产出，直接走商业特性异常。
+    raise StoryboardEnterpriseFeatureRequired()
+
+
+def audit_spatial_layout(spatial_layout, spatial_world=None):
+    raise StoryboardEnterpriseFeatureRequired()

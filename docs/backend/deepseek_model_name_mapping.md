@@ -86,3 +86,6 @@ mock 测试掩盖了从未真实调用过方舟的事实——映射修复必须
 - 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`
 - 测试：`tests/script_writer_core/test_vision_model_registration.py::test_deepseek_client_maps_vision_model`
 - 测试：`tests/llm/test_volcengine_humanize_error.py`（映射同步 + 404 翻译）
+- 后续事故：2026-10-26 方舟下线 doubao lite 260215 快照致
+  `InvalidEndpoint.ClosedEndpoint`（同为本映射机制的快照过期问题），见
+  `docs/backend/incidents/2026-10-26-doubao-lite-snapshot-closed-endpoint.md`

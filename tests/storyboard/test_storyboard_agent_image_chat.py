@@ -194,6 +194,7 @@ def test_storyboard_video_preferences_do_not_read_marketing_preferences():
             image_mode="first_last_frame",
             duration_seconds=8,
             video_resolution="1080p",
+            count=3,
         )
     )
 
@@ -202,6 +203,8 @@ def test_storyboard_video_preferences_do_not_read_marketing_preferences():
         "image_mode": "first_last_frame",
         "duration": 8,
         "resolution": "1080p",
+        "enable_face_mask": False,
+        "count": 3,
     }
 
 

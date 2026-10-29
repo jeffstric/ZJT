@@ -23,11 +23,15 @@
   "back_to_home": "返回首页",
   "in_development": "开发中",
   "user": "用户",
-
   "nav_inspiration": "灵感",
   "nav_generate": "生成",
-  "nav_assets": "资产",
-  "asset_library_title": "资产库",
+  "nav_assets": "已生成",
+  "nav_shared_asset_library": "资产库",
+  "mention_all_assets": "全部资产",
+  "mention_asset_folders": "资产目录",
+  "mention_ungrouped": "未分组",
+  "mention_back_to_groups": "返回资产目录",
+  "asset_library_title": "已生成",
   "asset_library_desc": "查看你在 AI 工具中生成的所有图片和视频结果。",
   "asset_empty_title": "暂无生成资产",
   "asset_empty_desc": "生成完成的图片或视频会自动出现在这里。",
@@ -36,7 +40,6 @@
   "previous_page": "上一页",
   "next_page": "下一页",
   "copy_failed": "复制失败",
-
   "sidebar_create": "开启创作",
   "new_chat": "新对话",
   "search_history": "搜索对话...",
@@ -46,19 +49,18 @@
   "rename": "重命名",
   "more_actions": "更多操作",
   "delete_confirm": "确定要删除这个对话吗？",
-
   "welcome_desc": "我是您的营销助手，可以帮助您创作带货脚本、广告创意、产品文案等营销内容。请告诉我您的需求。",
-
-  "input_placeholder": "输入想法、剧本或上传参考，输入 @ 引用媒体文件...",
+  "send_shortcut_ctrl_enter": "Ctrl+Enter 发送",
+  "send_shortcut_toggle_hint": "点击切换发送快捷键（Enter / Ctrl+Enter）",
+  "send_shortcut_enter": "Enter 发送",
+  "input_placeholder": "输入想法、剧本或上传参考，支持粘贴截图/视频，输入 @ 引用媒体文件...",
   "verification_placeholder": "请输入您的选择...",
-
   "mode_agent": "Agent 模式",
   "mode_agent_desc": "$2.0视频创作",
   "mode_image": "图片生成",
   "mode_image_desc": "智能美学提升",
   "mode_video": "视频生成",
   "mode_video_desc": "多种模型自由选择",
-
   "custom_settings": "自定义",
   "power_confirm_title": "自动确认上限",
   "power_confirm_unit": "算力",
@@ -66,6 +68,9 @@
   "power_confirm_reset": "恢复默认",
   "power_confirm_saved": "已保存自动确认上限",
   "power_confirm_save_failed": "保存自动确认上限失败",
+  "power_budget_title": "单次任务算力上限",
+  "power_budget_unit": "算力",
+  "power_budget_hint": "单次任务消耗超过此值将自动停止（0 表示不限制）。未设置时默认 {value}。",
   "generation_preference": "生成偏好",
   "image": "图片",
   "video": "视频",
@@ -77,6 +82,9 @@
   "first_last_frame_desc": "第一张为首帧，第二张为尾帧（可选）",
   "multi_reference_desc": "所有图片作为风格参考",
   "video_duration": "视频时长",
+  "generation_count": "生成次数",
+  "generation_count_hint": "单次提交将批量生成所选数量的图片/视频，算力按数量累计",
+  "generation_count_agent_hint": "智能体将按此数量提交生成任务，算力按数量累计",
   "duration_auto": "自动",
   "duration_seconds": "{dur}秒",
   "duration_unit": "秒",
@@ -93,24 +101,19 @@
   "add_subject": "添加主体",
   "add_subject_tip": "添加主体引用",
   "mode_not_supported": "当前模式不支持",
-
   "first_last_frame_mode": "首尾帧模式",
   "first_last_frame_mode_desc": "第一张为首帧，第二张为尾帧",
   "full_reference": "全能参考",
   "full_reference_desc": "所有图片作为风格参考",
-
   "upload_reference": "上传参考",
   "replace_image": "更换图片",
-
   "contact_us": "联系我们",
   "feedback_desc": "扫码加入微信反馈群，第一时间获取支持与更新动态。",
   "feedback_qr_alt": "意见反馈二维码",
   "delete_contact_button": "删除",
-
   "power_logs": "算力日志",
   "power_recharge": "算力充值",
   "current_power": "当前算力余额（点击查看日志）",
-
   "loading_packages": "加载套餐中...",
   "no_packages": "暂无可用套餐",
   "computing_power": "算力",
@@ -120,14 +123,12 @@
   "auto_arrival_tip": "如果已支付，请稍等片刻系统会自动到账",
   "back_to_packages": "返回选择套餐",
   "wechat_pay_qr_alt": "微信支付二维码",
-
   "download_image": "下载图片",
   "generate_video": "生成视频",
   "image_modal_alt": "放大查看",
   "image_alt": "图片",
   "reference_image_alt": "参考图",
   "generated_result_alt": "生成结果",
-
   "generating_image": "正在生成图片，请稍候...",
   "generating_video": "正在生成视频，请稍候...",
   "image_generated": "图片已生成：",
@@ -156,7 +157,6 @@
   "task_restore_failed": "任务状态恢复失败，请重新生成。",
   "ai_question": "AI 向您提问",
   "default_chat_text": "帮我创作一个带货短视频脚本",
-
   "auth_missing": "缺少认证信息",
   "local_recharge_hint": "只有云端环境才能开启二维码支付。本地模式下，管理员用户请进入后台增加算力。",
   "upload_failed_delete": "图片上传失败，请删除失败的图片后重新上传",
@@ -188,13 +188,12 @@
   "send_failed": "发送失败",
   "load_packages_failed": "加载失败，请重试",
   "create_order_failed": "创建支付订单失败",
-
   "type_image": "图片",
+  "type_asset": "资产",
+  "add_to_asset_library": "入库",
   "type_video": "视频",
   "type_audio": "音频",
-
   "new_chat_title": "新对话",
-
   "date_format": "{month}月{day}日",
   "resolution_2k": "高清 2K",
   "resolution_4k": "超清 4K",
@@ -207,7 +206,6 @@
   "desc_kling_video": "可灵图生视频模型",
   "desc_wanxiang_video": "阿里图生视频模型",
   "image_label": "[图片{num}]",
-
   "compressing": "压缩中...",
   "video_upload_failed_delete": "视频上传失败，请删除失败的视频后重新上传",
   "video_processing_timeout": "视频处理超时，请稍后重试",
@@ -245,5 +243,4 @@
   "output_language_custom": "自定义…",
   "output_language_custom_placeholder": "输入素材语言，如：Français",
   "output_language_hint": "控制图片/视频中的文字、口播旁白和营销文案的语言。"
-
 }

@@ -53,6 +53,7 @@ import {
     getAutoVideoCompleteButtonViewModel,
     getAutoVideoCompleteSummary,
 } from './auto_missing_videos_state.js';
+import { hasSpatialLayout } from './spatial_3d_preview.js';
 import {
     onDomWillRerender,
     updatePlayheadPosition,
@@ -609,6 +610,7 @@ function renderStoryboardCardCell(scene, nextScene) {
                         ${showActName ? `<div class="card-act-name">${actNameTag(scene)}</div>` : ''}
                         ${selecting ? '' : `<div class="storyboard-card-actions">
                             <button data-action="edit-scene" data-id="${scene.id}">${icon('edit', 14)} ${i18nT('btn_edit', '编辑')}</button>
+                            ${(state.directorStageGenerated !== false && hasSpatialLayout(scene)) ? `<button data-action="open-spatial-preview" data-id="${scene.id}" title="${i18nT('title_open_spatial_preview', '3D 空间布局预览')}">3D</button>` : ''}
                             <button data-action="duplicate-scene" data-id="${scene.id}"${state.duplicatingSceneId === scene.id ? ' disabled' : ''}>${icon('copy', 14)} ${i18nT('btn_duplicate', '复制')}</button>
                             <button data-action="delete-scene" data-id="${scene.id}">${icon('delete', 14)} ${i18nT('btn_delete', '删除')}</button>
                         </div>`}
@@ -631,6 +633,14 @@ function renderFirstFrameColoringToolbar(scene) {
                 data-action="color-first-frame"
                 title="${i18nT('title_color_edit_scene', '涂鸦编辑分镜图')}"
             >${icon('edit', 14)} ${i18nT('btn_color_edit', '涂鸦编辑')}</button>
+            <button
+                type="button"
+                class="preview-tool-btn"
+                data-action="add-scene-image-to-asset-library"
+                data-image-url="${escapeHtml(previewMedia.url)}"
+                data-asset-name="${escapeHtml(scene.title || '')}"
+                title="${i18nT('title_add_to_asset_library', '加入资产库')}"
+            >${icon('star', 14)} ${i18nT('btn_add_to_asset_library', '入库')}</button>
         </div>`;
 }
 
@@ -1688,7 +1698,10 @@ function renderAgentMessages() {
     const rows = state.agentMessages.slice(-8).map((message, index) => {
         const role = message.role || 'assistant';
         const label = role === 'user' ? i18nT('label_you', '你') : (role === 'status' ? i18nT('label_status', '状态') : i18nT('label_agent', '智能体'));
-        const full = String(message.content || message.status || '');
+        // 纯文本面板：markdown 图片语法（资产库 @引用 提交时还原产生）折叠为
+        // 「[图片:名]」占位，避免整段 URL 原文刷屏（历史回放与长消息均受益）
+        const full = String(message.content || message.status || '')
+            .replace(/!\[([^\]]*)\]\([^)\s]+\)/g, (_m, alt) => `[图片${alt ? ':' + alt : ''}]`);
         const key = agentMessageKey(message, index);
         const limit = role === 'status' ? 160 : 280;
         const isExpanded = Boolean(expandedMap[key]);
@@ -2581,6 +2594,15 @@ function renderGenerateFromScriptDialog() {
         const lockedBadge = qualityLocked
             ? `<span class="sequence-locked-badge">${icon('lock', 12)}<span>${i18nT('label_pro_edition', '商业版')}</span></span>`
             : '';
+        // 「生成 3D 导演台」内嵌效果模式卡片（数据仅效果模式产出），勾选即选中效果模式
+        const directorCheck = isQuality ? `
+            <label class="sequence-mode-director-check${qualityLocked || busy ? ' is-disabled' : ''}"
+                   title="${escapeHtmlAttr(i18nT('hint_director_stage', '为每镜生成 3D 空间，用于 3D 空间预览与工作流导演台'))}">
+                <input type="checkbox" data-action="toggle-enable-director-stage"
+                       ${state.enableDirectorStage === true ? 'checked' : ''}
+                       ${qualityLocked || busy ? 'disabled' : ''}>
+                <span>${escapeHtml(i18nT('option_director_stage', '生成3D空间'))}</span>
+            </label>` : '';
         return `
         <div class="${classes}"
              data-action="set-auto-image-sequence-mode" data-auto-image-sequence-mode="${mode}">
@@ -2595,6 +2617,7 @@ function renderGenerateFromScriptDialog() {
             <div class="sequence-mode-intro-meta">
                 <span class="sequence-mode-benefit">${escapeHtml(tag)}</span>
                 ${lockedBadge}
+                ${directorCheck}
             </div>
         </div>`;
     }).join('');
@@ -2687,15 +2710,48 @@ function renderFrameMentionButtons() {
     return `<div class="mention-frames">${buttons.join('')}</div>`;
 }
 
+/**
+ * 资产库 tab 的目录两级渲染（对齐 marketing_agent @ 下拉）：
+ * - groups 模式：分组目录（全部资产/未分组/各分组，带计数）；
+ * - assets 模式：「← 返回资产目录」+ 组内资产条目（滚动到底翻页，
+ *   翻页加载见 events.js loadAssetMentionPage / bindMentionListScroll）。
+ */
+function renderAssetMentionList() {
+    const view = state.assetMentionView;
+    if (view.mode === 'groups') {
+        const dirs = [
+            `<button type="button" class="mention-group-item" data-mention-group="all"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(i18nT('mention_all_assets', '全部资产'))}</span></button>`,
+            `<button type="button" class="mention-group-item" data-mention-group="ungrouped"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(i18nT('mention_ungrouped', '未分组'))}</span><span class="mention-group-count">${state.assetMentionUngroupedCount || 0}</span></button>`,
+        ].concat((state.assetMentionGroups || []).map((g) =>
+            `<button type="button" class="mention-group-item" data-mention-group="${escapeHtml(String(g.id))}" data-mention-group-name="${escapeHtmlAttr(g.name || '')}"><span class="mention-group-icon">📁</span><span class="mention-group-name">${escapeHtml(g.name || '')}</span><span class="mention-group-count">${g.assetCount || 0}</span></button>`));
+        const loading = (!state.assetMentionGroupsLoaded && !(state.assetMentionGroups || []).length)
+            ? `<div class="empty-note">${escapeHtml(i18nT('msg_loading', '加载中…'))}</div>`
+            : '';
+        return dirs.join('') + loading;
+    }
+    const back = `<button type="button" class="mention-back-item" data-mention-back><span>←</span><span>${escapeHtml(i18nT('mention_back_to_groups', '返回资产目录'))}${view.groupName ? ' · ' + escapeHtml(view.groupName) : ''}</span></button>`;
+    const items = view.items.map((item) =>
+        `<button data-mention-item="${escapeHtml('资产:' + item.id)}" data-hover-preview="${escapeHtmlAttr(item.thumb || '')}"><img src="${escapeHtml(getThumbnailUrl(item.thumb, 24))}" alt=""><span>${escapeHtml(item.name || ('资产' + item.id))}</span></button>`).join('');
+    const empty = (view.items.length || view.loading)
+        ? ''
+        : `<div class="empty-note">${escapeHtml(i18nT('msg_no_asset_library_items', '资产库为空，可在各页面生成图片后入库'))}</div>`;
+    const footer = view.loading
+        ? `<div class="empty-note">${escapeHtml(i18nT('msg_loading', '加载中…'))}</div>`
+        : (view.items.length && !view.hasMore ? `<div class="empty-note">${escapeHtml(i18nT('msg_no_more_items', '已全部加载'))}</div>` : '');
+    return back + items + empty + footer;
+}
+
 function renderMentionPopup() {
     if (!state.showMentionPopup) return '';
     const groups = {
         character: state.characters,
         scene: state.locations,
         prop: state.props,
+        asset: state.assetMentionItems || [],
     };
     const items = groups[state.mentionTab] || [];
     const frameButtons = renderFrameMentionButtons();
+    const isAssetTab = state.mentionTab === 'asset';
     return `
         <div class="mention-popup">
             ${frameButtons}
@@ -2703,12 +2759,16 @@ function renderMentionPopup() {
                 <button data-mention-tab="character" class="${state.mentionTab === 'character' ? 'active' : ''}">${i18nT('label_character', '角色')}</button>
                 <button data-mention-tab="scene" class="${state.mentionTab === 'scene' ? 'active' : ''}">${i18nT('label_scene', '场景')}</button>
                 <button data-mention-tab="prop" class="${state.mentionTab === 'prop' ? 'active' : ''}">${i18nT('label_prop', '道具')}</button>
+                <button data-mention-tab="asset" class="${isAssetTab ? 'active' : ''}">${i18nT('label_asset_library', '资产库')}</button>
             </div>
             <div class="mention-list">
-                ${items.map(item => {
-                    const preview = item.avatar || item.reference_image || '';
-                    return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
-                }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`}
+                ${isAssetTab
+                    ? renderAssetMentionList()
+                    : items.map(item => {
+                        const preview = item.avatar || item.reference_image || '';
+                        return `<button data-mention-item="${escapeHtml(item.name)}"${preview ? ` data-hover-preview="${escapeHtmlAttr(preview)}"` : ''}>${item.avatar ? `<img src="${escapeHtml(getThumbnailUrl(item.avatar, 24))}" alt="">` : ''}<span>${escapeHtml(item.name)}</span></button>`;
+                    }).join('') || `<div class="empty-note">${i18nT('msg_no_assets', '暂无资产')}</div>`
+                }
             </div>
         </div>`;
 }

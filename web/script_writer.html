@@ -6,6 +6,7 @@
     <title data-i18n="script_writer_title">剧本智能创作系统</title>
     <link rel="icon" href="__BRANDING_FAVICON_URL__" type="image/vnd.microsoft.icon"/>
     <link rel="stylesheet" href="/css/common.css">
+    <link rel="stylesheet" href="/css/asset_library.css?v=__VERSION__">
     <link rel="stylesheet" href="css/script_writer.css?v=__VERSION__">
     <link rel="stylesheet" href="css/script_writer_library.css?v=__VERSION__">
     <link rel="stylesheet" href="/css/model_catalog.css">
@@ -335,6 +336,18 @@
                             <div class="model-select-display" id="image-model-selector-display">加载中...</div>
                         </div>
                     </div>
+                    <div class="model-divider"></div>
+                    <div class="model-selector-item power-budget-item">
+                        <div class="model-icon power-budget-icon" id="power-budget-icon" title="本次任务算力上限" data-i18n="power_budget_title:title">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M13 2L4.5 12.5H11L9.5 22 19.5 10H13L13 2Z"/>
+                            </svg>
+                        </div>
+                        <div class="power-budget-wrapper">
+                            <input type="number" id="power-budget-input" class="power-budget-input" min="0" step="1" placeholder="--" onchange="onPowerBudgetChange()" />
+                            <button type="button" id="power-budget-reset" class="power-budget-reset" onclick="resetPowerBudget()" style="display: none;" data-i18n="power_budget_reset">恢复默认</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="computing-power-display" id="computing-power-display" title="当前算力余额（点击查看日志）" onclick="openComputingPowerLogsModal()" style="cursor: pointer;" data-i18n="current_power_balance:title">
                     <span class="power-icon">⚡</span>
@@ -457,6 +470,7 @@
                             <span id="status-text">就绪</span>
                         </span>
                         <span class="status-item"><span data-i18n="session_label">会话:</span> <span id="session-id" data-i18n="session_not_created">未创建</span></span>
+                        <button id="send-shortcut-toggle" class="send-shortcut-toggle" type="button" title="点击切换发送快捷键（Enter / Ctrl+Enter）"></button>
                     </div>
                 </div>
             </div>
@@ -965,6 +979,9 @@
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="clearImageInput('char-image')" data-i18n="btn_clear">
                                         清空
                                     </button>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="pickImageFromAssetLibrary('char-image')" title="从共享资产库选择图片">
+                                        📚 资产库
+                                    </button>
                                     <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('char-image', 1)">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -1106,6 +1123,9 @@
                                 <div class="image-upload-actions">
                                     <button type="button" class="btn btn-secondary btn-sm" onclick="clearImageInput('prop-image')" data-i18n="btn_clear">
                                         清空
+                                    </button>
+                                    <button type="button" class="btn btn-secondary btn-sm" onclick="pickImageFromAssetLibrary('prop-image')" title="从共享资产库选择图片">
+                                        📚 资产库
                                     </button>
                                     <button type="button" class="btn btn-primary btn-sm" onclick="triggerImageUpload('prop-image', 3)" data-i18n="btn_upload_image">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1615,6 +1635,18 @@
                         </svg>
                         <span data-i18n="view_image_history">历史形象图</span>
                     </button>
+                    <button type="button" class="btn btn-secondary" id="preview-asset-library-btn" onclick="pickPreviewImageFromAssetLibrary()" style="margin-left: 8px;" title="从资产库选择图片设为形象图">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        <span data-i18n="pick_image_from_asset_library">资产库</span>
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="preview-add-asset-library-btn" onclick="addPreviewImageToAssetLibrary()" style="margin-left: 8px;" title="将当前图片加入资产库">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 4px;">
+                            <path d="M12 5v14M5 12h14"/>
+                        </svg>
+                        <span data-i18n="add_to_asset_library">加入资产库</span>
+                    </button>
                     <span id="preview-regenerate-status" style="margin-left: 10px; font-size: 12px; color: #6b7280;" data-i18n="regenerate_character_image_hint">点击后由 AI 重新生成该角色的形象参考图（AI 处理中会自动排队）</span>
                 </div>
                 <!-- 缩略图网格 -->
@@ -1683,6 +1715,7 @@
 
     <script src="/js/sse_client.js?v=__VERSION__"></script>
     <script src="/js/recharge_center.js?v=__VERSION__"></script>
+    <script src="/js/asset_library.js?v=__VERSION__"></script>
     <script src="/js/script_writer.js?v=__VERSION__"></script>
     <script src="/js/script_writer_library.js?v=__VERSION__"></script>
     <!-- 导入剧本弹窗 -->

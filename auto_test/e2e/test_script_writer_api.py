@@ -284,3 +284,48 @@ def test_export_world_doc_success(api_client, user_id):
             assert data.get("filename", "").endswith(".docx"), f"文件名应为 .docx: {data}"
             return
     pytest.skip("环境中没有含文件可导出的世界")
+
+
+# ---------------------------------------------------------------------------
+# 会话列表鉴权收紧 + task 404（34e987ce6）：跨用户会话枚举漏洞回归
+# ---------------------------------------------------------------------------
+
+@pytest.mark.script_writer
+def test_session_list_cross_user_not_leaked(base_url, e2e_config, user_id):
+    """sw_api_exp_003 - 副账号（不同登录身份）无法枚举主账号会话列表：
+    会话列表鉴权已收紧为登录身份，body/params 里的他人 user_id 不得放行。"""
+    creds = e2e_config["credentials"]["secondary"]
+    login_resp = httpx.post(
+        f"{base_url}/api/auth/login",
+        json={"phone": creds["phone"], "password": creds["password"]},
+        timeout=15,
+    )
+    assert login_resp.status_code == 200, f"副账号登录失败: {login_resp.text}"
+    token = (login_resp.json().get("data") or login_resp.json()).get("token")
+    assert token
+    secondary_user_id = (login_resp.json().get("data") or login_resp.json()).get("user_id")
+
+    resp = httpx.get(
+        f"{base_url}/api/script-writer/sessions",
+        params={"user_id": str(user_id)},  # 试图枚举主账号会话
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=15,
+    )
+    # 收紧后只返回副账号自己的会话（不携带主账号数据）；任何形态的主账号
+    # 会话泄露（200 + 他人 session）都算回归
+    assert resp.status_code in (200, 401, 403), f"异常状态: {resp.status_code} {resp.text}"
+    if resp.status_code == 200:
+        data = resp.json()
+        sessions = data.get("sessions") or data.get("data") or []
+        for s in sessions if isinstance(sessions, list) else []:
+            owner = str(s.get("user_id", ""))
+            assert owner == "" or owner == str(secondary_user_id), \
+                f"会话列表泄露他人会话: {s}"
+
+
+@pytest.mark.script_writer
+def test_task_status_404_for_unknown_task(api_client):
+    """sw_api_exp_004 - 未知任务轮询返回 404 而非 500/挂死（前端据此触发
+    自愈重建，vitest script_writer_session_404_self_heal 已测前端侧）。"""
+    resp = api_client.get("/api/script-writer/task-status/nonexistent-task-id-xyz")
+    assert resp.status_code == 404, f"未知任务应 404: {resp.status_code} {resp.text}"

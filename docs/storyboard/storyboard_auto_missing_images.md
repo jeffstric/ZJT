@@ -157,10 +157,11 @@ Inserted scenes that have no parsed group metadata inherit the previous scene's 
 - **触发条件**（全部满足）：quality + first_frame 批任务；item `error_code=grid_first_frame_failed`（覆盖几何校验失败、宫格超时、ComfyUI FAILED、下载失败、拆分回写失败等全部宫格终态失败）；item 尚未带降级标记（每 item 每批任务仅降级一次，防循环）。
 - **执行位置**：`StoryboardAgentCliService._process_one_image_batch_job()` 在 reconcile 之后、quality 决策分支之前：`_prepare_grid_fallback_items()` 把 FAILED item 复活为 PENDING 并写 `extra_json.degraded_from_grid_to_single=True`（同时清 `error_code/error_message`，并通过 JSON_MERGE_PATCH null 删除陈旧 `grid_task_id`，防止降级后的单图任务再被宫格对账误杀）；`_submit_grid_fallback_items()` 随后逐 item 调 `generate_image()` 提交单图直出。
 - **单图提交语义**：模型沿用批任务创建时锁定的快照（item `extra_json.generation_snapshots` 优先，回退 job 快照，禁止回退实时偏好）；`source_image` 用 `extra_json.previous_group_reference_url`（宫格提交时已存好的前一幕末帧，保持跨幕连贯性）；prompt 复用 `extra_json.grid_prompt_cell_context.prompt_text`（LLM 精修过的格子提示词，缺省回退场景默认 prompt）；`force_bypass=True` 跳过 location 参考图 readiness 检查（降级已是兜底路径）。
+- **快照 slot 不匹配兜底**：批任务以 `mode=text_to_image` 创建时快照只锁了 `image.text_to_image` 一个 slot，而带 `previous_group_reference_url` 的 item 默认走 `image_edit` 提交，必被 `generate_image` 以 `MODEL_MODE_UNSUPPORTED` 拒收。此时降级提交退化为纯文生图（放弃前一幕参考图，打 `[grid-fallback] ... 退化为 text_to_image` warning），与批任务声明的 mode 语义一致；快照为空（旧数据）时不做此检查，维持实时偏好重建的既有行为。
 - **结果**：提交成功 → item 置 RUNNING，由既有 asset 轮询对账自然完成（`resolve_scene_generation_bindings` 自动选中）；提交失败 → item FAILED（`grid_fallback_submit_failed`），**不再二次降级**，此时后续组按既有 `fail_downstream` 语义判死。
 - **与"quality 宁可失败也不降级"原则的关系**：该原则针对的是**参考图缺失时不得无参考生成**（避免画面一致性崩坏），本降级针对的是**宫格格式失败后换用单图通道**（参考图照常携带、模型快照不变），不违反一致性目标。设计约束修订见 `docs/storyboard/storyboard_quality_strict_act_sequence_design.md`。
 - 状态接口 `_batch_item_summary` 透出 `degraded_from_grid_to_single` 布尔字段供前端/排查感知；前端无需改造（item 走 failed → running → completed 的既有展示路径）。
-- 诊断日志 tag：`[grid-fallback]`。防回归测试：`tests/storyboard/test_storyboard_agent_cli_service.py::test_grid_fallback_*`（7 例）。
+- 诊断日志 tag：`[grid-fallback]`。防回归测试：`tests/storyboard/test_storyboard_agent_cli_service.py::test_grid_fallback_*`（8 例）。
 
 Existing completed scenes participate in dependencies. For example, if A1 already has a first frame and A2 is missing, A2 can reference A1 without regenerating A1. Existing running scenes also participate; dependent scenes wait until their selected asset has a result URL.
 
