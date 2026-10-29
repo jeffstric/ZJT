@@ -3119,9 +3119,7 @@ function navigateToEpisode(episodeNumber, options = {}) {
     if (state.workflowId) {
         params.set('workflow_id', String(state.workflowId));
     }
-    if (state.userId) {
-        params.set('user_id', String(state.userId));
-    }
+    // 不拼 user_id：storyboard 页面身份只取 localStorage 登录态，URL 里的 user_id 转发后会触发身份一致性 401
     window.location.href = `/storyboard?${params.toString()}`;
 }
 

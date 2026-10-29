@@ -1166,23 +1166,41 @@ def build_storyboard_folders(
         }
         folders[item['folder_key']] = item
 
+    # 跨属主剧本索引：scope=all / scope=user 按创建者拆分时，故事板属主常与剧本属主
+    # 不同（如剧本由 17 创建、故事板由 23 创建）。此时故事板卡片不能因为合并不了
+    # 就被标成「剧本缺失」(orphan)——只要同一世界同一集存在任意属主的剧本即可。
+    scripts_by_episode = {}
+    for script in scripts:
+        episode_key = (script.get('world_id'), script.get('episode_number') or 1)
+        if episode_key not in scripts_by_episode:
+            scripts_by_episode[episode_key] = script
+
     for storyboard in storyboards:
         key = _storyboard_folder_key(storyboard, separate_owners)
         episode_number = storyboard.get('episode_number') or 1
         owner_user_id = _folder_owner_id(storyboard)
         if key not in folders:
             title = storyboard.get('title') or f"Episode {episode_number}"
+            script_match = scripts_by_episode.get((storyboard.get('world_id'), episode_number))
+            if script_match is not None:
+                script_id = script_match.get('id')
+                script_title = script_match.get('title') or title
+                status = 'created'
+            else:
+                script_id = storyboard.get('script_id')
+                script_title = title
+                status = 'orphan'
             folders[key] = {
                 'folder_key': key,
                 'world_id': storyboard.get('world_id'),
                 'world_name': world_names.get(storyboard.get('world_id'), ''),
                 'episode_number': episode_number,
-                'script_id': storyboard.get('script_id'),
-                'script_title': title,
+                'script_id': script_id,
+                'script_title': script_title,
                 'storyboard_id': storyboard.get('id'),
                 'storyboard_title': title,
                 'scene_count': int(storyboard.get('scene_count') or 0),
-                'status': 'orphan',
+                'status': status,
                 'owner_user_id': owner_user_id,
                 'update_at': _to_iso(storyboard.get('update_at') or storyboard.get('create_at')),
             }

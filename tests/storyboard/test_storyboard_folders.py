@@ -296,3 +296,59 @@ def test_list_names_for_storyboard_folders_keeps_soft_deleted_worlds(monkeypatch
     assert captured["params"] == tuple()
     assert "user_id" not in shared_sql
     assert "limit" not in shared_sql
+
+
+def test_build_storyboard_folders_cross_owner_storyboard_is_not_orphan():
+    """scope=all 按创建者拆开时，故事板属主与剧本属主不同不算「剧本缺失」。
+
+    剧本 359 属主 17、故事板 201 属主 23 的场景：拆开后两者 key 不同合并不了，
+    但同一世界同一集存在剧本，故事板卡片应显示已创建并带回剧本信息。
+    """
+    scripts = [
+        {
+            "id": 359,
+            "world_id": 93,
+            "user_id": 17,
+            "title": "包裹里的远方",
+            "episode_number": 1,
+            "update_time": "2026-10-19T20:03:15",
+        },
+    ]
+    storyboards = [
+        {
+            "id": 201,
+            "world_id": 93,
+            "user_id": 23,
+            "script_id": 359,
+            "title": "包裹里的远方",
+            "episode_number": 1,
+            "scene_count": 5,
+            "update_at": "2026-10-20T10:00:00",
+        },
+        {
+            "id": 202,
+            "world_id": 93,
+            "user_id": 23,
+            "script_id": None,
+            "title": "无剧本集",
+            "episode_number": 2,
+            "scene_count": 1,
+            "update_at": "2026-10-20T11:00:00",
+        },
+    ]
+
+    folders = storyboard_api.build_storyboard_folders(
+        scripts, storyboards, {93: "包裹里的远方（A组)"}, separate_owners=True
+    )
+    by_key = {folder["folder_key"]: folder for folder in folders}
+
+    board_folder = by_key["93:1:23"]
+    assert board_folder["status"] == "created"
+    assert board_folder["script_id"] == 359
+    assert board_folder["script_title"] == "包裹里的远方"
+    assert board_folder["storyboard_id"] == 201
+
+    # 同一世界同集确实没有剧本时，仍保持 orphan（剧本缺失）
+    orphan_folder = by_key["93:2:23"]
+    assert orphan_folder["status"] == "orphan"
+    assert orphan_folder["script_id"] is None
