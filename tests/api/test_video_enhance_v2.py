@@ -90,6 +90,39 @@ def test_task_registered_as_runninghub_driver():
     assert get_implementation_id('video_enhance_runninghub_v1') > 0
 
 
+# ==================== 参数 schema（配置驱动） ====================
+
+def test_params_schema_defined_and_exposed_to_frontend():
+    """schema 唯一定义在 unified_config；video_enhance 任务配置透出 params_schema。"""
+    from config.constant import TaskTypeRegistry, TaskTypeId
+    from config.unified_config import VIDEO_ENHANCE_PARAMS_SCHEMA, validate_video_enhance_params
+
+    # 本期只开放 max_resolution（node 112）；node 108/instanceType 不开放
+    assert [item["key"] for item in VIDEO_ENHANCE_PARAMS_SCHEMA] == ["max_resolution"]
+    item = VIDEO_ENHANCE_PARAMS_SCHEMA[0]
+    assert item["type"] == "select"
+    assert item["node_id"] == "112"
+    assert item["field_name"] == "value"
+    assert item["default"] == "1920"
+    assert {opt["value"] for opt in item["options"]} == {"720", "1080", "1440", "1920"}
+
+    config = TaskTypeRegistry.get(TaskTypeId.VIDEO_ENHANCE)
+    assert config.params_schema == VIDEO_ENHANCE_PARAMS_SCHEMA
+
+    # 透出到前端任务配置（to_frontend_dict 含 params_schema）
+    frontend = config.to_frontend_dict()
+    assert frontend["params_schema"] == VIDEO_ENHANCE_PARAMS_SCHEMA
+
+    # 校验函数：合法通过 / 非法拒绝
+    assert validate_video_enhance_params({"max_resolution": "1080"}) == {"max_resolution": "1080"}
+    with pytest.raises(ValueError):
+        validate_video_enhance_params({"max_resolution": "9999"})
+    with pytest.raises(ValueError):
+        validate_video_enhance_params({"unknown_key": "1080"})
+    with pytest.raises(ValueError):
+        validate_video_enhance_params("not-a-dict")
+
+
 # ==================== 提交端点（只落库入队） ====================
 
 def _enhance_client(monkeypatch, probed_duration, created, queued):
@@ -173,6 +206,51 @@ def test_submit_marks_history_source_for_legacy_param(monkeypatch):
     assert json.loads(created[0]["extra_config"]) == {"source": "history"}
 
 
+def test_submit_with_valid_params_stored_in_extra_config(monkeypatch):
+    """合法 params 按 schema 校验后并入 extra_config["params"] 落库。"""
+    created, queued = [], []
+    client = _enhance_client(monkeypatch, 5.0, created, queued)
+
+    resp = _post_enhance(client, params='{"max_resolution":"1080"}')
+    assert resp.status_code == 200, resp.text
+    extra_config = json.loads(created[0]["extra_config"])
+    assert extra_config["params"] == {"max_resolution": "1080"}
+
+
+def test_submit_with_invalid_param_value_rejected(monkeypatch):
+    """值不在 options 白名单：400 拒绝，不静默丢弃，不落库不入队。"""
+    created, queued = [], []
+    client = _enhance_client(monkeypatch, 5.0, created, queued)
+
+    resp = _post_enhance(client, params='{"max_resolution":"9999"}')
+    assert resp.status_code == 400
+    assert "max_resolution" in resp.json()["detail"]
+    assert not created
+    assert not queued
+
+
+def test_submit_with_unknown_param_key_rejected(monkeypatch):
+    """未知参数名：400 拒绝（schema 之外的 key 一律不收）。"""
+    created, queued = [], []
+    client = _enhance_client(monkeypatch, 5.0, created, queued)
+
+    resp = _post_enhance(client, params='{"foo":"bar"}')
+    assert resp.status_code == 400
+    assert not created
+    assert not queued
+
+
+def test_submit_with_malformed_params_rejected(monkeypatch):
+    """params 不是合法 JSON：400 拒绝。"""
+    created, queued = [], []
+    client = _enhance_client(monkeypatch, 5.0, created, queued)
+
+    resp = _post_enhance(client, params='not-a-json')
+    assert resp.status_code == 400
+    assert not created
+    assert not queued
+
+
 @pytest.mark.parametrize("probed,expected_tier,expected_power", [
     (3.2, 4, 10),     # 低于下限吸附到 4 秒档
     (15.0, 15, 40),   # 恰好 15 秒（浮点边界）
@@ -240,13 +318,22 @@ def _driver():
         return VideoEnhanceRunninghubV1Driver()
 
 
-def _ai_tool(duration=8, video_path="/upload/temp/video.mp4"):
+def _ai_tool(duration=8, video_path="/upload/temp/video.mp4", extra_config=None):
     return SimpleNamespace(
         id=77,
         video_path=video_path,
         duration=duration,
         prompt="视频高清修复",
+        extra_config=extra_config,
     )
+
+
+def _build_request(driver, ai_tool):
+    async def _upload(path):
+        return "abc123.mp4"
+
+    driver._upload_video = _upload
+    return asyncio.run(driver.build_create_request(ai_tool))
 
 
 def test_driver_build_create_request_nodes():
@@ -270,6 +357,42 @@ def test_driver_build_create_request_nodes():
     assert nodes["108"]["fieldName"] == "select"
     assert nodes["108"]["fieldValue"] == "1"
     assert nodes["112"]["fieldName"] == "value"
+    assert nodes["112"]["fieldValue"] == "1920"
+
+
+def test_driver_build_create_request_with_max_resolution_param():
+    """用户经 extra_config.params 传入合法 max_resolution=1080 → node 112 取用户值。"""
+    driver = _driver()
+    ai_tool = _ai_tool(extra_config=json.dumps({"params": {"max_resolution": "1080"}}))
+    request = _build_request(driver, ai_tool)
+
+    nodes = {n["nodeId"]: n for n in request["json"]["nodeInfoList"]}
+    assert nodes["112"]["fieldValue"] == "1080"
+
+
+def test_driver_build_create_request_param_not_passed_uses_default():
+    """不传 params（extra_config 无 params 字段）→ node 112 回落 schema default 1920。"""
+    driver = _driver()
+    request = _build_request(driver, _ai_tool(extra_config=json.dumps({"source": "direct"})))
+
+    nodes = {n["nodeId"]: n for n in request["json"]["nodeInfoList"]}
+    assert nodes["112"]["fieldValue"] == "1920"
+
+
+@pytest.mark.parametrize("raw_params", [
+    {"max_resolution": "9999"},   # 不在 options 白名单
+    {"max_resolution": 1080},     # 类型不符（int 不在 str 白名单）
+    "not-a-dict",                 # params 不是对象
+])
+def test_driver_build_create_request_invalid_param_falls_back_to_default(raw_params):
+    """驱动不信任库数据：非法 params 告警后回落 default，不影响三节点提交。"""
+    driver = _driver()
+    ai_tool = _ai_tool(extra_config=json.dumps({"params": raw_params}))
+    request = _build_request(driver, ai_tool)
+
+    nodes = {n["nodeId"]: n for n in request["json"]["nodeInfoList"]}
+    assert nodes["46"]["fieldName"] == "video"
+    assert nodes["108"]["fieldValue"] == "1"
     assert nodes["112"]["fieldValue"] == "1920"
 
 
