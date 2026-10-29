@@ -7,16 +7,31 @@ import copy
 import importlib.util
 import unittest
 
-_HAS_ENTERPRISE_SPATIAL = (
-    importlib.util.find_spec("enterprise.services.storyboard_spatial.three_scene")
-    is not None
-)
+def _detect_enterprise_spatial() -> bool:
+    """探测 three_scene 模块是否可导入。
 
-if _HAS_ENTERPRISE_SPATIAL:
-    from enterprise.services.storyboard_spatial.three_scene import (
-        audit_spatial_layout,
-        build_three_scene,
-    )
+    find_spec 带点路径会先导入父包；父包 __init__ 或其依赖在部分环境
+    （如社区 CI 的精简镜像）下可能抛异常，必须兜住，否则整个测试模块
+    以 _FailedTest 形式报错而不是干净跳过。
+    """
+    try:
+        if (
+            importlib.util.find_spec("enterprise.services.storyboard_spatial.three_scene")
+            is None
+        ):
+            return False
+        from enterprise.services.storyboard_spatial.three_scene import (
+            audit_spatial_layout,
+            build_three_scene,
+        )
+        globals()["audit_spatial_layout"] = audit_spatial_layout
+        globals()["build_three_scene"] = build_three_scene
+        return True
+    except Exception:
+        return False
+
+
+_HAS_ENTERPRISE_SPATIAL = _detect_enterprise_spatial()
 
 
 def _cabin_layout():
