@@ -64,7 +64,9 @@ body.tour-generate-video-locked .minimap-asset-entry{
   border-radius: 14px;
   box-shadow: var(--shadow-lg);
   backdrop-filter: blur(8px);
-  z-index: 1400;
+  /* 必须低于 .add-btn-container(z-47)：面板与左侧添加节点按钮重叠，
+     盖住它会导致用户必须先收起面板才能添加节点 */
+  z-index: 45;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

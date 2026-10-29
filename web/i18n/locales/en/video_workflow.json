@@ -1038,7 +1038,7 @@
   "script_enable_director_stage_hint": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
   "script_director_stage_hint_quality": "Quality mode: generates a 3D space for each shot, powering the 3D preview and the director stage",
   "script_director_stage_hint_need_quality": "Quality mode only",
-  "node_asset_panel_btn": "Assets",
+  "node_asset_panel_btn": "Nodes",
   "node_asset_panel_title": "Node Manager",
   "node_asset_search_placeholder": "Search nodes...",
   "node_asset_filter_all": "All types",

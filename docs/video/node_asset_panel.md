@@ -1,14 +1,14 @@
-# 节点管理面板（资产管理）
+# 节点管理面板
 
 ## 概述
 
-节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与删除，底部实时统计节点总数。入口为画布左下角小地图上方的「资产管理」按钮。
+节点管理面板提供画布上全部节点的列表视图（交互参考 LibLibTV 的节点列表）：缩略图 + 标题 + 类型徽标，支持搜索、类型筛选、一键定位与删除，底部实时统计节点总数。入口为画布左下角小地图上方的「节点管理」按钮（与「资产库」无关，仅管理画布节点）。
 
 纯前端能力：数据只读自 `state.nodes`（页面内存），不发起任何网络请求；节点缩略图复用节点自身的资源 URL。
 
 ## 入口
 
-画布左下角，小地图（minimap）正上方的「资产管理」横条按钮（`#nodeAssetPanelBtn`，与小地图同宽对齐）。
+画布左下角，小地图（minimap）正上方的「节点管理」横条按钮（`#nodeAssetPanelBtn`，与小地图同宽对齐）。
 
 - 点击开合面板（toggle），`Esc` 也可关闭。
 - 面板为画布左侧悬浮抽屉（`.node-asset-panel`），打开期间不阻塞画布操作。
@@ -61,6 +61,6 @@
 
 ## i18n 词条
 
-`node_asset_panel_btn`（资产管理）、`node_asset_panel_title`（节点管理）、`node_asset_search_placeholder`、`node_asset_filter_all`、`node_asset_total`（共 {n} 节点）、`node_asset_total_filtered`、`node_asset_empty`、`node_asset_no_match`、`node_asset_locate`、`node_asset_delete`、`node_asset_delete_confirm`、`node_asset_refresh`、`node_asset_close`。
+`node_asset_panel_btn`（节点管理）、`node_asset_panel_title`（节点管理）、`node_asset_search_placeholder`、`node_asset_filter_all`、`node_asset_total`（共 {n} 节点）、`node_asset_total_filtered`、`node_asset_empty`、`node_asset_no_match`、`node_asset_locate`、`node_asset_delete`、`node_asset_delete_confirm`、`node_asset_refresh`、`node_asset_close`。
 
 节点类型展示名复用既有词条（image / video / image_to_video / shot_frame_group 等），新类型未收录时回退显示类型标识。
