@@ -81,6 +81,17 @@ deepseek 三家，2026-08-07 起配置）：
 教训：跨供应商套用模型名映射（DeepSeek 官方的改名不等于方舟的改名），
 mock 测试掩盖了从未真实调用过方舟的事实——映射修复必须用真实 key 实测。
 
+## supports_vl=1（2026-10-29，迁移 no_159_20261029_enable_ds_v4_flash_vl）
+
+`deepseek-flash`（V4.1-Flash，`deepseek-v4-flash` 的出口模型）已并入
+vision-exp 的视觉能力，官方视觉接口每张图片 token 有 1024 上限（服务端
+自动缩放，2000×2000 与 5000×5000 等价），方舟侧 `deepseek-v4-flash-ga-260731`
+也实测支持图片输入。迁移 no_159 把 model 表 `deepseek-v4-flash` 行
+`supports_vl` 置 1，使其进入 VL 场景可选列表（画风识别下拉、资产检查专家、
+H3 提示词优化参考图注入等）；`deepseek-v4-flash-vision-exp`（vl=1）与
+`deepseek-v4-flash` 走同一 API 模型，两者等效，旧名保留兼容。
+与 no_132（mimo 误标 vl=1 回退 0）方向相反：本迁移基于 API 实测能力开启。
+
 ## 关联
 
 - 代码：`llm/openai_deepseek.py` `_MODEL_NAME_MAP`、`llm/volcengine_openai_client.py` `_MODEL_NAME_MAP`
