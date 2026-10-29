@@ -34,7 +34,8 @@ class RunningHubKeyPoolProvider(Protocol):
     def get_pool_overview(self) -> list[dict[str, Any]]: ...
     def get_key_raw(self, index: int) -> str: ...
     def set_key(self, index: int, *, api_key: Optional[str], max_slots: Optional[int],
-                label: Optional[str], enabled: Optional[bool], updated_by: int) -> list[str]: ...
+                label: Optional[str], enabled: Optional[bool],
+                key_type: Optional[str], updated_by: int) -> list[str]: ...
     def delete_key(self, index: int) -> int: ...
     def reset_circuit(self, index: int) -> bool: ...
 
@@ -77,7 +78,8 @@ class CommunityRunningHubKeyPoolProvider:
         return self._unavailable()
 
     def set_key(self, index: int, *, api_key: Optional[str], max_slots: Optional[int],
-                label: Optional[str], enabled: Optional[bool], updated_by: int) -> list[str]:
+                label: Optional[str], enabled: Optional[bool],
+                key_type: Optional[str], updated_by: int) -> list[str]:
         return self._unavailable()
 
     def delete_key(self, index: int) -> int:
@@ -182,7 +184,8 @@ async def get_key_raw_async(index: int) -> str:
 
 
 async def set_key_async(index: int, *, api_key: Optional[str], max_slots: Optional[int],
-                        label: Optional[str], enabled: Optional[bool], updated_by: int) -> list[str]:
+                        label: Optional[str], enabled: Optional[bool],
+                        key_type: Optional[str], updated_by: int) -> list[str]:
     _require_available()
     return await asyncio.to_thread(
         _provider.set_key,
@@ -191,6 +194,7 @@ async def set_key_async(index: int, *, api_key: Optional[str], max_slots: Option
         max_slots=max_slots,
         label=label,
         enabled=enabled,
+        key_type=key_type,
         updated_by=updated_by,
     )
 

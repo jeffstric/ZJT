@@ -1278,6 +1278,13 @@ RUNNINGHUB_KEY_HALF_OPEN_PROBE_LIMIT = 1        # 半开状态下同时允许的
 # 可通过动态配置 runninghub.key_pool.congest_cooldown_seconds 热更新
 RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒）
 
+# 密钥类型（config_key = runninghub.key.{N}.key_type）
+#   standard = 普通密钥：并发小、便宜，平时参与正常轮换分配
+#   wallet   = 钱包密钥：并发大、按量计费较贵，仅在所有普通密钥并发占满时兜底使用
+RUNNINGHUB_KEY_TYPE_STANDARD = 'standard'
+RUNNINGHUB_KEY_TYPE_WALLET = 'wallet'
+RUNNINGHUB_KEY_TYPES = (RUNNINGHUB_KEY_TYPE_STANDARD, RUNNINGHUB_KEY_TYPE_WALLET)
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 

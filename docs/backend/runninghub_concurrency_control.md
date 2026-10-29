@@ -519,6 +519,52 @@ print(f"Cleaned {cleaned_count} stale slots")
 但许可证未激活时同样 403 并显示锁定卡片（须先在许可证管理页激活）。商业版的
 配置格式、选择策略、故障隔离和运维说明位于私有企业包文档中。
 
+### 密钥类型分层：钱包密钥兜底（key_type）
+
+#### 背景与语义
+
+密钥池新增类型维度 `key_type`（`config/constant.py` 常量
+`RUNNINGHUB_KEY_TYPE_STANDARD` / `RUNNINGHUB_KEY_TYPE_WALLET`）：
+
+- **standard（普通密钥，默认）**：并发数小、成本低，参与日常「最小负载优先」轮换；
+- **wallet（钱包密钥）**：并发数大、按量计费较贵，**仅在所有普通密钥并发占满
+  （或熔断/停用/拥堵冷却）时才兜底启用**，平时不参与分配。
+
+类型存储于 `system_config`（`config_key = runninghub.key.{N}.key_type`，
+与 `max_slots` / `label` 同构，**不改表结构**；无该配置行的存量密钥默认 standard）。
+管理入口：admin 后台「RH密钥池」→ 编辑弹窗「类型」下拉，表格以徽章展示（钱包=金色）。
+
+#### 选择算法（acquire_key 分层）
+
+```
+1. 候选 A：普通密钥（standard）中 enabled + ENABLED + 未在拥堵冷却 + active < max_slots
+   → 最小负载优先 (active ASC, fail_count ASC, last_used_at ASC)
+2. 候选 A 空 → 候选 W：钱包密钥（wallet）中同样健康的密钥（同样最小负载优先）
+   ★ 平时并发足够时，候选 A 非空，钱包密钥永远不被选中
+   ★ 兜底命中打 WARNING 日志「启用钱包密钥兜底」，便于观察成本
+3. 候选 A/W 都空 → 候选 B：半开探测（HALF_OPEN，不区分类型，普通/钱包密钥
+   熔断后均通过探测恢复；钱包优先于半开探测——兜底是确定容量，探测是赌博）
+4. 都空 → 返回 None → 调用方回退全局 key
+```
+
+钱包密钥与其余运行态机制完全正交，按 index 维度照常生效：
+`enabled` 手动停用、熔断状态机（`report_failure`/`report_success`）、
+拥堵冷却（`report_congested`）、`max_slots` 单密钥并发上限、
+`runninghub_slots.api_key_index` 任务关联。
+
+#### 边界处理
+
+| 场景 | 行为 |
+|---|---|
+| 普通密钥有空位 | 永不使用钱包密钥（即使钱包 active 更低） |
+| 普通密钥全满/全部不可用 | 钱包密钥按最小负载兜底，承接至其 `max_slots` |
+| 钱包密钥也满/停用/熔断/冷却中 | `acquire_key` 返回 None → 回退全局 key |
+| 存量密钥无 `key_type` 配置 | 默认视为普通密钥（向后兼容） |
+| 钱包密钥计费观察 | 检索日志「启用钱包密钥兜底」（WARNING 级） |
+
+单测：`enterprise/tests/test_runninghub_key_pool_wallet.py`（分层选择、
+旧数据兼容、半开探测共存、多钱包最小负载等 12 例）。
+
 ### 拥堵冷却（Congestion Cooldown）
 
 #### 背景与问题

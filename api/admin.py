@@ -28,6 +28,7 @@ from config.constant import (
     ADMIN_CONFIG_BATCH_MAX_ITEMS,
     DRIVER_IMPLEMENTATION_MAPPING,
     GEMINI_URL_FORMATS,
+    RUNNINGHUB_KEY_TYPES,
     ChannelLevel,
     UserStatus,
     REMARK_MAX_LEN,
@@ -3954,6 +3955,7 @@ class RunningHubKeyRequest(BaseModel):
     max_slots: Optional[int] = None
     label: Optional[str] = None
     enabled: Optional[bool] = None
+    key_type: Optional[str] = None
 
 
 @router.get("/runninghub-key-pool")
@@ -4014,6 +4016,11 @@ async def admin_set_runninghub_key(
     """新增/更新密钥池中某个槽位的配置（仅配置项，运行态由系统维护）"""
     admin = await require_admin(auth_token)
     _require_enterprise_for_key_pool()
+    if request.key_type is not None and request.key_type not in RUNNINGHUB_KEY_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"key_type 必须为 {'/'.join(RUNNINGHUB_KEY_TYPES)} 之一",
+        )
     try:
         from task.runninghub_key_pool import set_key_async
         updated = await set_key_async(
@@ -4022,6 +4029,7 @@ async def admin_set_runninghub_key(
             max_slots=request.max_slots,
             label=request.label,
             enabled=request.enabled,
+            key_type=request.key_type,
             updated_by=admin.id,
         )
 
