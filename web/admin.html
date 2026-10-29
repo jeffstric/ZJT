@@ -3110,13 +3110,20 @@
                                     <span v-if="isProviderConfigured(provider.id)" class="qc-badge qc-badge-done">&#10003; {{ t('badge_configured') }}</span>
                                 </div>
                                 <div class="qc-config-fields">
-                                    <div v-for="field in provider.fields" :key="field.id" class="form-group">
+                                    <div v-for="field in provider.fields" :key="field.id" class="form-group" v-show="isFieldVisible(provider, field)">
                                         <label>
                                             {{ field.label }}
                                             <span v-if="field.required" style="color: red;">*</span>
                                         </label>
+                                        <!-- 开关字段（如火山真人库）：checkedValue/uncheckedValue 映射为配置值 -->
+                                        <label v-if="field.type === 'switch'" class="form-label qc-switch-field">
+                                            <input type="checkbox"
+                                                   :checked="getFormField(provider.id, field.id) === (field.checkedValue || '1')"
+                                                   @change="updateFormField(provider.id, field.id, $event.target.checked ? (field.checkedValue || '1') : (field.uncheckedValue || '0'))">
+                                            {{ getFormField(provider.id, field.id) === (field.checkedValue || '1') ? t('switch_state_on') : t('switch_state_off') }}
+                                        </label>
                                         <!-- 下拉选择字段（信息采集通道模式等） -->
-                                        <select v-if="field.type === 'select'"
+                                        <select v-else-if="field.type === 'select'"
                                                 class="filter-select"
                                                 style="width:100%;padding:8px 10px;"
                                                 :value="getFormField(provider.id, field.id)"

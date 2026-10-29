@@ -40,6 +40,7 @@ if not hasattr(requests, 'exceptions') or not hasattr(requests.exceptions, 'HTTP
     requests = importlib.import_module('requests')
 
 from .base_video_driver import BaseVideoDriver, ImageMode
+from .seedance_human_asset_mixin import SeedanceHumanAssetMixin
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
@@ -79,15 +80,20 @@ def _cleanup_seedance_reference_video_temps(paths):
             pass
 
 
-class SeedanceHuimengiV1Driver(BaseVideoDriver):
+class SeedanceHuimengiV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
     """
     Seedance huimengi 网关 v1 版本驱动（基类）
     异步 API - 图生视频 / 文生视频
 
     子类通过不同的 driver_type 和 model_name 区分模型。
+    混入 SeedanceHumanAssetMixin：真人素材按 huimengi.human_asset_mode 分派
+    （默认 param_pass：网关内置 human_review 真人审核）。
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
+
+    # 真人素材三模式挂 huimengi 配置组（默认 param_pass，见 YAML 兜底配置）
+    _human_asset_config_group = "huimengi"
 
     # r2v 参考音频限制（与火山官方一致，huimengi 为其网关代理）：
     # 2.0 系列总时长 ≤15s（API 容差 15.2s）且 ≤3 段；2.5 总时长 ≤30s 且 ≤10 段。
@@ -364,20 +370,6 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
         if extra_config.get('generate_audio') is not None:
             params["generate_audio"] = extra_config['generate_audio']
 
-        # human_review：真人审核模式，从 extra_config 透传（默认 false）
-        # 开启后素材将自动上传资产库审核加白，支持含真人人脸的素材
-        # 兜底注入：extra_config 在提交时按"当时解析到的实现方"固化，若当时命中的是
-        # volcengine 等本地遮盖实现方则不会写入 human_review；失败重试切换到本网关后
-        # 该字段缺失，而本驱动会恢复原始（未遮盖）素材，含人脸素材会被网关内容审核拒绝。
-        # 故未显式声明且用户勾选了人脸遮盖时，由驱动侧补注 true（显式 false 不覆盖）。
-        if extra_config.get('human_review') is not None:
-            params["human_review"] = bool(extra_config['human_review'])
-        elif bool(extra_config.get('enable_face_mask')):
-            params["human_review"] = True
-            self.logger.info(
-                "extra_config 未声明 human_review，按 enable_face_mask=true 补注真人审核模式"
-            )
-
         ratio = extra_config.get('ratio') or ai_tool.ratio
         # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
         # 使接口提前校验参数限制（ratio 必须 adaptive、duration 必须 -1）。
@@ -569,13 +561,19 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             "Authorization": f"Bearer {self._api_key}"
         }
 
-        return {
+        return self._apply_human_asset_pipeline({
             "url": f"{self._base_url}/api/v1/tasks",
             "method": "POST",
             "json": payload,
             "headers": headers,
             "timeout": self._timeout
-        }
+        }, ai_tool)
+
+    def _inject_human_review_param(self, request_params: Dict[str, Any]) -> None:
+        """param_pass 模式注入位置：huimengi 扁平 {model, params} 结构，参数在 params 内"""
+        payload = request_params.get("json")
+        if isinstance(payload, dict) and isinstance(payload.get("params"), dict):
+            payload["params"]["human_review"] = True
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
@@ -836,6 +834,7 @@ class SeedanceHuimengiV1Driver(BaseVideoDriver):
             # 3. 状态映射（huimengi 扁平顶层 status，大小写归一）
             raw_status = str(result.get("status", ""))
             status_upper = raw_status.upper()
+            self._cleanup_assets_if_terminal(status_upper)
 
             if status_upper in self._SUCCESS_STATES:
                 # video_url 位于 result.video_url（huimengi API 规范）

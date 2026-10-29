@@ -13,6 +13,7 @@ import traceback
 import json
 import uuid
 from .base_video_driver import BaseVideoDriver, ImageMode
+from .seedance_human_asset_mixin import SeedanceHumanAssetMixin
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
@@ -49,21 +50,40 @@ def _cleanup_seedance_reference_video_temps(paths):
             pass
 
 
-class SeedanceVolcengineV1Driver(BaseVideoDriver):
+class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
     """
     Seedance 火山引擎供应商 v1 版本驱动（基类）
     异步 API - 图生视频 / 文生视频
 
     子类通过不同的 driver_type 和 model_name 区分模型。
+    混入 SeedanceHumanAssetMixin：火山直连已接入真人素材配置组（声明
+    _human_asset_config_group = "volcengine"），按 volcengine 组三键分派
+    （human_asset_mode：默认 face_mask 本地遮盖；asset_library 官方私域素材库
+    透传，需配 access_key + secret_key 走 AK/SK 签名鉴权，见
+    utils/volcengine_signer.py）。
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
+
+    # 真人素材三模式挂 volcengine 配置组（human_asset_mode / access_key /
+    # secret_key / asset_base_url），未配置时默认 face_mask，行为同未接入
+    _human_asset_config_group = "volcengine"
 
     # r2v 参考音频限制（火山官方，子类按模型覆盖）：
     # 2.0 系列总时长 ≤15s（API 容差 15.2s）且 ≤3 段；2.5 总时长 ≤30s 且 ≤10 段。
     # 提交前按「(总上限-安全余量)/条数」均分配额自动截断，见 prepare_reference_audio_budget_sync。
     R2V_AUDIO_MAX_TOTAL_SECONDS = SEEDANCE_R2V_AUDIO_MAX_TOTAL_DURATION
     R2V_AUDIO_MAX_COUNT = 3
+
+    # 任务接口路径（火山方舟原生），兼容网关类供应商（如 TopenRouter）子类按需覆盖
+    _create_task_path = "/api/v3/contents/generations/tasks"
+    _query_task_path = "/api/v3/contents/generations/tasks"
+    # 任务状态合法枚举与状态映射钩子（网关类供应商可覆盖以支持 expired/cancelled 等扩展状态）
+    _valid_task_statuses = ("queued", "running", "succeeded", "failed")
+
+    def _map_task_status(self, status: str) -> str:
+        """查询状态到判定状态的映射（默认恒等，子类按需覆盖，如 expired → failed）"""
+        return status
 
     def __init__(self, driver_type: int, model_name: str, impl_name: str = DriverImplementation.SEEDANCE_2_0_VOLCENGINE_V1):
         """
@@ -235,7 +255,7 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             return False, f"响应缺少 'status' 字段，实际字段: {list(result.keys())}"
 
         status = result.get("status")
-        if status not in ("queued", "running", "succeeded", "failed"):
+        if status not in self._valid_task_statuses:
             return False, f"'status' 值无效: {status}"
 
         if status == "succeeded":
@@ -526,20 +546,20 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
             "Authorization": f"Bearer {self._api_key}"
         }
 
-        return {
-            "url": f"{self._base_url}/api/v3/contents/generations/tasks",
+        return self._apply_human_asset_pipeline({
+            "url": f"{self._base_url}{self._create_task_path}",
             "method": "POST",
             "json": payload,
             "headers": headers,
             "timeout": self._timeout
-        }
+        }, ai_tool)
 
     def build_check_query(self, project_id: str) -> Dict[str, Any]:
         """
         构建查询 Seedance 任务状态的请求参数
         """
         return {
-            "url": f"{self._base_url}/api/v3/contents/generations/tasks/{project_id}",
+            "url": f"{self._base_url}{self._query_task_path}/{project_id}",
             "method": "GET",
             "json": None,
             "headers": {
@@ -650,11 +670,19 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                 message=f"Seedance submit_task 异常: {error_msg}",
                 context={"task_id": task_id, "traceback": traceback.format_exc()}
             )
+            # 网关 4xx/5xx 的响应体含具体业务原因（如 model_not_found），拼入详情便于排障
+            detail = error_msg
+            response_body = getattr(e, "response_body", None)
+            if isinstance(response_body, dict) and response_body:
+                try:
+                    detail = f"{error_msg} | 响应体: {json.dumps(response_body, ensure_ascii=False)[:500]}"
+                except Exception:
+                    pass
             return {
                 "success": False,
                 "error": "服务异常，请联系技术支持",
                 "error_type": "SYSTEM",
-                "error_detail": error_msg,
+                "error_detail": detail,
                 "retry": False
             }
 
@@ -704,7 +732,8 @@ class SeedanceVolcengineV1Driver(BaseVideoDriver):
                 }
 
             # 3. 映射状态
-            status = result.get("status")
+            status = self._map_task_status(result.get("status"))
+            self._cleanup_assets_if_terminal(status)
 
             if status == "succeeded":
                 video_url = result.get("content", {}).get("video_url")
