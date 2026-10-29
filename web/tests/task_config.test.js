@@ -80,6 +80,20 @@ const mockConfigData = {
       supported_sizes: [],
       computing_power: 0,
       hidden: false
+    },
+    {
+      // legacy_keys 迁移回归（qwenimage2.1）：runninghub-ai-app 等旧 key
+      // 重载到当前任务，旧工作流重开后模型下拉才能选中
+      id: 39,
+      key: 'qwenimage2_1_new',
+      short_key: 'qwenimage2.1',
+      name: 'QwenImage 2.1',
+      category: 'text_to_image',
+      legacy_keys: ['runninghub-ai-app', 'qwen-image-2-1', 'kling'],
+      supported_ratios: [],
+      supported_sizes: [],
+      computing_power: 20,
+      hidden: false
     }
   ],
   categories: {
@@ -126,7 +140,7 @@ describe('TaskConfig - 基础查询', () => {
 
   test('getAllTasks 返回所有任务', () => {
     const tasks = TaskConfig.getAllTasks();
-    expect(tasks.length).toBe(7);
+    expect(tasks.length).toBe(8);
   });
 
   test('getTaskById 返回正确任务', () => {
@@ -338,5 +352,49 @@ describe('TaskConfig - 回调机制', () => {
     // 配置已在 beforeAll 中加载，回调应立即执行
     expect(callback).toHaveBeenCalled();
     expect(callback).toHaveBeenCalledWith(expect.objectContaining({ tasks: expect.any(Array) }));
+  });
+});
+
+// ── legacy_keys 迁移 ──
+describe('TaskConfig - legacy_keys 迁移', () => {
+  test('getTaskByKey 命中 legacy_keys 中的旧 key', () => {
+    const task = TaskConfig.getTaskByKey('runninghub-ai-app');
+    expect(task).not.toBeNull();
+    expect(task.id).toBe(39);
+  });
+
+  test('getTaskByKey 命中 legacy_keys 中的第二个旧 key', () => {
+    expect(TaskConfig.getTaskByKey('qwen-image-2-1')?.id).toBe(39);
+  });
+
+  test('getTaskIdByKey 经 legacy key 解析出任务 ID', () => {
+    expect(TaskConfig.getTaskIdByKey('runninghub-ai-app')).toBe(39);
+  });
+
+  test('canonicalModelKey 把旧 key 改写为当前 short_key', () => {
+    expect(TaskConfig.canonicalModelKey('runninghub-ai-app')).toBe('qwenimage2.1');
+    expect(TaskConfig.canonicalModelKey('qwen-image-2-1')).toBe('qwenimage2.1');
+  });
+
+  test('canonicalModelKey 对已是 short_key 的值返回自身', () => {
+    expect(TaskConfig.canonicalModelKey('qwenimage2.1')).toBe('qwenimage2.1');
+  });
+
+  test('canonicalModelKey 对未知 key 原样返回', () => {
+    expect(TaskConfig.canonicalModelKey('totally-unknown-model')).toBe('totally-unknown-model');
+  });
+
+  test('legacy_keys 不得劫持其他任务的精确 key（精确匹配优先）', () => {
+    // 任务 39 的 legacy_keys 里塞了 'kling'，但 kling 是任务 2 的精确 key
+    expect(TaskConfig.getTaskByKey('kling')?.id).toBe(2);
+  });
+
+  test('getTaskByKey 未知 key 且无前缀匹配时返回 null', () => {
+    expect(TaskConfig.getTaskByKey('totally-unknown-model')).toBeNull();
+  });
+
+  test('taskMatchesModelKey 空 key 与空任务返回 false', () => {
+    expect(TaskConfig.getTaskByKey('')).toBeNull();
+    expect(TaskConfig.getTaskByKey(null)).toBeNull();
   });
 });
