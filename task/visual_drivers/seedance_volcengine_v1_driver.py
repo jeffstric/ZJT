@@ -56,11 +56,18 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
     异步 API - 图生视频 / 文生视频
 
     子类通过不同的 driver_type 和 model_name 区分模型。
-    混入 SeedanceHumanAssetMixin：火山直连未接入真人素材配置组（默认
-    face_mask 本地遮盖），网关子类声明 _human_asset_config_group 后按组配置分派。
+    混入 SeedanceHumanAssetMixin：火山直连已接入真人素材配置组（声明
+    _human_asset_config_group = "volcengine"），按 volcengine 组三键分派
+    （human_asset_mode：默认 face_mask 本地遮盖；asset_library 官方私域素材库
+    透传，需配 access_key + secret_key 走 AK/SK 签名鉴权，见
+    utils/volcengine_signer.py）。
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
+
+    # 真人素材三模式挂 volcengine 配置组（human_asset_mode / access_key /
+    # secret_key / asset_base_url），未配置时默认 face_mask，行为同未接入
+    _human_asset_config_group = "volcengine"
 
     # r2v 参考音频限制（火山官方，子类按模型覆盖）：
     # 2.0 系列总时长 ≤15s（API 容差 15.2s）且 ≤3 段；2.5 总时长 ≤30s 且 ≤10 段。
@@ -663,11 +670,19 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                 message=f"Seedance submit_task 异常: {error_msg}",
                 context={"task_id": task_id, "traceback": traceback.format_exc()}
             )
+            # 网关 4xx/5xx 的响应体含具体业务原因（如 model_not_found），拼入详情便于排障
+            detail = error_msg
+            response_body = getattr(e, "response_body", None)
+            if isinstance(response_body, dict) and response_body:
+                try:
+                    detail = f"{error_msg} | 响应体: {json.dumps(response_body, ensure_ascii=False)[:500]}"
+                except Exception:
+                    pass
             return {
                 "success": False,
                 "error": "服务异常，请联系技术支持",
                 "error_type": "SYSTEM",
-                "error_detail": error_msg,
+                "error_detail": detail,
                 "retry": False
             }
 

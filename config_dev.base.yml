@@ -58,6 +58,18 @@ volcengine_tts:
   # 开启 = 克隆模式可用火山预置音色样例克隆（侵权+违约风险）。仅可改此文件，后台不可配。
   allow_clone_from_voice_library: false
 
+# 火山引擎（Seedream 5.0 文生图 / Seedance 视频）
+volcengine:
+  api_key: ""
+  # 真人素材处理模式：face_mask=本地人脸遮盖（默认）；asset_library=官方私域素材库透传
+  # （需另配 access_key + secret_key，素材上传加白后以 asset:// 引用）
+  human_asset_mode: "face_mask"
+  # 私域素材库 Action 接口 AK/SK 签名凭据（asset_library 模式使用，与视频 api_key 独立）
+  access_key: ""
+  secret_key: ""
+  # 真人库素材接口地址（asset_library 模式使用；缺省回落 https://ark.cn-beijing.volces.com）
+  asset_base_url: ""
+
 huimengi:
   api_key: ""
   base_url: "https://api.huimengi.com"
@@ -68,5 +80,4 @@ topenrouter:
   api_key: ""
   base_url: "https://tp-api.chinadatapay.com:8000"
   asset_api_key: ""
-  # 真人素材处理模式（与生产一致：官方真人库透传）
-  human_asset_mode: "asset_library"
+

@@ -12,9 +12,9 @@ TopenRouter（topenrouter.chinadatapay.com）的视频接口与火山方舟协�
 状态枚举扩展（cancelled/expired，映射为失败）。
 
 继承自火山引擎国内版驱动，覆盖配置加载（topenrouter 配置节）、任务路径与
-真人素材处理（SeedanceHumanAssetMixin 按 topenrouter.human_asset_mode 分派，
-默认 asset_library：素材经 utils/seedance_asset_client.py 上传真人库加白后
-以 asset:// 引用；素材地址/Token 读 topenrouter.asset_base_url / asset_api_key）。
+真人素材处理（SeedanceHumanAssetMixin：模式写死为官方真人库透传 asset_library，
+该网关模式唯一、无需用户选择；素材经 utils/seedance_asset_client.py 上传真人库
+加白后以 asset:// 引用；素材地址/Token 读 topenrouter.asset_base_url / asset_api_key）。
 """
 import json
 from typing import Dict
@@ -24,6 +24,7 @@ from .seedance_volcengine_v1_driver import SeedanceVolcengineV1Driver
 from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     SEEDANCE_2_5_AUDIO_MAX_TOTAL_DURATION,
+    SEEDANCE_HUMAN_ASSET_MODE_ASSET_LIBRARY,
     TOPENROUTER_API_BASE_URL,
     TOPENROUTER_SEEDANCE_MODEL_ALIASES,
 )
@@ -34,9 +35,9 @@ class SeedanceTopenrouterV1Driver(SeedanceVolcengineV1Driver):
     """
     Seedance TopenRouter v1 版本驱动（基类）
 
-    协议与火山方舟同构，仅覆盖任务路径与模型名；真人素材按
-    topenrouter.human_asset_mode 分派（见 SeedanceHumanAssetMixin），
-    默认 asset_library 模式经真人库加白后以 asset:// 引用。
+    协议与火山方舟同构，仅覆盖任务路径与模型名；真人素材模式写死为官方真人库
+    透传（asset_library，见 SeedanceHumanAssetMixin._human_asset_mode_fixed），
+    素材经真人库加白后以 asset:// 引用。
 
     注意：不应直接实例化基类，应使用具体的子类。
     """
@@ -47,8 +48,10 @@ class SeedanceTopenrouterV1Driver(SeedanceVolcengineV1Driver):
     # TopenRouter 状态枚举比火山多 cancelled / expired，均映射为失败
     _valid_task_statuses = ("queued", "running", "succeeded", "failed", "cancelled", "expired")
 
-    # 真人素材三模式挂 topenrouter 配置组（human_asset_mode / asset_base_url / asset_api_key）
+    # 真人素材挂 topenrouter 配置组（asset_base_url / asset_api_key 素材地址与 Token），
+    # 模式写死 asset_library：不读 topenrouter.human_asset_mode 配置（该配置键已移除）
     _human_asset_config_group = "topenrouter"
+    _human_asset_mode_fixed = SEEDANCE_HUMAN_ASSET_MODE_ASSET_LIBRARY
 
     # TopenRouter 文档未列出的模型名按惯例推测，可经 topenrouter.model_aliases 热修正
     DEFAULT_MODEL_ALIASES = dict(TOPENROUTER_SEEDANCE_MODEL_ALIASES)

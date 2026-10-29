@@ -2969,6 +2969,12 @@ async def ai_app_run_image(
         impl_uses_local_face_mask = impl_human_asset_mode == SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK
 
         base_extra_config = {IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}
+        # 用户勾选意图随任务流转：驱动侧真人素材三模式（asset_library 上传真人库 /
+        # param_pass 注 human_review）以 extra_config.enable_face_mask 为决策依据；
+        # face_mask 本地遮盖仍由下方 need_pipeline_steps 判定，不依赖此键。
+        # 三模式改造后此键漏写，直提交入口勾「处理人脸」对 asset_library/param_pass
+        # 实现方失效（素材直传触发上游真人风控 400，事故任务 246）
+        base_extra_config['enable_face_mask'] = bool(enable_face_mask)
         # 人脸遮盖白名单：参考生视频的参考图混合角色/场景/道具，人脸遮盖只对
         # 角色参考图有意义；前端（video_workflow 分镜组/分镜/图生视频节点）收集
         # 参考图时已知类型，把角色图 URL 传入。未传时保持旧行为（全部参考图遮盖）。

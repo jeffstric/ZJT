@@ -4,31 +4,42 @@ Seedance 素材 Action 接口客户端（火山方舟真人库标准协议，供
 
 对接《对外接口文档-Seedance素材Action接口.md》：
 - POST {base_url}/v1/api/assets/?Action=<Action>&Version=2024-01-01
-- 鉴权：Authorization: Bearer <平台 Token>（火山方舟同构网关形态；官方 AK/SK 签名
-  形态待真实直连客户出现时再支持）
+- 鉴权两种形态（按供应商组配置的凭据自动分派）：
+  - Bearer：Authorization: Bearer <平台 Token>（网关形态，如 TopenRouter）
+  - 火山 AK/SK 签名：X-Date + Authorization（HMAC-SHA256 V4，直连火山方舟；
+    见 utils/volcengine_signer.py，如配置了 <group>.access_key/<group>.secret_key 则启用）
 - 请求体/响应体与火山方舟官方一致（大驼峰字段，响应为 ResponseMetadata + Result）
 
-本客户端为纯协议实现（Bearer 形态），不感知具体供应商；按供应商组解析地址/Token
+本客户端为纯协议实现，不感知具体供应商；按供应商组解析地址/凭据
 请用工厂 create_seedance_asset_client(config_group)，配置键约定：
-- 地址：<group>.asset_base_url（素材专用，优先）> <group>.base_url（素材与视频同址的网关免配）
-- Token：<group>.asset_api_key > <group>.api_key
+- 地址：<group>.asset_base_url（素材专用，优先）> <group>.base_url > 组默认地址表
+  （config/constant.py SEEDANCE_ASSET_GROUP_DEFAULT_BASE_URL，如 volcengine → 火山方舟）
+- Bearer Token：<group>.asset_api_key > <group>.api_key（AK/SK 存在时忽略）
+- 签名凭据：<group>.access_key + <group>.secret_key（均非空时启用签名鉴权；
+  region/service 用 config/constant.py VOLCENGINE_ARK_* 默认）
 
 本客户端为同步实现（requests），供视频驱动在同步任务执行器内调用，
 与 BaseVideoDriver._request 同一运行环境，不进入 web 事件循环。
 Web 路由如需调用请用 asyncio.to_thread 包装。
 """
+import json
 import time
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
 from config.config_util import get_dynamic_config_value
 from config.constant import (
+    SEEDANCE_ASSET_GROUP_DEFAULT_BASE_URL,
     SEEDANCE_ASSET_POLL_INTERVAL_SECONDS,
     SEEDANCE_ASSET_REQUEST_TIMEOUT_SECONDS,
     SEEDANCE_ASSET_WAIT_ACTIVE_TIMEOUT_SECONDS,
+    VOLCENGINE_ARK_REGION,
+    VOLCENGINE_ARK_SIGN_SERVICE,
 )
+from utils.volcengine_signer import sign_request
 
 logger = logging.getLogger(__name__)
 
@@ -50,19 +61,30 @@ class SeedanceAssetError(Exception):
 
 def create_seedance_asset_client(config_group: str) -> "SeedanceAssetClient":
     """
-    按供应商组构建素材客户端（地址/Token 动态配置解析）
+    按供应商组构建素材客户端（地址/凭据动态配置解析）
 
-    地址：<group>.asset_base_url > <group>.base_url（素材与视频同址的网关免配），均未配置时报错；
-    Token：<group>.asset_api_key > <group>.api_key，均未配置时报错。
+    地址：<group>.asset_base_url > <group>.base_url > 组默认地址表，均未命中时报错；
+    凭据：<group>.access_key + <group>.secret_key 均非空 → AK/SK 签名鉴权；
+    否则 Bearer：<group>.asset_api_key > <group>.api_key，均未配置时报错。
     """
     base_url = (
         get_dynamic_config_value(config_group, "asset_base_url", default="")
         or get_dynamic_config_value(config_group, "base_url", default="")
+        or SEEDANCE_ASSET_GROUP_DEFAULT_BASE_URL.get(config_group, "")
     )
     if not base_url:
         raise SeedanceAssetError(
             f"素材库地址未配置（{config_group}.asset_base_url，"
             f"素材与视频接口同址时可只配 {config_group}.base_url）"
+        )
+    access_key = get_dynamic_config_value(config_group, "access_key", default="") or ""
+    secret_key = get_dynamic_config_value(config_group, "secret_key", default="") or ""
+    if access_key and secret_key:
+        return SeedanceAssetClient(
+            api_key="",
+            base_url=base_url,
+            access_key=access_key,
+            secret_key=secret_key,
         )
     api_key = (
         get_dynamic_config_value(config_group, "asset_api_key", default="")
@@ -70,22 +92,48 @@ def create_seedance_asset_client(config_group: str) -> "SeedanceAssetClient":
     )
     if not api_key:
         raise SeedanceAssetError(
-            f"素材接口 Token 未配置（{config_group}.asset_api_key / {config_group}.api_key）"
+            f"素材接口凭据未配置（{config_group}.access_key + {config_group}.secret_key，"
+            f"或 {config_group}.asset_api_key / {config_group}.api_key）"
         )
     return SeedanceAssetClient(api_key=api_key, base_url=base_url)
 
 
 class SeedanceAssetClient:
     """
-    Seedance 素材 Action 接口客户端（纯协议实现，地址/Token 由调用方显式注入）
+    Seedance 素材 Action 接口客户端（纯协议实现，地址/凭据由调用方显式注入）
+
+    鉴权二选一：Bearer（api_key）或火山 AK/SK 签名（access_key + secret_key），
+    后者优先（两形态同时注入时走签名）。
     """
 
-    def __init__(self, api_key: str, base_url: str, timeout: Optional[float] = None):
-        if not api_key or not base_url:
-            raise SeedanceAssetError("素材客户端构造需显式提供 api_key 与 base_url")
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        timeout: Optional[float] = None,
+        access_key: Optional[str] = None,
+        secret_key: Optional[str] = None,
+        region: Optional[str] = None,
+        service: Optional[str] = None,
+    ):
+        if not base_url:
+            raise SeedanceAssetError("素材客户端构造需显式提供 base_url")
+        self.access_key = access_key or ""
+        self.secret_key = secret_key or ""
+        if (self.access_key and not self.secret_key) or (self.secret_key and not self.access_key):
+            raise SeedanceAssetError("火山签名鉴权需同时提供 access_key 与 secret_key")
+        if not api_key and not self.access_key:
+            raise SeedanceAssetError("素材客户端构造需显式提供 api_key（Bearer）或 access_key + secret_key（签名）")
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout or SEEDANCE_ASSET_REQUEST_TIMEOUT_SECONDS
+        # 签名 scope 参数（仅签名鉴权时使用，缺省取直连火山默认）
+        self.region = region or VOLCENGINE_ARK_REGION
+        self.service = service or VOLCENGINE_ARK_SIGN_SERVICE
+
+    @property
+    def _use_signing(self) -> bool:
+        return bool(self.access_key and self.secret_key)
 
     # ---------- 基础调用 ----------
 
@@ -98,17 +146,36 @@ class SeedanceAssetClient:
                 ResponseMetadata.Error 结构）、响应非 JSON、或网络异常。
         """
         url = f"{self.base_url}/v1/api/assets/"
-        try:
-            response = requests.post(
-                url,
-                params={"Action": action, "Version": "2024-01-01"},
-                json=body or {},
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=self.timeout,
+        query = {"Action": action, "Version": "2024-01-01"}
+        headers = {"Content-Type": "application/json"}
+        request_kwargs: Dict[str, Any] = {
+            "params": query,
+            "headers": headers,
+            "timeout": self.timeout,
+        }
+        if self._use_signing:
+            # 签名模式：先序列化请求体，保证签名载荷与发送载荷逐字节一致
+            body_bytes = json.dumps(body or {}).encode("utf-8")
+            parsed = urlparse(url)
+            signed_headers = sign_request(
+                method="POST",
+                host=parsed.netloc,
+                path=parsed.path or "/",
+                query=query,
+                headers=headers,
+                body=body_bytes,
+                access_key=self.access_key,
+                secret_key=self.secret_key,
+                region=self.region,
+                service=self.service,
             )
+            headers.update(signed_headers)
+            request_kwargs["data"] = body_bytes
+        else:
+            request_kwargs["json"] = body or {}
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            response = requests.post(url, **request_kwargs)
         except requests.exceptions.RequestException as e:
             raise SeedanceAssetError(f"素材接口网络异常: {e}") from e
 

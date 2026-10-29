@@ -225,11 +225,21 @@ TOPENROUTER_API_BASE_URL = "https://tp-api.chinadatapay.com:8000"
 # TopenRouter Seedance 模型名默认映射（火山原生名 → TopenRouter 名）。
 # 平台文档仅明确 doubao-seedance-2.0，fast/mini/2.5 为命名惯例推测，
 # 可通过动态配置 topenrouter.model_aliases（JSON）热修正，配置优先于本默认表。
-TOPENROUTER_SEEDANCE_MODEL_ALIASES = {
-    "doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast",
-    "doubao-seedance-2-0-260128": "doubao-seedance-2.0",
-    "doubao-seedance-2-0-mini-260615": "doubao-seedance-2.0-mini",
-    "doubao-seedance-2-5-260628": "doubao-seedance-2.5",
+# TopenRouter 网关模型名：/v1/models 实测原生支持火山原名（doubao-seedance-2-0-*-260xxx），
+# 无需别名映射（2026-10-29 实测：简化名 doubao-seedance-2.0-mini 会被 400 model_not_found）。
+# 网关渠道后续若改名，用 topenrouter.model_aliases 配置热修正，不动此表。
+TOPENROUTER_SEEDANCE_MODEL_ALIASES = {}
+
+# ===== 火山方舟直连素材库（私域素材库/真人人像库，AK/SK 签名形态）=====
+# 直连火山与网关（TopenRouter）素材 Action 接口协议同构（/v1/api/assets/?Action=...），
+# 差异仅在鉴权：网关为 Bearer Token，直连火山为 AK/SK HMAC-SHA256 V4 签名。
+# 签名 scope 参数（对齐 volcengine 官方 SDK 惯例，region 固定 cn-beijing）；
+# 素材库地址缺省回落：各组 asset_base_url > 各组 base_url > 组默认地址表。
+VOLCENGINE_ARK_REGION = "cn-beijing"
+VOLCENGINE_ARK_SIGN_SERVICE = "ark"
+VOLCENGINE_ARK_BASE_URL = "https://ark.cn-beijing.volces.com"
+SEEDANCE_ASSET_GROUP_DEFAULT_BASE_URL = {
+    "volcengine": VOLCENGINE_ARK_BASE_URL,
 }
 
 # ===== Seedance 2.5 视频编辑任务（omni_reference_task_type=edit）=====

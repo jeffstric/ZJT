@@ -97,9 +97,9 @@ class TestDriverInit(unittest.TestCase):
     """初始化：配置加载与模型名映射"""
 
     def test_default_init_and_model_alias(self):
-        """默认模型别名：doubao-seedance-2-0-260128 → doubao-seedance-2.0"""
+        """默认无别名：网关原生支持火山原名（/v1/models 实测），模型名原样透传"""
         driver = _create_driver()
-        self.assertEqual(driver._model, 'doubao-seedance-2.0')
+        self.assertEqual(driver._model, 'doubao-seedance-2-0-260128')
         self.assertEqual(driver._base_url, 'https://tp-api.chinadatapay.com:8000')
         self.assertEqual(driver._api_key, 'test_tpr_key')
         self.assertEqual(driver.driver_name, 'seedance_2_0_topenrouter_v1')
@@ -133,7 +133,7 @@ class TestDriverInit(unittest.TestCase):
                 ('test_mode', 'mock_videos'): {},
             }.get(keys, default)
             driver = Seedance25TopenrouterV1Driver()
-        self.assertEqual(driver._model, 'doubao-seedance-2.5')
+        self.assertEqual(driver._model, 'doubao-seedance-2-5-260628')
         self.assertEqual(driver.R2V_AUDIO_MAX_COUNT, 10)
 
 
@@ -165,7 +165,7 @@ class TestTaskPathAndStatus(unittest.TestCase):
         ai_tool = _make_ai_tool(extra_config={'image_mode': 'first_last_frame'})
         result = self.driver.build_create_request(ai_tool)
         self.assertIn('/v1/video/tasks', result['url'])
-        self.assertEqual(result['json']['model'], 'doubao-seedance-2.0')
+        self.assertEqual(result['json']['model'], 'doubao-seedance-2-0-260128')
 
     def test_validate_status_accepts_extended_statuses(self):
         """expired/cancelled 为合法状态"""
@@ -321,7 +321,7 @@ class TestHumanAssetModeResolution(unittest.TestCase):
     """模式解析：read_human_asset_mode 回落语义与工厂 resolver"""
 
     def test_no_group_defaults_to_face_mask(self):
-        """未声明组（volcengine 直连/kkidc 等未接入者）恒为 face_mask"""
+        """未声明组（grok/kkidc 等未接入者）恒为 face_mask"""
         from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
         self.assertEqual(read_human_asset_mode(None), 'face_mask')
         self.assertEqual(read_human_asset_mode(''), 'face_mask')
@@ -340,7 +340,7 @@ class TestHumanAssetModeResolution(unittest.TestCase):
         with patch.object(mixin_mod, 'get_dynamic_config_value',
                           return_value='yolo_mode'):
             from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
-            self.assertEqual(read_human_asset_mode('topenrouter'), 'face_mask')
+            self.assertEqual(read_human_asset_mode('huimengi'), 'face_mask')
 
     def test_valid_modes_pass_through(self):
         """三种合法值原样返回"""
@@ -348,7 +348,7 @@ class TestHumanAssetModeResolution(unittest.TestCase):
         from task.visual_drivers.seedance_human_asset_mixin import read_human_asset_mode
         for mode in ('face_mask', 'asset_library', 'param_pass'):
             with patch.object(mixin_mod, 'get_dynamic_config_value', return_value=mode):
-                self.assertEqual(read_human_asset_mode('topenrouter'), mode)
+                self.assertEqual(read_human_asset_mode('huimengi'), mode)
 
     def test_factory_resolver_by_impl_name(self):
         """工厂 resolver：按实现方名查驱动类声明的组（grok 覆盖回 None 恒 face_mask）"""
@@ -357,10 +357,18 @@ class TestHumanAssetModeResolution(unittest.TestCase):
         from task.visual_drivers.seedance_topenrouter_v1_driver import SeedanceTopenrouterV1Driver
         from task.visual_drivers.seedance_huimengi_v1_driver import SeedanceHuimengiV1Driver
         from task.visual_drivers.grok_huimengi_v1_driver import GrokHuimengiV1Driver
+        from task.visual_drivers.seedance_volcengine_v1_driver import SeedanceVolcengineV1Driver
+        from task.visual_drivers.seedance_volcengine_oversea_v1_driver import SeedanceVolcengineOverseaV1Driver
 
         self.assertEqual(SeedanceTopenrouterV1Driver._human_asset_config_group, 'topenrouter')
         self.assertEqual(SeedanceHuimengiV1Driver._human_asset_config_group, 'huimengi')
         self.assertIsNone(GrokHuimengiV1Driver._human_asset_config_group)
+        # 火山直连已挂 volcengine 组：按组配置三模式分派（默认仍 face_mask）
+        self.assertEqual(SeedanceVolcengineV1Driver._human_asset_config_group, 'volcengine')
+        # 海外版显式不继承国内组（账号/区域隔离，素材库直连未接入海外版）
+        self.assertIsNone(SeedanceVolcengineOverseaV1Driver._human_asset_config_group)
+        # TopenRouter 模式写死官方真人库透传：不读组配置（配置键已移除）
+        self.assertEqual(SeedanceTopenrouterV1Driver._human_asset_mode_fixed, 'asset_library')
 
         import task.visual_drivers.seedance_human_asset_mixin as mixin_mod
         with patch.object(mixin_mod, 'get_dynamic_config_value',
@@ -368,6 +376,16 @@ class TestHumanAssetModeResolution(unittest.TestCase):
             self.assertEqual(
                 VideoDriverFactory.resolve_human_asset_mode('seedance_2_0_huimengi_v1'),
                 'param_pass',
+            )
+            # 火山直连：声明组后同样按配置分派
+            self.assertEqual(
+                VideoDriverFactory.resolve_human_asset_mode('seedance_2_0_fast_volcengine_v1'),
+                'param_pass',
+            )
+            # TopenRouter：写死模式，配置 mock 成 param_pass 仍返回 asset_library
+            self.assertEqual(
+                VideoDriverFactory.resolve_human_asset_mode('seedance_2_0_fast_topenrouter_v1'),
+                'asset_library',
             )
             # grok 未挂组：不读配置，恒 face_mask
             self.assertEqual(
@@ -402,7 +420,7 @@ class TestSubclassInstantiation(unittest.TestCase):
             self.assertEqual(Seedance20MiniTopenrouterV1Driver().driver_type, 31)
             d25 = Seedance25TopenrouterV1Driver()
             self.assertEqual(d25.driver_type, 36)
-            self.assertEqual(d25._model, 'doubao-seedance-2.5')
+            self.assertEqual(d25._model, 'doubao-seedance-2-5-260628')
 
 
 if __name__ == '__main__':

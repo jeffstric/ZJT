@@ -82,7 +82,14 @@ class SeedanceHumanAssetMixin:
     # 供应商配置组名（None = 未接入，恒为 face_mask）。子类按需声明。
     _human_asset_config_group: Optional[str] = None
 
+    # 写死的真人素材模式（None = 按组配置 human_asset_mode 分派）。供应商模式唯一、
+    # 无需用户选择时声明（如 TopenRouter 恒为 asset_library），声明后忽略组配置，
+    # 提交闸门（driver_factory.resolve_human_asset_mode）与驱动分派共用本约定。
+    _human_asset_mode_fixed: Optional[str] = None
+
     def _resolve_human_asset_mode(self) -> str:
+        if self._human_asset_mode_fixed:
+            return self._human_asset_mode_fixed
         return read_human_asset_mode(self._human_asset_config_group)
 
     @staticmethod

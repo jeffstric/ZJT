@@ -28,7 +28,7 @@ TopenRouter（topenrouter.chinadatapay.com）是支持 Seedance 2.x 系列模型
 | 查询响应 | `status` + `content.video_url` + `usage.completion_tokens` | 一致 | 一致 |
 | 状态枚举 | queued / running / succeeded / failed | 多 `cancelled` / `expired` | 扩展（驱动映射为 failed） |
 | 鉴权 | Bearer（API Key） | Bearer（sk- 开头） | 一致 |
-| 模型名 | `doubao-seedance-2-0-260128` 等带日期 | `doubao-seedance-2.0`（文档仅明确此一个） | 需映射 |
+| 模型名 | `doubao-seedance-2-0-260128` 等带日期 | 同火山原名（2026-10-29 实测 `/v1/models`：`doubao-seedance-2-0-260128`/`-fast-260128`/`-mini-260615`/`2-5-260628` 均在列） | 无需映射 |
 | 素材引用 | 素材库 asset | `asset://<asset_id>`（真人素材优先，避免敏感风控） | 支持 |
 
 ## 3. 新增/修改文件
@@ -45,25 +45,31 @@ TopenRouter（topenrouter.chinadatapay.com）是支持 Seedance 2.x 系列模型
   `SeedanceAssetError`
 - 错误统一为 `SeedanceAssetError(code, message, http_status)`：平台信封
   `{code, message}` 与官方 `ResponseMetadata.Error`（如 `NotFound.asset_id`）两类结构
+- **鉴权双形态**（工厂按供应商组凭据自动分派）：网关 Bearer（`<group>.asset_api_key`
+  回落 `<group>.api_key`）；直连火山 AK/SK 签名（`<group>.access_key` + `<group>.secret_key`，
+  HMAC-SHA256 V4 实现见 `utils/volcengine_signer.py`，火山直连驱动已挂 `volcengine`
+  组接入，见 docs/drivers/seedance_volcengine_v1_driver.md「真人素材三模式」）
 
 ### 3.2 TopenRouter 驱动（新增）
 
 `task/visual_drivers/seedance_topenrouter_v1_driver.py` — 基类
 `SeedanceTopenrouterV1Driver(SeedanceVolcengineV1Driver)` + 4 个子类：
 
-| 子类 | driver_type | 默认模型名映射 |
+| 子类 | driver_type | 发送的模型名（= 火山原名，网关原生支持） |
 |---|---|---|
-| `Seedance20FastTopenrouterV1Driver` | 22 (2.0 Fast) | → `doubao-seedance-2.0-fast` |
-| `Seedance20TopenrouterV1Driver` | 23 (2.0) | → `doubao-seedance-2.0` |
-| `Seedance20MiniTopenrouterV1Driver` | 31 (2.0 Mini) | → `doubao-seedance-2.0-mini` |
-| `Seedance25TopenrouterV1Driver` | 36 (2.5) | → `doubao-seedance-2.5` |
+| `Seedance20FastTopenrouterV1Driver` | 22 (2.0 Fast) | `doubao-seedance-2-0-fast-260128` |
+| `Seedance20TopenrouterV1Driver` | 23 (2.0) | `doubao-seedance-2-0-260128` |
+| `Seedance20MiniTopenrouterV1Driver` | 31 (2.0 Mini) | `doubao-seedance-2-0-mini-260615` |
+| `Seedance25TopenrouterV1Driver` | 36 (2.5) | `doubao-seedance-2-5-260628` |
 
 要点：
 
 - 覆盖类属性 `_create_task_path`/`_query_task_path = "/v1/video/tasks"`、
   `_valid_task_statuses`（加 cancelled/expired）、`_map_task_status`（cancelled/
   expired → failed，避免 expired 被当 RUNNING 死轮询）
-- `topenrouter.model_aliases` 动态配置可覆盖默认映射（JSON，火山原生名 → 平台名）
+- `topenrouter.model_aliases` 动态配置可覆盖模型名（JSON，驱动名 → 网关名）；
+  默认别名表已清空——2026-10-29 实测网关按火山原名路由，此前的简化名推测
+  （`doubao-seedance-2.0-mini` 等）会被 400 `model_not_found`（事故：任务 244）
 - **真人素材三模式**（`_human_asset_config_group = "topenrouter"`，默认
   `asset_library`）：用户勾选"处理人脸"后由 `SeedanceHumanAssetMixin` 分派——
   素材库模式把 content 中的图片/视频/音频 URL 经 `SeedanceAssetClient` 上传真人库
@@ -93,7 +99,8 @@ TopenRouter（topenrouter.chinadatapay.com）是支持 Seedance 2.x 系列模型
 
 ### 3.5 真人素材三模式（中转站级策略，后续改造沉淀）
 
-「处理人脸」勾选后按实现方所属供应商组的 `<group>.human_asset_mode` 三选一：
+「处理人脸」勾选后按实现方所属供应商组的 `<group>.human_asset_mode` 三选一
+（模式唯一的供应商可写死，见下）：
 
 | 模式 | 行为 | 适用 |
 |---|---|---|
@@ -103,15 +110,25 @@ TopenRouter（topenrouter.chinadatapay.com）是支持 Seedance 2.x 系列模型
 
 - 决策入口：`SeedanceHumanAssetMixin._apply_human_asset_pipeline`（模板方法，
   宿主 `build_create_request` return 处调用；不覆盖同名方法避免 MRO 遮蔽）
-- 模式解析：`read_human_asset_mode(group)`（`seedance_human_asset_mixin.py`），
-  server/storyboard 闸门经 `VideoDriverFactory.resolve_human_asset_mode(impl_name)`
-  共用；无组/未配置/非法值一律回落 `face_mask`
+- 模式解析：驱动 `_resolve_human_asset_mode` / 工厂
+  `VideoDriverFactory.resolve_human_asset_mode(impl_name)`（server/storyboard
+  闸门共用）——声明 `_human_asset_mode_fixed` 的供应商写死模式、不读组配置
+  （**TopenRouter 恒为 `asset_library`**，模式唯一无需用户选择）；否则按
+  `_human_asset_config_group` 读 `<group>.human_asset_mode`，
+  无组/未配置/非法值一律回落 `face_mask`
 - `human_review` 不再由 server 注入、不再随 extra_config 流转：重试切换实现方后
   按新实现方模式现场重算（修复跨实现方 human_review 固化错配的根源）
+- **决策输入 `extra_config.enable_face_mask` 由建任务侧写入**（用户勾选意图随任务
+  流转）：storyboard 链路一直有写；server 直提交入口（`/api/run/image`，index/
+  video_workflow 等）在 b3656484 改造时漏写，导致勾选「处理人脸」对
+  asset_library/param_pass 实现方失效——素材直传触发上游真人风控
+  `upstream_InputImageSensitiveContentDetected.PrivacyInformation` 400（事故任务
+  246，2026-10-29 修复：`base_extra_config['enable_face_mask'] = bool(enable_face_mask)`）
 - 接入新网关 = 驱动类声明 `_human_asset_config_group` + build_create_request/
-  check_status 两处插桩 + 后台配置组三键（`human_asset_mode`/`asset_base_url`/
-  `asset_api_key`）；素材客户端为供应商无关的 Bearer 形态（火山官方 AK/SK 签名
-  形态待真实直连客户出现时再支持）
+  check_status 两处插桩 + 后台配置组键（`asset_base_url`/`asset_api_key` 素材
+  地址与 Token；模式可配置的加 `human_asset_mode`，模式唯一的用
+  `_human_asset_mode_fixed` 写死）；素材客户端按组凭据自动分派 Bearer /
+  火山 AK/SK 签名形态（见 docs/drivers/seedance_volcengine_v1_driver.md）
 
 ## 4. 配置说明
 
@@ -120,19 +137,20 @@ topenrouter:
   api_key: ""                # 必填，视频 API 与素材接口共用（sk- 开头）
   base_url: "https://tp-api.chinadatapay.com:8000"
   asset_api_key: ""          # 真人库素材接口独立 Token（与 api_key 相同时无需配置）
-  human_asset_mode: "asset_library"  # 真人素材模式：face_mask/asset_library/param_pass
   asset_base_url: ""         # 真人库素材接口地址（缺省回落 base_url，同址可不配）
   model_aliases: {}          # 模型名映射 JSON，覆盖默认映射
 ```
 
-huimengi 组同款 `huimengi.human_asset_mode`（默认 `param_pass`）；kkidc/火山直连
-未挂组，恒为本地遮盖。
+TopenRouter 真人素材模式写死 `asset_library`，无 `human_asset_mode` 配置键。
+huimengi 组同款 `huimengi.human_asset_mode`（默认 `param_pass`）；kkidc 未挂组
+恒为本地遮盖；火山直连已挂 `volcengine` 组（默认 `face_mask`，可选 asset_library
+AK/SK 签名直连官方素材库），见 docs/drivers/seedance_volcengine_v1_driver.md
+「真人素材三模式」。
 
 ## 5. 已知风险
 
-1. **模型 ID 推测**：平台文档仅明确 `doubao-seedance-2.0`；fast/mini/2.5 的平台模型名
-   （`doubao-seedance-2.0-fast` 等）为命名惯例推测。上线前需用真实 key 冒烟验证；
-   若 404，后台改 `topenrouter.model_aliases` 热修正即可，无需发版。
+1. ~~**模型 ID 推测**~~（已消除，2026-10-29）：网关 `/v1/models` 实测原生支持火山原名，
+   驱动直发原名；网关渠道后续若改名，后台改 `topenrouter.model_aliases` 热修正即可，无需发版。
 2. **素材 token 共用假设**：素材 Action 接口与视频 API 按同一 Token 设计
    （`asset_api_key` 可覆盖）。若实测不同，仅需后台配置。
 3. **任务耗时**：真人模式素材上传需等待 Processing→Active（轮询 1.5s 间隔，上限 120s，

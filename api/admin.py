@@ -35,6 +35,10 @@ from config.constant import (
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
 from services.queue_backlog import collect_queue_backlog
+from services.implementation_preference_cleanup import (
+    cleanup_preferences_for_implementations,
+    find_affected_implementations,
+)
 from config.model_catalog import (
     ModelScene,
     SCENE_RECOS,
@@ -1321,16 +1325,29 @@ async def admin_batch_update_configs(
 
     results = batch_result["results"]
     errors = batch_result["errors"]
-    
+
     updated_count = len([r for r in results if r['status'] == 'updated'])
     created_count = len([r for r in results if r['status'] == 'created'])
+
+    # 必需配置被更新（典型：api_key 清空）的实现方可能已不可用，
+    # 主动清掉指向它们的用户偏好/固定标记，避免固定任务持续失败且无法解除
+    stale_cleared = None
+    affected_impls = find_affected_implementations(config_keys)
+    if affected_impls:
+        try:
+            stale_cleared = await asyncio.to_thread(
+                cleanup_preferences_for_implementations, affected_impls
+            )
+        except Exception as e:
+            logger.error(f"Failed to cleanup stale preferences after config batch update: {e}")
 
     return {
         "code": 0,
         "message": f"批量更新完成，新建 {created_count} 条，更新 {updated_count} 条配置",
         "data": {
             "results": results,
-            "errors": errors
+            "errors": errors,
+            **({"stale_preferences_cleared": stale_cleared} if stale_cleared else {})
         }
     }
 
@@ -1389,13 +1406,26 @@ async def admin_update_config(
         
         # 清除缓存
         invalidate_dynamic_cache(config_key)
-        
+
+        # 必需配置被更新（典型：api_key 清空）的实现方可能已不可用，
+        # 主动清掉指向它们的用户偏好/固定标记，避免固定任务持续失败且无法解除
+        stale_cleared = None
+        affected_impls = find_affected_implementations([config_key])
+        if affected_impls:
+            try:
+                stale_cleared = await asyncio.to_thread(
+                    cleanup_preferences_for_implementations, affected_impls
+                )
+            except Exception as e:
+                logger.error(f"Failed to cleanup stale preferences after config update: {e}")
+
         return {
             "code": 0,
             "message": "配置更新成功",
             "data": {
                 "old_value": SystemConfigModel.mask_sensitive_value(old_value) if config.is_sensitive else old_value,
-                "new_value": SystemConfigModel.mask_sensitive_value(new_value) if config.is_sensitive else new_value
+                "new_value": SystemConfigModel.mask_sensitive_value(new_value) if config.is_sensitive else new_value,
+                **({"stale_preferences_cleared": stale_cleared} if stale_cleared else {})
             }
         }
     except HTTPException:
@@ -2216,6 +2246,21 @@ async def admin_set_implementation_config(
             updated_by=admin.id
         )
 
+        # 禁用实现方后，主动清掉所有用户指向它的偏好/固定标记：
+        # 固定任务否则会持续失败，且设置界面看不到已禁用供应商、无法取消固定
+        stale_cleared = None
+        if success and request.enabled is False:
+            try:
+                stale_cleared = await asyncio.to_thread(
+                    cleanup_preferences_for_implementations,
+                    [request.implementation_name],
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to cleanup stale preferences for disabled "
+                    f"implementation {request.implementation_name}: {e}"
+                )
+
         if success:
             return {
                 "code": 0,
@@ -2224,7 +2269,8 @@ async def admin_set_implementation_config(
                     "implementation_name": request.implementation_name,
                     "driver_key": request.driver_key,
                     "enabled": request.enabled,
-                    "sort_order": request.sort_order
+                    "sort_order": request.sort_order,
+                    **({"stale_preferences_cleared": stale_cleared} if stale_cleared else {})
                 }
             }
         else:

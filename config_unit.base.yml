@@ -127,6 +127,8 @@ ai_tools:
 # Volcengine configuration (for Seedream driver)
 volcengine:
   api_key: "unittest"
+  # 真人素材处理模式（单测默认与未配置一致：本地遮盖）
+  human_asset_mode: "face_mask"
 
 kkidc:
   api_key: "unittest"
@@ -142,8 +144,7 @@ topenrouter:
   api_key: "unittest"
   base_url: "https://tp-api.chinadatapay.com:8000"
   asset_api_key: "unittest"
-  # 真人素材处理模式（与生产一致：官方真人库透传）
-  human_asset_mode: "asset_library"
+
 
 # API Aggregator configuration
 api_aggregator:

@@ -96,7 +96,7 @@ class TestClientInit(unittest.TestCase):
         mock_config.side_effect = side_effect
         with self.assertRaises(SeedanceAssetError) as ctx:
             create_seedance_asset_client('gateway_d')
-        self.assertIn('Token', str(ctx.exception))
+        self.assertIn('凭据', str(ctx.exception))
 
 
 class TestCallAction(unittest.TestCase):
@@ -311,6 +311,94 @@ class TestWaitAssetActive(unittest.TestCase):
             with self.assertRaises(SeedanceAssetError) as ctx:
                 self.client.wait_asset_active('a1', timeout=5, poll_interval=0)
             self.assertEqual(ctx.exception.code, 'AssetWaitTimeout')
+
+
+class TestFactorySigningMode(unittest.TestCase):
+    """工厂 AK/SK 签名凭据解析与组默认地址回落"""
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_signing_credentials(self, mock_config):
+        """access_key + secret_key 均非空 → 签名鉴权模式（api_key 留空）"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('volcengine', 'asset_base_url'): 'https://asset.volcengine.example.com',
+                ('volcengine', 'access_key'): 'test-ak',
+                ('volcengine', 'secret_key'): 'test-sk',
+                ('volcengine', 'api_key'): 'video-token',
+            }
+            return key_map.get(keys, default)
+        mock_config.side_effect = side_effect
+        client = create_seedance_asset_client('volcengine')
+        self.assertTrue(client._use_signing)
+        self.assertEqual(client.api_key, '')
+        self.assertEqual(client.access_key, 'test-ak')
+        self.assertEqual(client.secret_key, 'test-sk')
+        self.assertEqual(client.base_url, 'https://asset.volcengine.example.com')
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_volcengine_default_base_url(self, mock_config):
+        """volcengine 组未配 asset_base_url/base_url → 回落火山方舟默认地址"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('volcengine', 'access_key'): 'test-ak',
+                ('volcengine', 'secret_key'): 'test-sk',
+            }
+            return key_map.get(keys, default)
+        mock_config.side_effect = side_effect
+        client = create_seedance_asset_client('volcengine')
+        from config.constant import VOLCENGINE_ARK_BASE_URL
+        self.assertEqual(client.base_url, VOLCENGINE_ARK_BASE_URL)
+
+    @patch.object(asset_client_mod, 'get_dynamic_config_value')
+    def test_factory_only_access_key_without_secret_raises(self, mock_config):
+        """只配 access_key 未配 secret_key：回落 Bearer 解析，无 Token 报错"""
+        def side_effect(*keys, default=None):
+            key_map = {
+                ('volcengine', 'access_key'): 'test-ak',
+            }
+            return key_map.get(keys, default)
+        mock_config.side_effect = side_effect
+        with self.assertRaises(SeedanceAssetError):
+            create_seedance_asset_client('volcengine')
+
+
+class TestSigningCallAction(unittest.TestCase):
+    """AK/SK 签名模式的请求构造"""
+
+    def setUp(self):
+        self.client = SeedanceAssetClient(
+            api_key='', base_url='https://ark.cn-beijing.volces.com',
+            access_key='test-ak', secret_key='test-sk',
+        )
+
+    def test_use_signing(self):
+        self.assertTrue(self.client._use_signing)
+
+    @patch.object(asset_client_mod.requests, 'post')
+    def test_signed_request_construction(self, mock_post):
+        """签名模式：X-Date/Authorization 头替换 Bearer；body 以 data= 原样发送"""
+        mock_post.return_value = _mock_response(json_data={
+            "ResponseMetadata": {}, "Result": {"Id": "asset-1", "Status": "Processing"},
+        })
+        self.client.create_asset(url='https://example.com/cat.png', asset_type='Image')
+        kwargs = mock_post.call_args.kwargs
+        headers = kwargs['headers']
+        self.assertNotIn('Bearer', headers.get('Authorization', ''))
+        self.assertTrue(headers['Authorization'].startswith('HMAC-SHA256 Credential=test-ak/'))
+        self.assertIn('SignedHeaders=content-type;host;x-date', headers['Authorization'])
+        # X-Date 头随签名生成（UTC 基本格式）
+        self.assertRegex(headers['X-Date'], r'^\d{8}T\d{6}Z$')
+        # body 以序列化字节发送（与签名载荷逐字节一致），不再走 json= 参数
+        self.assertEqual(
+            kwargs['data'],
+            b'{"URL": "https://example.com/cat.png", "AssetType": "Image"}',
+        )
+        self.assertNotIn('json', kwargs)
+
+    def test_signed_request_region_service_defaults(self):
+        from config.constant import VOLCENGINE_ARK_REGION, VOLCENGINE_ARK_SIGN_SERVICE
+        self.assertEqual(self.client.region, VOLCENGINE_ARK_REGION)
+        self.assertEqual(self.client.service, VOLCENGINE_ARK_SIGN_SERVICE)
 
 
 if __name__ == '__main__':
