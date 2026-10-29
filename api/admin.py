@@ -4016,6 +4016,8 @@ async def admin_set_runninghub_key(
     """新增/更新密钥池中某个槽位的配置（仅配置项，运行态由系统维护）"""
     admin = await require_admin(auth_token)
     _require_enterprise_for_key_pool()
+    if request is None:
+        raise HTTPException(status_code=400, detail="请求体不能为空")
     if request.key_type is not None and request.key_type not in RUNNINGHUB_KEY_TYPES:
         raise HTTPException(
             status_code=400,

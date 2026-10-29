@@ -560,6 +560,8 @@ print(f"Cleaned {cleaned_count} stale slots")
 | 普通密钥全满/全部不可用 | 钱包密钥按最小负载兜底，承接至其 `max_slots` |
 | 钱包密钥也满/停用/熔断/冷却中 | `acquire_key` 返回 None → 回退全局 key |
 | 存量密钥无 `key_type` 配置 | 默认视为普通密钥（向后兼容） |
+| `key_type` 为白名单外脏值（手工改库等） | 加载层归一化为普通密钥并 WARNING 日志，不会变成死密钥 |
+| PUT 管理接口不带请求体 / key_type 非法 | 400（`请求体不能为空` / `key_type 必须为 standard/wallet 之一`） |
 | 钱包密钥计费观察 | 检索日志「启用钱包密钥兜底」（WARNING 级） |
 
 单测：`enterprise/tests/test_runninghub_key_pool_wallet.py`（分层选择、
