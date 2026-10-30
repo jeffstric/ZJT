@@ -18,6 +18,8 @@
             const isLoading = ref(false);
             const isInitializing = ref(true);
             const errorMessage = ref('');
+            // 中性提示 toast（成功类反馈，如「已恢复生成参数」；区别于红色 error-toast）
+            const noticeMessage = ref('');
             const searchQuery = ref('');
             const activeView = ref('generate');
 
@@ -354,7 +356,9 @@
                         const key = `${taskId || ''}:${url}`;
                         if (seen.has(key)) return;
                         seen.add(key);
-                        rows.push({ result_url: url, ai_tool_id: taskId });
+                        // get-status 返回的生成参数元数据（模型/时长/比例/分辨率等，
+                        // 见后端 _build_task_meta_payload），结果卡展示与重新编辑/重新生成用
+                        rows.push({ result_url: url, ai_tool_id: taskId, meta: task.meta || null });
                     });
                 });
                 return rows;
@@ -396,17 +400,65 @@
                         const url = row.result_url || '';
                         const displayUrl = proxyImageUrl(url);
                         const aiToolId = row.ai_tool_id || '';
-                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}"><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}"><div class="generated-result-actions">${buildPublishButton(aiToolId, inputText.value)}${buildAddToAssetLibraryButton(url)}</div></div>`;
+                        const genAttrs = buildGenMetaAttrs('image', row.meta || {});
+                        const metaBar = buildGenMetaBarHtml('image', row);
+                        const actionButtons = buildGenActionButtonsHtml('image', aiToolId);
+                        return `<div class="generated-image-wrapper generated-result-card" data-modal-src="${escapeHtml(displayUrl)}" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}" ${genAttrs}><img src="${escapeHtml(displayUrl)}" class="generated-image" alt="${window.t('generated_result_alt')}">${metaBar}<div class="generated-result-actions">${actionButtons}${buildPublishButton(aiToolId, inputText.value)}${buildAddToAssetLibraryButton(url)}</div></div>`;
                     }).join('');
                 }
                 if (type === 'video') {
                     return rows.map(row => {
                         const url = row.result_url || '';
                         const displayUrl = proxyDownloadUrl(url);
-                        return `<div class="generated-result-card"><video src="${escapeHtml(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video><div class="generated-result-actions">${buildPublishButton(row.ai_tool_id, inputText.value)}</div></div>`;
+                        const aiToolId = row.ai_tool_id || '';
+                        const genAttrs = buildGenMetaAttrs('video', row.meta || {});
+                        const metaBar = buildGenMetaBarHtml('video', row);
+                        const actionButtons = buildGenActionButtonsHtml('video', aiToolId);
+                        return `<div class="generated-result-card" data-tool-id="${escapeHtml(aiToolId)}" data-tool-title="${escapeHtml(inputText.value || '')}" ${genAttrs}><video src="${escapeHtml(displayUrl)}" controls style="max-width:100%;max-height:400px;border-radius:8px;margin:8px 0;"></video>${metaBar}<div class="generated-result-actions">${actionButtons}${buildPublishButton(aiToolId, inputText.value)}</div></div>`;
                     }).join('');
                 }
                 return '';
+            }
+
+            // 生成结果卡元数据条：模型 | 时长 | 比例 | 分辨率 | 详细信息（图1样式）。
+            // 数据同时写入卡片 data-gen-* 属性持久化到会话历史，刷新/重进会话后仍可展示。
+            function buildGenMetaAttrs(type, meta) {
+                const attrs = [`data-gen-type="${escapeHtml(type)}"`];
+                if (meta.model_name) attrs.push(`data-gen-model="${escapeHtml(String(meta.model_name))}"`);
+                if (meta.ratio) attrs.push(`data-gen-ratio="${escapeHtml(String(meta.ratio))}"`);
+                if (meta.duration != null && meta.duration !== '') attrs.push(`data-gen-duration="${escapeHtml(String(meta.duration))}"`);
+                const resolution = type === 'video' ? (meta.resolution || meta.image_size) : meta.image_size;
+                if (resolution) attrs.push(`data-gen-resolution="${escapeHtml(String(resolution))}"`);
+                return attrs.join(' ');
+            }
+
+            function buildGenMetaBarHtml(type, row) {
+                const meta = row.meta || {};
+                const resolution = type === 'video' ? (meta.resolution || meta.image_size) : meta.image_size;
+                const durationText = type === 'video' && meta.duration != null && meta.duration !== '' ? `${meta.duration}s` : '';
+                const parts = [];
+                if (meta.model_name) parts.push(`<span class="gen-meta-item gen-meta-model">${escapeHtml(String(meta.model_name))}</span>`);
+                if (durationText) parts.push(`<span class="gen-meta-item">${escapeHtml(durationText)}</span>`);
+                if (meta.ratio) parts.push(`<span class="gen-meta-item">${escapeHtml(String(meta.ratio))}</span>`);
+                if (resolution) parts.push(`<span class="gen-meta-item">${escapeHtml(String(resolution))}</span>`);
+                if (parts.length === 0) return '';
+                const detailBtn = row.ai_tool_id
+                    ? `<button type="button" class="gen-meta-detail-btn" data-gen-detail="${escapeHtml(String(row.ai_tool_id))}">${window.t('gen_meta_detail')} <span class="gen-meta-detail-icon">ⓘ</span></button>`
+                    : '';
+                return `<div class="gen-meta-bar">${parts.join('<span class="gen-meta-sep"></span>')}${detailBtn}</div>`;
+            }
+
+            // 重新编辑/重新生成按钮（图2样式）。点击行为由事件委托驱动
+            // （内联 onclick 会被 secureSanitize 剥离），参数按 data-tool-id 在
+            // 点击时从 get-status 拉取，避免把提示词等长文本塞进持久化 HTML。
+            function buildGenActionButtonsHtml(type, aiToolId) {
+                if (!aiToolId) return '';
+                return `<button type="button" class="gen-action-btn" data-regen-edit="${escapeHtml(type)}" data-tool-id="${escapeHtml(String(aiToolId))}">` +
+                    `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>` +
+                    `<span>${window.t('gen_re_edit')}</span></button>` +
+                    `<button type="button" class="gen-action-btn" data-regen-submit="${escapeHtml(type)}" data-tool-id="${escapeHtml(String(aiToolId))}">` +
+                    `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>` +
+                    `<span>${window.t('gen_re_generate')}</span></button>`;
             }
 
             function buildGeneratedTaskContent(type, tasks) {
@@ -2120,6 +2172,27 @@
                         }
                         return;
                     }
+                    // 「详细信息」：展开/收起该结果的生成参数面板（懒加载 get-status）
+                    const detailBtn = e.target.closest('[data-gen-detail]');
+                    if (detailBtn) {
+                        toggleGeneratedResultDetails(detailBtn);
+                        return;
+                    }
+                    // 「重新编辑」：把该结果的提示词/模型/比例/时长/分辨率/参考图恢复到输入区
+                    const editBtn = e.target.closest('[data-regen-edit]');
+                    if (editBtn) {
+                        handleGeneratedResultEdit(editBtn);
+                        return;
+                    }
+                    // 「重新生成」：按原参数直接重提生成任务（不经 LLM 编排）
+                    const regenBtn = e.target.closest('[data-regen-submit]');
+                    if (regenBtn) {
+                        handleGeneratedResultRegenerate(regenBtn);
+                        return;
+                    }
+                    // 元数据条/详情面板区域内的点击不触发「点击放大」（面板在
+                    // data-modal-src 卡片内部，不拦会被冒泡误判为放大请求）
+                    if (e.target.closest('.gen-meta-bar, .gen-meta-details')) return;
                     const zoomTarget = e.target.closest('img[data-full-src], [data-modal-src]');
                     if (!zoomTarget) return;
                     const src = zoomTarget.getAttribute('data-full-src')
@@ -2174,6 +2247,294 @@
                     observer.observe(el, { childList: true, subtree: true });
                     augmentGeneratedImageCards(el);
                 }, { immediate: true });
+            }
+
+            // ========== 生成结果卡：详细信息 / 重新编辑 / 重新生成 ==========
+            // 元数据来源：get-status 返回的 task.meta（后端 _build_task_meta_payload）。
+            // 点击时拉取而非持久化进 HTML：提示词等长文本不进会话历史，旧消息无需迁移。
+
+            async function fetchGeneratedTaskMeta(toolId) {
+                if (!toolId) return null;
+                try {
+                    // 轮询凭证走 cookie 翻译，token 不拼 URL（X3 红线）
+                    const res = await axios.get(`/api/get-status/${encodeURIComponent(toolId)}`);
+                    const task = res.data && Array.isArray(res.data.tasks) ? res.data.tasks[0] : null;
+                    return (task && task.meta) || null;
+                } catch (e) {
+                    console.warn('[Regen] 获取任务元数据失败:', e);
+                    return null;
+                }
+            }
+
+            // 「详细信息」展开面板：全部走 DOM textContent 渲染（提示词是不可信文本，
+            // 不拼 HTML），字段按可用性逐行展示
+            function renderGeneratedTaskDetails(panel, meta) {
+                // 生成方式枚举翻译为界面文案（first_last_frame/multi_reference 有现成 key）
+                let imageModeText = '';
+                if (meta.image_mode) {
+                    const modeKey = meta.image_mode === 'multi_reference' ? 'multi_reference'
+                        : meta.image_mode === 'first_last_with_ref' ? 'first_last_frame_mode'
+                        : 'first_last_frame';
+                    imageModeText = `${window.t(modeKey)} (${meta.image_mode})`;
+                }
+                const rows = [
+                    ['gen_details_model', meta.model_name],
+                    ['gen_details_ratio', meta.ratio],
+                    ['gen_details_duration', (meta.duration != null && meta.duration !== '') ? `${meta.duration}s` : ''],
+                    ['gen_details_resolution', meta.resolution || meta.image_size],
+                    ['gen_details_image_mode', imageModeText],
+                    ['gen_details_create_time', meta.create_time],
+                    ['gen_details_prompt', meta.prompt]
+                ].filter(([, value]) => value !== null && value !== undefined && value !== '');
+                panel.textContent = '';
+                if (rows.length === 0) {
+                    panel.textContent = window.t('gen_details_unavailable');
+                    return;
+                }
+                rows.forEach(([key, value]) => {
+                    const row = document.createElement('div');
+                    row.className = 'gen-details-row';
+                    const label = document.createElement('span');
+                    label.className = 'gen-details-label';
+                    label.textContent = window.t(key);
+                    const val = document.createElement('span');
+                    val.className = 'gen-details-value' + (key === 'gen_details_prompt' ? ' gen-details-prompt' : '');
+                    val.textContent = String(value);
+                    row.appendChild(label);
+                    row.appendChild(val);
+                    panel.appendChild(row);
+                });
+            }
+
+            async function toggleGeneratedResultDetails(btn) {
+                const card = btn.closest('.generated-result-card');
+                if (!card) return;
+                let panel = card.querySelector('.gen-meta-details');
+                if (!panel) {
+                    panel = document.createElement('div');
+                    panel.className = 'gen-meta-details';
+                    panel.hidden = true;
+                    card.appendChild(panel);
+                }
+                if (!panel.hidden) {
+                    panel.hidden = true;
+                    return;
+                }
+                panel.hidden = false;
+                if (panel.dataset.loaded === '1') return;
+                panel.textContent = window.t('loading');
+                const toolId = btn.getAttribute('data-gen-detail') || card.getAttribute('data-tool-id') || '';
+                const meta = await fetchGeneratedTaskMeta(toolId);
+                if (!meta) {
+                    panel.textContent = window.t('gen_details_unavailable');
+                    return;
+                }
+                renderGeneratedTaskDetails(panel, meta);
+                panel.dataset.loaded = '1';
+            }
+
+            // 中性提示 toast（成功类反馈；showError 是红色错误样式，不适用）
+            let _showNoticeTimer = null;
+            function showNotice(msg) {
+                noticeMessage.value = msg;
+                if (_showNoticeTimer) clearTimeout(_showNoticeTimer);
+                _showNoticeTimer = setTimeout(() => { noticeMessage.value = ''; }, 5000);
+            }
+
+            // 把某次生成的参数恢复到输入区（重新编辑）：提示词、模型、比例、
+            // 时长、分辨率、参考图/视频/音频。恢复后用户可微调再发送。
+            function restoreGenerationParamsToEditor(genType, meta) {
+                inputText.value = String(meta.prompt || '');
+                autoResize();
+
+                // 模型：按 task_type 反查 TaskConfig，再在对应模型池里按 key 前缀匹配
+                const task = (meta.task_type && window.TaskConfig && typeof window.TaskConfig.getTaskById === 'function')
+                    ? window.TaskConfig.getTaskById(meta.task_type)
+                    : null;
+                if (task && task.key) {
+                    const matches = (m) => m && (m.key === task.key || String(task.key).startsWith(m.key + '_'));
+                    if (genType === 'image') {
+                        const model = allImageModels.value.find(matches);
+                        if (model) {
+                            selectedImageModel.value = model.name;
+                            selectedImageModelKey.value = model.key || '';
+                        }
+                    } else {
+                        const model = [...allImageToVideoModels.value, ...allTextToVideoModels.value].find(matches);
+                        if (model) {
+                            selectedVideoModelKey.value = model.key || '';
+                            selectedVideoModelName.value = model.name;
+                        }
+                    }
+                }
+
+                // 比例（仅恢复当前可选值，避免选中悬空选项）
+                if (meta.ratio && currentRatios.value.some(r => r.value === meta.ratio)) {
+                    hasUserSelectedRatio.value = true;
+                    selectedRatio.value = meta.ratio;
+                }
+                // 时长（视频）
+                if (genType === 'video' && meta.duration != null && meta.duration !== '' &&
+                    currentDurationOptions.value.includes(Number(meta.duration))) {
+                    selectedDuration.value = Number(meta.duration);
+                    durationInputText.value = String(meta.duration);
+                }
+                // 分辨率
+                const resolution = genType === 'video' ? (meta.resolution || meta.image_size) : meta.image_size;
+                if (genType === 'image' && resolution && currentResolutions.value.includes(resolution)) {
+                    selectedResolution.value = resolution;
+                } else if (genType === 'video' && resolution) {
+                    selectedVideoResolution.value = resolution;
+                }
+
+                // 参考素材回填：服务端 URL 直接加入（不重新上传），与灵感页带图跳转同模式。
+                // reference_images（多参考）与 frame_images（首尾帧/图片编辑参考图）合并带回
+                clearAllMedia();
+                const refs = [
+                    ...(Array.isArray(meta.reference_images) ? meta.reference_images : []),
+                    ...(Array.isArray(meta.frame_images) ? meta.frame_images : [])
+                ].filter(isHttpUrl);
+                refs.forEach(url => {
+                    const imgItem = { file: null, previewUrl: url, serverUrl: url, uploading: false, uploadFailed: false };
+                    agentImageFiles.value.push(imgItem);
+                    addMediaItem(null, 'image', url, { serverUrl: url, thumbnailUrl: url, agentImageItem: imgItem });
+                });
+                if (isHttpUrl(meta.reference_video)) {
+                    addMediaItem(null, 'video', meta.reference_video, { serverUrl: meta.reference_video });
+                }
+                if (isHttpUrl(meta.reference_audio)) {
+                    addMediaItem(null, 'audio', meta.reference_audio, { serverUrl: meta.reference_audio });
+                }
+
+                if (inputTextarea.value) inputTextarea.value.focus();
+                showNotice(refs.length > 0
+                    ? window.t('gen_edit_restored_with_refs', { count: refs.length })
+                    : window.t('gen_edit_restored'));
+            }
+
+            async function handleGeneratedResultEdit(btn) {
+                const toolId = btn.getAttribute('data-tool-id') || '';
+                const genType = btn.getAttribute('data-regen-edit') || 'image';
+                btn.disabled = true;
+                try {
+                    const meta = await fetchGeneratedTaskMeta(toolId);
+                    if (!meta) {
+                        showError(window.t('gen_details_unavailable'));
+                        return;
+                    }
+                    restoreGenerationParamsToEditor(genType, meta);
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+
+            // 「重新生成」：按原参数直接重提生成任务（不经 LLM），复用
+            // pending 标记 + 轮询 + persistDirectGenerationResult 的直连链路
+            async function handleGeneratedResultRegenerate(btn) {
+                const toolId = btn.getAttribute('data-tool-id') || '';
+                const genType = btn.getAttribute('data-regen-submit') || 'image';
+                if (!currentSessionId.value) {
+                    showError(window.t('gen_regen_need_session'));
+                    return;
+                }
+                btn.disabled = true;
+                try {
+                    const meta = await fetchGeneratedTaskMeta(toolId);
+                    if (!meta || !meta.task_type) {
+                        showError(window.t('gen_details_unavailable'));
+                        return;
+                    }
+                    const task = (window.TaskConfig && typeof window.TaskConfig.getTaskById === 'function')
+                        ? window.TaskConfig.getTaskById(meta.task_type)
+                        : null;
+                    const categories = [task && task.category, ...((task && Array.isArray(task.categories)) ? task.categories : [])]
+                        .filter(Boolean);
+                    // 首尾帧/图片编辑参考图存 image_path（frame_images），多参考图存 reference_images
+                    const frameImages = (Array.isArray(meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
+                    const multiRefs = (Array.isArray(meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                    const hasRefMedia = frameImages.length > 0 || multiRefs.length > 0 ||
+                        isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio);
+
+                    const form = new FormData();
+                    form.append('prompt', String(meta.prompt || ''));
+                    form.append('task_id', String(meta.task_type));
+                    form.append('count', '1');
+                    form.append('user_id', userId.value);
+                    form.append('auth_token', authToken.value);
+
+                    let apiUrl = '';
+                    if (genType === 'image') {
+                        if (meta.image_size && meta.image_size !== 'auto') form.append('image_size', String(meta.image_size));
+                        if (frameImages.length > 0 && categories.includes('image_edit')) {
+                            form.append('ratio', String(meta.ratio || '1:1'));
+                            form.append('ref_image_urls', frameImages.join(','));
+                            apiUrl = '/api/image-edit';
+                        } else {
+                            form.append('aspect_ratio', String(meta.ratio || '1:1'));
+                            apiUrl = '/api/text-to-image';
+                        }
+                    } else {
+                        form.append('ratio', String(meta.ratio || '9:16'));
+                        if (meta.duration != null && meta.duration !== '') form.append('duration_seconds', String(meta.duration));
+                        const resolution = meta.resolution || meta.image_size;
+                        if (resolution) form.append('resolution', String(resolution));
+                        if (hasRefMedia && categories.includes('image_to_video')) {
+                            const imageMode = String(meta.image_mode || 'first_last_frame');
+                            form.append('image_mode', imageMode);
+                            // 首尾帧 → image_urls；多参考 → reference_image_urls（与提交端点语义对齐）
+                            if (imageMode === 'multi_reference') {
+                                if (multiRefs.length > 0) form.append('reference_image_urls', multiRefs.join(','));
+                                if (frameImages.length > 0) form.append('image_urls', frameImages.join(','));
+                            } else if (frameImages.length > 0) {
+                                form.append('image_urls', frameImages.join(','));
+                            } else if (multiRefs.length > 0) {
+                                form.append('image_urls', multiRefs.join(','));
+                            }
+                            if (isHttpUrl(meta.reference_audio)) form.append('audio_urls', String(meta.reference_audio));
+                            if (isHttpUrl(meta.reference_video)) form.append('video_urls', String(meta.reference_video));
+                            if (meta.enable_face_mask === true) form.append('enable_face_mask', 'true');
+                            apiUrl = '/api/ai-app-run-image';
+                        } else {
+                            apiUrl = '/api/ai-app-run';
+                        }
+                    }
+
+                    const res = await axios.post(apiUrl, form, {
+                        headers: { 'Authorization': 'Bearer ' + authToken.value }
+                    });
+                    const projectIds = (res.data && Array.isArray(res.data.project_ids)) ? res.data.project_ids : [];
+                    if (projectIds.length === 0) {
+                        throw new Error((res.data && (res.data.message || res.data.error)) || window.t('gen_regen_failed'));
+                    }
+                    submitRegeneratedTask(genType, projectIds);
+                    showNotice(window.t('gen_regen_submitted'));
+                } catch (e) {
+                    showError((e && e.message) || window.t('gen_regen_failed'));
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+
+            // 重新生成的任务复用直连生成链路：占位气泡 → pending 标记入库 →
+            // 轮询完成后 replacePendingTask 替换为结果卡（含元数据条与操作按钮）
+            function submitRegeneratedTask(genType, projectIds) {
+                const sessionId = currentSessionId.value;
+                const msgUid = generateMsgUid();
+                messages.value.push({
+                    _uid: msgUid,
+                    role: 'ai',
+                    content: genType === 'image' ? window.t('generating_image') : window.t('generating_video'),
+                    timestamp: new Date().toISOString()
+                });
+                scrollToBottom();
+                const taskType = genType === 'image' ? 'image_task_submitted' : 'video_task_submitted';
+                appendMessageToBackend('assistant', `__PENDING_TASK__:${taskType}:${JSON.stringify(projectIds)}`, sessionId)
+                    .catch(e => console.warn('[Regen] pending 标记入库失败:', e));
+                if (genType === 'image') {
+                    startImageStatusCheck(msgUid, projectIds, sessionId);
+                } else {
+                    startVideoStatusCheck(msgUid, projectIds, sessionId);
+                }
             }
 
             function previewMedia(src, mediaType) {
@@ -7619,6 +7980,7 @@
                 isLoading,
                 isInitializing,
                 errorMessage,
+                noticeMessage,
                 searchQuery,
                 activeView,
                 switchView,

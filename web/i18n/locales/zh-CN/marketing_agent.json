@@ -242,5 +242,21 @@
   "output_language_auto": "自动（跟随界面语言）",
   "output_language_custom": "自定义…",
   "output_language_custom_placeholder": "输入素材语言，如：Français",
-  "output_language_hint": "控制图片/视频中的文字、口播旁白和营销文案的语言。"
+  "output_language_hint": "控制图片/视频中的文字、口播旁白和营销文案的语言。",
+  "gen_meta_detail": "详细信息",
+  "gen_re_edit": "重新编辑",
+  "gen_re_generate": "重新生成",
+  "gen_details_model": "模型",
+  "gen_details_ratio": "比例",
+  "gen_details_duration": "时长",
+  "gen_details_resolution": "分辨率",
+  "gen_details_image_mode": "生成方式",
+  "gen_details_create_time": "生成时间",
+  "gen_details_prompt": "提示词",
+  "gen_details_unavailable": "无法获取该结果的生成参数（任务不存在或已过期）",
+  "gen_edit_restored": "已恢复该结果的生成参数与提示词，可修改后重新发送",
+  "gen_edit_restored_with_refs": "已恢复生成参数，并带回 {count} 张参考图，可修改后重新发送",
+  "gen_regen_submitted": "已按原参数重新提交生成任务",
+  "gen_regen_failed": "重新生成失败，请稍后重试",
+  "gen_regen_need_session": "请先选择或创建一个会话后再重新生成"
 }

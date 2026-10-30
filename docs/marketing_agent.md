@@ -308,6 +308,17 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - 直接发起模式的轮询错误兜底与 Agent 路径对齐：连续 `MAX_CONSECUTIVE_TASK_ERRORS`（3）次错误后**不判死**——占位气泡转中性「生成中...」（`generating_placeholder`），高频 interval 降频为 `TASK_ERROR_BACKOFF_INTERVAL`（30s）继续探测；任一次轮询成功后照常走结果/失败分支。修复前此处是显示「请求超时，请稍后重试」并彻底停掉轮询，页面不刷新就永远拿不到结果（2026-10-28 事故，会话 3941fc69：视频服务端已生成完成，前端轮询已死，结果未回传对话）
 - `handleImageTaskSubmitted` / `handleVideoTaskSubmitted` 支持显式 `explicitSessionId` 入参；由 SSE 流派发任务时传入该流的 `streamSessionId`，使轮询与结果持久化归属发起会话，而非事件被处理时的"当前会话"
 
+#### 生成结果卡：参数元数据与重新编辑/重新生成（2026-10-30）
+
+针对「生成后忘记参数选择、重新生成需重贴提示词/重传参考图」的痛点，每张生成结果卡（Agent 轮询与直连轮询共用 `buildGeneratedMediaRowsHtml`）新增两层能力：
+
+1. **参数元数据条**（`.gen-meta-bar`，样式对齐即梦结果卡）：`模型名 | 时长s | 比例 | 分辨率 | 详细信息ⓘ`。数据来自 `GET /api/get-status` 新增的 `task.meta`（后端 `server.py::_build_task_meta_payload`，从 ai_tools 记录提取 `task_type`/`model_name`/`ratio`/`duration`/`image_size`/`resolution`(extra_config)/`image_mode`/`enable_face_mask`/`prompt`/`reference_images`(多参考 JSON)/`frame_images`(image_path 逗号分隔，即图片编辑参考图与图生视频首尾帧)/`reference_video`/`reference_audio`；任何字段异常仅告警不抛，不影响状态轮询主流程）。同时元数据写入卡片 `data-gen-type/model/ratio/duration/resolution` 属性随结果 HTML 持久化到会话历史，刷新/重进会话后元数据条仍可展示（属性已加入 `web/js/security.js` DOMPurify 白名单）。旧消息无 data-gen-* 属性时自然降级为不显示元数据条。
+2. **详细信息面板**：点击「详细信息」按 `data-tool-id` 懒加载 `get-status` 拉全量参数（含完整提示词），以 DOM `textContent` 渲染（提示词是不可信文本，不拼 HTML），再次点击收起。
+3. **重新编辑**（`data-regen-edit` + 事件委托 `handleGeneratedResultEdit`）：点击时按 `data-tool-id` 拉取元数据并恢复到输入区——提示词回填输入框、模型按 `task_type` 经 `TaskConfig.getTaskById` 反查回填（图片/视频模型池分开）、比例/时长/分辨率恢复为当前可选值内的原值（避免选中悬空选项）、参考图/视频/音频以服务端 URL 直接加入媒体条（不重新上传，与灵感页带图跳转同模式），成功后绿色 notice-toast 提示（新增 `noticeMessage` 状态与 `.notice-toast` 样式，区别于红色 error-toast）。
+4. **重新生成**（`data-regen-submit` + `handleGeneratedResultRegenerate`）：不经 LLM 编排，按原参数直接重提任务——图片按有无参考图走 `/api/image-edit`（`ref_image_urls`，需 task 类别含 image_edit）或 `/api/text-to-image`；视频按 `image_mode` 走 `/api/ai-app-run-image`（首尾帧→`image_urls`、多参考→`reference_image_urls`，附 `audio_urls`/`video_urls`/`enable_face_mask`）或 `/api/ai-app-run`，`task_id` 直接复用 ai_tools.type，count 固定 1。提交后复用直连链路：占位气泡 → `__PENDING_TASK__` 标记入库 → `startImage/VideoStatusCheck` 轮询 → `persistDirectGenerationResult` 替换为含元数据条与操作按钮的结果卡。
+
+安全与兼容注意：`data-gen-*`/`data-regen-*` 属性值均为参数快照（不含 URL 与提示词，提示词点击时才拉取），构建时经 `escapeHtml` 转义；`bindGeneratedMediaDelegation` 中元数据条/详情面板区域内的点击先于「点击放大」分支短路返回，避免面板在 `data-modal-src` 卡片内部被冒泡误判为放大请求。`tests/js/test_marketing_agent_digital_human_single_video.js` 对 `buildGeneratedMediaRowsHtml` 的静态断言窗口由 1600 放宽至 2600 字符（图片行模板加入元数据条与操作按钮后变长）。
+
 #### 任务恢复机制
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：

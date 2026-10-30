@@ -2508,6 +2508,70 @@ async def _get_compose_status_payload(project_id: str) -> Dict[str, Any]:
     }
 
 
+def _build_task_meta_payload(task_record) -> dict:
+    """从 ai_tools 记录提取生成参数元数据（营销智能体结果卡展示/重新编辑/重新生成用）。
+
+    字段缺失一律返回 None 而不是抛错：get-status 是高频轮询接口，
+    元数据属于附加信息，任何字段异常都不能影响状态轮询主流程。
+    """
+    meta = {
+        "task_type": None,          # unified_config 任务类型 ID（重新生成时作为 task_id 直接复用）
+        "model_name": None,         # 模型显示名（UnifiedConfigRegistry）
+        "ratio": None,
+        "duration": None,           # 视频时长（秒）
+        "image_size": None,         # 图片分辨率档位（1K/2K/4K）
+        "resolution": None,         # 视频分辨率（extra_config.resolution，如 720P/1080P）
+        "image_mode": None,         # 图生视频模式（first_last_frame/multi_reference）
+        "enable_face_mask": None,
+        "prompt": None,
+        "reference_images": [],     # 多参考模式参考图 URL 列表（reference_images JSON）
+        "frame_images": [],         # 首尾帧/图片编辑参考图 URL 列表（image_path 逗号分隔）
+        "reference_video": None,
+        "reference_audio": None,
+        "create_time": None,
+        "completed_time": None,
+    }
+    try:
+        if not task_record:
+            return meta
+        record_dict = task_record.to_dict()
+        meta["task_type"] = record_dict.get("type")
+        meta["model_name"] = record_dict.get("model_name")
+        meta["ratio"] = record_dict.get("ratio")
+        meta["duration"] = record_dict.get("duration")
+        meta["image_size"] = record_dict.get("image_size")
+        meta["prompt"] = record_dict.get("prompt")
+        meta["create_time"] = record_dict.get("create_time")
+        meta["completed_time"] = record_dict.get("completed_time")
+        meta["reference_video"] = record_dict.get("video_path")
+        meta["reference_audio"] = record_dict.get("audio_path")
+        if record_dict.get("reference_images"):
+            try:
+                parsed_refs = json.loads(record_dict["reference_images"])
+                if isinstance(parsed_refs, list):
+                    meta["reference_images"] = [
+                        item.get("url") if isinstance(item, dict) else item
+                        for item in parsed_refs
+                        if (isinstance(item, dict) and item.get("url")) or isinstance(item, str)
+                    ]
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        # image_path：图片编辑的参考图 / 图生视频首尾帧（逗号分隔 URL，见
+        # /api/image-edit 与 /api/ai-app-run-image 落库逻辑），与 reference_images 分开返回
+        if record_dict.get("image_path"):
+            meta["frame_images"] = [
+                u.strip() for u in str(record_dict["image_path"]).split(',') if u.strip()
+            ]
+        from model.ai_tools import parse_extra_config_dict
+        extra = parse_extra_config_dict(record_dict.get("extra_config"))
+        meta["resolution"] = extra.get("resolution")
+        meta["image_mode"] = extra.get("image_mode")
+        meta["enable_face_mask"] = bool(extra.get("enable_face_mask")) if "enable_face_mask" in extra else None
+    except Exception as e:
+        logger.warning(f"构建任务元数据失败（不影响状态轮询）: {e}")
+    return meta
+
+
 # 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
 # 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
 # 历史原因导致参数名与实际含义不一致，调用时请注意。
@@ -2545,7 +2609,8 @@ async def get_status(
                     "project_id": ai_tool_id,
                     "status": "NOT_FOUND",
                     "results": [],
-                    "reason": "任务记录不存在"
+                    "reason": "任务记录不存在",
+                    "meta": None,
                 })
                 continue
             
@@ -2616,7 +2681,9 @@ async def get_status(
                 "results": results_payload,
                 "reason": reason_payload,
                 # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
-                "is_content_violation": is_content_moderation_user_message(reason_payload)
+                "is_content_violation": is_content_moderation_user_message(reason_payload),
+                # 生成参数元数据（前端结果卡展示模型/时长/比例/分辨率与重新编辑/重新生成用）
+                "meta": _build_task_meta_payload(task_record),
             })
 
         # Multiple project_ids: return list
