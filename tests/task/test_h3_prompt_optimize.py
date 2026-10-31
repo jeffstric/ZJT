@@ -743,6 +743,44 @@ def test_kfref_instruction_omits_the_unused_keyframe_sentence():
     assert "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3)." in last_message
 
 
+def test_kfref_instruction_start_keyframe_timeline_rule():
+    """首帧在场规则：首帧图外的角色必须写明入画时刻，禁止 throughout 全程在场。
+
+    事故 ai_tools 13131（2026-10-31）：首帧图只有一人，优化结果却把第二个角色写成
+    「stays silent throughout」，视频模型第 0 帧就生成双人构图，推翻首帧句。
+    """
+    first_only = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    message = build_h3_optimize_user_message(
+        "王福成说「说啥？」",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=first_only,
+    )
+    assert "0.00 秒的画面只允许出现起始关键帧图里可见的人物" in message
+    assert "walks into frame around the 2-second mark" in message
+    assert "stays silent throughout" in message
+    assert "不要在开头安排切镜" in message
+
+    # 只有尾帧时不存在起始关键帧，不注入该规则
+    last_only = assign_h3_keyframe_ref_pictures(["ref.png", "last.png"], "图2是尾帧。")
+    last_message = build_h3_optimize_user_message(
+        "只有尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=last_only,
+    )
+    assert "起始关键帧图里可见的人物" not in last_message
+
+    # 全局指南同步携带同口径英文规则
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "Only the people visible in the starting key frame may appear at 0.00 seconds" in guide
+    assert "walks into frame around the 2-second mark" in guide
+
+
 def test_kfref_validator_requires_exact_keyframe_sentences():
     slots = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref.png", "last.png"],

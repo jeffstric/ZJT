@@ -428,7 +428,23 @@ def _build_kfref_instruction(
         "才在前缀末尾追加 \u201c + audio reference\u201d，否则前缀保持基础值。"
     )
     seconds = f"{float(duration or 5):.2f}"
+    has_start = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_START for index in (1, 2, 3))
     has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in (1, 2, 3))
+    # 事故 ai_tools 13131（2026-10-31）：首帧图只有一个人，优化结果却把第二个角色写成
+    # 「stays silent throughout ... nod ... glance」，视频模型为让对话成立，第 0 帧就生成
+    # 双人构图，推翻「pixel-consistently」首帧句。参考模式画布的首帧约束只是提示词软约束，
+    # 优化结果的时间线必须与首帧构图自洽（同批 13129/13130 同图同病，系统性行为）。
+    start_override = ""
+    if has_start:
+        start_override = (
+            "存在起始关键帧时，0.00 秒的画面只允许出现起始关键帧图里可见的人物，开场构图以该图为准。"
+            "起始关键帧图里没有的角色，不得写成开场就在画面里，也不得用 throughout、"
+            "from the beginning、stays silent throughout 等写法让其全程在场；"
+            "必须写明该角色在第几秒入画（如 walks into frame around the 2-second mark），"
+            "入画前该角色的反应一律画外处理。"
+            "开场段落的动作必须从首帧构图自然延展，不得为容纳其他角色而改换开场构图，"
+            "也不要在开头安排切镜（cut）。\n"
+        )
     # 原文常写「固定运镜」和起始姿势。大模型若把这些写进结尾，视频模型会停在首帧构图，尾帧图对不上。
     end_override = ""
     if has_end:
@@ -447,6 +463,7 @@ def _build_kfref_instruction(
         "不得改写 EXACT、时间、大小写或 ref_image 编号。\n"
         + "\n".join(lines)
         + "\n"
+        + start_override
         + end_override
         + _kfref_speaker_binding_rules(image_prompt_note)
         + audio_line
