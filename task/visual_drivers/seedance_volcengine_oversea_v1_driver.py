@@ -21,6 +21,10 @@ class SeedanceVolcengineOverseaV1Driver(SeedanceVolcengineV1Driver):
     注意：不应直接实例化基类，应使用具体的子类。
     """
 
+    # 不继承国内版的 volcengine 真人素材组：海外版账号/区域（ap-southeast）与国内
+    # 素材库（cn-beijing）隔离，素材库直连未接入海外版，恒为 face_mask 本地遮盖
+    _human_asset_config_group = None
+
     def __init__(self, driver_type: int, model_name: str, impl_name: str = DriverImplementation.SEEDANCE_2_0_VOLCENGINE_OVERSEA_V1):
         # 跳过父类 __init__，直接调用 BaseVideoDriver 避免加载国内配置
         BaseVideoDriver.__init__(

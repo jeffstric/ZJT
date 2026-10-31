@@ -154,6 +154,12 @@ vidu:
 
 volcengine:
   api_key: ""  # 火山引擎 API Key（用于 Seedream 5.0 文生图）
+  # 真人素材处理模式：face_mask=本地人脸遮盖（默认）；asset_library=官方私域素材库透传
+  # （需另配 access_key + secret_key，素材上传加白后以 asset:// 引用）
+  human_asset_mode: "face_mask"
+  access_key: ""  # 火山 Access Key（私域素材库 AK/SK 签名鉴权用，与 api_key 独立）
+  secret_key: ""  # 火山 Secret Key（与 access_key 配对使用）
+  asset_base_url: ""  # 真人库素材接口地址（缺省回落 https://ark.cn-beijing.volces.com）
 
 volcengine_oversea:
   api_key: ""  # 火山引擎海外版 API Key（用于 Seedream/Seedance 海外版）
@@ -167,6 +173,18 @@ kkidc:
 huimengi:
   api_key: ""  # huimengi 网关 API Key（用于 Seedance 2.0 系列视频）
   base_url: "https://api.huimengi.com"  # huimengi API 基础 URL
+  # 真人素材处理模式：param_pass=human_review 参数直传（默认）；face_mask=本地人脸遮盖；
+  # asset_library=官方真人库透传（需另配 asset_base_url）
+  human_asset_mode: "param_pass"
+  asset_base_url: ""  # 真人库素材接口地址（asset_library 模式使用；缺省回落 base_url，两者同址可不配）
+
+topenrouter:
+  api_key: ""  # TopenRouter API Key（用于 Seedance 系列视频，火山方舟同构协议）
+  base_url: "https://tp-api.chinadatapay.com:8000"  # TopenRouter API 基础 URL
+  asset_api_key: ""  # 素材 Action 接口 Token（缺省回落 api_key，两者相同时无需配置）
+  # 真人库素材 Action 接口地址（缺省回落 base_url，两者同址可不配）
+  asset_base_url: ""
+  model_aliases: {}  # 模型名映射 JSON（火山原生名 → 平台名），404 时在此修正
 
 pay:
   wxpay:

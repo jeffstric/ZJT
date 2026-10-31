@@ -447,6 +447,38 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True,
         'user_module_grantable': True
     },
+    {
+        'key': 'volcengine.human_asset_mode',
+        'value_type': 'string',
+        'description': '火山引擎真人素材处理模式：face_mask=本地人脸遮盖（默认） / asset_library=官方私域素材库透传（素材上传加白后以 asset:// 引用，需另配 access_key + secret_key）；非法值回落 face_mask',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'volcengine.access_key',
+        'value_type': 'string',
+        'description': '火山引擎 Access Key（私域素材库 Action 接口 AK/SK 签名鉴权用，与视频 api_key 独立，见控制台 API 访问密钥管理）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'volcengine.secret_key',
+        'value_type': 'string',
+        'description': '火山引擎 Secret Key（与 volcengine.access_key 配对使用，素材库签名鉴权用）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'volcengine.asset_base_url',
+        'value_type': 'string',
+        'description': '火山引擎私域素材库 Action 接口地址（asset_library 模式使用；缺省回落 https://ark.cn-beijing.volces.com）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
 
     # ==================== 火山引擎语音合成（豆包语音） ====================
     # 新版控制台单 API Key 鉴权（X-Api-Key），见 docs/audio/volcengine_tts.md
@@ -511,6 +543,65 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'huimengi.base_url',
         'value_type': 'string',
         'description': 'huimengi API 基础 URL（默认 https://api.huimengi.com）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'huimengi.human_asset_mode',
+        'value_type': 'string',
+        'description': 'huimengi 真人素材处理模式：face_mask=本地人脸遮盖 / asset_library=官方真人库透传（需另配 asset_base_url） / param_pass=human_review 参数直传（默认，网关内置真人审核）；非法值回落 face_mask。注意：Grok 视频走 huimengi 网关但不支持 human_review，恒为本地遮盖',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'huimengi.asset_base_url',
+        'value_type': 'string',
+        'description': 'huimengi 真人库素材 Action 接口地址（asset_library 模式使用；缺省回落 huimengi.base_url，两者同址时无需配置）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== TopenRouter 网关配置（火山方舟同构协议） ====================
+    {
+        'key': 'topenrouter.api_key',
+        'value_type': 'string',
+        'description': 'TopenRouter API Key（Seedance 系列视频，sk- 开头）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'topenrouter.base_url',
+        'value_type': 'string',
+        'description': 'TopenRouter API 基础 URL（默认 https://tp-api.chinadatapay.com:8000）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+    {
+        'key': 'topenrouter.model_aliases',
+        'value_type': 'string',
+        'description': 'TopenRouter 模型名映射 JSON（火山原生名 → 平台名，覆盖默认映射；平台仅明确 doubao-seedance-2.0，fast/mini/2.5 为惯例推测，404 时在此修正）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': False
+    },
+    {
+        'key': 'topenrouter.asset_api_key',
+        'value_type': 'string',
+        'description': 'TopenRouter 素材 Action 接口 Token（缺省回落 topenrouter.api_key，两者相同时无需配置）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True
+    },
+    {
+        'key': 'topenrouter.asset_base_url',
+        'value_type': 'string',
+        'description': 'TopenRouter 真人库素材 Action 接口地址（asset_library 模式使用；缺省回落 topenrouter.base_url，两者同址时无需配置）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True

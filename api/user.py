@@ -97,6 +97,9 @@ async def get_implementation_preferences(
     # 获取所有任务类型及其可选实现方
     all_task_configs = UnifiedConfigRegistry.get_all()
     available_implementations = {}
+    # 每个任务「已配置且启用」的实现方名字集合（不受下方纳入阈值影响），
+    # 用于识别偏好指向的实现方已停用/未配置的失效偏好
+    enabled_by_task = {}
 
     # 一次性加载所有统计数据（仅商业版）
     stats_map = {}
@@ -186,6 +189,9 @@ async def get_implementation_preferences(
                     "stats": impl_stats
                 })
 
+        # 记录该任务当前全部可用实现方（含仅剩 1 个的情形），供失效偏好判定
+        enabled_by_task[task_config.key] = {impl["name"] for impl in impls}
+
         # 只保留有可选实现方的任务（≥1 即纳入；只有 1 个实现时也展示，便于用户确认供应商）
         if len(impls) >= 1:
             # 确定任务所属的分类组
@@ -233,6 +239,18 @@ async def get_implementation_preferences(
                 ]
             }
         }
+
+    # 自愈：偏好指向的实现方已停用/未配置时，清除该偏好与固定标记。
+    # 否则供应商从设置界面消失后固定标记仍残留：任务持续失败，且设置界面无法解除
+    for task_key in [k for k, impl_name in current_prefs.items()
+                     if impl_name not in enabled_by_task.get(k, set())]:
+        try:
+            await asyncio.to_thread(UsersModel.clear_implementation_preference, user_id, task_key)
+            current_prefs.pop(task_key, None)
+            current_locks.pop(task_key, None)
+            logger.info(f"Cleared stale implementation preference: user={user_id}, task={task_key}")
+        except Exception as e:
+            logger.error(f"Failed to clear stale preference for user {user_id}, task {task_key}: {e}")
 
     return {
         "code": 0,

@@ -60,6 +60,14 @@ volcengine_tts:
 
 volcengine:
   api_key: ""
+  # 真人素材处理模式：face_mask=本地人脸遮盖（默认）；asset_library=官方私域素材库透传
+  # （需另配 access_key + secret_key，素材上传加白后以 asset:// 引用）
+  human_asset_mode: "face_mask"
+  # 私域素材库 Action 接口 AK/SK 签名凭据（asset_library 模式使用，与视频 api_key 独立）
+  access_key: ""
+  secret_key: ""
+  # 真人库素材接口地址（asset_library 模式使用；缺省回落 https://ark.cn-beijing.volces.com）
+  asset_base_url: ""
 
 volcengine_oversea:
   api_key: ""
@@ -73,6 +81,23 @@ kkidc:
 huimengi:
   api_key: ""
   base_url: "https://api.huimengi.com"
+  # 真人素材处理模式：param_pass=human_review 参数直传（网关内置真人审核，默认）；
+  # face_mask=本地人脸遮盖；asset_library=官方真人库透传（需另配 asset_base_url）
+  human_asset_mode: "param_pass"
+  # 真人库素材接口地址（asset_library 模式使用；缺省回落 base_url，本网关两者同址可不配）
+  asset_base_url: ""
+
+topenrouter:
+  api_key: ""
+  base_url: "https://tp-api.chinadatapay.com:8000"
+  # 素材 Action 接口 Token（缺省回落 api_key，两者相同时无需配置）
+  asset_api_key: ""
+  # 真人库素材 Action 接口地址（缺省回落 base_url，本网关两者同址可不配）
+  asset_base_url: ""
+  # 模型名映射 JSON（火山原生名 → 平台名），覆盖默认映射；平台仅明确 doubao-seedance-2.0，
+  # fast/mini/2.5 为惯例推测，404 时在此修正，例：
+  # {"doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast"}
+  model_aliases: {}
 
 # 适配云雾 comfly这类聚合站
 api_aggregator:

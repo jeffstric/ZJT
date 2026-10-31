@@ -532,9 +532,12 @@ export function initStateFromUrl() {
     state.scriptId = params.get('script_id') ? parseInt(params.get('script_id'), 10) : null;
     state.workflowId = params.get('workflow_id') ? parseInt(params.get('workflow_id'), 10) : null;
 
-    // 规范化 userId：必须是有效正整数，否则置 null，避免发送非法 X-User-Id 导致后端 422
+    // 身份只取自登录态（localStorage），绝不从 URL 读取 user_id：
+    // URL 里的 user_id 是链接生成者的身份，转发给其他人后若作为 X-User-Id
+    // 发送，会触发后端身份一致性校验返回 401（x_user_id_consistency_middleware）。
+    // 规范化：必须是有效正整数，否则置 null，避免发送非法 X-User-Id 导致后端 422
     state.userId = null;
-    const rawUserId = params.get('user_id') || localStorage.getItem('user_id');
+    const rawUserId = localStorage.getItem('user_id');
     if (rawUserId) {
         const parsed = parseInt(rawUserId, 10);
         if (!isNaN(parsed) && parsed > 0) {

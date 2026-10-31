@@ -419,11 +419,12 @@ class TestImplementationIdMappingFunctions(unittest.TestCase):
         self.assertEqual(get_implementation_name(999), 'unknown')
 
 
-class TestSupportsAutoFace(unittest.TestCase):
-    """实现方「支持自动处理人脸」能力标识测试
+class TestHumanAssetModeConfig(unittest.TestCase):
+    """实现方真人素材模式配置测试
 
-    huimengi 网关内置 human_review 真人审核，标识为 supports_auto_face=True；
-    其余 Seedance 2.0 网关（volcengine/oversea/kkidc）保持 False，仍走 RunningHub 遮盖预处理。
+    supports_auto_face 静态标识已移除：真人处理方式由中转站组配置
+    human_asset_mode 三选一（face_mask/asset_library/param_pass），驱动类声明
+    _human_asset_config_group 挂组（见 task/visual_drivers/seedance_human_asset_mixin.py）。
     """
 
     def setUp(self):
@@ -437,59 +438,26 @@ class TestSupportsAutoFace(unittest.TestCase):
         from config.unified_config import UnifiedConfigRegistry
         UnifiedConfigRegistry.restore(getattr(self, "_registry_snapshot", None))
 
-    def test_huimengi_implementations_support_auto_face(self):
-        """huimengi 3 个实现方应标识 supports_auto_face=True"""
-        from config.unified_config import UnifiedConfigRegistry
-        for impl_name in [
-            'seedance_2_0_fast_huimengi_v1',
-            'seedance_2_0_huimengi_v1',
-            'seedance_2_0_mini_huimengi_v1',
-        ]:
-            impl = UnifiedConfigRegistry.get_implementation(impl_name)
-            with self.subTest(impl_name=impl_name):
-                self.assertIsNotNone(impl, f"{impl_name} 未注册")
-                self.assertTrue(impl.supports_auto_face, f"{impl_name} 应支持自动处理人脸")
-
-    def test_other_seedance_implementations_do_not_support_auto_face(self):
-        """volcengine/oversea/kkidc 的 Seedance 2.0 实现方应保持 supports_auto_face=False"""
-        from config.unified_config import UnifiedConfigRegistry
-        for impl_name in [
-            'seedance_2_0_volcengine_v1',
-            'seedance_2_0_fast_volcengine_v1',
-            'seedance_2_0_mini_volcengine_v1',
-            'seedance_2_0_volcengine_oversea_v1',
-            'seedance_2_0_fast_volcengine_oversea_v1',
-            'seedance_2_0_mini_volcengine_oversea_v1',
-            'seedance_2_0_kkidc_v1',
-            'seedance_2_0_fast_kkidc_v1',
-            'seedance_2_0_mini_kkidc_v1',
-        ]:
-            impl = UnifiedConfigRegistry.get_implementation(impl_name)
-            with self.subTest(impl_name=impl_name):
-                self.assertIsNotNone(impl, f"{impl_name} 未注册")
-                self.assertFalse(impl.supports_auto_face, f"{impl_name} 不应支持自动处理人脸")
-
-    def test_supports_auto_face_default_false(self):
-        """新增 ImplementationConfig 默认 supports_auto_face=False"""
+    def test_implementation_config_has_no_supports_auto_face(self):
+        """ImplementationConfig 不再有 supports_auto_face 字段（改为组配置模式推导）"""
         from config.unified_config import ImplementationConfig
         impl = ImplementationConfig(
-            name='test_auto_face_default',
+            name='test_mode_config',
             display_name='测试',
             driver_class='TestDriver',
         )
-        self.assertFalse(impl.supports_auto_face)
+        self.assertFalse(hasattr(impl, 'supports_auto_face'))
 
-    def test_to_dict_includes_supports_auto_face(self):
-        """to_dict 应包含 supports_auto_face 字段"""
+    def test_to_dict_excludes_supports_auto_face(self):
+        """to_dict 不再输出 supports_auto_face"""
         from config.unified_config import UnifiedConfigRegistry
         impl = UnifiedConfigRegistry.get_implementation('seedance_2_0_huimengi_v1')
         self.assertIsNotNone(impl)
         d = impl.to_dict()
-        self.assertIn('supports_auto_face', d)
-        self.assertTrue(d['supports_auto_face'])
+        self.assertNotIn('supports_auto_face', d)
 
     def test_seedance_2_5_huimengi_implementation(self):
-        """Seedance 2.5 慧梦实现方已注册，且支持自动处理人脸"""
+        """Seedance 2.5 慧梦实现方已注册（真人模式由 huimengi 组配置驱动）"""
         from config.unified_config import UnifiedConfigRegistry, DriverImplementation
 
         impl = UnifiedConfigRegistry.get_implementation(
@@ -498,7 +466,6 @@ class TestSupportsAutoFace(unittest.TestCase):
         self.assertIsNotNone(impl)
         self.assertEqual(impl.display_name, 'huimengi')
         self.assertEqual(impl.driver_class, 'Seedance25HuimengiV1Driver')
-        self.assertTrue(impl.supports_auto_face)
         self.assertEqual(impl.required_config_keys, ['huimengi.api_key'])
 
 

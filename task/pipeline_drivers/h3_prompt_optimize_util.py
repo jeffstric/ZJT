@@ -1,12 +1,18 @@
-"""MiniMax H3 I2VA/FL2VA/Ref2VA/KFRef 提示词优化的纯函数（无数据库依赖）。"""
+"""MiniMax H3 I2VA/FL2VA/Ref2VA/KFRef 提示词优化的纯函数（无数据库依赖）。
+
+collect_h3_optimize_image_data_urls 例外：涉及本地文件 IO 与压缩（无数据库），
+同步执行，调用方需放线程池。
+"""
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from config.constant import (
+    H3_PROMPT_OPTIMIZE_MAX_IMAGES,
     H3_PROMPT_OPTIMIZE_VARIANT_FL2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_I2VA,
     H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
@@ -556,14 +562,15 @@ def _build_voice_casting_instruction(original_prompt: str) -> str:
     )
 
 
-def build_h3_optimize_user_message(
+def _build_h3_optimize_text(
     original_prompt: str,
     variant: str,
     duration: float,
-    template: Optional[str] = None,
-    ref_counts: Optional[Dict[str, int]] = None,
-    keyframe_slots: Optional[Dict[str, Any]] = None,
-    image_prompt_note: str = "",
+    template: Optional[str],
+    ref_counts: Optional[Dict[str, int]],
+    keyframe_slots: Optional[Dict[str, Any]],
+    image_prompt_note: str,
+    grounded_note: str = "",
 ) -> str:
     guide = template if template is not None else load_h3_prompt_template(variant)
     quoted_spans = _extract_quoted_cjk_spans(original_prompt)
@@ -587,8 +594,140 @@ def build_h3_optimize_user_message(
     voice_casting_line = _build_voice_casting_instruction(original_prompt)
     if voice_casting_line:
         instruction = f"{instruction}\n{voice_casting_line}"
+    if grounded_note:
+        instruction = f"{instruction}\n{grounded_note}"
     body = (original_prompt or "").strip() or "(empty original prompt)"
     return f"{guide.rstrip()}\n\n{instruction}\n\n{body}\n"
+
+
+def build_h3_optimize_user_message(
+    original_prompt: str,
+    variant: str,
+    duration: float,
+    template: Optional[str] = None,
+    ref_counts: Optional[Dict[str, int]] = None,
+    keyframe_slots: Optional[Dict[str, Any]] = None,
+    image_prompt_note: str = "",
+) -> str:
+    return _build_h3_optimize_text(
+        original_prompt, variant, duration, template,
+        ref_counts, keyframe_slots, image_prompt_note,
+    )
+
+
+def _build_image_grounded_note(image_count: int) -> str:
+    """多模态注入时的防幻觉指令：外观描述必须忠于随消息附上的参考图。
+
+    线上案例（2026-10-29 会话 5d72a44f，ai_tool 13059）：纯文本优化凭
+    "蓝色乌灵胶囊"字面把参考图角色臆测成 round blue-and-white creature，
+    该文字定义压过参考图，成片角色与资产库形象完全不符。
+    """
+    return (
+        f"本次调用随消息附上 {image_count} 张参考图片，按顺序对应 "
+        f"<picture_1>~<picture_{image_count}>，与上文参考资产编号一一对应。"
+        "subject_definitions 为图片内容定义 <subject_N> 时，其外观（颜色、形状、"
+        "物种、材质、服饰等一切视觉特征）必须逐项忠实描述对应图片中的实际内容，"
+        "禁止依据文字提示词推测或虚构图片中没有的特征；"
+        "文字提示词与图片冲突时，一律以图片为准（文字仅提供动作、场景与叙事意图）。"
+    )
+
+
+def build_h3_optimize_user_content(
+    original_prompt: str,
+    variant: str,
+    duration: float,
+    template: Optional[str] = None,
+    ref_counts: Optional[Dict[str, int]] = None,
+    keyframe_slots: Optional[Dict[str, Any]] = None,
+    image_prompt_note: str = "",
+    image_data_urls: Optional[List[str]] = None,
+) -> Union[str, List[Dict[str, Any]]]:
+    """构造优化调用的 user content：无图返回纯文本 str（旧行为），有图返回多模态数组。
+
+    图片附在文本之后：OpenAI 兼容客户端（DeepSeek 官方/方舟）原样透传，
+    Gemini 客户端把 image_url data URL 转 inlineData。
+    ref_counts.images 随实际注入数修正——<picture_N> 必须与随消息附上的
+    第 N 张图严格对应，防御性截断时指令张数与注入张数保持一致。
+    """
+    images = [
+        str(url) for url in (image_data_urls or [])
+        if str(url).startswith("data:image/")
+    ]
+    if not images:
+        return build_h3_optimize_user_message(
+            original_prompt, variant, duration, template=template,
+            ref_counts=ref_counts, keyframe_slots=keyframe_slots,
+            image_prompt_note=image_prompt_note,
+        )
+    if ref_counts and int(ref_counts.get("images") or 0) != len(images):
+        ref_counts = dict(ref_counts)
+        ref_counts["images"] = len(images)
+    text = _build_h3_optimize_text(
+        original_prompt, variant, duration, template,
+        ref_counts, keyframe_slots, image_prompt_note,
+        grounded_note=_build_image_grounded_note(len(images)),
+    )
+    parts: List[Dict[str, Any]] = [{"type": "text", "text": text}]
+    parts.extend(
+        {"type": "image_url", "image_url": {"url": url}} for url in images
+    )
+    return parts
+
+
+def _resolve_h3_local_image_path(url: str) -> Optional[str]:
+    """把任务里的图片 URL/相对路径映射到本地文件，找不到返回 None。
+
+    口径与 script_writer_core/mcp_tool.py fetch_image_as_base64 一致：
+    相对路径（/upload/... 或裸相对）拼项目根；http(s) 仅当域名匹配
+    server.host 时映射本地（try_map_url_to_local_file），不下载外部图片。
+    """
+    if not url:
+        return None
+    project_root = str(Path(__file__).resolve().parents[2])
+    if url.startswith("/"):
+        local_path = os.path.join(project_root, url.lstrip("/"))
+        return local_path if os.path.exists(local_path) else None
+    if url.startswith(("http://", "https://")):
+        from config.config_util import get_config
+        from utils.image_upload_utils import try_map_url_to_local_file
+        return try_map_url_to_local_file(url, get_config(), project_root)
+    local_path = os.path.join(project_root, url)
+    return local_path if os.path.exists(local_path) else None
+
+
+def collect_h3_optimize_image_data_urls(ai_tool: Any, variant: Optional[str]) -> List[str]:
+    """收集提示词优化要注入的参考图，压缩为 base64 data URL 列表。
+
+    Ref2VA/KFRef 取 reference_images；I2VA/FL2VA 取 image_path 前两张（首/尾帧）。
+    任一张映射/加载/压缩失败即整体返回 []：部分注入会让 <picture_N> 与提交给
+    视频模型的第 N 张参考图错位，宁可退回纯文本优化（现状行为，不阻断出片）。
+    压缩口径与 expert_agent/mcp_tool 注入一致（max_pixels=250_000，
+    DeepSeek 视觉计量每张 ≤1024 token）。
+    涉及同步文件 IO 与 PIL 重编码，调用方需放线程池执行。
+    """
+    try:
+        if variant in (H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, H3_PROMPT_OPTIMIZE_VARIANT_KF_REF):
+            urls = split_media_paths(getattr(ai_tool, "reference_images", None))
+        else:
+            urls = split_media_paths(getattr(ai_tool, "image_path", None))[:2]
+        if not urls:
+            return []
+        from utils.image_compressor import compress_local_image_to_base64
+        data_urls: List[str] = []
+        for url in urls[:H3_PROMPT_OPTIMIZE_MAX_IMAGES]:
+            local_path = _resolve_h3_local_image_path(url)
+            if not local_path:
+                return []
+            ok, data_url, _error = compress_local_image_to_base64(
+                local_path, max_size_mb=2.0, max_pixels=250_000
+            )
+            if not ok or not data_url:
+                return []
+            data_urls.append(data_url)
+        return data_urls
+    except Exception:
+        # 图片注入是增强能力：任何意外异常都不阻断优化主流程（回退纯文本）
+        return []
 
 
 def strip_leading_json_object(text: str) -> str:
@@ -714,6 +853,7 @@ def merge_h3_prompt_extra_config(
     variant: str,
     fallback: bool,
     has_dialogue: Optional[bool] = None,
+    used_reference_images: Optional[int] = None,
 ) -> str:
     data = extra_config if isinstance(extra_config, dict) else {}
     if not data and extra_config:
@@ -736,6 +876,9 @@ def merge_h3_prompt_extra_config(
         # 若头已合法解析仍保留布尔值（驱动据此清音频）；None（协议未启用/
         # 头缺失）时驱动回退 has_quoted_dialogue 正则兜底。
         "has_dialogue": has_dialogue,
+        # 本次优化实际注入的参考图张数（0=纯文本优化）。排查外观与参考图
+        # 不符类问题（2026-10-29 会话 5d72a44f）时据此判断优化是否看了图。
+        "used_reference_images": used_reference_images,
     }
     return json.dumps(data, ensure_ascii=False)
 

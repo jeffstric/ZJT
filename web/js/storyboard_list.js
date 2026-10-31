@@ -30,9 +30,8 @@ export function buildStoryboardUrl(folder) {
   params.set('episode_number', folder.episode_number || 1);
   if (folder.script_id) params.set('script_id', folder.script_id);
   if (folder.workflow_id) params.set('workflow_id', folder.workflow_id);
-  // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 页面会从 localStorage 读取（与 script_writer.html 保持一致）
-  const uid = getUserId();
-  if (uid) params.set('user_id', uid);
+  // 注意：不把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 页面会从 localStorage 读取（与 script_writer.html 保持一致）
+  // 也不拼 user_id：URL 中的 user_id 是链接生成者的身份，转发给他人会触发后端身份一致性校验 401
   return `/storyboard?${params.toString()}`;
 }
 

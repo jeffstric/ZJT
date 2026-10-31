@@ -229,9 +229,20 @@ const PROVIDER_DEFINITIONS = [
         isOfficialAPI: false,
         impactsKey: 'provider_huoshan_media_impacts',
         fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' }
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true, helpTextKey: 'field_api_key_help_volcengine' },
+            // 真人库开关：配置 api_key 后出现；开启 = asset_library（官方私域素材库透传），关闭 = face_mask（本地遮盖）
+            { id: 'human_asset_mode', labelKey: 'field_human_asset_switch_label', type: 'switch', checkedValue: 'asset_library', uncheckedValue: 'face_mask', required: false, visibleIf: { field: 'api_key', truthy: true }, helpTextKey: 'field_human_asset_switch_help_volcengine' },
+            { id: 'access_key', labelKey: 'field_access_key_label', type: 'text', placeholderKey: 'field_access_key_placeholder', required: false, visibleIf: { field: 'human_asset_mode', equals: 'asset_library' }, helpTextKey: 'field_access_key_help' },
+            { id: 'secret_key', labelKey: 'field_secret_key_label', type: 'text', placeholderKey: 'field_secret_key_placeholder', required: false, visibleIf: { field: 'human_asset_mode', equals: 'asset_library' } },
+            { id: 'asset_base_url', labelKey: 'field_asset_base_url_label', type: 'url', placeholder: 'https://ark.cn-beijing.volces.com', required: false, visibleIf: { field: 'human_asset_mode', equals: 'asset_library' }, helpTextKey: 'field_asset_base_url_help' }
         ],
-        configKeyMap: { api_key: 'volcengine.api_key' },
+        configKeyMap: {
+            api_key: 'volcengine.api_key',
+            human_asset_mode: 'volcengine.human_asset_mode',
+            access_key: 'volcengine.access_key',
+            secret_key: 'volcengine.secret_key',
+            asset_base_url: 'volcengine.asset_base_url'
+        },
         testEndpoint: null,
         _sharedWith: 'huoshan'
     },
@@ -457,9 +468,39 @@ const PROVIDER_DEFINITIONS = [
         isOfficialAPI: false,
         impactsKey: 'provider_huimengi_video_impacts',
         fields: [
-            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true }
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
+            { id: 'asset_base_url', labelKey: 'field_asset_base_url_label', type: 'url', placeholder: 'https://api.huimengi.com', required: false, helpTextKey: 'field_asset_base_url_help_gateway' }
         ],
-        configKeyMap: { api_key: 'huimengi.api_key' },
+        configKeyMap: { api_key: 'huimengi.api_key', asset_base_url: 'huimengi.asset_base_url' },
+        testEndpoint: null
+    },
+    {
+        // TopenRouter（火山方舟同构协议网关）：视频与素材接口协议同构，
+        // 素材接口地址独立可配（asset_base_url，与视频 base_url 同址时可留空）。
+        // 真人素材模式恒为官方真人库透传（asset_library），由配置基线写死，不提供选择
+        id: 'topenrouter_video',
+        nameKey: 'provider_topenrouter_name',
+        descKey: 'provider_topenrouter_desc',
+        category: 'multimedia',
+        icon: '🔗',
+        docUrl: 'https://topenrouter.chinadatapay.com/#/auth/register?aff=kGjU',
+        lazyRecommended: false,
+        displayOrder: 21,
+        baseName: 'topenrouter',
+        isOfficialAPI: false,
+        impactsKey: 'provider_topenrouter_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder', required: true },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://tp-api.chinadatapay.com:8000', required: false, helpTextKey: 'field_base_url_help_topenrouter' },
+            { id: 'asset_api_key', labelKey: 'field_asset_api_key_label', type: 'text', placeholderKey: 'field_asset_api_key_placeholder', required: false, helpTextKey: 'field_asset_api_key_help' },
+            { id: 'asset_base_url', labelKey: 'field_asset_base_url_label', type: 'url', placeholder: 'https://tp-api.chinadatapay.com:8000', required: false, helpTextKey: 'field_asset_base_url_help_gateway' }
+        ],
+        configKeyMap: {
+            api_key: 'topenrouter.api_key',
+            base_url: 'topenrouter.base_url',
+            asset_api_key: 'topenrouter.asset_api_key',
+            asset_base_url: 'topenrouter.asset_base_url'
+        },
         testEndpoint: null
     },
 
@@ -4322,7 +4363,18 @@ const AdminApp = {
         // 密钥类字段判定：这类字段默认覆盖毛玻璃遮罩，点击眼睛按钮才显示完整密钥
         // （app_key/access_key 为火山语音合成凭证，同属敏感密钥）
         isSecretField(field) {
-            return !field.readOnly && ['api_key', 'token', 'app_key', 'access_key'].includes(field.id);
+            return !field.readOnly && ['api_key', 'token', 'app_key', 'access_key', 'secret_key', 'asset_api_key'].includes(field.id);
+        },
+
+        // 条件显示字段：visibleIf: { field: '<fieldId>', truthy?: true, equals?: '<value>' }
+        // 基于当前表单值求值（同 baseName 兄弟卡片共享字段值，见 getFormField）
+        isFieldVisible(provider, field) {
+            const cond = field.visibleIf;
+            if (!cond || !cond.field) return true;
+            const val = String(this.getFormField(provider.id, cond.field) || '');
+            if (cond.truthy) return val.trim() !== '';
+            if ('equals' in cond) return val === cond.equals;
+            return true;
         },
 
         // 密钥字段是否应自动上玻璃遮罩：仅当值来自已保存配置（与打开弹窗时加载的原始值一致，

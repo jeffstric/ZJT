@@ -592,20 +592,18 @@ def _storyboard_needs_face_mask_pipeline(
         logger.warning(f"Failed to check seedance face mask type for task {task_type}: {e}")
         return False
 
-    # 实现方若自带 human_review（如 huimengi），跳过 RunningHub 遮盖预处理
+    # 实现方真人素材模式非本地遮盖（真人库/参数直传）时，跳过 RunningHub 遮盖预处理
     try:
         from task.visual_drivers import VideoDriverFactory
+        from config.constant import SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK
         actual_impl = VideoDriverFactory.get_implementation_for_user(
             int(task_type), user_id
         ) if user_id is not None else None
-        impl_config = (
-            UnifiedConfigRegistry.get_implementation(actual_impl) if actual_impl else None
-        )
-        if impl_config and getattr(impl_config, 'supports_auto_face', False):
+        if VideoDriverFactory.resolve_human_asset_mode(actual_impl) != SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK:
             return False
     except Exception as e:
         logger.warning(
-            f"Failed to resolve impl auto-face for storyboard face mask gate: {e}"
+            f"Failed to resolve impl human asset mode for storyboard face mask gate: {e}"
         )
 
     runninghub_api_key = get_dynamic_config_value("runninghub", "api_key", default=None)
@@ -1166,23 +1164,41 @@ def build_storyboard_folders(
         }
         folders[item['folder_key']] = item
 
+    # 跨属主剧本索引：scope=all / scope=user 按创建者拆分时，故事板属主常与剧本属主
+    # 不同（如剧本由 17 创建、故事板由 23 创建）。此时故事板卡片不能因为合并不了
+    # 就被标成「剧本缺失」(orphan)——只要同一世界同一集存在任意属主的剧本即可。
+    scripts_by_episode = {}
+    for script in scripts:
+        episode_key = (script.get('world_id'), script.get('episode_number') or 1)
+        if episode_key not in scripts_by_episode:
+            scripts_by_episode[episode_key] = script
+
     for storyboard in storyboards:
         key = _storyboard_folder_key(storyboard, separate_owners)
         episode_number = storyboard.get('episode_number') or 1
         owner_user_id = _folder_owner_id(storyboard)
         if key not in folders:
             title = storyboard.get('title') or f"Episode {episode_number}"
+            script_match = scripts_by_episode.get((storyboard.get('world_id'), episode_number))
+            if script_match is not None:
+                script_id = script_match.get('id')
+                script_title = script_match.get('title') or title
+                status = 'created'
+            else:
+                script_id = storyboard.get('script_id')
+                script_title = title
+                status = 'orphan'
             folders[key] = {
                 'folder_key': key,
                 'world_id': storyboard.get('world_id'),
                 'world_name': world_names.get(storyboard.get('world_id'), ''),
                 'episode_number': episode_number,
-                'script_id': storyboard.get('script_id'),
-                'script_title': title,
+                'script_id': script_id,
+                'script_title': script_title,
                 'storyboard_id': storyboard.get('id'),
                 'storyboard_title': title,
                 'scene_count': int(storyboard.get('scene_count') or 0),
-                'status': 'orphan',
+                'status': status,
                 'owner_user_id': owner_user_id,
                 'update_at': _to_iso(storyboard.get('update_at') or storyboard.get('create_at')),
             }
@@ -4935,22 +4951,15 @@ async def generate_scene_video(
     if not ok:
         return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
 
-    # 支持 auto-face 的实现方：注入 human_review，不走 RunningHub pipeline
+    # 解析实现方（真人素材模式由驱动侧按 human_asset_mode 分派，此处只取 impl_id，
+    # 不再注入 human_review 标记——重试切换实现方后按新实现方模式现场重算）
     impl_id = 0
-    human_review = False
     try:
         from task.visual_drivers import VideoDriverFactory
         from config.unified_config import get_implementation_id
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
         if actual_impl:
             impl_id = get_implementation_id(actual_impl) or 0
-            impl_config = UnifiedConfigRegistry.get_implementation(actual_impl)
-            if (
-                effective_face_mask
-                and impl_config
-                and getattr(impl_config, 'supports_auto_face', False)
-            ):
-                human_review = True
     except Exception as e:
         logger.warning(f"Failed to resolve video implementation for face mask: {e}")
 
@@ -5001,8 +5010,6 @@ async def generate_scene_video(
         extra_payload[IMAGE_MODE_EXTRA_CONFIG_KEY] = snapshot_image_mode
     if video_resolution:
         extra_payload['resolution'] = video_resolution
-    if human_review:
-        extra_payload['human_review'] = True
     # KFRef 优化步骤的说话人绑定原料：分镜画面构成（生成分镜图所用提示词，
     # 含人物站位/外观）。multi_reference 分支才会加载 scene_characters_ctx，
     # 与 KFRef 的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。

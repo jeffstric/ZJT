@@ -66,6 +66,8 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 
 独立图生视频入口（无故事板上下文）跳过第 1 步。全部候选均未配置密钥时直接回退原文，不发起必败的 LLM 调用。
 
+2026-10-29 起优化调用默认注入参考图（首帧/尾帧图压缩后随消息发给 VL 模型，外观描述以图为准；无可用 VL 模型或图片加载失败退纯文本），模型链先按 `supports_vl=1` 过滤再回退原口径，详见 `docs/backend/pipeline_steps.md` 的「参考图多模态注入」。
+
 ### 超时
 
 - 单次 LLM 调用：`H3_PROMPT_OPTIMIZE_TIMEOUT = 90s`，同时作为外层 `asyncio.wait_for` 与底层 `request_timeout`（对齐 httpx，避免超时后线程残留）

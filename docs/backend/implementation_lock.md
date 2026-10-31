@@ -71,6 +71,29 @@
 
 企业版真实落库；社区版 demo 路由接受字段但不保存。
 
+### 失效偏好清理（2026-10-29）
+
+供应商被禁用或未配置后，指向它的偏好/固定标记若残留，固定任务会持续失败
+（`FIXED_IMPLEMENTATION_UNAVAILABLE`），且设置界面按可用列表渲染、看不到该供应商，
+用户无法自行取消固定。三层防线：
+
+1. **管理端主动清理（主路径）**：管理端「实现方管理」禁用实现方（`PUT /admin/implementation-config`，
+   `enabled=false`）、更新实现方必需配置（`PUT /admin/config/{key}` 与 `PUT /admin/config/batch`，
+   按更新键与实现方 `required_config_keys` 求交判定受影响实现方）成功后，扫描全量用户清除指向该
+   实现方的偏好与固定标记。实现：`services/implementation_preference_cleanup.py`
+   （LIKE 预筛 + 逐行 JSON 解析，无变化不写回；响应附 `stale_preferences_cleared` 统计）。
+2. **提交期兜底**：`VideoDriverFactory._get_implementation_for_user` 命中固定不可用 fail-fast 时，
+   本次任务仍按固定语义失败（不静默换供应商），但顺手清除该用户该任务的失效固定
+   （`UsersModel.clear_implementation_preference`），下次提交即恢复正常选择。
+3. **设置页自愈**：`GET /api/user/implementation-preferences`（企业版与社区版 demo 路由同款）
+   返回前，清除指向「已配置且启用」集合之外实现方的偏好并写库。
+
+判定用「已配置且启用」全集（`enabled_by_task`），不用响应的 `available_implementations`
+（后者按 `len>1` 截断，任务仅剩 1 个可用实现方时会误判）。测试：
+`tests/api/test_stale_implementation_preference_cleanup.py`、
+`tests/services/test_implementation_preference_cleanup.py`、
+`tests/drivers/test_driver_factory.py`（locked 用例断言提交期清理）。
+
 ## 提交期 fail-fast
 
 `VideoDriverFactory._get_implementation_for_user`：固定且实现方不可用（未配置 / 已禁用）时不降级，`_last_create_error.reason = FIXED_IMPLEMENTATION_UNAVAILABLE`。

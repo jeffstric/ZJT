@@ -39,6 +39,10 @@ class GrokHuimengiV1Driver(SeedanceHuimengiV1Driver):
     # huimengi 官方模型名
     MODEL_NAME = "grok-video-channel"
 
+    # Grok 网关不支持 human_review 真人审核，覆盖回 None（恒 face_mask，
+    # 不受 huimengi 组 human_asset_mode 配置影响）
+    _human_asset_config_group = None
+
     # 时长档位（任务级 supported_durations），非法值回退默认
     SUPPORTED_DURATIONS = (6, 10, 15)
     DEFAULT_DURATION = 10

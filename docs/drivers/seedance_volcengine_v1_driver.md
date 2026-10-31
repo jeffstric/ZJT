@@ -105,6 +105,53 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 
 具体检测、输出复用和跨平台单飞锁约束见商业版文档 `enterprise/doc/generated_video_face_grid_prefix_trim.md`。
 
+## 真人素材三模式（volcengine 配置组）
+
+火山直连已接入真人素材配置组（基类声明 `_human_asset_config_group = "volcengine"`），
+勾选「处理人脸」的真人参考图按 `volcengine.human_asset_mode` 三模式分派（机制与
+huimengi 网关共用 `SeedanceHumanAssetMixin`；TopenRouter 模式唯一，已用
+`_human_asset_mode_fixed` 写死 asset_library，不走组配置。模式解析见
+docs/backend/topenrouter_seedance_integration.md）：
+
+| 模式 | 行为 | 需要配置 |
+|------|------|---------|
+| `face_mask`（默认） | 本地人脸遮盖预处理（上文网格/黑块），规避真人审核 | 无 |
+| `asset_library` | 官方私域素材库透传：素材经素材 Action 接口上传加白，以 `asset://` 引用 | `access_key` + `secret_key` |
+| `param_pass` | human_review 参数直传（火山直连不适用，仅 huimengi 网关形态） | 网关侧加白 |
+
+> **海外版（oversea）不适用**：`SeedanceVolcengineOverseaV1Driver` 显式不继承国内
+> 配置组（`_human_asset_config_group = None`），恒为 face_mask——海外版账号与
+> ap-southeast 区域和国内素材库（cn-beijing）隔离，素材库直连暂未接入海外版。
+
+直连火山与网关（TopenRouter）素材接口**协议同构**（`POST {base}/v1/api/assets/?Action=...
+&Version=2024-01-01`，见[火山官方教程](https://www.volcengine.com/docs/82379/2333565)），
+差异仅在鉴权：
+
+- 网关（TopenRouter）：`Authorization: Bearer <token>`（`asset_api_key` 回落 `api_key`）
+- 直连火山：**AK/SK HMAC-SHA256 V4 签名**（`X-Date` + `Authorization` 头，标准库实现
+  见 `utils/volcengine_signer.py`，签名 scope 固定 region `cn-beijing` / service `ark`）
+
+配置键（后台「系统配置」或快速配置「火山引擎（多媒体）」卡片均可改；卡片在 api_key
+已填时出现「真人库（私域素材库）」开关，开启后展开 AK/SK 与素材库地址）：
+
+```yaml
+volcengine:
+  api_key: ""                    # 视频任务 Bearer Key
+  human_asset_mode: "face_mask"  # face_mask（默认） / asset_library
+  access_key: ""                 # 素材库签名 AK（asset_library 模式必填）
+  secret_key: ""                 # 素材库签名 SK
+  asset_base_url: ""             # 素材库接口地址（缺省回落 https://ark.cn-beijing.volces.com）
+```
+
+流程：开启开关后，勾选「处理人脸」的真人参考图在任务提交前经 `CreateAsset` 上传 →
+`GetAsset` 轮询至 `Active` → content 中 URL 替换为 `asset://<asset_id>` → 任务终态后
+自动 `DeleteAsset` 回收。素材地址解析链：`asset_base_url` > `base_url` > 组默认地址表
+（`config/constant.py::SEEDANCE_ASSET_GROUP_DEFAULT_BASE_URL`）。
+
+真人人像 H5 活体认证两接口（`CreateVisualValidateSession` / `GetVisualValidateResult`，
+终端用户授权绑定真人素材组）客户端已封装（`utils/seedance_asset_client.py`），
+暂未接入前端路由；如需完整真人人像库授权流程另行接入。
+
 ## Content 数组格式
 
 Seedance API 使用 content 数组传递输入：
@@ -238,6 +285,9 @@ volcengine:
   api_key: "your_volcengine_api_key"
 ```
 
+真人素材（真人库）相关配置（`human_asset_mode` / `access_key` / `secret_key` /
+`asset_base_url`）见上文「真人素材三模式」章节。
+
 ## 文件列表
 
 | 文件 | 说明 |
@@ -245,6 +295,8 @@ volcengine:
 | `task/visual_drivers/seedance_volcengine_v1_driver.py` | 国内版驱动实现 |
 | `task/visual_drivers/seedance_volcengine_oversea_v1_driver.py` | 海外版驱动实现 |
 | `task/visual_drivers/base_video_driver.py` | 驱动基类 |
+| `utils/volcengine_signer.py` | 火山 AK/SK HMAC-SHA256 V4 签名（素材库直连鉴权） |
+| `utils/seedance_asset_client.py` | 素材 Action 接口客户端（Bearer/签名双形态） |
 | `config/unified_config.py` | 驱动配置定义 |
 | `config/constant.py` | 驱动映射配置 |
 | `model/ai_tools.py` | AI 工具模型（含 audio_path、video_path 字段） |

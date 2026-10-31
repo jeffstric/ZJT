@@ -444,31 +444,22 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertEqual(Seedance25HuimengiV1Driver.R2V_AUDIO_MAX_TOTAL_SECONDS, 30.0)
         self.assertEqual(Seedance25HuimengiV1Driver.R2V_AUDIO_MAX_COUNT, 10)
 
-    def test_human_review_passthrough(self):
-        """human_review 从 extra_config 透传到 params.human_review"""
+    def _param_pass_driver(self):
+        """param_pass 模式驱动（生产 huimengi 默认，单测配置缓存无该键需显式钉住）"""
+        from unittest.mock import patch as _patch
         driver = self._driver()
-        ai_tool = _make_ai_tool(
-            prompt='真人审核测试',
-            image_path=None,
-            extra_config={'human_review': True}
-        )
-        req = driver.build_create_request(ai_tool)
-        self.assertTrue(req['json']['params']['human_review'])
+        patcher = _patch.object(driver, '_resolve_human_asset_mode', return_value='param_pass')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return driver
 
-    def test_human_review_default_omitted(self):
-        """extra_config 未声明 human_review 时，params 不含该字段"""
-        driver = self._driver()
-        ai_tool = _make_ai_tool(prompt='无审核', image_path=None)
-        req = driver.build_create_request(ai_tool)
-        self.assertNotIn('human_review', req['json']['params'])
+    def test_param_pass_injects_by_flag(self):
+        """param_pass 模式 + 勾选处理人脸：params.human_review=true
 
-    def test_human_review_injected_by_face_mask(self):
-        """未声明 human_review 但 enable_face_mask=true：驱动侧补注 true
-
-        覆盖跨实现方重试场景：提交时按默认实现方（volcengine）固化 extra_config，
-        失败重试切换到本网关后字段缺失，含人脸素材否则会被网关内容审核拒绝。
+        覆盖跨实现方重试场景：extra_config 不再固化 human_review，每次提交按
+        当前实现方模式现场重算，enable_face_mask（用户勾选）是唯一输入。
         """
-        driver = self._driver()
+        driver = self._param_pass_driver()
         ai_tool = _make_ai_tool(
             prompt='真人审核兜底',
             image_path=None,
@@ -477,26 +468,46 @@ class TestBuildCreateRequest(unittest.TestCase):
         req = driver.build_create_request(ai_tool)
         self.assertIs(req['json']['params']['human_review'], True)
 
-    def test_human_review_explicit_false_not_overridden(self):
-        """显式 human_review=false 优先于 enable_face_mask=true，不被覆盖"""
-        driver = self._driver()
+    def test_param_pass_no_flag_omitted(self):
+        """param_pass 模式但用户未勾选：params 不含该字段"""
+        driver = self._param_pass_driver()
+        ai_tool = _make_ai_tool(prompt='无审核', image_path=None)
+        req = driver.build_create_request(ai_tool)
+        self.assertNotIn('human_review', req['json']['params'])
+
+    def test_stale_human_review_without_flag_ignored(self):
+        """残留 human_review=true（旧版本固化）且未勾选：不注入（残留重算）"""
+        driver = self._param_pass_driver()
         ai_tool = _make_ai_tool(
-            prompt='显式关闭',
+            prompt='残留标记',
+            image_path=None,
+            extra_config={'human_review': True}
+        )
+        req = driver.build_create_request(ai_tool)
+        self.assertNotIn('human_review', req['json']['params'])
+
+    def test_stale_human_review_false_with_flag_injects(self):
+        """残留 human_review=false 且勾选：照常注入 true（残留不生效）"""
+        driver = self._param_pass_driver()
+        ai_tool = _make_ai_tool(
+            prompt='显式关闭残留',
             image_path=None,
             extra_config={'human_review': False, 'enable_face_mask': True}
         )
         req = driver.build_create_request(ai_tool)
-        self.assertIs(req['json']['params']['human_review'], False)
+        self.assertIs(req['json']['params']['human_review'], True)
 
-    def test_human_review_face_mask_false_not_injected(self):
-        """enable_face_mask=false（用户未勾选）时不注入 human_review"""
+    def test_face_mask_mode_not_injected(self):
+        """face_mask 模式（本地遮盖）：驱动不注入 human_review"""
+        from unittest.mock import patch as _patch
         driver = self._driver()
-        ai_tool = _make_ai_tool(
-            prompt='未勾选遮盖',
-            image_path=None,
-            extra_config={'enable_face_mask': False}
-        )
-        req = driver.build_create_request(ai_tool)
+        with _patch.object(driver, '_resolve_human_asset_mode', return_value='face_mask'):
+            ai_tool = _make_ai_tool(
+                prompt='本地遮盖模式',
+                image_path=None,
+                extra_config={'enable_face_mask': True}
+            )
+            req = driver.build_create_request(ai_tool)
         self.assertNotIn('human_review', req['json']['params'])
 
     def test_resolution_mapping_lowercase(self):

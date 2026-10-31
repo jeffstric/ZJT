@@ -4292,7 +4292,7 @@
                 episode_number: ep,
             });
             if (scriptId) params.set('script_id', scriptId);
-            if (USER_ID) params.set('user_id', USER_ID);
+            // 不拼 user_id：storyboard 页面身份只取 localStorage 登录态，URL 里的 user_id 转发后会触发身份一致性 401
             if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
             // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
             window.location.href = `/storyboard?${params.toString()}`;
@@ -9633,7 +9633,7 @@
                 episode_number: episodeNumber,
             });
             if (scriptId) params.set('script_id', scriptId);
-            if (USER_ID) params.set('user_id', USER_ID);
+            // 不拼 user_id：storyboard 页面身份只取 localStorage 登录态，URL 里的 user_id 转发后会触发身份一致性 401
             if (WORKFLOW_ID) params.set('workflow_id', WORKFLOW_ID);
             // 注意：不再把 auth_token 放到 URL 中（避免敏感信息暴露），storyboard 会从 localStorage 读取（参考本文件实现）
             window.location.href = `/storyboard?${params.toString()}`;

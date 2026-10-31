@@ -54,6 +54,24 @@ class VideoDriverFactory:
         """注销驱动类（仅用于用户模块动态实现方的重载卸载）"""
         cls._registered_drivers.pop(driver_name, None)
 
+    @classmethod
+    def resolve_human_asset_mode(cls, implementation_name: Optional[str]) -> str:
+        """
+        解析实现方的真人素材处理模式（face_mask / asset_library / param_pass）。
+
+        server/storyboard 提交闸门与驱动侧分派共用本入口：模式写死的供应商
+        （_human_asset_mode_fixed，如 TopenRouter 恒为 asset_library）优先；
+        否则组名取驱动类声明的 _human_asset_config_group（唯一事实源），
+        未注册驱动/未声明组一律 face_mask。
+        """
+        driver_class = cls._registered_drivers.get(implementation_name or "")
+        fixed_mode = getattr(driver_class, '_human_asset_mode_fixed', None)
+        if fixed_mode:
+            return fixed_mode
+        config_group = getattr(driver_class, '_human_asset_config_group', None)
+        from .seedance_human_asset_mixin import read_human_asset_mode
+        return read_human_asset_mode(config_group)
+
     # 存储最近一次创建驱动失败的原因（用于返回更友好的错误信息）
     _last_create_error: Optional[Dict[str, Any]] = None
 
@@ -316,6 +334,19 @@ class VideoDriverFactory:
                             "implementation": user_pref,
                         }
                         locked_pref_failed = True
+                        # 本次任务仍按固定语义失败（不静默换供应商），但该供应商已不可用，
+                        # 固定标记留着只会让后续任务持续失败且用户难以解除，顺手清除
+                        try:
+                            UsersModel.clear_implementation_preference(user_id, task_key)
+                            logger.info(
+                                f"Cleared locked preference {user_pref} for user {user_id}, "
+                                f"task {task_key}: implementation unavailable"
+                            )
+                        except Exception as cleanup_error:
+                            logger.warning(
+                                f"Failed to clear locked preference for user {user_id}, "
+                                f"task {task_key}: {cleanup_error}"
+                            )
                         logger.warning(
                             f"User locked preference {user_pref} unavailable or disabled "
                             f"for task {task_key}, skip auto-select"
@@ -903,6 +934,22 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1, Seedance25HuimengiV1Driver)
     except ImportError as e:
         logger.warning(f"Failed to import Seedance huimengi drivers: {e}")
+
+    # Seedance TopenRouter 网关驱动注册（火山方舟同构协议，真人素材经平台素材库加白）
+    try:
+        from .seedance_topenrouter_v1_driver import (
+            Seedance20FastTopenrouterV1Driver,
+            Seedance20TopenrouterV1Driver,
+            Seedance20MiniTopenrouterV1Driver,
+            Seedance25TopenrouterV1Driver,
+        )
+        # 注册 Seedance TopenRouter v1 版本（4 个模型：2.0 / 2.0 Fast / 2.0 Mini / 2.5）
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_FAST_TOPENROUTER_V1, Seedance20FastTopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_TOPENROUTER_V1, Seedance20TopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_0_MINI_TOPENROUTER_V1, Seedance20MiniTopenrouterV1Driver)
+        VideoDriverFactory.register_driver(DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1, Seedance25TopenrouterV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import Seedance topenrouter drivers: {e}")
 
     try:
         from .qwen_multi_angle_runninghub_v1_driver import QwenMultiAngleRunninghubV1Driver
