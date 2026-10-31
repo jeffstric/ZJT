@@ -17,6 +17,16 @@
 - 标记名与库全名不一致、库中无此角色、或无可用 `reference_image` / 变体：该标记**静默不进参考图**，并打 `[storyboard-ref]` warning 日志。
 - 不做简称模糊匹配（别名/ID 重拼见 `docs/backend/character_reference_by_id_design.md` 另案）。
 
+## 生视频链路的角色来源（2026-10-31 修订）
+
+video_workflow 画布的两条生视频提交路径——分镜节点逐个生成（`shot_frame_video_generator.js`，`collectShotFrameRefImages(node, { characterSource: 'video' })`）与分镜组批量生成（`nodes.js collectReferenceImagesForGrid(shotFrameNodes, { characterSource: 'video' })`）——**角色参考只取生视频提示词中的 `【【角色名】】`**（`utils.js videoShotCharacterNames`），不再并入图片提示词的角色：
+
+- 图片提示词的角色属于画面构成（分镜图可以画多个角色），不等于本镜生视频要带的参考资产。
+- 事故 ai_tools 13137（2026-10-31）：视频提示词只点名王福成，李成建因图片提示词被并进参考清单（图3 + 音频2），KFRef 优化提示词凭空多出一个角色并上传了他的音色。
+- 连带效果：`voiceCharacters` 只含视频提示词点名的角色——参考音频（`audio_urls`）与「角色音色说明」指纹块同步只注入这些人。
+- 生成分镜图链路（`shot_frame_generator.js` 生图、宫格生图）维持「图片提示词 ∪ 生视频提示词」并集不变：画面构成需要图片提示词里的全部角色。
+- 分镜助手对话链路（后端）本次不改：该链路已有说话人音频过滤（`extract_speaking_character_ids`）。
+
 ## 三条生图路径
 
 | 路径 | 角色参考从哪来 | 如何提交给生图模型 | 备注 |
