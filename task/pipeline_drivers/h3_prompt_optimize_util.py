@@ -455,6 +455,21 @@ def _build_kfref_instruction(
             "不要用文字规定结尾的景别、机位和人物姿势。结尾画面只由结束关键帧那张图决定。"
             "镜头正文只写两帧之间的动作和台词，并写明视频停在该结束关键帧上。\n"
         )
+    # 事故 ai_tools 13134（2026-10-31）：原文「固定镜头」被优化结果改写成
+    # 「pushes in slowly」，视频模型照做。原文带镜头描述时必须原样保留并遵守。
+    # 规则常驻指令（由 LLM 按原文判断有无镜头指令），不靠代码枚举关键词——
+    # 镜头描述写法太多样（推镜头/推进头/慢推/环绕…），词表必然漏。与结束
+    # 关键帧的冲突沿用 end_override 既有优先级（首尾帧过渡优先）。
+    camera_directive_rule = (
+        "镜头指令保留：原文里任何镜头运动描述（固定镜头/固定机位、推镜头、拉镜头、"
+        "摇镜、跟随、手持等）都必须原样保留到优化结果并遵守，不得删除、替换或弱化。"
+        "原文要求固定镜头时，写成 static locked-off shot（三脚架固定机位），"
+        "不得出现 push in、pull back、pan、tilt、zoom、dolly 等任何镜头运动，"
+        "原文的构图与景别偏好通过人物走位和动作实现，不通过镜头运动实现；"
+        "原文要求推、拉、摇、移等运镜时，按原文的方向与速度原样保留。"
+        "存在结束关键帧时例外：镜头必须从首帧走到尾帧（见下方结束关键帧规则），"
+        "原文的固定镜头让位于首尾帧过渡。\n"
+    )
     return (
         "下面是原本视频的提示词。这是关键帧与参考图混合生成，不要使用 Ref2VA 的六段标题。"
         f"{audio_prefix_line}"
@@ -463,6 +478,7 @@ def _build_kfref_instruction(
         "不得改写 EXACT、时间、大小写或 ref_image 编号。\n"
         + "\n".join(lines)
         + "\n"
+        + camera_directive_rule
         + start_override
         + end_override
         + _kfref_speaker_binding_rules(image_prompt_note)

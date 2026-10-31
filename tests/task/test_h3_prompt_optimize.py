@@ -781,6 +781,52 @@ def test_kfref_instruction_start_keyframe_timeline_rule():
     assert "walks into frame around the 2-second mark" in guide
 
 
+def test_kfref_instruction_preserves_camera_directives():
+    """镜头指令保留规则常驻：原文带固定/推拉等镜头描述时必须原样遵守（ai_tools 13134）。
+
+    事故：原文「固定镜头」被优化结果改写成 pushes in slowly，视频模型照做。
+    规则常驻指令由 LLM 按原文判断有无镜头描述，代码不做关键词枚举。
+    """
+    slots = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    message = build_h3_optimize_user_message(
+        "固定镜头\r\n王福成说「说啥？」",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=slots,
+    )
+    assert "镜头指令保留" in message
+    assert "static locked-off shot" in message
+    assert "通过人物走位和动作实现，不通过镜头运动实现" in message
+    # 无尾帧：固定镜头不让位，规则里写明例外只挂结束关键帧
+    assert "存在结束关键帧时例外" in message
+    assert "不要把起始姿势写成结尾姿势" not in message
+
+    # 有尾帧时规则仍在，且与 end_override 并存（首尾帧过渡优先）
+    both_slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"], "图1是首帧，图3是尾帧。"
+    )
+    both_message = build_h3_optimize_user_message(
+        "固定镜头，从首帧走到尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        6,
+        template="GUIDE",
+        ref_counts={"images": 3, "videos": 0, "audios": 0},
+        keyframe_slots=both_slots,
+    )
+    assert "镜头指令保留" in both_message
+    assert "不要把起始姿势写成结尾姿势" in both_message
+
+    # 全局指南同步：镜头指令约束力 + fixed camera 禁令限定在尾帧场景
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "Camera directives from the source prompt are binding" in guide
+    assert "realize composition preferences" in guide and "through blocking and action" in guide
+    assert (
+        "In that case do not write fixed camera, camera locked, or a held opening shot" in guide
+    )
+
+
 def test_kfref_validator_requires_exact_keyframe_sentences():
     slots = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref.png", "last.png"],
