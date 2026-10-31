@@ -394,7 +394,7 @@ def test_optimize_kfref_returns_dialogue_flag_from_header():
     driver.logger = MagicMock()
     slots = assign_h3_keyframe_ref_pictures(["first.png"], "图1是首帧。")
 
-    async def fake_llm(original, variant, duration, step_params):
+    async def fake_llm(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _kfref_ok_body()
 
     driver._call_llm = fake_llm
@@ -405,7 +405,7 @@ def test_optimize_kfref_returns_dialogue_flag_from_header():
     assert flag is False
     assert optimized.startswith("<Picture 1> is the EXACT starting key frame")
 
-    async def fake_llm_spoken(original, variant, duration, step_params):
+    async def fake_llm_spoken(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": true}\n\n' + _kfref_ok_body(
             "<Audio 1> is the voice-timbre reference for the older man in <Picture 2> (S1): "
             "it provides voice timbre, vocal identity, speaking tone, rhythm, intonation, and lip-sync pacing.\n\n"
@@ -426,7 +426,7 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     calls = {"n": 0}
 
     # LLM 不守协议（无 JSON 头）：两次都失败 → 回退原文，has_dialogue=None
-    async def no_header(original, variant, duration, step_params):
+    async def no_header(original, variant, duration, step_params, image_data_urls=None):
         calls["n"] += 1
         return _kfref_ok_body()
 
@@ -438,7 +438,7 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     assert optimized == "原文" and calls["n"] == 2
 
     # 判无台词却仍写 <Audio 1>：forbid_audio_refs 校验拒绝 → 重试耗尽回退
-    async def says_false_but_writes_audio(original, variant, duration, step_params):
+    async def says_false_but_writes_audio(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _kfref_ok_body(
             "<Audio 1> is a reference audio for voice timbre.\n\n"
         )
@@ -743,6 +743,90 @@ def test_kfref_instruction_omits_the_unused_keyframe_sentence():
     assert "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3)." in last_message
 
 
+def test_kfref_instruction_start_keyframe_timeline_rule():
+    """首帧在场规则：首帧图外的角色必须写明入画时刻，禁止 throughout 全程在场。
+
+    事故 ai_tools 13131（2026-10-31）：首帧图只有一人，优化结果却把第二个角色写成
+    「stays silent throughout」，视频模型第 0 帧就生成双人构图，推翻首帧句。
+    """
+    first_only = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    message = build_h3_optimize_user_message(
+        "王福成说「说啥？」",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=first_only,
+    )
+    assert "0.00 秒的画面只允许出现起始关键帧图里可见的人物" in message
+    assert "walks into frame around the 2-second mark" in message
+    assert "stays silent throughout" in message
+    assert "不要在开头安排切镜" in message
+
+    # 只有尾帧时不存在起始关键帧，不注入该规则
+    last_only = assign_h3_keyframe_ref_pictures(["ref.png", "last.png"], "图2是尾帧。")
+    last_message = build_h3_optimize_user_message(
+        "只有尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=last_only,
+    )
+    assert "起始关键帧图里可见的人物" not in last_message
+
+    # 全局指南同步携带同口径英文规则
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "Only the people visible in the starting key frame may appear at 0.00 seconds" in guide
+    assert "walks into frame around the 2-second mark" in guide
+
+
+def test_kfref_instruction_preserves_camera_directives():
+    """镜头指令保留规则常驻：原文带固定/推拉等镜头描述时必须原样遵守（ai_tools 13134）。
+
+    事故：原文「固定镜头」被优化结果改写成 pushes in slowly，视频模型照做。
+    规则常驻指令由 LLM 按原文判断有无镜头描述，代码不做关键词枚举。
+    """
+    slots = assign_h3_keyframe_ref_pictures(["first.png", "ref.png"], "图1是首帧。")
+    message = build_h3_optimize_user_message(
+        "固定镜头\r\n王福成说「说啥？」",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        keyframe_slots=slots,
+    )
+    assert "镜头指令保留" in message
+    assert "static locked-off shot" in message
+    assert "通过人物走位和动作实现，不通过镜头运动实现" in message
+    # 无尾帧：固定镜头不让位，规则里写明例外只挂结束关键帧
+    assert "存在结束关键帧时例外" in message
+    assert "不要把起始姿势写成结尾姿势" not in message
+
+    # 有尾帧时规则仍在，且与 end_override 并存（首尾帧过渡优先）
+    both_slots = assign_h3_keyframe_ref_pictures(
+        ["first.png", "ref.png", "last.png"], "图1是首帧，图3是尾帧。"
+    )
+    both_message = build_h3_optimize_user_message(
+        "固定镜头，从首帧走到尾帧",
+        H3_PROMPT_OPTIMIZE_VARIANT_KF_REF,
+        6,
+        template="GUIDE",
+        ref_counts={"images": 3, "videos": 0, "audios": 0},
+        keyframe_slots=both_slots,
+    )
+    assert "镜头指令保留" in both_message
+    assert "不要把起始姿势写成结尾姿势" in both_message
+
+    # 全局指南同步：镜头指令约束力 + fixed camera 禁令限定在尾帧场景
+    guide = load_h3_prompt_template(H3_PROMPT_OPTIMIZE_VARIANT_KF_REF)
+    assert "Camera directives from the source prompt are binding" in guide
+    assert "realize composition preferences" in guide and "through blocking and action" in guide
+    assert (
+        "In that case do not write fixed camera, camera locked, or a held opening shot" in guide
+    )
+
+
 def test_kfref_validator_requires_exact_keyframe_sentences():
     slots = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref.png", "last.png"],
@@ -958,7 +1042,7 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     driver.logger = MagicMock()
     calls = {"n": 0}
 
-    async def writes_audio(original, variant, duration, step_params):
+    async def writes_audio(original, variant, duration, step_params, image_data_urls=None):
         calls["n"] += 1
         return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(
             "<audio_1> is the voice-timbre reference for <subject_1> (S1)."
@@ -973,7 +1057,7 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     assert optimized == "无对白镜头，只有环境音"
     assert calls["n"] == 2
 
-    async def keeps_speaking_intent(original, variant, duration, step_params):
+    async def keeps_speaking_intent(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(
             "He gives a slight nod, ready to speak."
         )
@@ -984,7 +1068,7 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     ))
     assert fallback is True and optimized.startswith("胡敏环视众人")
 
-    async def clean(original, variant, duration, step_params):
+    async def clean(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _ref2va_ok_body()
 
     driver._call_llm = clean
@@ -1003,7 +1087,7 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     assert fallback is False and flag is False
 
     # 有台词（JSON 头 true）：音色引用与 <d> 均合法，forbid 不开
-    async def with_dialogue(original, variant, duration, step_params):
+    async def with_dialogue(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": true}\n\n' + _ref2va_ok_body(
             "<audio_1> is the voice-timbre reference for <subject_1> (S1). "
             "He says: <d>[Chinese] 今天到此为止</d>"
@@ -1071,3 +1155,188 @@ def test_has_quoted_dialogue_excludes_visible_text():
     )
     for text in spoken:
         assert has_quoted_dialogue(text), text
+
+
+# ===== 多模态注入：参考图随优化调用一起发给 VL 模型（2026-10-29 会话 5d72a44f） =====
+
+def test_user_content_without_images_is_plain_text():
+    """无图：与旧 build_h3_optimize_user_message 输出逐字一致（纯文本 str）。"""
+    from task.pipeline_drivers.h3_prompt_optimize_util import build_h3_optimize_user_content
+    kwargs = dict(
+        ref_counts={"images": 1, "videos": 0, "audios": 0},
+        keyframe_slots=None,
+        image_prompt_note="",
+    )
+    assert build_h3_optimize_user_content("原文", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, **kwargs) == \
+        build_h3_optimize_user_message("原文", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, **kwargs)
+
+
+def test_user_content_with_images_returns_multimodal_parts():
+    """有图：text part（含防幻觉指令）在前，K 个 image parts 在后。"""
+    from task.pipeline_drivers.h3_prompt_optimize_util import build_h3_optimize_user_content
+    images = ["data:image/jpeg;base64,AAA", "data:image/jpeg;base64,BBB"]
+    content = build_h3_optimize_user_content(
+        "乌灵喊麦", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 10.0,
+        ref_counts={"images": 2, "videos": 0, "audios": 0},
+        image_data_urls=images,
+    )
+    assert isinstance(content, list) and len(content) == 3
+    assert content[0]["type"] == "text"
+    assert "一律以图片为准" in content[0]["text"]
+    assert "2 张参考图片" in content[0]["text"]
+    assert content[1] == {"type": "image_url", "image_url": {"url": images[0]}}
+    assert content[2] == {"type": "image_url", "image_url": {"url": images[1]}}
+
+
+def test_user_content_clamps_ref_count_to_injected_images():
+    """防御性截断时指令张数随实际注入数修正，picture_N 与附图严格对应。"""
+    from task.pipeline_drivers.h3_prompt_optimize_util import build_h3_optimize_user_content
+    content = build_h3_optimize_user_content(
+        "原文", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0,
+        ref_counts={"images": 9, "videos": 0, "audios": 0},
+        image_data_urls=["data:image/jpeg;base64,AAA"],
+    )
+    assert "1 张参考图片" in content[0]["text"]
+    assert "9 张" not in content[0]["text"]
+
+    # 非 data URL 的杂项不注入，等同无图（纯文本回退）
+    assert build_h3_optimize_user_content(
+        "原文", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0,
+        image_data_urls=["/upload/a.png", ""],
+    ) == build_h3_optimize_user_message("原文", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0)
+
+
+def test_collect_images_by_variant_and_all_or_nothing(monkeypatch, tmp_path):
+    """Ref2VA 取 reference_images；I2VA 取 image_path 前两张；任一张失败整体返回 []。"""
+    from task.pipeline_drivers import h3_prompt_optimize_util as util
+
+    img = tmp_path / "a.jpg"
+    img.write_bytes(b"fake")
+
+    def fake_resolve(url):
+        return str(img) if url else None
+
+    def fake_compress(path, max_size_mb=2.0, max_pixels=0, cleanup=False):
+        return True, "data:image/jpeg;base64,AAA", None
+
+    monkeypatch.setattr(util, "_resolve_h3_local_image_path", fake_resolve)
+    monkeypatch.setattr(
+        "utils.image_compressor.compress_local_image_to_base64", fake_compress
+    )
+
+    ref2va_tool = SimpleNamespace(reference_images='["/upload/a.jpg", "/upload/b.jpg"]', image_path=None)
+    assert util.collect_h3_optimize_image_data_urls(ref2va_tool, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA) == \
+        ["data:image/jpeg;base64,AAA", "data:image/jpeg;base64,AAA"]
+
+    i2va_tool = SimpleNamespace(reference_images=None, image_path="/upload/a.jpg")
+    assert len(util.collect_h3_optimize_image_data_urls(i2va_tool, H3_PROMPT_OPTIMIZE_VARIANT_I2VA)) == 1
+
+    # 第二张映射失败 → 整体 []（防 picture_N 编号错位，退纯文本优化）
+    def fake_resolve_second_missing(url):
+        return str(img) if url == "/upload/a.jpg" else None
+
+    monkeypatch.setattr(util, "_resolve_h3_local_image_path", fake_resolve_second_missing)
+    assert util.collect_h3_optimize_image_data_urls(ref2va_tool, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA) == []
+
+
+def test_collect_images_swallows_unexpected_errors(monkeypatch):
+    """压缩函数抛异常：图片注入是增强能力，意外异常不阻断优化主流程。"""
+    from task.pipeline_drivers import h3_prompt_optimize_util as util
+
+    def boom(path, max_size_mb=2.0, max_pixels=0, cleanup=False):
+        raise RuntimeError("disk broken")
+
+    monkeypatch.setattr(util, "_resolve_h3_local_image_path", lambda url: "/tmp/x.jpg")
+    monkeypatch.setattr("utils.image_compressor.compress_local_image_to_base64", boom)
+    tool = SimpleNamespace(reference_images='["/upload/a.jpg"]', image_path=None)
+    assert util.collect_h3_optimize_image_data_urls(tool, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA) == []
+
+
+def test_resolve_model_require_vl_filters_non_vl(monkeypatch):
+    """require_vl=True：vl=0 的 chat_model 被跳过，vl=1 的全局默认命中；
+    全链无 VL 返回 (None, None)。纯文本口径优先级不变。"""
+    vl_flags = {"deepseek-v4-flash": 1, "some-text-model": 0, "gemini-3.5-flash": 0}
+
+    # 直接 patch driver 模块级名字：全量跑时其他测试会污染 model.model 模块
+    # 状态（真实查库连不上），跨模块字符串 patch 不稳。
+    monkeypatch.setattr(
+        "task.pipeline_drivers.h3_prompt_optimize_driver._model_supports_vl",
+        lambda name: vl_flags.get(name, 0) == 1,
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.h3_prompt_optimize_driver.get_dynamic_config_value",
+        lambda *a, **k: 0,
+    )
+    monkeypatch.setattr(
+        "llm.llm_client_factory.get_llm_client", lambda model, vendor_id=None: object()
+    )
+    monkeypatch.setattr(
+        "llm.llm_client_factory.is_llm_client_configured", lambda client: True
+    )
+
+    params = {"chat_model": "some-text-model", "chat_vendor_id": None}
+    # 多模态：chat_model 非 VL 跳过 → 全局 deepseek-v4-flash（vl=1）命中
+    assert H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(params, require_vl=True) == \
+        ("deepseek-v4-flash", None)
+    # 纯文本：chat_model 仍第一优先（现状优先级不变）
+    assert H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(params, require_vl=False) == \
+        ("some-text-model", None)
+
+    # 全链无 VL（deepseek 也未开启）→ (None, None)，调用方退纯文本
+    vl_flags["deepseek-v4-flash"] = 0
+    assert H3PromptOptimizePipelineDriver.resolve_h3_optimize_model(params, require_vl=True) == (None, None)
+
+
+def test_call_llm_drops_images_when_no_vl_model(monkeypatch):
+    """无可用 VL 模型：丢弃图片退纯文本，且不抛"no llm configured"。"""
+    driver = H3PromptOptimizePipelineDriver()
+    driver.logger = MagicMock()
+
+    monkeypatch.setattr(
+        "task.pipeline_drivers.h3_prompt_optimize_driver._model_supports_vl",
+        lambda name: False,
+    )
+    monkeypatch.setattr(
+        "task.pipeline_drivers.h3_prompt_optimize_driver.get_dynamic_config_value",
+        lambda *a, **k: 0,
+    )
+    monkeypatch.setattr(
+        "llm.llm_client_factory.get_llm_client", lambda model, vendor_id=None: object()
+    )
+    monkeypatch.setattr(
+        "llm.llm_client_factory.is_llm_client_configured", lambda client: True
+    )
+    captured = {}
+
+    class _FakeClient:
+        def call_api(self, **kwargs):
+            captured["messages"] = kwargs["messages"]
+            resp = MagicMock()
+            resp.choices = [MagicMock(message=MagicMock(content=_ref2va_ok_body("He says: <d>[Chinese] 你好</d>")))]
+            return resp
+
+    import llm.llm_client_factory as factory
+    monkeypatch.setattr(factory, "get_llm_client", lambda model, vendor_id=None: _FakeClient())
+
+    raw = asyncio.run(driver._call_llm(
+        "他说：\"你好\"", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
+        ["data:image/jpeg;base64,AAA"],
+    ))
+    assert raw.startswith("subject_definitions:")
+    user_content = captured["messages"][1]["content"]
+    assert isinstance(user_content, str), "无 VL 模型时应退回纯文本"
+
+
+def test_merge_extra_config_records_used_reference_images():
+    merged = json.loads(merge_h3_prompt_extra_config(
+        {}, original_prompt="原文", optimized_prompt="optimized",
+        variant=H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, fallback=False,
+        has_dialogue=True, used_reference_images=2,
+    ))
+    assert merged["h3_prompt_optimize"]["used_reference_images"] == 2
+
+    merged_default = json.loads(merge_h3_prompt_extra_config(
+        {}, original_prompt="原文", optimized_prompt="optimized",
+        variant=H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, fallback=False,
+    ))
+    assert merged_default["h3_prompt_optimize"]["used_reference_images"] is None

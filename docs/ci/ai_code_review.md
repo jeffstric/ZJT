@@ -25,7 +25,11 @@ Runner 必须能访问 `192.168.10.112:4000`。脚本对 vLLM 请求不走 `HTTP
 - `stage: review`，并设置 `needs: []`，因此和 lint 同时开始，不等待、也不拦住 `test` / `e2e`。
 - `timeout: 20m`。vLLM 用流式补全，单次读超时默认 120 秒。路由器一直不回包时，改直连 jeffS7:8000，再不行直连 jeffS10:8000。
 - 同一 commit 已有带标记的审查评论时跳过，避免重跑流水线刷屏。
-- 锁文件、二进制、`bin/`、`node_modules` 不送进模型。文本 diff 默认最多 40 个文件、共 8 万字符。
+- 锁文件、二进制、`bin/`、`node_modules` 不送进模型。文本 diff 默认最多 40 个文件、共 8 万字符；hunk 上下文默认 ±8 行（`AI_REVIEW_CONTEXT_LINES`，原 3 行——hunk 外紧邻的定义曾对模型不可见，导致「变量未定义」式误报）。
+- **上下文增强**（2026-10-30，抗误报）：diff 之外额外送两类证据，git 失败时静默降级、不阻断审查：
+  - **定义骨架**：每个变更 `.py` 文件的 import / 顶层赋值 / `class` / `def` 行（带行号，取自 HEAD 文件全文），单文件上限 1500 字符；
+  - **符号定位**：新增行引用且 diff 内找不到定义的标识符（停用词过滤，最多 30 个），`git grep HEAD -- '*.py'` 全仓找 `def` / `class` / 赋值行，总上限 6000 字符。跨 hunk 的局部变量与跨文件不变量由此可见。
+- **证据规则**（system prompt）：声称「未定义 / 不存在 / 结构不匹配」前必须先在 diff、骨架、符号定位中找到证据；找不到的疑点归入输出新增的 `## 需人工确认` 小节，不得直接断言为 bug；每条问题必须引用送审内容原文行作证据。
 
 评论是参考意见。合并是否通过仍由原有 lint、单元测试和 E2E 决定。
 
@@ -64,6 +68,7 @@ diff 不走 GitLab `/diffs` 接口。GitLab 18 的 `CI_JOB_TOKEN` 只能读取 M
 | `AI_REVIEW_MAX_TOKENS` | `4096` | 审查输出上限 |
 | `AI_REVIEW_MAX_DIFF_CHARS` | `80000` | 送进模型的 diff 总字符 |
 | `AI_REVIEW_MAX_FILES` | `40` | 送进模型的文件数 |
+| `AI_REVIEW_CONTEXT_LINES` | `8` | diff hunk 上下文行数 |
 | `AI_REVIEW_TEMPERATURE` | `0.3` | 采样温度 |
 
 思考模式在审查请求里关闭（`chat_template_kwargs.enable_thinking=false`），避免思维链占满输出预算、拖长 MR 评论等待。

@@ -533,6 +533,8 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
         error = VideoDriverFactory.get_last_create_error()
         self.assertIsNotNone(error)
         self.assertEqual(error["reason"], DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE)
+        # 固定实现方不可用时，本次失败但失效固定标记应被顺手清除（提交期自愈兜底）
+        MockUsersModel.clear_implementation_preference.assert_called_once_with(1, config.key)
 
     @patch('model.users.UsersModel')
     def test_create_driver_keeps_locked_unavailable_error(self, MockUsersModel):
@@ -541,7 +543,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
         MockUsersModel.get_implementation_preference.return_value = "test_missing_locked"
         MockUsersModel.is_implementation_locked.return_value = True
 
-        self._register_test_task([
+        config = self._register_test_task([
             ("test_missing_locked", MockConfigMissingDriver, 100),
             ("test_ok_fallback", MockDriver, 200),
         ])
@@ -550,6 +552,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
         self.assertIsNone(driver)
         error = VideoDriverFactory.get_last_create_error()
         self.assertEqual(error["reason"], DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE)
+        MockUsersModel.clear_implementation_preference.assert_called_once_with(1, config.key)
 
 
 if __name__ == "__main__":

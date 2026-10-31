@@ -55,6 +55,7 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 - 驱动读 `extra_config.h3_prompt_optimize.optimized_prompt`，否则读 `ai_tool.prompt`
 - 关闭开关或 LLM 失败时回退原文，仍提交 RunningHub
 - **对话保真**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM（详见 `docs/backend/pipeline_steps.md` 的对话保真小节）
+- **速度保真**（2026-10-31，工作流 2059 全片慢动作事故）：镜头运动速度必须来自原文，原文未要求慢速（慢镜/慢动作/缓慢/缓缓等）时禁止自行添加 `at slow speed` / `slow motion` / `slowly`。旧模板 few-shot 两例镜头句均带 `at slow speed`，改写 LLM 模仿后给约 1/3 中性运镜（固定/跟随/手持）凭空加了慢速标注（实测 94 条任务中 31 条含 slow），已删示例慢速词并在规范处加忠实原文约束
 
 ### 大模型回退链
 
@@ -65,6 +66,8 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 3. **JIEKOU 在线模型** `LLMModel.GEMINI_3_5_FLASH`（`gemini-3.5-flash`，走 JIEKOU/google key；2026-08 原第三级"剧本拆分默认模型"随默认值切 `deepseek-v4-flash` 后与第 2 级重复、被去重失效，故改为独立在线模型）
 
 独立图生视频入口（无故事板上下文）跳过第 1 步。全部候选均未配置密钥时直接回退原文，不发起必败的 LLM 调用。
+
+2026-10-29 起优化调用默认注入参考图（首帧/尾帧图压缩后随消息发给 VL 模型，外观描述以图为准；无可用 VL 模型或图片加载失败退纯文本），模型链先按 `supports_vl=1` 过滤再回退原口径，详见 `docs/backend/pipeline_steps.md` 的「参考图多模态注入」。
 
 ### 超时
 

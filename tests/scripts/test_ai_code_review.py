@@ -664,3 +664,199 @@ def test_probe_raises_when_all_backends_down():
     with raises(Exception) as excinfo:
         review.run(env, opener=opener, sleep=lambda _seconds: None)
     assert "502" in str(excinfo.value) or "探针" in str(excinfo.value)
+
+
+# ==================== 上下文增强（定义骨架 + 符号定位） ====================
+
+def test_python_skeleton_lists_definitions_with_line_numbers():
+    content = (
+        "import json\n"
+        "\n"
+        "\n"
+        "class A:\n"
+        "    def m(self):\n"
+        "        local_var = 1\n"
+        "\n"
+        "TOP = 1\n"
+        "# TOP2 = 2\n"
+        "def f():\n"
+        "    pass\n"
+    )
+    lines = review.python_skeleton(content)
+    joined = "\n".join(lines)
+    assert "1: import json" in joined
+    assert "4: class A:" in joined
+    assert "8: TOP = 1" in joined
+    assert "10: def f():" in joined
+    # 局部赋值与注释行不进骨架
+    assert "local_var" not in joined
+    assert "TOP2" not in joined
+
+
+def test_python_skeleton_truncates_at_budget():
+    content = "\n".join(f"def func_{i}():\n    pass\n" for i in range(200))
+    lines = review.python_skeleton(content, max_chars=300)
+    assert lines[-1] == "…（骨架已截断）"
+    assert sum(len(s) + 1 for s in lines[:-1]) <= 300 + len("…（骨架已截断）")
+
+
+def test_collect_added_identifiers_excludes_diff_resolved_and_stoplist():
+    files = [
+        review.FileDiff(
+            path="api/user.py",
+            status="修改",
+            diff=(
+                "@@ -1,2 +1,5 @@\n"
+                " ctx\n"
+                "-old\n"
+                "+current_locks.pop(task_key, None)\n"
+                "+enabled_by_task = {}\n"
+                "+logger.info(f\"json {value}\")\n"
+            ),
+        ),
+    ]
+    ids = review.collect_added_identifiers(files)
+    # diff 内已有定义的 enabled_by_task、停用词 logger/json/value、上下文变量 task_key 不送
+    assert "enabled_by_task" not in ids
+    assert "logger" not in ids and "json" not in ids and "value" not in ids
+    assert "task_key" in ids  # 新增行引用且 diff 内无定义，交给全仓定位核实
+    # current_locks 是真实事故案例：diff 内无定义，必须送定位
+    assert "current_locks" in ids
+
+
+def test_locate_symbols_greps_head_and_caps_output():
+    captured = {}
+
+    def runner(args, timeout):
+        captured["args"] = args
+        payload = "\n".join(
+            [f"api/user.py:{no}:    current_locks = await asyncio.to_thread(x)" for no in range(1, 100)]
+        )
+        return 0, payload.encode("utf-8"), b""
+
+    lines = review.locate_symbols(["current_locks"], timeout=5, runner=runner, max_chars=400)
+
+    pattern = captured["args"][captured["args"].index("-E") + 1]
+    assert "current_locks" in pattern
+    assert captured["args"][-3:] == ["HEAD", "--", "*.py"]
+    assert "-E" in captured["args"] and "-nI" in captured["args"]
+    joined = "\n".join(lines)
+    assert lines[-1] == "…（符号定位已截断）"
+    assert len(joined) <= 400 + len("…（符号定位已截断）")
+
+
+def test_locate_symbols_no_match_returns_empty():
+    def runner(args, timeout):
+        return 1, b"", b""  # git grep 无匹配退出码 1
+
+    assert review.locate_symbols(["ghost_name"], timeout=5, runner=runner) == []
+
+
+def test_build_messages_includes_skeleton_and_symbol_sections():
+    files = [review.FileDiff(path="api/user.py", status="修改", diff="+x = 1")]
+    messages = review.build_messages(
+        "t", "s", "target", "",
+        files,
+        [],
+        skeletons={"api/user.py": ["95:     current_locks = await asyncio.to_thread(f)"]},
+        symbol_lines=["model/users.py:714:        preferences = parse_implementation_preferences(...)"],
+    )
+    user_content = messages[1]["content"]
+    assert "符号定位（HEAD 全仓" in user_content
+    assert "model/users.py:714" in user_content
+    assert "定义骨架（行号: 定义行" in user_content
+    assert "95:     current_locks" in user_content
+
+
+def test_build_messages_without_enrichment_still_works():
+    files = [review.FileDiff(path="a.py", status="新增", diff="+x = 1")]
+    messages = review.build_messages("t", "s", "target", "", files, ["b.lock（锁文件）"])
+    user_content = messages[1]["content"]
+    assert "符号定位" not in user_content
+    assert "定义骨架" not in user_content
+    assert "b.lock（锁文件）" in user_content
+
+
+def test_load_git_diffs_sends_configurable_context_lines():
+    base = "226f4406aaaa"
+    head = "3088da12bbbb"
+    raw = b":100644 100644 aaa bbb M\0api/foo.py\0"
+    captured = {}
+
+    def runner(args, timeout):
+        if args[1] == "fetch":
+            return 0, b"", b""
+        if args[1:3] == ["cat-file", "-e"]:
+            return 0, b"", b""
+        if args[1] == "merge-base":
+            return 0, base.encode() + b"\n", b""
+        if args[1:3] == ["diff", "--raw"]:
+            return 0, raw, b""
+        if args[1] == "diff":
+            captured["unified"] = [a for a in args if a.startswith("--unified")]
+            return 0, b"", b""
+        raise AssertionError(args)
+
+    env = {
+        "CI_COMMIT_SHA": head,
+        "CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "develop",
+        "AI_REVIEW_CONTEXT_LINES": "12",
+    }
+    review.load_git_diffs(env, runner=runner, timeout=5)
+    assert captured["unified"] == ["--unified=12"]
+
+
+def test_run_enrichment_failure_degrades_to_plain_review():
+    """增强 git 调用失败（如 fake runner 未覆盖）不阻断审查主流程。"""
+    posted = []
+    base = "abc123def4567890"
+    raw = b":100644 100644 aaa bbb M\0api/foo.py\0"
+    unified = "diff --git a/api/foo.py b/api/foo.py\n--- a/api/foo.py\n+++ b/api/foo.py\n@@ -1 +1 @@\n-old\n+new\n"
+
+    def command_runner(args, timeout):
+        if args[1] == "fetch":
+            return 0, b"", b""
+        if args[1:3] == ["cat-file", "-e"]:
+            return 0, b"", b""
+        if args[1] == "merge-base":
+            return 0, base.encode() + b"\n", b""
+        if args[1:3] == ["diff", "--raw"]:
+            return 0, raw, b""
+        if args[1] == "diff":
+            return 0, unified.encode("utf-8"), b""
+        # git show / git grep 未模拟：抛错走降级路径
+        raise AssertionError(args)
+
+    def opener(request, timeout):
+        url = request.full_url
+        method = request.get_method()
+        if method == "GET" and "/notes?" in url:
+            return FakeResponse(200, "[]")
+        if url.endswith("/v1/models"):
+            return FakeResponse(200, json.dumps({"data": [{"id": "qwen3.8:27b"}]}))
+        if url.endswith("/v1/chat/completions"):
+            payload = json.loads(request.data.decode("utf-8"))
+            content = payload["messages"][1]["content"]
+            assert "符号定位" not in content  # 降级后无增强段
+            assert "api/foo.py" in content
+            return FakeResponse(
+                200,
+                json.dumps({"choices": [{"message": {"content": "## 结论\n未发现必须修改的问题。"}}], "usage": {}}, ensure_ascii=False),
+            )
+        if method == "POST" and url.endswith("/notes"):
+            posted.append(json.loads(request.data.decode("utf-8"))["body"])
+            return FakeResponse(201, "{}")
+        raise AssertionError(f"{method} {url}")
+
+    env = {
+        "CI_API_V4_URL": "https://gitlab.example/api/v4",
+        "CI_PROJECT_ID": "60",
+        "CI_MERGE_REQUEST_IID": "782",
+        "CI_COMMIT_SHA": "43c856b1abcd",
+        "CI_MERGE_REQUEST_DIFF_BASE_SHA": base,
+        "CI_JOB_TOKEN": "job-token",
+        "VLLM_BASE_URL": "http://192.168.10.112:4000",
+        "VLLM_MODEL": "qwen3.8:27b",
+    }
+    assert review.run(env, opener=opener, sleep=lambda _s: None, command_runner=command_runner) == "posted"
+    assert "未发现必须修改的问题" in posted[0]

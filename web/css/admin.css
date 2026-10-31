@@ -2589,6 +2589,22 @@ body {
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
+/* 开关字段（如火山真人库开关）：覆盖 .form-group input 的 100% 宽/内边距通用规则 */
+.qc-config-fields .qc-switch-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: normal;
+    cursor: pointer;
+}
+
+.qc-config-fields .qc-switch-field input[type="checkbox"] {
+    width: auto;
+    padding: 0;
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+
 /* 密钥字段：毛玻璃遮罩 + 眼睛按钮 */
 .qc-secret-wrap {
     position: relative;

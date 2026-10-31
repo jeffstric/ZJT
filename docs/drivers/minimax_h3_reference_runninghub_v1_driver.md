@@ -120,6 +120,7 @@ subject_definitions / summary / retention_analysis / detailed_description / over
 - **台词语义判断（JSON 头协议，2026-10-14 起 Ref2VA 同 KFRef）**：Ref2VA 优化输出首行 `{"has_dialogue": true|false}`——引号正则会把背景板/横幅等画面可见文字误判成台词（dev3 案例 ai_tool 1815：背景板比赛全称被写进 `<d>`，用角色音色念成台词）。语义标记优先于正则：判 false 时驱动清空参考音频、优化校验双开 forbid；**结构校验失败回退原文时语义标记保留**（1816 教训：判断与文本解耦，否则回退场景丢掉语义判断落回正则被可见文字误判，音色样本被当成片声音）。正则仅作残余兜底（协议未启用/头缺失/旧任务），且已按可见文字前后缀启发式排除（「…“字样/标题”」「背景板/写着…」不算台词）；I2VA/FL2VA 无 JSON 头，恒用正则。
 - **可见文字不进 `<d>`**：`<d>` 只承载会被念出的说话内容（台词/歌词）；背景板/横幅/牌匾/字幕等画面可见文字用英文双引号写进画面描述（如 `the backdrop reads "..."`）——统一口径落在 `_SYSTEM_PROMPT`、fidelity note 与 Ref2VA/KFRef 模板。另校验 `<d>`/`</d>` 配对，畸形嵌套（`<d> <d>…</d>`）一律拦截。
 - **触发条件**：`pipeline.h3_prompt_optimize_enabled=true`（默认开）+ 至少一项参考资产；改写失败回退原文，不阻断出片。
+- **参考图多模态注入（2026-10-29 起，防外观臆测）**：有可用 VL 模型（model 表 `supports_vl=1`，迁移 no_159 已把 `deepseek-v4-flash` 置 1）时，参考图压缩后随优化调用一起发给 LLM，subject_definitions 的外观描述必须忠于对应 `<picture_N>` 实际内容（文字与图片冲突以图为准）；任一张图加载失败或无 VL 模型则退纯文本优化。背景：会话 5d72a44f 纯文本优化把乌灵参考图角色臆测成 "round blue-and-white creature"，成片形象与资产库不符。注入张数落库 `extra_config.h3_prompt_optimize.used_reference_images`。
 - **驱动消费**：提交时优先使用 `extra_config.h3_prompt_optimize.optimized_prompt`，否则用 `ai_tool.prompt`（原文备份在 `extra_config.original_prompt`）。
 - 机制详情（原子创建、模型回退链、超时）见 `docs/backend/pipeline_steps.md` 的 `h3_prompt_optimize` 章节。
 

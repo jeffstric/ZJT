@@ -21,6 +21,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 from urllib.parse import quote
@@ -34,6 +35,13 @@ DEFAULT_VLLM_MODEL = "qwen3.8:27b"
 DEFAULT_MAX_DIFF_CHARS = 80_000
 DEFAULT_MAX_FILE_CHARS = 20_000
 DEFAULT_MAX_FILES = 40
+# diff hunk 上下文行数。原 3 行时，hunk 外 1-2 行处的定义（如函数开头初始化的局部
+# 变量）对模型不可见，曾导致「current_locks 未定义」式误报；默认提到 8 行。
+DEFAULT_CONTEXT_LINES = 8
+# 上下文增强：定义骨架单文件字符上限 / 符号定位总字符上限 / 送审符号个数上限
+DEFAULT_SKELETON_MAX_CHARS = 1_500
+DEFAULT_SYMBOL_MAX_CHARS = 6_000
+DEFAULT_SYMBOL_IDS = 30
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TEMPERATURE = 0.3
 DEFAULT_VLLM_TIMEOUT = 120
@@ -433,7 +441,11 @@ def load_git_diffs(
     if code != 0:
         raise ReviewError(f"git diff --raw 失败: {err.decode('utf-8', 'replace')[:300]}")
     code, unified, err = _git(
-        ["git", "diff", "--find-renames", "--no-color", "--unified=3", base, head],
+        [
+            "git", "diff", "--find-renames", "--no-color",
+            f"--unified={max(1, env_int(env, 'AI_REVIEW_CONTEXT_LINES', DEFAULT_CONTEXT_LINES))}",
+            base, head,
+        ],
         timeout,
         runner,
     )
@@ -642,7 +654,120 @@ def select_diffs(
     return included, omitted
 
 
-SYSTEM_PROMPT = """你是智剧通（comfyui_server）仓库的代码审查员。只根据用户给出的 Merge Request diff 审查，用中文 Markdown 回答。
+# ==================== 上下文增强（定义骨架 + 符号定位） ====================
+# diff 只有 hunk±N 行：跨 hunk 引用的定义（函数开头初始化的局部变量）与跨文件
+# 不变量（存储结构 vs 解析方）对模型不可见，是小模型编造「未定义/结构不匹配」
+# 误报的机制根源。这里把两类证据主动塞进送审内容：
+#   1. 定义骨架：变更 py 文件的 import/顶层赋值/class/def 行（带行号）
+#   2. 符号定位：新增行引用且 diff 内找不到定义的标识符，git grep HEAD 全仓找
+#      def/class/赋值行
+# 全部尽力而为：git 失败静默降级，不阻断审查主流程。
+
+_PY_DEF_RE = re.compile(r"^\s*(?:async\s+def|class|def)\s+\w")
+_TOP_ASSIGN_RE = re.compile(r"^[A-Za-z_]\w*(?::\s*[^=]+)?\s*=")
+_IMPORT_RE = re.compile(r"^(?:from\s+[\w.]+\s+import\s|import\s)")
+_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b")
+
+# 高频通用名不送符号定位（噪声远大于信息），内置名/关键字一并排除
+_SYMBOL_STOP = frozenset({
+    "self", "cls", "None", "True", "False", "return", "raise", "while", "except",
+    "str", "int", "float", "bool", "list", "dict", "set", "tuple", "len", "print",
+    "kwargs", "args", "result", "results", "error", "errors", "value", "values",
+    "data", "item", "items", "name", "path", "info", "test", "tests", "assert",
+    "logger", "logging", "json", "time", "uuid", "index", "count", "total",
+    "type", "content", "message", "response", "request", "config", "params",
+    "field", "fields", "key", "keys", "update", "create", "check", "status",
+})
+
+
+def python_skeleton(content: str, max_chars: int = DEFAULT_SKELETON_MAX_CHARS) -> list[str]:
+    """抽取 Python 文件定义骨架（行号: 定义行），只列 import/顶层赋值/class/def。"""
+    out: list[str] = []
+    used = 0
+    for no, line in enumerate(content.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not (_PY_DEF_RE.match(line) or _TOP_ASSIGN_RE.match(line) or _IMPORT_RE.match(line)):
+            continue
+        entry = f"{no}: {line.rstrip()}"
+        if used + len(entry) + 1 > max_chars:
+            out.append("…（骨架已截断）")
+            break
+        out.append(entry)
+        used += len(entry) + 1
+    return out
+
+
+def collect_added_identifiers(files: list[FileDiff], max_ids: int = DEFAULT_SYMBOL_IDS) -> list[str]:
+    """收集新增行引用、且 diff 内找不到定义的标识符（按出现次数降序，截前 max_ids 个）。"""
+    visible = "\n".join(f.diff for f in files)
+    counts: Counter[str] = Counter()
+    for item in files:
+        for line in item.diff.splitlines():
+            if not line.startswith("+") or line.startswith("+++"):
+                continue
+            for name in _IDENTIFIER_RE.findall(line[1:]):
+                if name in _SYMBOL_STOP:
+                    continue
+                counts[name] += 1
+    unresolved = []
+    for name, _count in counts.most_common():
+        if len(unresolved) >= max_ids:
+            break
+        hit = re.search(
+            rf"\b(?:def|class)\s+{re.escape(name)}\b|{re.escape(name)}\s*=[^=]",
+            visible,
+        )
+        if not hit:
+            unresolved.append(name)
+    return unresolved
+
+
+def locate_symbols(
+    identifiers: list[str],
+    *,
+    timeout: float,
+    runner: "GitRunner | None" = None,
+    max_chars: int = DEFAULT_SYMBOL_MAX_CHARS,
+) -> list[str]:
+    """git grep HEAD 全仓（*.py）定位标识符的 def/class/赋值行，输出 path:line:内容。"""
+    if not identifiers:
+        return []
+    pattern = "|".join(
+        rf"def\s+{re.escape(name)}\b|class\s+{re.escape(name)}\b|{re.escape(name)}\s*=[^=]"
+        for name in identifiers
+    )
+    code, raw, _err = _git(
+        ["git", "grep", "-nI", "-E", pattern, "HEAD", "--", "*.py"],
+        timeout,
+        runner,
+    )
+    if code not in (0, 1):  # 1 = 无匹配；其余失败静默降级
+        return []
+    out: list[str] = []
+    used = 0
+    for line in raw.decode("utf-8", "replace").splitlines():
+        entry = line.strip()
+        if not entry:
+            continue
+        if used + len(entry) + 1 > max_chars:
+            out.append("…（符号定位已截断）")
+            break
+        out.append(entry)
+        used += len(entry) + 1
+    return out
+
+
+def read_file_at_head(path: str, timeout: float, runner: "GitRunner | None" = None) -> str:
+    """读 HEAD 版本的文件全文（CI 检出即被审 commit）；失败返回空串。"""
+    code, raw, _err = _git(["git", "show", f"HEAD:{path}"], timeout, runner)
+    if code != 0:
+        return ""
+    return raw.decode("utf-8", "replace")
+
+
+SYSTEM_PROMPT = """你是智剧通（comfyui_server）仓库的代码审查员。只根据用户给出的送审内容（diff 及随附的定义骨架、符号定位）审查，用中文 Markdown 回答。
 
 优先指出会在运行时出错或造成数据/安全问题的点：
 - 逻辑错误、异常被吞、空值、条件写反
@@ -653,18 +778,34 @@ SYSTEM_PROMPT = """你是智剧通（comfyui_server）仓库的代码审查员�
 - 给 execute_tool 增加关键字参数时没有同步所有实现
 - 视频工作流新增节点没有考虑重新加载后复原
 
+证据规则（必须遵守）：
+- diff 只展示变更片段及其上下文；未变更区域与未变更文件可能存在 diff 中看不到的定义。随附的「定义骨架」取自变更文件的 HEAD 全文，「符号定位」取自 HEAD 全仓检索，声称前先在这些内容里核对。
+- 声称「未定义 / 不存在 / 结构不匹配」前，必须先在 diff、定义骨架与符号定位中找到证据；找不到证据的疑点写进「## 需人工确认」，不得直接断言为 bug。
+- 每条问题必须引用送审内容中的原文行（文件:行号或代码行）作为证据，无证据不得报告。
+
 输出格式固定为：
 ## 结论
 一句话。没有必须修改的问题时明确写「未发现必须修改的问题」。
 ## 问题
-没有问题就写「无」。有问题时每条包含严重级别（高/中/低）、文件位置、说明、建议。
+没有问题就写「无」。有问题时每条包含严重级别（高/中/低）、文件位置、说明（附证据行）、建议。
+## 需人工确认
+无法用送审内容证实或证伪的疑点；没有就写「无」。
 ## 测试建议
 一两句。
 
-只讨论 diff 里看得到的代码。不要评价命名、格式、锁文件，不要复述 diff，不要输出思考过程。"""
+只讨论送审内容覆盖的代码。不要评价命名、格式、锁文件，不要复述 diff，不要输出思考过程。"""
 
 
-def build_messages(title: str, source: str, target: str, description: str, files: list[FileDiff], omitted: list[str]) -> list[dict]:
+def build_messages(
+    title: str,
+    source: str,
+    target: str,
+    description: str,
+    files: list[FileDiff],
+    omitted: list[str],
+    skeletons: Mapping[str, list[str]] | None = None,
+    symbol_lines: list[str] | None = None,
+) -> list[dict]:
     parts = [
         f"标题: {title or '（无标题）'}",
         f"分支: {source or '?'} -> {target or '?'}",
@@ -674,10 +815,22 @@ def build_messages(title: str, source: str, target: str, description: str, files
         parts.append("描述:\n" + desc[:2000])
     if omitted:
         parts.append("未纳入审查的文件:\n" + "\n".join(f"- {item}" for item in omitted[:80]))
+    if symbol_lines:
+        parts.append(
+            "符号定位（HEAD 全仓 def/class/赋值行检索，供交叉核对定义是否存在）:\n"
+            + "\n".join(symbol_lines[:80])
+        )
     parts.append("")
     for item in files:
         note = "（该文件 diff 已截断）" if item.truncated else ""
         parts.append(f"### {item.path}（{item.status}）{note}")
+        sk = (skeletons or {}).get(item.path)
+        if sk:
+            parts.append(
+                "定义骨架（行号: 定义行，取自 HEAD 文件全文）:\n```text\n"
+                + "\n".join(sk)
+                + "\n```"
+            )
         parts.append("```diff")
         parts.append(item.diff)
         parts.append("```")
@@ -981,6 +1134,29 @@ def run(
     )
     print(f"diff 文件 {len(raw_diffs)} 个，纳入审查 {len(files)} 个，跳过 {len(omitted)} 个")
 
+    # 上下文增强（定义骨架 + 符号定位）：git 失败静默降级——增强是锦上添花，
+    # 任何异常都不能阻断审查主流程
+    git_timeout = env_int(env, "AI_REVIEW_GIT_TIMEOUT", DEFAULT_GIT_TIMEOUT)
+    skeletons: dict[str, list[str]] = {}
+    symbol_lines: list[str] = []
+    try:
+        for item in files:
+            if not item.path.endswith(".py") or item.status == "删除":
+                continue
+            content = read_file_at_head(item.path, timeout=git_timeout, runner=command_runner)
+            if content:
+                skeletons[item.path] = python_skeleton(content)
+        symbol_lines = locate_symbols(
+            collect_added_identifiers(files),
+            timeout=git_timeout,
+            runner=command_runner,
+        )
+        if symbol_lines:
+            print(f"符号定位送审 {len(symbol_lines)} 行")
+    except Exception as exc:
+        print(f"上下文增强失败（忽略，继续审查）: {exc}", file=sys.stderr)
+        skeletons, symbol_lines = {}, []
+
     base_url = (env.get("VLLM_BASE_URL") or DEFAULT_VLLM_BASE_URL).strip()
     model = (env.get("VLLM_MODEL") or DEFAULT_VLLM_MODEL).strip()
     if not files:
@@ -1028,6 +1204,8 @@ def run(
         env.get("CI_MERGE_REQUEST_DESCRIPTION") or "",
         files,
         omitted,
+        skeletons=skeletons,
+        symbol_lines=symbol_lines,
     )
     try:
         review, usage = call_vllm(
