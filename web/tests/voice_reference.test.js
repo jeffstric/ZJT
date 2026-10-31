@@ -128,14 +128,16 @@ describe('画布三类节点接线', () => {
     expect(collector).toContain("return { referenceImageUrls, promptSuffix, missingCharacters, voiceCharacters, characterRefUrls };");
 
     const generator = readSource('web/js/shot_frame_video_generator.js');
-    expect(generator).toContain('voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node)');
+    // 生视频链路 characterSource 传 'video'：角色只取生视频提示词（ai_tools 13137）
+    expect(generator).toContain("voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node, { characterSource: 'video' })");
     expect(generator).toContain("collectVoiceReferences(videoModel, voiceCharacters || [], '')");
     expect(generator).toContain("form.append('audio_urls', voiceRefs.voiceUrls.join(','))");
   });
 
   it('分镜组节点：参考模式消费 gridVoiceCharacters 并写入 audio_urls', () => {
     const src = readSource('web/js/nodes.js');
-    expect(src).toContain('voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes)');
+    // 批量生视频链路同样只取生视频提示词里的角色
+    expect(src).toContain("voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes, { characterSource: 'video' })");
     expect(src).toContain('collectVoiceReferences(videoModel || \'wan22\', gridVoiceCharacters, \'\')');
   });
 });

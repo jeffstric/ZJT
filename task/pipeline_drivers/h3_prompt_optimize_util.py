@@ -428,7 +428,23 @@ def _build_kfref_instruction(
         "才在前缀末尾追加 \u201c + audio reference\u201d，否则前缀保持基础值。"
     )
     seconds = f"{float(duration or 5):.2f}"
+    has_start = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_START for index in (1, 2, 3))
     has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in (1, 2, 3))
+    # 事故 ai_tools 13131（2026-10-31）：首帧图只有一个人，优化结果却把第二个角色写成
+    # 「stays silent throughout ... nod ... glance」，视频模型为让对话成立，第 0 帧就生成
+    # 双人构图，推翻「pixel-consistently」首帧句。参考模式画布的首帧约束只是提示词软约束，
+    # 优化结果的时间线必须与首帧构图自洽（同批 13129/13130 同图同病，系统性行为）。
+    start_override = ""
+    if has_start:
+        start_override = (
+            "存在起始关键帧时，0.00 秒的画面只允许出现起始关键帧图里可见的人物，开场构图以该图为准。"
+            "起始关键帧图里没有的角色，不得写成开场就在画面里，也不得用 throughout、"
+            "from the beginning、stays silent throughout 等写法让其全程在场；"
+            "必须写明该角色在第几秒入画（如 walks into frame around the 2-second mark），"
+            "入画前该角色的反应一律画外处理。"
+            "开场段落的动作必须从首帧构图自然延展，不得为容纳其他角色而改换开场构图，"
+            "也不要在开头安排切镜（cut）。\n"
+        )
     # 原文常写「固定运镜」和起始姿势。大模型若把这些写进结尾，视频模型会停在首帧构图，尾帧图对不上。
     end_override = ""
     if has_end:
@@ -439,6 +455,21 @@ def _build_kfref_instruction(
             "不要用文字规定结尾的景别、机位和人物姿势。结尾画面只由结束关键帧那张图决定。"
             "镜头正文只写两帧之间的动作和台词，并写明视频停在该结束关键帧上。\n"
         )
+    # 事故 ai_tools 13134（2026-10-31）：原文「固定镜头」被优化结果改写成
+    # 「pushes in slowly」，视频模型照做。原文带镜头描述时必须原样保留并遵守。
+    # 规则常驻指令（由 LLM 按原文判断有无镜头指令），不靠代码枚举关键词——
+    # 镜头描述写法太多样（推镜头/推进头/慢推/环绕…），词表必然漏。与结束
+    # 关键帧的冲突沿用 end_override 既有优先级（首尾帧过渡优先）。
+    camera_directive_rule = (
+        "镜头指令保留：原文里任何镜头运动描述（固定镜头/固定机位、推镜头、拉镜头、"
+        "摇镜、跟随、手持等）都必须原样保留到优化结果并遵守，不得删除、替换或弱化。"
+        "原文要求固定镜头时，写成 static locked-off shot（三脚架固定机位），"
+        "不得出现 push in、pull back、pan、tilt、zoom、dolly 等任何镜头运动，"
+        "原文的构图与景别偏好通过人物走位和动作实现，不通过镜头运动实现；"
+        "原文要求推、拉、摇、移等运镜时，按原文的方向与速度原样保留。"
+        "存在结束关键帧时例外：镜头必须从首帧走到尾帧（见下方结束关键帧规则），"
+        "原文的固定镜头让位于首尾帧过渡。\n"
+    )
     return (
         "下面是原本视频的提示词。这是关键帧与参考图混合生成，不要使用 Ref2VA 的六段标题。"
         f"{audio_prefix_line}"
@@ -447,6 +478,8 @@ def _build_kfref_instruction(
         "不得改写 EXACT、时间、大小写或 ref_image 编号。\n"
         + "\n".join(lines)
         + "\n"
+        + camera_directive_rule
+        + start_override
         + end_override
         + _kfref_speaker_binding_rules(image_prompt_note)
         + audio_line

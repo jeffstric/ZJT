@@ -362,9 +362,10 @@ async function generateShotFrameVideo(nodeId, node){
 
     if(mode === 'multi_reference') {
       // === 参考图模式 ===
-      // 收集角色/场景/道具参考图
+      // 收集角色/场景/道具参考图。角色只取生视频提示词：视频里没点名的角色
+      // 不得带参考图与音色（图片提示词的角色属于画面构成，ai_tools 13137 事故）
       showToast('正在收集参考图...', 'info');
-      let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node);
+      let { referenceImageUrls, promptSuffix, voiceCharacters, characterRefUrls } = await collectShotFrameRefImages(node, { characterSource: 'video' });
 
       // 只读字段按当前首尾帧重算。用户的 videoPromptText 不动。
       if (typeof node.syncFrameAutoPrompt === 'function') {
