@@ -1499,6 +1499,57 @@ def test_process_image_batch_submits_dependent_with_previous_frame_reference(pat
     assert items[2]["status"] == 1
 
 
+def test_resolve_batch_job_limit_reads_dynamic_config(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: 25)
+    assert service._resolve_batch_job_limit() == 25
+
+
+def test_resolve_batch_job_limit_clamps_out_of_range(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    constants = module.StoryboardAutoGenerateConstants
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: 99999)
+    assert service._resolve_batch_job_limit() == constants.BATCH_SCHEDULER_JOB_LIMIT_MAX
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: 0)
+    assert service._resolve_batch_job_limit() == constants.BATCH_SCHEDULER_JOB_LIMIT_MIN
+
+
+def test_resolve_batch_job_limit_falls_back_on_invalid_value(patched_storyboard_cli, monkeypatch):
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    constants = module.StoryboardAutoGenerateConstants
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: "not-a-number")
+    assert service._resolve_batch_job_limit() == constants.BATCH_SCHEDULER_JOB_LIMIT
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: None)
+    assert service._resolve_batch_job_limit() == constants.BATCH_SCHEDULER_JOB_LIMIT
+
+
+def test_process_image_batch_uses_dynamic_job_limit(patched_storyboard_cli, monkeypatch):
+    """process_image_batch_jobs 应把热更新上限透传给 list_active。"""
+    module = patched_storyboard_cli.module
+    limits = []
+
+    class FakeJobModel:
+        @staticmethod
+        def list_active(limit=10):
+            limits.append(limit)
+            return []
+
+    monkeypatch.setattr(module, "StoryboardImageBatchJobModel", FakeJobModel)
+    monkeypatch.setattr(module, "get_dynamic_config_value", lambda *a, **k: 30)
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+
+    result = service.process_image_batch_jobs()
+
+    assert result == {"success": True, "processed_count": 0, "submitted_count": 0}
+    assert limits == [30]
+    # 显式 limit_jobs 优先于动态配置
+    service.process_image_batch_jobs(limit_jobs=5)
+    assert limits == [30, 5]
+
+
 def test_process_image_batch_fails_running_item_when_grid_task_failed(patched_storyboard_cli, monkeypatch):
     module = patched_storyboard_cli.module
     jobs = {

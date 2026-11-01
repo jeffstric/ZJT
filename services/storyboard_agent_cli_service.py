@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from config.config_util import get_config, get_current_env
+from config.config_util import get_config, get_current_env, get_dynamic_config_value
 from config.constant import (
     Edition,
     StoryboardAgentCommandConstants,
@@ -2371,6 +2371,38 @@ class StoryboardAgentCliService:
             "items": [self._batch_item_summary(item) for item in items],
         }
 
+    def _resolve_batch_job_limit(self) -> int:
+        """每轮 tick 推进的活跃批次上限，支持管理后台热更新。
+
+        读取链：system_config(storyboard.batch_scheduler_job_limit) → YAML →
+        常量默认值（BATCH_SCHEDULER_JOB_LIMIT=10）。get_dynamic_config_value
+        自带 30s TTL 进程内缓存，每 7s 调用一次开销可忽略。
+        越界/非法值钳制到 [MIN, MAX] 并告警，保证调度器永不因配置错误停摆。
+        """
+        default_limit = int(StoryboardAutoGenerateConstants.BATCH_SCHEDULER_JOB_LIMIT)
+        raw = get_dynamic_config_value(
+            'storyboard',
+            'batch_scheduler_job_limit',
+            default=default_limit,
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            logger.warning(
+                "[batch-scheduler] storyboard.batch_scheduler_job_limit 非法值 %r，回退默认 %s",
+                raw, default_limit,
+            )
+            return default_limit
+        min_limit = int(StoryboardAutoGenerateConstants.BATCH_SCHEDULER_JOB_LIMIT_MIN)
+        max_limit = int(StoryboardAutoGenerateConstants.BATCH_SCHEDULER_JOB_LIMIT_MAX)
+        if value < min_limit or value > max_limit:
+            logger.warning(
+                "[batch-scheduler] storyboard.batch_scheduler_job_limit=%s 越界，钳制到 [%s, %s]",
+                value, min_limit, max_limit,
+            )
+            return max(min_limit, min(value, max_limit))
+        return value
+
     def process_image_batch_jobs(
         self,
         *,
@@ -2382,7 +2414,7 @@ class StoryboardAgentCliService:
             jobs = [job] if job else []
         else:
             jobs = StoryboardImageBatchJobModel.list_active(
-                int(limit_jobs or StoryboardAutoGenerateConstants.BATCH_SCHEDULER_JOB_LIMIT)
+                int(limit_jobs or self._resolve_batch_job_limit())
             )
 
         submitted_count = 0

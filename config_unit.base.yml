@@ -46,6 +46,10 @@ task_queue:
   task_expire_days: 7
   enable_expire_check: true
 
+# 故事板批量生图调度配置（后台「初始化配置」种入可编辑行的前提）
+storyboard:
+  batch_scheduler_job_limit: 10
+
 # Upload file size limits (in MB)
 upload:
   max_image_size_mb: 10

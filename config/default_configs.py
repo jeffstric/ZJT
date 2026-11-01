@@ -70,6 +70,20 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'is_sensitive': False
     },
 
+    # ==================== 故事板批量生图调度配置 ====================
+    {
+        'key': 'storyboard.batch_scheduler_job_limit',
+        'value_type': 'int',
+        'description': (
+            '故事板批量生图调度器每轮推进的活跃批次上限（按创建时间取最老 N 个）。'
+            '高峰期活跃批次超过该值时，新发起的批次会排队等待（界面表现为一直不出图），'
+            '可适当调大缓解排队。热更新生效（约 30 秒内），无需重启服务。'
+            '默认 10，合法范围 1-200'
+        ),
+        'editable': True,
+        'is_sensitive': False
+    },
+
     # ==================== 下载队列健康检查 ====================
     {
         'key': 'download_queue_health.enabled',
