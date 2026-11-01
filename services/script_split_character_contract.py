@@ -390,10 +390,123 @@ def first_character_contract_error_message(errors: List[Dict[str, Any]]) -> str:
     return f"角色提示词硬校验失败：{detail}"
 
 
+def rename_character_tokens(parsed_data: Dict[str, Any], renamed: Dict[str, str]) -> None:
+    """把 shot_groups 全树文本中的【【短名】】标记原地替换为【【完整名】】。
+
+    只动标记形式（含括号转义语义），不碰普通文本，避免误替换。
+    递归覆盖 shot 的全部字段（提示词、对白 text/character_name、
+    spatial_layout 的 screen_composition/description 等机位锚文本），
+    使任何读取这些字段的下游链路（生图参考解析、camera_anchor）按名
+    查库都能命中完整名。供合并期归一化与发布期 bootstrap 共用。
+    """
+    if not renamed:
+        return
+    token_res = [
+        re.compile(r"【【(" + re.escape(short) + r")】】")
+        for short in renamed
+    ]
+
+    def _rewrite(value: Any) -> Any:
+        if isinstance(value, str):
+            if "【【" not in value:
+                return value
+            for token_re in token_res:
+                value = token_re.sub(
+                    lambda m, full=renamed: f"【【{full[m.group(1)]}】】", value,
+                )
+            return value
+        if isinstance(value, list):
+            return [_rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _rewrite(item) for key, item in value.items()}
+        return value
+
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            for key, item in shot.items():
+                shot[key] = _rewrite(item)
+
+
+def normalize_characters_by_db_id(
+    parsed: Dict[str, Any],
+    character_contract: Optional[Dict[str, Any]],
+) -> Dict[str, str]:
+    """以 ``character_db_id`` 为真值，把角色名归一化为契约完整名（方案A）。
+
+    LLM 语义匹配通常能正确回填 ``character_db_id``，但 ``characters[].name``
+    与提示词【【】】标记仍可能输出简称或分隔符变体（「哈利」→「哈利波特」、
+    「德拉科莉亚·马尔福」→「德拉科莉亚马尔福」），而下游生图/参考图解析
+    按名精确查库（``CharacterModel.get_by_name``）会 miss。
+
+    本函数在合并期把已锁定 db_id 的角色名强制改写为契约 ``canonical_name``，
+    并同步替换 shot 标记；仅当旧名不是库内任何角色的完整名时才替换，
+    避免把恰好同名的另一角色的标记误改。
+
+    Returns:
+        {旧名: 完整名} 归一化映射；空 dict 表示无需归一化。
+    """
+    if not isinstance(parsed, dict):
+        return {}
+    by_db_id, _aliases = _contract_indexes(character_contract)
+    if not by_db_id:
+        return {}
+    canonical_names = set(by_db_id.values())
+
+    renamed: Dict[str, str] = {}
+    for character in parsed.get("characters") or []:
+        if not isinstance(character, dict):
+            continue
+        db_id = str(character.get("character_db_id") or "").strip()
+        if not db_id:
+            continue  # 库外新角色：交给发布期 bootstrap 按名/别名处理
+        canonical_name = by_db_id.get(db_id)
+        if not canonical_name:
+            continue  # db_id 未命中契约：交给 validate 告警，不猜测
+        actual_name = _clean_name(
+            character.get("name") or character.get("character_name"),
+        )
+        if actual_name == canonical_name:
+            continue
+        if actual_name and actual_name in canonical_names:
+            # 旧名与库内另一角色完整名相同：替换标记会误伤该角色，跳过
+            logger.warning(
+                "角色名归一化跳过: name=%r 与库内其他角色完整名冲突 "
+                "(character_db_id=%s → %r)",
+                actual_name, db_id, canonical_name,
+            )
+            continue
+        if actual_name:
+            existing_target = renamed.get(actual_name)
+            if existing_target is not None and existing_target != canonical_name:
+                # 极罕见：同名旧名映射到不同完整名，无法确定标记替换方向
+                logger.warning(
+                    "角色名归一化跳过: name=%r 已映射到 %r，忽略 %r",
+                    actual_name, existing_target, canonical_name,
+                )
+                continue
+            renamed[actual_name] = canonical_name
+        character["name"] = canonical_name
+        if character.get("character_name"):
+            character["character_name"] = canonical_name
+
+    if renamed:
+        rename_character_tokens(parsed, renamed)
+        logger.info(
+            "按 character_db_id 归一化角色名: %s", renamed,
+        )
+    return renamed
+
+
 __all__ = [
     "CHARACTER_CONTRACT_CONFIG_KEY",
     "build_character_contract_snapshot",
     "contract_to_parser_characters",
     "first_character_contract_error_message",
+    "normalize_characters_by_db_id",
+    "rename_character_tokens",
     "validate_segment_character_contract",
 ]
