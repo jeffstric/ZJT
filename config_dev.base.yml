@@ -20,6 +20,11 @@ pipeline:
   h3_prompt_optimize_model: "deepseek-v4-flash"
   h3_prompt_optimize_vendor_id: 0
 
+# 故事板批量生图调度配置（兜底默认值；存在于 YAML 是后台「初始化配置」
+# 能种入可编辑行的前提，default_configs 仅从 YAML 取值入库）
+storyboard:
+  batch_scheduler_job_limit: 10
+
 # 剧本分段拆分多 worker 配置
 # 由 run_dev.py 读取，>0 时拉起 N 个独立 worker 进程，主调度器跳过此 job
 script_split:

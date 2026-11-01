@@ -2023,6 +2023,11 @@ class StoryboardAutoGenerateConstants:
     BATCH_ITEM_STATUS_SKIPPED = 3
     BATCH_SCHEDULER_INTERVAL_SECONDS = 7
     BATCH_SCHEDULER_JOB_LIMIT = 10
+    # BATCH_SCHEDULER_JOB_LIMIT 支持管理后台热更新（system_config:
+    # storyboard.batch_scheduler_job_limit），此为其合法区间钳制边界。
+    # 上限防止误填超大值导致单轮 tick 对账查询过多拖慢调度器。
+    BATCH_SCHEDULER_JOB_LIMIT_MIN = 1
+    BATCH_SCHEDULER_JOB_LIMIT_MAX = 200
 
 
 class StoryboardAudioGenerateConstants:

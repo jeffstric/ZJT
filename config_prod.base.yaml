@@ -225,6 +225,14 @@ task_queue:
   task_expire_days: 7
   enable_expire_check: true
 
+# 故事板批量生图调度配置
+# 存在于 YAML 是后台「初始化配置」能种入可编辑行的前提（default_configs 仅从 YAML 取值入库）。
+storyboard:
+  # 调度器每轮推进的活跃批次上限（按创建时间取最老 N 个）。
+  # 高峰期活跃批次超过该值时，新批次排队等待（表现为一直不出图），可适当调大。
+  # 后台改值约 30 秒内热生效，无需重启。合法范围 1-200。
+  batch_scheduler_job_limit: 10
+
 upload:
   max_image_size_mb: 10
   max_video_size_mb: 50
