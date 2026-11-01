@@ -8,6 +8,7 @@
 - 2026年6月9日：新增在线缩略图服务，优化角色头像加载性能
 - 2026年7月10日：强化分镜空间布局的物理座位连续性，避免机位变化导致驾驶座/副驾驶座等槽位左右混淆
 - 2026年7月10日：将空间投影/坐标连续性核心实现迁移到 `enterprise.services.storyboard_spatial`，社区版保留旧格式兼容读取
+- 2026年11月1日：拆分引擎链路（script_split_engine）新增按 character_db_id 强制归一化角色名与【【】】标记（方案A），覆盖简称（哈利→哈利波特）与分隔符变体（德拉科莉亚·马尔福→德拉科莉亚马尔福）
 
 ## 问题背景
 
@@ -384,6 +385,27 @@ LLM 解析
     ↓
 返回: [{ id: "char_001", name: "阿方索戴维斯_AlphonsoDavies", llm_name: "布冯", character_db_id: 4649 }]
 ```
+
+#### 3. 拆分引擎链路：按 character_db_id 强制归一化（2026-11-01，方案A）
+
+上述「后端名称替换」仅覆盖旧直连链路（`POST /api/parse-script`）。拆分引擎链路
+（`script_split_engine`）此前只有契约校验 warning（`validate_segment_character_contract`
+非严格模式放行），LLM 语义匹配正确回填 `character_db_id` 但 `name`/提示词标记输出
+简称时（哈利波特世界实测：name=「哈利」db_id=81397、name=「德拉科莉亚·马尔福」
+db_id=81401），下游按名精确查库全部 miss。
+
+修复（`services/script_split_character_contract.py`）：
+
+- `normalize_characters_by_db_id(parsed, character_contract)`：以契约快照的
+  `character_db_id → canonical_name` 为真值，把已锁定 db_id 的角色 `name` 强制
+  改写为完整名，并调用 `rename_character_tokens` 同步替换 shot 文本与对白中的
+  `【【】】` 标记；仅当旧名不是库内任何角色的完整名时才替换（防止误伤同名角色）；
+- 接入点 1（合并期，`step_merge`）：`validate_segment_character_contract` 之前执行，
+  归一化结果随 `final_result_json` 落库并记入 `metadata.character_name_normalized`。
+  故事板与视频工作流两种来源共用 merge，均被覆盖；
+- 接入点 2（发布期兜底，`StoryboardCharacterBootstrapService.bootstrap`）：已携带
+  db_id 的角色复用前按 `{db_id: 库内完整名}` 索引做同规则归一化，覆盖历史检查点
+  恢复等绕过合并归一化的路径；db_id 已被删除仅记 warning 保持原样。
 
 ## 角色完整出场约束（prompt 优化）
 

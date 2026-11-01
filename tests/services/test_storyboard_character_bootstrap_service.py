@@ -153,6 +153,104 @@ class TestBootstrapAliasNormalize:
         assert any("多个库内角色" in w for w in result["warnings"])
 
 
+class TestBootstrapMatchedDbIdNormalize:
+    """方案A：已回填 character_db_id 的角色，name 简称/变体按库内完整名归一化。"""
+
+    def test_db_id_with_short_name_normalized(self):
+        """db_id 正确但 name 是简称：归一化 name + shot 标记，不重复入库。"""
+        parsed = _make_parsed([
+            {"id": "char_001", "name": "哈利", "character_db_id": 81397},
+        ], shots=[{
+            "opening_frame_description": "【【哈利】】举起魔杖",
+            "scene_detail": "走廊昏暗",
+            "description": "【【哈利】】直视前方",
+            "action": "【【哈利】】后撤",
+            "dialogue": [{"text": "【【哈利】】说：快跑"}],
+        }])
+        world_rows = [
+            {"id": 81397, "name": "哈利波特"},
+            {"id": 81401, "name": "德拉科莉亚马尔福"},
+        ]
+
+        with patch(_CM + ".create") as mock_create, \
+             patch(_WM + ".get_by_id", return_value=_FAKE_WORLD), \
+             patch(_CM + ".get_by_name") as mock_get_by_name, \
+             patch(_CM + ".list_by_world",
+                   return_value={"data": world_rows, "total": len(world_rows)}):
+            result = StoryboardCharacterBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        mock_create.assert_not_called()
+        mock_get_by_name.assert_not_called()
+        assert parsed["characters"][0]["name"] == "哈利波特"
+        assert parsed["characters"][0]["character_db_id"] == 81397
+        assert result["reused_character_count"] == 1
+        assert result["renamed"] == {"哈利": "哈利波特"}
+        shot = parsed["shot_groups"][0]["shots"][0]
+        assert shot["opening_frame_description"] == "【【哈利波特】】举起魔杖"
+        assert shot["description"] == "【【哈利波特】】直视前方"
+        assert shot["dialogue"][0]["text"] == "【【哈利波特】】说：快跑"
+        assert any("归一化" in w for w in result["warnings"])
+
+    def test_db_id_with_separator_variant_normalized(self):
+        """分隔符变体（德拉科莉亚·马尔福）归一化为库内无点全名。"""
+        parsed = _make_parsed([
+            {"id": "char_001", "name": "德拉科莉亚·马尔福", "character_db_id": 81401},
+        ], shots=[{"action": "【【德拉科莉亚·马尔福】】冷笑"}])
+        world_rows = [{"id": 81401, "name": "德拉科莉亚马尔福"}]
+
+        with patch(_CM + ".create") as mock_create, \
+             patch(_WM + ".get_by_id", return_value=_FAKE_WORLD), \
+             patch(_CM + ".get_by_name"), \
+             patch(_CM + ".list_by_world",
+                   return_value={"data": world_rows, "total": len(world_rows)}):
+            result = StoryboardCharacterBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        mock_create.assert_not_called()
+        assert parsed["characters"][0]["name"] == "德拉科莉亚马尔福"
+        assert result["renamed"] == {"德拉科莉亚·马尔福": "德拉科莉亚马尔福"}
+        assert parsed["shot_groups"][0]["shots"][0]["action"] == "【【德拉科莉亚马尔福】】冷笑"
+
+    def test_db_id_with_name_of_another_character_not_renamed(self):
+        """name 恰为库内另一角色完整名：不改写，避免标记误替换。"""
+        parsed = _make_parsed([
+            {"id": "char_001", "name": "哈利波特", "character_db_id": 2},
+        ], shots=[{"action": "【【哈利波特】】挥手"}])
+        world_rows = [
+            {"id": 1, "name": "哈利波特"},
+            {"id": 2, "name": "哈利"},
+        ]
+
+        with patch(_CM + ".create") as mock_create, \
+             patch(_WM + ".get_by_id", return_value=_FAKE_WORLD), \
+             patch(_CM + ".list_by_world",
+                   return_value={"data": world_rows, "total": len(world_rows)}):
+            result = StoryboardCharacterBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        mock_create.assert_not_called()
+        assert parsed["characters"][0]["name"] == "哈利波特"
+        assert result["renamed"] == {}
+        assert parsed["shot_groups"][0]["shots"][0]["action"] == "【【哈利波特】】挥手"
+        assert any("同名" in w for w in result["warnings"])
+
+    def test_db_id_deleted_from_world_kept_as_is(self):
+        """db_id 已不在世界角色库（角色被删）：保持复用原 db_id，仅记 warning。"""
+        parsed = _make_parsed([
+            {"id": "char_001", "name": "哈利", "character_db_id": 404},
+        ])
+
+        with patch(_CM + ".create") as mock_create, \
+             patch(_WM + ".get_by_id", return_value=_FAKE_WORLD), \
+             patch(_CM + ".list_by_world", return_value={"data": [], "total": 0}):
+            result = StoryboardCharacterBootstrapService().bootstrap(parsed, WORLD_ID, USER_ID)
+
+        mock_create.assert_not_called()
+        assert parsed["characters"][0]["character_db_id"] == 404
+        assert parsed["characters"][0]["name"] == "哈利"
+        assert result["reused_character_count"] == 1
+        assert result["renamed"] == {}
+        assert any("不存在" in w for w in result["warnings"])
+
+
 class TestBootstrapResilience:
     def test_single_character_failure_does_not_block(self):
         """单角色入库异常仅 warning，其余角色正常处理。"""
