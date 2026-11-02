@@ -4061,14 +4061,27 @@ export function bindEvents() {
                 raw = scene.videoPrompt || '';
             }
             const ta = document.createElement('textarea');
-            ta.className = 'voice-textarea';
             ta.value = raw;
-            ta.style.minHeight = '120px';
             promptDisplay.innerHTML = '';
             promptDisplay.appendChild(ta);
+            // 编辑态外层不再出滚动条（textarea 自身可滚动）：负 margin 铺满会贴住内容区边缘，
+            // overflow:auto 会误判溢出弹出横向滚动条，导致外框比预览态凭空高一个滚动条高度。
+            promptDisplay.style.overflow = 'hidden';
+            // 初始高度 = max(预览框高, 编辑文本实际需要高度)：预览是 chip 内联渲染、编辑是纯文本，
+            // 两者行数可能不同，取较大者保证切换无跳变且不出现内部滚动。
+            ta.style.height = '0px';
+            const neededHeight = ta.scrollHeight + 2; // +2 = 上下 border
+            ta.style.height = `${Math.max(promptDisplay.offsetHeight, neededHeight)}px`;
             ta.focus();
             // 光标落在末尾，避免点击下拉项时仍保持整段提示词被选中。
             ta.setSelectionRange(ta.value.length, ta.value.length);
+
+            // 高度随内容增长，与预览态 div 自动撑开的行为保持一致（+2 = 上下 border）。
+            const autoGrowPromptTextarea = () => {
+                ta.style.height = 'auto';
+                ta.style.height = `${ta.scrollHeight + 2}px`;
+            };
+            ta.addEventListener('input', autoGrowPromptTextarea);
 
             // 支持输入 @ 弹出角色/道具选择
             ta.addEventListener('keydown', (e) => {

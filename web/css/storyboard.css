@@ -802,6 +802,28 @@ button {
   line-height: 1.5;
 }
 
+/* 提示词编辑态：textarea 负 margin 铺满外层 .prompt-display（抵消其 padding 8px + border 1px），
+   字号/行高/内边距/圆角/最小高度与预览态完全一致，初始高度由 events.js 设为预览态实际高度，
+   保证预览 ↔ 编辑切换时框体高度与文字位置无跳变。 */
+.prompt-display > textarea {
+  display: block;
+  width: calc(100% + 18px);
+  margin: -9px;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: inherit;
+  padding: 8px;
+  border: 1px solid var(--primary);
+  border-radius: 4px;
+  background: #fff;
+  outline: none;
+  resize: none;
+  min-height: 80px;
+  overflow: auto;
+}
+
 .role-chip {
   background-color: #dbeafe; /* 浅蓝色背景 */
   color: #1e40af;
