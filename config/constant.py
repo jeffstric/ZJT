@@ -1482,6 +1482,15 @@ AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
 
 
+# ===== 智能体 CLI 直接生图接口（POST /api/agent-auth/generate-image）=====
+# 用户从首页「智能体连接」弹窗复制的 CLI 信息（含 agent_token）可直接调用本接口生图。
+# 服务端编排见 services/agent_image_service.py + api/agent_auth.py；文档见
+# docs/backend/agent_image_generation_api.md
+AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS = 3   # wait=true 时的 ai_tools 轮询间隔（秒）
+AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS = 180  # wait=true 的同步等待上限（秒），超时返回 submitted 供继续轮询
+AGENT_CLI_IMAGE_MAX_COUNT = 4               # 单次生成图片张数上限（与前端文生图一致）
+
+
 # ===== 下载队列（download_queue）解耦配置 =====
 # visual_task 主循环检测到上游生成完成后，不再同步 await 分钟级下载，而是把下载意图
 # 写入 download_queue 表、状态置 DOWNLOADING，由独立 job download_queue_worker 异步消费。
