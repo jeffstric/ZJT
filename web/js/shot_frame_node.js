@@ -707,6 +707,10 @@
 
             // 重新填充视频模型列表
             populateVideoModelOptions();
+            // 模型迁移后联动更新时长选项（与 updateResolutionOptions 同口径）：
+            // 否则时长下拉残留上一模型档位（如万相3.0 的 2~30秒），可选中
+            // MiniMax H3 不支持的时长，提交后成片时长不正确
+            updateVideoDurationOptions(node.data.videoModel);
             updateResolutionOptions(node.data.videoModel);
             updateModeUI();
             // 触发算力重新计算（通过元素引用，因为函数定义在后面）
@@ -2029,6 +2033,7 @@
       node.updateLastFrameAvailability = updateLastFrameAvailability;
       node.populateVideoModelOptions = populateVideoModelOptions;
       node.updateShotFrameResolutionOptions = updateResolutionOptions;
+      node.updateShotFrameDurationOptions = updateVideoDurationOptions;
       el._updateLastFrame = updateLastFrameDisplay;
       el._applyLastFrameFromImage = applyLastFrameFromImageNode;
 

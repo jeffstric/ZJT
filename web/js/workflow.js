@@ -1896,6 +1896,10 @@
         if (typeof node.updateShotFrameResolutionOptions === 'function') {
           node.updateShotFrameResolutionOptions(node.data.videoModel);
         }
+        // 同步刷新时长选项（模型可能已迁移，旧档位对新模型非法，如万相3.0 的 30秒 残留到 MiniMax H3）
+        if (typeof node.updateShotFrameDurationOptions === 'function') {
+          node.updateShotFrameDurationOptions(node.data.videoModel);
+        }
         if (typeof node.updateLastFrameAvailability === 'function') {
           node.updateLastFrameAvailability();
         }
