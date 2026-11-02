@@ -4048,7 +4048,7 @@ export function bindEvents() {
             return;
         }
         const promptDisplay = event.target.closest('.prompt-display');
-        if (promptDisplay && !promptDisplay.querySelector('textarea')) {
+        if (promptDisplay && !promptDisplay.querySelector('textarea, .prompt-edit-editor')) {
             closeAllDropdowns();
             closeReferenceVariantSelector();
             const type = promptDisplay.dataset.promptType;
@@ -4060,28 +4060,36 @@ export function bindEvents() {
             } else if (type === 'video') {
                 raw = scene.videoPrompt || '';
             }
-            const ta = document.createElement('textarea');
-            ta.value = raw;
+            const ta = createPromptRichEditor(raw, scene);
             promptDisplay.innerHTML = '';
             promptDisplay.appendChild(ta);
-            // 编辑态外层不再出滚动条（textarea 自身可滚动）：负 margin 铺满会贴住内容区边缘，
+            // 编辑态外层不再出滚动条（编辑器自身可增高）：负 margin 铺满会贴住内容区边缘，
             // overflow:auto 会误判溢出弹出横向滚动条，导致外框比预览态凭空高一个滚动条高度。
             promptDisplay.style.overflow = 'hidden';
-            // 初始高度 = max(预览框高, 编辑文本实际需要高度)：预览是 chip 内联渲染、编辑是纯文本，
-            // 两者行数可能不同，取较大者保证切换无跳变且不出现内部滚动。
-            ta.style.height = '0px';
-            const neededHeight = ta.scrollHeight + 2; // +2 = 上下 border
-            ta.style.height = `${Math.max(promptDisplay.offsetHeight, neededHeight)}px`;
             ta.focus();
             // 光标落在末尾，避免点击下拉项时仍保持整段提示词被选中。
             ta.setSelectionRange(ta.value.length, ta.value.length);
 
-            // 高度随内容增长，与预览态 div 自动撑开的行为保持一致（+2 = 上下 border）。
-            const autoGrowPromptTextarea = () => {
-                ta.style.height = 'auto';
-                ta.style.height = `${ta.scrollHeight + 2}px`;
-            };
-            ta.addEventListener('input', autoGrowPromptTextarea);
+            // Enter 直接换行（浏览器默认在 contenteditable 里插 <div>/<br> 不定，统一走 insertLineBreak 便于序列化）。
+            ta.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.isComposing) {
+                    e.preventDefault();
+                    document.execCommand('insertLineBreak');
+                }
+            });
+
+            // 粘贴只收纯文本：防止外部 HTML 破坏 chip 结构（富文本片段会生成无 token 的未知元素）。
+            ta.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const clip = e.clipboardData || window.clipboardData;
+                const text = clip ? String(clip.getData('text/plain') || '') : '';
+                if (!text) return;
+                const lines = text.replace(/\r\n?/g, '\n').split('\n');
+                lines.forEach((line, i) => {
+                    if (i > 0) document.execCommand('insertLineBreak');
+                    if (line) document.execCommand('insertText', false, line);
+                });
+            });
 
             // 支持输入 @ 弹出角色/道具选择
             ta.addEventListener('keydown', (e) => {
@@ -4159,6 +4167,179 @@ function applyUneditedDirectInput(previous, next) {
     if (updated == null) return;
     state.inputMessage = updated;
     rerenderAgentPanel();
+}
+
+// ===== 提示词富文本编辑器（contenteditable）=====
+// 编辑态与预览态一样把 【【角色】】/〖〖道具〗〗 渲染成胶囊（chip contenteditable=false 原子编辑），
+// 并包装出 textarea 兼容 API（value / selectionStart / selectionEnd / setSelectionRange），
+// 让 @ 提及下拉、blur 保存、Esc/Ctrl+Enter 等既有逻辑无需感知编辑器类型差异。
+// 序列化口径：文本节点原样、chip 还原为 token 标记、BR/DIV 归一为 '\n'。
+function serializePromptEditorNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+    const el = node;
+    if (el.dataset && el.dataset.promptToken) return el.dataset.promptToken;
+    if (el.tagName === 'BR') return '\n';
+    if (el.tagName === 'IMG') return '';
+    const inner = Array.from(el.childNodes).map(serializePromptEditorNode).join('');
+    if (el.tagName === 'DIV' || el.tagName === 'P') return '\n' + inner;
+    return inner;
+}
+
+// 光标位置（container, offset）到纯文本偏移的换算：clone 前半段内容再按同一套序列化规则计长
+function promptEditorOffsetAt(editor, container, offsetInContainer) {
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    try {
+        range.setEnd(container, offsetInContainer);
+    } catch (e) {
+        return 0;
+    }
+    const holder = document.createElement('div');
+    holder.appendChild(range.cloneContents());
+    return Array.from(holder.childNodes).map(serializePromptEditorNode).join('').length;
+}
+
+// 纯文本偏移 → 放置光标（token/BR 是原子单位，落在其边界）
+function promptEditorPlaceCaret(editor, target) {
+    const range = document.createRange();
+    let acc = 0;
+    let placed = false;
+    const visit = (node) => {
+        if (placed) return;
+        if (node.nodeType === Node.TEXT_NODE) {
+            const len = node.textContent.length;
+            if (target <= acc + len) {
+                range.setStart(node, target - acc);
+                placed = true;
+                return;
+            }
+            acc += len;
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const el = node;
+        const token = el.dataset ? el.dataset.promptToken : null;
+        if (token) {
+            const len = token.length;
+            if (target < acc + len) {
+                range.setStartBefore(el);
+                placed = true;
+            } else if (target === acc + len) {
+                range.setStartAfter(el); // 恰好落在段末：放到段后（下一段开头），避免错位到段前
+                placed = true;
+            }
+            if (placed) return;
+            acc += len;
+            return;
+        }
+        if (el.tagName === 'BR') {
+            if (target < acc + 1) {
+                range.setStartBefore(el);
+                placed = true;
+            } else if (target === acc + 1) {
+                range.setStartAfter(el);
+                placed = true;
+            }
+            if (placed) return;
+            acc += 1;
+            return;
+        }
+        if (el.tagName === 'DIV' || el.tagName === 'P') {
+            if (target < acc + 1) {
+                range.setStartBefore(el);
+                placed = true;
+                return;
+            }
+            if (target === acc + 1) {
+                range.setStart(el, 0); // 前置换行之后 = 块内容开头
+                placed = true;
+                return;
+            }
+            acc += 1;
+        }
+        Array.from(el.childNodes).forEach(visit);
+    };
+    Array.from(editor.childNodes).forEach(visit);
+    if (!placed) {
+        range.selectNodeContents(editor);
+        range.collapse(false); // 空/末尾：光标放最后
+    } else {
+        range.collapse(true);
+    }
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+}
+
+// 编辑态胶囊只作展示：原子删除、不可改写内部文字；移除预览态的选参考图交互标记，
+// 避免编辑中点击胶囊触发参考图弹层；并写入 promptToken 供序列化还原。
+function decoratePromptEditorChips(editor) {
+    editor.querySelectorAll('.role-chip, .prop-chip').forEach((chip) => {
+        chip.contentEditable = 'false';
+        const img = chip.querySelector('img');
+        if (img) img.draggable = false;
+        delete chip.dataset.action;
+        delete chip.dataset.referenceVariant;
+        let name = chip.dataset.characterName;
+        if (!name && chip.classList.contains('prop-chip')) {
+            name = chip.textContent.trim();
+        }
+        if (name) {
+            chip.dataset.promptToken = chip.classList.contains('prop-chip')
+                ? `〖〖${name}〗〗`
+                : `【【${name}】】`;
+        }
+    });
+}
+
+function createPromptRichEditor(rawValue, scene) {
+    const editor = document.createElement('div');
+    editor.className = 'prompt-edit-editor';
+    editor.contentEditable = 'true';
+    editor.spellcheck = false;
+    editor.dataset.placeholder = t('hint_prompt_edit_placeholder', '输入提示词，@ 可插入角色或道具');
+    const renderValue = (text) => {
+        if (!String(text || '').trim()) {
+            editor.innerHTML = ''; // 空内容交给 CSS :empty placeholder
+            return;
+        }
+        // 复用预览态渲染（含幽灵角色警示、已选参考角标），保证两态视觉一致
+        editor.innerHTML = renderPromptWithInlineRoles(text, state.characters || [], state.props || [], scene);
+        decoratePromptEditorChips(editor);
+    };
+    Object.defineProperties(editor, {
+        value: {
+            get() {
+                return Array.from(editor.childNodes).map(serializePromptEditorNode).join('');
+            },
+            set(v) {
+                renderValue(v);
+            },
+        },
+        selectionStart: {
+            get() {
+                const sel = window.getSelection();
+                if (!sel || !sel.rangeCount || !editor.contains(sel.getRangeAt(0).startContainer)) return editor.value.length;
+                const r = sel.getRangeAt(0);
+                return promptEditorOffsetAt(editor, r.startContainer, r.startOffset);
+            },
+        },
+        selectionEnd: {
+            get() {
+                const sel = window.getSelection();
+                if (!sel || !sel.rangeCount || !editor.contains(sel.getRangeAt(0).endContainer)) return editor.value.length;
+                const r = sel.getRangeAt(0);
+                return promptEditorOffsetAt(editor, r.endContainer, r.endOffset);
+            },
+        },
+    });
+    editor.setSelectionRange = (start) => {
+        editor.focus();
+        promptEditorPlaceCaret(editor, start);
+    };
+    renderValue(rawValue);
+    return editor;
 }
 
 async function persistPromptValue(scene, type, value) {

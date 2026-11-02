@@ -802,10 +802,11 @@ button {
   line-height: 1.5;
 }
 
-/* 提示词编辑态：textarea 负 margin 铺满外层 .prompt-display（抵消其 padding 8px + border 1px），
-   字号/行高/内边距/圆角/最小高度与预览态完全一致，初始高度由 events.js 设为预览态实际高度，
+/* 提示词编辑态：编辑器（textarea / contenteditable 富文本）负 margin 铺满外层 .prompt-display
+   （抵消其 padding 8px + border 1px），字号/行高/内边距/圆角/最小高度与预览态完全一致，
    保证预览 ↔ 编辑切换时框体高度与文字位置无跳变。 */
-.prompt-display > textarea {
+.prompt-display > textarea,
+.prompt-display > .prompt-edit-editor {
   display: block;
   width: calc(100% + 18px);
   margin: -9px;
@@ -819,9 +820,25 @@ button {
   border-radius: 4px;
   background: #fff;
   outline: none;
-  resize: none;
   min-height: 80px;
   overflow: auto;
+}
+.prompt-display > textarea { resize: none; }
+/* contenteditable 富文本编辑器：空格保留与 textarea 一致；空内容用 placeholder 提示 */
+.prompt-display > .prompt-edit-editor {
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+.prompt-display > .prompt-edit-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+}
+/* 编辑态胶囊（角色/道具）只作展示：原子删除、不可改写内部文字、不响应选参考图点击 */
+.prompt-display > .prompt-edit-editor .role-chip,
+.prompt-display > .prompt-edit-editor .prop-chip {
+  user-select: none;
+  cursor: default;
 }
 
 .role-chip {
