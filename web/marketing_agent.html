@@ -966,6 +966,11 @@
             {{ errorMessage }}
         </div>
 
+        <!-- 中性操作提示（重新编辑恢复参数 / 重新生成已提交等成功类反馈） -->
+        <div v-if="noticeMessage" class="notice-toast" @click="noticeMessage = ''">
+            {{ noticeMessage }}
+        </div>
+
         <!-- 图片放大模态框 -->
         <div id="imgModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 2000; align-items: center; justify-content: center; flex-direction: column; cursor: zoom-out;" onclick="const v=document.getElementById('imgModalVideo'); if(v){v.pause();v.style.display='none';} document.getElementById('imgModalImg').style.display=''; this.style.display='none'">
             <img id="imgModalImg" style="max-width: 90%; max-height: 85%; border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);" src="" :alt="$t('image_modal_alt')">

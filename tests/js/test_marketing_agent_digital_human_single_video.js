@@ -67,7 +67,9 @@ assert.equal(
 );
 const videoRenderFnStart = js.indexOf('function buildGeneratedMediaRowsHtml(type, rows)');
 assert.notEqual(videoRenderFnStart, -1, 'buildGeneratedMediaRowsHtml should exist');
-const videoRenderBlock = js.slice(videoRenderFnStart, videoRenderFnStart + 1600);
+// 2600：图片行模板加入元数据条与重新编辑/重新生成按钮后变长，<video> 落在
+// 图片分支之后（旧窗口 1600 已不够；见 buildGeneratedMediaRowsHtml 实现）
+const videoRenderBlock = js.slice(videoRenderFnStart, videoRenderFnStart + 2600);
 assert.equal(
   videoRenderBlock.includes('<video'),
   true,

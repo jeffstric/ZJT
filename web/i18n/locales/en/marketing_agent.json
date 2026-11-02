@@ -242,5 +242,21 @@
   "output_language_auto": "Auto (follow UI language)",
   "output_language_custom": "Custom…",
   "output_language_custom_placeholder": "e.g. Français",
-  "output_language_hint": "Controls the language of text, voiceover and marketing copy in generated assets."
+  "output_language_hint": "Controls the language of text, voiceover and marketing copy in generated assets.",
+  "gen_meta_detail": "Details",
+  "gen_re_edit": "Edit",
+  "gen_re_generate": "Regenerate",
+  "gen_details_model": "Model",
+  "gen_details_ratio": "Aspect ratio",
+  "gen_details_duration": "Duration",
+  "gen_details_resolution": "Resolution",
+  "gen_details_image_mode": "Generation mode",
+  "gen_details_create_time": "Created at",
+  "gen_details_prompt": "Prompt",
+  "gen_details_unavailable": "Generation parameters unavailable (task missing or expired)",
+  "gen_edit_restored": "Generation parameters and prompt restored. Edit and send again.",
+  "gen_edit_restored_with_refs": "Parameters restored with {count} reference image(s). Edit and send again.",
+  "gen_regen_submitted": "Regeneration task submitted with original parameters",
+  "gen_regen_failed": "Regeneration failed, please try again later",
+  "gen_regen_need_session": "Select or create a session before regenerating"
 }
