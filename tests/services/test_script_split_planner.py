@@ -53,6 +53,53 @@ def test_anchorize_scene_marker_forces_boundary():
     assert len(blocks) >= 2
 
 
+def test_anchorize_oversized_no_blank_line_script_split():
+    """超长无空行剧本（docx 粘贴丢空行）应被切细到 SEGMENT_MAX_SOURCE_CHARS 以内。
+
+    2026-11-02 task 286/287 事故：docx 粘贴的剧本空行全部丢失且场景标记
+    非 markdown 格式，整篇 2526 字成为一个 block；分段校验要求 block 恰好
+    归属一段，quality 编译又要求 segment 原文 ≤ 上限，规划陷入无解死锁，
+    PLAN_MAX_RETRIES 耗尽后任务暂停在 5%。锚点化必须兜底切细超长 block。
+    """
+    script = "\n".join(
+        f"（【镜头{i}｜全景】李牧看着远方的九幽宗山门，心中杀机渐起。）"
+        for i in range(200)
+    )
+    assert len(script) > ScriptSplitConstants.SEGMENT_MAX_SOURCE_CHARS
+    blocks = anchorize_script(script)
+    assert len(blocks) > 1
+    # 每个 block 都不超上限
+    for b in blocks:
+        assert len(b["content"]) <= ScriptSplitConstants.SEGMENT_MAX_SOURCE_CHARS
+    # 内容与顺序不变：切分点含行尾换行，顺序拼接可还原 rstrip 后的原文
+    assert "".join(b["content"] for b in blocks) == script
+    # block_id 按序递增；切细产生的多个 block 共享原行号范围
+    total_lines = len(script.splitlines())
+    for i, b in enumerate(blocks):
+        assert b["block_id"] == f"block_{i+1:04d}"
+        assert b["start_line"] == 1 and b["end_line"] == total_lines
+
+
+def test_anchorize_oversized_single_paragraph_split_by_sentence():
+    """超长且无换行的自然段按句读切细，不改变内容与顺序。"""
+    sentence = "李牧拿出修真界律法卷册，天条显化压制赵无极修为。"
+    script = sentence * 70
+    assert len(script) > ScriptSplitConstants.SEGMENT_MAX_SOURCE_CHARS
+    blocks = anchorize_script(script)
+    assert len(blocks) > 1
+    for b in blocks:
+        assert len(b["content"]) <= ScriptSplitConstants.SEGMENT_MAX_SOURCE_CHARS
+    assert "".join(b["content"] for b in blocks) == script
+
+
+def test_anchorize_oversized_paragraph_keeps_short_blocks_untouched():
+    """未超限的自然段不受兜底切分影响（行为与历史一致）。"""
+    script = "第一行\n第二行\n第三行"
+    blocks = anchorize_script(script)
+    assert len(blocks) == 1
+    assert blocks[0]["content"] == "第一行\n第二行\n第三行"
+
+
 # ---- 计划校验 ----
 
 def _make_anchors(n=4):
