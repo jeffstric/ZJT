@@ -121,6 +121,18 @@ class BaseFileStorage(ABC):
         """
         return []
 
+    async def stat(self, key: str) -> Optional[dict]:
+        """
+        查询文件元信息（存在性/大小/哈希），供前端直传 confirm 校验复用。
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            dict（含 fsize/hash/mimeType 等字段）；文件不存在或后端不支持时返回 None
+        """
+        return None
+
     async def delete_by_prefix(self, prefix: str) -> int:
         """
         删除指定前缀下的所有文件

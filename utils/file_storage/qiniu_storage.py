@@ -350,6 +350,43 @@ class QiniuFileStorage(BaseFileStorage):
             limit
         )
 
+    def _sync_stat(self, key: str) -> Optional[dict]:
+        """同步查询文件元信息；文件不存在（612）或异常返回 None"""
+        try:
+            bucket_manager = qiniu.BucketManager(self._auth)
+            ret, info = bucket_manager.stat(self.bucket_name, key)
+            if ret is not None:
+                return ret
+            if info is not None and info.status_code == 612:
+                return None
+            logger.error(
+                f"[七牛云] 查询文件元信息失败: key={key}, "
+                f"status_code={getattr(info, 'status_code', None)}, error={getattr(info, 'error', None)}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"[七牛云] 查询文件元信息异常: key={key}, error={e}")
+            return None
+
+    async def stat(self, key: str) -> Optional[dict]:
+        """
+        异步查询文件元信息（含 fsize/hash/mimeType）
+
+        供前端直传 upload-confirm 校验文件真实存在与大小一致，防伪造登记。
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            dict；文件不存在返回 None
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._sync_stat,
+            key
+        )
+
     def _sync_delete(self, key: str) -> bool:
         """同步删除文件"""
         try:

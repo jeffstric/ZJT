@@ -106,6 +106,66 @@ cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路�
 测试：`web/js/download_attachment.test.js`（9 用例，vitest：通道选择 5 +
 扩展名兜底 4）。
 
+### 7. 工作流素材前端直传七牛（2026-11，省服务器进出带宽 + 根治播放换源竞态）
+
+**事故背景**（2026-11-02 线上调查）：multipart 上传返回 plain URL 后，
+异步七牛上传约 2s 才置位 `cloud_path`，视频元素播放会话内经历
+"本地 206（经 frp）→ 突然 302 到 CDN"的服务中换源，Chromium 媒体管线在该
+窗口内加载失败后不自恢复，且前端 play()/error 全部静默吞错——用户看到
+"上传成功但无法播放"。同时用户上传 18MB（frp 入）+ 服务器传七牛 18MB
+（ECS 出，计费大头）双份带宽都花在了中转上。
+
+**方案**（浏览器直传，服务器只做确认与落主副本）：
+
+```
+upload-token（token 绑定 key + fsizeLimit + returnBody，30min 过期）
+  → 浏览器 XHR 直传七牛（进度可观测，不经服务器）
+  → upload-confirm：七牛 stat 核实 → 签名 URL 流式回源下载到本地素材目录
+    （临时文件 + 大小上限 + 魔数校验 + os.replace 原子落盘）
+    → 落盘成功才插入 media_file_mapping（cloud_path 直接置位）
+    → 返回与 multipart 同款的本站永久 URL（永不过期）
+```
+
+- **本地为主副本、CDN 为加速层**：用户要求"下载到本地后才入库"，保证
+  `media_file_mapping.local_path` 永远有本地文件兜底（七牛丢文件/CDN 故障时
+  plain URL 仍可本地直出），mapping 语义与 multipart 链路完全一致
+- **竞态根治**：mapping 建立时 CDN 上已有文件，首个播放请求直接 302 命中，
+  不存在"本地 206→302"中途换源窗口
+- **带宽账**：服务器出带宽（上传七牛）18MB→0，frp 入（用户上传）18MB→0，
+  服务器入（回源下载，云厂商入方向廉价）18MB
+- **降级链**：`server.auto_upload_to_cdn=false` 时 token 返回
+  `data.direct_upload=false`（reason=cdn_disabled），前端走原有 multipart；
+  TIFF 同样降级（reason=tiff_unsupported，转码只能发生在回源下载后，key 已
+  固定 .tif 会与转码产物脱节）；token/XHR/confirm 任一环节失败前端均静默
+  降级 multipart（console.warn 留痕），旧服务端 404 亦自然降级（滚动发布兼容）
+
+**改动**：
+
+- `config/constant.py`：`WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT`（回源下载
+  wait_for 硬上限 300s）、`WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT`（httpx 空闲
+  超时 60s，线程不可取消只能靠它收敛）、`WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT`、
+  `QINIU_UC_QUERY_URL`
+- `server.py`：`POST /api/video-workflow/upload-token`（key=`upload/workflow/{uid}/...`
+  绑定登录用户 + 扩展名白名单 + 大小预校验）、
+  `POST /api/video-workflow/upload-confirm`（key 归属校验防跨用户/路径穿越、
+  七牛 stat 核实、回源下载、幂等）、`_download_cdn_asset_to_local()`（同步
+  实现，`asyncio.wait_for(asyncio.to_thread(...))` 包裹，临时文件 finally 清理）、
+  `_resolve_qiniu_direct_upload_host()`（配置 `upload_host` 覆盖 → 七牛 UC
+  按 AK+bucket 查询区域域名并缓存 → 默认华东 `QINIU_UPLOAD_REGION_URL`；
+  不同 bucket 区域域名不同，照搬 world-import 的 upload.qiniup.com 会 400）
+- `utils/media_mapping_util.py`：`register_direct_uploaded_mapping()`——
+  cloud_path 直接置位、不触发 `trigger_cdn_upload`、幂等复用
+- `utils/file_storage/`：`BaseFileStorage.stat()` 默认返回 None（不破坏既有
+  子类），`QiniuFileStorage.stat()` 经 BucketManager 实现防伪造 confirm 核实
+- `web/js/api.js`：`uploadFile()` 优先 `uploadFileDirectToCdn()`（token → XHR
+  直传 → confirm），失败降级走原 multipart 路径；认证仍走 Authorization 头
+  （红线14），上传凭证只进七牛 form 体（七牛直传协议要求）
+
+测试：`tests/api/test_workflow_direct_upload.py`（15 用例：token 降级/颁发/
+白名单/超限/TIFF、UC 域名解析三分支、confirm 跨用户/穿越/白名单/stat 缺失/
+成功落盘注册/幂等/超限）+ `tests/cdn/test_register_direct_uploaded_mapping.py`
+（6 用例）。
+
 ## 生效链路
 
 ```
@@ -120,6 +180,9 @@ cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路�
 ```
 
 上传完成前的 PENDING 窗口内访问仍本地直出（与 `/upload/cache/` 既有行为一致）。
+
+前端直传链路（CDN 开启时的新增通路，见第 7 节）无 PENDING 窗口：
+confirm 返回时本地文件与 CDN 文件均已就绪，首个访问即 302 命中。
 
 ## 明确不接入的链路
 

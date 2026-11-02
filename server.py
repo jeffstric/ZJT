@@ -102,6 +102,12 @@ from config.constant import (
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
     VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
+    WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
+    WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT,
+    WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT,
+    QINIU_UC_QUERY_URL,
+    QINIU_UPLOAD_REGION_URL,
+    QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -120,7 +126,7 @@ from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
-from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
+from utils.media_mapping_util import register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -148,6 +154,7 @@ from utils.media_upload import (
     UploadValidationError,
     check_media_magic,
     convert_tiff_file_to_png,
+    max_upload_size_for_ext,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -6997,6 +7004,332 @@ async def upload_workflow_asset(
             status_code=500,
             content={"code": -1, "message": f"上传失败: {str(e)}"}
         )
+
+
+# ===== 工作流素材前端直传七牛（视频/图片/音频；CDN 未启用时前端自动降级 multipart）=====
+# 流程：upload-token（token 绑定 key + fsizeLimit）→ 浏览器 XHR 直传七牛（不占服务器带宽）→
+# upload-confirm 服务端从七牛回源下载到本地（大小+魔数校验）→ 本地落盘成功才入库。
+# 本地文件为主副本、CDN 为加速层；mapping 建立时 cloud_path 已置位，
+# 首个播放请求直接 302 命中 CDN，消除 multipart 链路"本地 206→302"的服务中切换竞态。
+
+# 直传域名解析缓存：(access_key, bucket_name) -> "https://host"，进程内复用
+_qiniu_direct_upload_host_cache = {}
+
+# 回源下载的同步实现（工作线程中执行；线程不可取消，靠 httpx 自身超时收敛）。
+# 临时文件在 finally 中清理（超时红线第 10 条：被 wait_for 包装的 coroutine 必须自清理）。
+def _download_cdn_asset_to_local(download_url: str, final_path: str, ext: str,
+                                 expected_size: int, max_bytes: int) -> int:
+    tmp_path = final_path + ".download_tmp"
+    total = 0
+    try:
+        timeout = WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with client.stream("GET", download_url) as resp:
+                resp.raise_for_status()
+                magic_checked = False
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(MediaUploadSafetyConstants.CHUNK_SIZE):
+                        if not chunk:
+                            continue
+                        if not magic_checked:
+                            if not check_media_magic(ext, chunk[:MediaUploadSafetyConstants.MAGIC_SCAN_BYTES]):
+                                raise UploadValidationError(
+                                    f"文件内容与 {ext} 格式不符（魔数校验失败）"
+                                )
+                            magic_checked = True
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise UploadValidationError(
+                                f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"
+                            )
+                        if expected_size and total > expected_size:
+                            raise UploadValidationError("回源内容与七牛元数据大小不符")
+                        f.write(chunk)
+        if total == 0:
+            raise UploadValidationError("回源下载内容为空")
+        if expected_size and total != expected_size:
+            raise UploadValidationError(
+                f"回源内容大小不一致（期望 {expected_size} 字节，实际 {total} 字节）"
+            )
+        os.replace(tmp_path, final_path)  # 原子落盘：校验全通过才可见
+        return total
+    finally:
+        # 成功路径 tmp 已被 rename 不存在；失败路径清理半成品
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            logger.warning(f"清理直传回源半成品失败: {tmp_path}")
+
+
+async def _resolve_qiniu_direct_upload_host(section: str = "qiniu_long_term") -> str:
+    """解析七牛直传域名：配置覆盖 → UC 按 AK+bucket 查询（缓存）→ 默认华东域名。
+
+    不同 bucket 所在区域的上传域名不同（复用华东 z0 域名会 400），
+    world-import 用的 upload.qiniup.com 只对默认短期桶成立，不可照搬。
+    """
+    configured = (get_dynamic_config_value("file_storage", section, "upload_host", default="") or "").strip()
+    if configured:
+        return configured if configured.startswith("http") else f"https://{configured}"
+
+    access_key = (get_dynamic_config_value("file_storage", section, "access_key", default="") or "").strip()
+    bucket_name = (get_dynamic_config_value("file_storage", section, "bucket_name", default="") or "").strip()
+    cache_key = (access_key, bucket_name)
+    if cache_key in _qiniu_direct_upload_host_cache:
+        return _qiniu_direct_upload_host_cache[cache_key]
+
+    try:
+        async with httpx.AsyncClient(timeout=WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT) as client:
+            resp = await client.get(QINIU_UC_QUERY_URL, params={"ak": access_key, "bucket": bucket_name})
+            data = resp.json()
+        up = (data or {}).get("up") or {}
+        main_hosts = ((up.get("acc") or {}).get("main")
+                      or ((up.get("old_acc") or {}).get("main")) or [])
+        if main_hosts and isinstance(main_hosts[0], str) and main_hosts[0]:
+            host = f"https://{main_hosts[0]}"
+            _qiniu_direct_upload_host_cache[cache_key] = host
+            return host
+    except Exception as e:
+        logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
+    return QINIU_UPLOAD_REGION_URL
+
+
+@app.post('/api/video-workflow/upload-token')
+@require_permission("video_workflow:upload")
+async def upload_workflow_asset_direct_token(
+    request: Request,
+    filename: str = Form(..., description="原始文件名（用于扩展名白名单与大小上限校验）"),
+    size: Optional[int] = Form(None, description="文件大小（字节），用于预校验"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    颁发工作流素材前端直传七牛的上传凭证
+
+    仅 server.auto_upload_to_cdn=true 时可用；未启用 CDN 返回
+    data.direct_upload=false，前端降级走既有 multipart 上传（/api/video-workflow/upload），
+    行为与直传功能上线前完全一致。TIFF 素材同样返回 direct_upload=false：
+    TIFF 落盘前必须转 PNG，而直传路径服务端不碰原始字节，转码只能发生在
+    回源下载之后，key 已固定为 .tif 会与本地 .png 脱节，故统一走 multipart。
+
+    前端直传成功后必须调用 /api/video-workflow/upload-confirm。
+    """
+    auth_user_id = get_auth_user_id(request)
+    if auth_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+        )
+    mismatch = check_claimed_user_id(user_id, auth_user_id)
+    if mismatch is not None:
+        return mismatch
+
+    if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
+        return JSONResponse({
+            "code": 0,
+            "message": "CDN 未启用，走服务器上传",
+            "data": {"direct_upload": False, "reason": "cdn_disabled"}
+        })
+
+    try:
+        ext = resolve_media_extension(filename)
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+
+    max_bytes = max_upload_size_for_ext(ext)
+    if size is not None and size > max_bytes:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
+        )
+
+    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+        return JSONResponse({
+            "code": 0,
+            "message": "TIFF 需服务端转码，走服务器上传",
+            "data": {"direct_upload": False, "reason": "tiff_unsupported"}
+        })
+
+    try:
+        from utils.file_storage import get_file_storage
+        storage = get_file_storage(section="qiniu_long_term")
+    except ValueError as e:
+        logger.error(f"直传凭证颁发失败（CDN 存储配置不完整）: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": "CDN 存储配置不完整，请联系管理员"}
+        )
+
+    info = generate_upload_filename(prefix="workflow", extension=ext)
+    key = f"{UploadPathConstants.UPLOAD_ROOT}/workflow/{auth_user_id}/{info.filename}"
+    token = storage.get_upload_token(
+        key=key,
+        expires=QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        policy={
+            'fileType': 0,  # 标准存储
+            'fsizeLimit': max_bytes,
+            'returnBody': '{"key":"$(key)","hash":"$(etag)","fsize":"$(fsize)"}',
+        },
+    )
+    upload_host = await _resolve_qiniu_direct_upload_host()
+    return JSONResponse({
+        "code": 0,
+        "message": "success",
+        "data": {
+            "direct_upload": True,
+            "upload_url": upload_host,
+            "token": token,
+            "key": key,
+            "expires": QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+        }
+    })
+
+
+@app.post('/api/video-workflow/upload-confirm')
+@require_permission("video_workflow:upload")
+async def confirm_workflow_asset_direct_upload(
+    request: Request,
+    key: str = Form(..., description="直传成功后的七牛 key（upload/workflow/{uid}/xxx.ext）"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    确认工作流素材直传完成：回源下载到本地（主副本）+ 校验通过后才入库
+
+    1. 校验 key 归属当前登录用户且扩展名在白名单内；
+    2. 向七牛 stat 核实文件真实存在与大小一致（防伪造登记）；
+    3. 从七牛签名 URL 流式下载到本地素材目录（临时文件 + 原子落盘，
+       大小上限与魔数校验与 multipart 链路同款防线）；
+    4. 本地文件落盘成功才插入 media_file_mapping（cloud_path 直接置位）；
+    5. 返回与 multipart 链路同款的本站永久 URL（/upload/ 路径，永不过期，
+       访问时由 cdn_redirect_middleware 现签 302 到七牛）。
+
+    幂等：mapping 已存在时直接返回 URL。任何失败前端降级走 multipart 重传。
+    """
+    auth_user_id = get_auth_user_id(request)
+    if auth_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+        )
+    mismatch = check_claimed_user_id(user_id, auth_user_id)
+    if mismatch is not None:
+        return mismatch
+
+    if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "CDN 未启用，直传确认不可用，请走服务器上传"}
+        )
+
+    # key 必须落在当前登录用户自己的素材目录，且不含路径穿越/嵌套段
+    expected_prefix = f"{UploadPathConstants.UPLOAD_ROOT}/workflow/{auth_user_id}/"
+    filename = os.path.basename(key.replace("\\", "/"))
+    if (not key.startswith(expected_prefix)
+            or key != expected_prefix + filename
+            or filename in ("", ".", "..")):
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "非法的文件 key"}
+        )
+
+    try:
+        ext = resolve_media_extension(filename)
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "TIFF 素材不支持直传，请走服务器上传"}
+        )
+
+    max_bytes = max_upload_size_for_ext(ext)
+
+    try:
+        from utils.file_storage import get_file_storage
+        storage = get_file_storage(section="qiniu_long_term")
+    except ValueError as e:
+        logger.error(f"直传确认失败（CDN 存储配置不完整）: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": "CDN 存储配置不完整，请联系管理员"}
+        )
+
+    # 幂等：重复 confirm（如前端重试）直接返回既有 URL
+    from model.media_file_mapping import MediaFileMappingModel
+    existing = await asyncio.to_thread(MediaFileMappingModel.get_by_local_path, key)
+    if existing:
+        file_url = build_upload_url("workflow", str(auth_user_id), filename, host=_get_request_host(request))
+        return JSONResponse({
+            "code": 0,
+            "message": "上传成功",
+            "data": {"url": file_url}
+        })
+
+    # 七牛侧核实文件真实存在（防伪造 confirm）
+    meta = await storage.stat(key)
+    if not meta:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "七牛侧未找到该文件，请重新上传"}
+        )
+    try:
+        expected_size = int(meta.get("fsize") or 0)
+    except (TypeError, ValueError):
+        expected_size = 0
+    if expected_size > max_bytes:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
+        )
+
+    # 回源下载到本地素材目录（主副本）；本地落盘成功才入库
+    asset_dir = get_upload_subdir("workflow", str(auth_user_id))
+    final_path = os.path.join(asset_dir, filename)
+    download_url = storage.get_download_url(key, expires=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT)
+    started = time.monotonic()
+    try:
+        total = await asyncio.wait_for(
+            asyncio.to_thread(
+                _download_cdn_asset_to_local,
+                download_url, final_path, ext, expected_size, max_bytes
+            ),
+            timeout=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"直传回源下载超时: key={key}, timeout={WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT}s")
+        return JSONResponse(
+            status_code=504,
+            content={"code": -1, "message": "回源下载超时，请重试或走服务器上传"}
+        )
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    except Exception as e:
+        logger.error(f"直传回源下载失败: key={key}, error={e}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=502,
+            content={"code": -1, "message": "回源下载失败，请重试或走服务器上传"}
+        )
+    elapsed = time.monotonic() - started
+
+    # 同步 DB 调用放入工作线程，不阻塞事件循环（与 multipart 链路同款约束）
+    await asyncio.to_thread(
+        register_direct_uploaded_mapping,
+        user_id=auth_user_id,
+        local_path=key,
+        entity_type=MediaFileEntity.WORKFLOW,
+        policy_code=MediaFilePolicy.NEVER_EXPIRE,
+        file_size=total,
+    )
+    logger.info(
+        f"直传素材回源落盘完成: key={key}, size={total}, elapsed={elapsed:.2f}s"
+    )
+
+    file_url = build_upload_url("workflow", str(auth_user_id), filename, host=_get_request_host(request))
+    return JSONResponse({
+        "code": 0,
+        "message": "上传成功",
+        "data": {"url": file_url}
+    })
 
 
 class DescribeImageRequest(BaseModel):
