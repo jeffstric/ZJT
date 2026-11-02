@@ -43,6 +43,9 @@
             // 创作类型与模型选择
             const showDropdown = ref(false);
             const selectedType = ref('agent');
+            // 重新编辑回填期间为 true：挡住模式/参考图/模型监听，避免它们把刚恢复的
+            // 模型、比例、分辨率改回用户偏好或默认档。
+            let restoringGenerationParams = false;
             const creationTypes = [
                 { icon: '✨', key: 'agent', nameKey: 'mode_agent', descKey: 'mode_agent_desc' },
                 { icon: '🖼️', key: 'image', nameKey: 'mode_image', descKey: 'mode_image_desc' },
@@ -2341,75 +2344,268 @@
                 _showNoticeTimer = setTimeout(() => { noticeMessage.value = ''; }, 5000);
             }
 
-            // 把某次生成的参数恢复到输入区（重新编辑）：提示词、模型、比例、
-            // 时长、分辨率、参考图/视频/音频。恢复后用户可微调再发送。
-            function restoreGenerationParamsToEditor(genType, meta) {
-                inputText.value = String(meta.prompt || '');
-                autoResize();
+            // 重新编辑：落库分辨率档位 → 输入栏选项文案。
+            // 2K/4K 在界面上是 i18n 文案（高清 2K / 超清 4K），3K 等其余档位保持原样
+            // （Seedream 5.0 / 5.0 Pro 的 3K 没有单独文案）。
+            function imageResolutionLabels() {
+                return {
+                    resolution_2k: window.t('resolution_2k'),
+                    resolution_4k: window.t('resolution_4k')
+                };
+            }
 
-                // 模型：按 task_type 反查 TaskConfig，再在对应模型池里按 key 前缀匹配
-                const task = (meta.task_type && window.TaskConfig && typeof window.TaskConfig.getTaskById === 'function')
-                    ? window.TaskConfig.getTaskById(meta.task_type)
-                    : null;
-                if (task && task.key) {
-                    const matches = (m) => m && (m.key === task.key || String(task.key).startsWith(m.key + '_'));
-                    if (genType === 'image') {
-                        const model = allImageModels.value.find(matches);
-                        if (model) {
-                            selectedImageModel.value = model.name;
-                            selectedImageModelKey.value = model.key || '';
-                        }
+            function imageSizeToUiResolution(size, labels) {
+                const raw = String(size || '').trim();
+                if (!raw) return '';
+                const upper = raw.toUpperCase();
+                if (upper === 'AUTO') return 'auto';
+                if (upper === '2K') return (labels && labels.resolution_2k) || '2K';
+                if (upper === '4K') return (labels && labels.resolution_4k) || '4K';
+                return upper;
+            }
+
+            function uiResolutionToImageSize(uiValue, labels) {
+                const raw = String(uiValue || '').trim();
+                if (!raw || raw.toLowerCase() === 'auto') return '';
+                const label2k = labels && labels.resolution_2k;
+                const label4k = labels && labels.resolution_4k;
+                if (label2k && raw === label2k) return '2K';
+                if (label4k && raw === label4k) return '4K';
+                return raw.toUpperCase();
+            }
+
+            function appendSelectedImageSize(form) {
+                const sizeVal = uiResolutionToImageSize(selectedResolution.value, imageResolutionLabels());
+                if (sizeVal) form.append('image_size', sizeVal);
+            }
+
+            // 可再次提交的图片地址：http(s) 或站内路径。排除 blob/data，避免把本地预览地址发给后端。
+            function isReusableMediaUrl(url) {
+                if (typeof url !== 'string') return false;
+                const value = url.trim();
+                if (!value || /^(blob|data):/i.test(value)) return false;
+                return /^https?:\/\//i.test(value) || value.startsWith('/');
+            }
+
+            // 没有本地 File 的图片 URL（重新编辑带回的参考图）。有 File 的项由上传字段提交，避免同一张图提交两次。
+            function collectUrlOnlyImageUrls() {
+                const urls = [];
+                const add = (url) => {
+                    if (isReusableMediaUrl(url) && !urls.includes(url)) urls.push(url);
+                };
+                if (!uploadedImageFile.value) {
+                    add(uploadedImageServerUrl.value);
+                    add(uploadedImageUrl.value);
+                }
+                referenceImageFiles.value.forEach(ref => {
+                    if (!ref || ref.file) return;
+                    add(ref.serverUrl || ref.url);
+                });
+                mediaItems.value.forEach(item => {
+                    if (!item || item.type !== 'image' || item.originalFile) return;
+                    add(item.serverUrl);
+                    add(item.fileUrl);
+                });
+                return urls;
+            }
+
+            function findModelOptionForGeneration(pools, task, modelName) {
+                const lists = [];
+                (pools || []).forEach(list => {
+                    if (Array.isArray(list)) lists.push(list);
+                });
+                const keys = [];
+                if (task && task.key) keys.push(String(task.key));
+                if (task && task.short_key) keys.push(String(task.short_key));
+                const modelMatches = (model) => {
+                    if (!model) return false;
+                    const modelKeys = [model.key, model.short_key, model.value]
+                        .filter(value => value != null && value !== '')
+                        .map(value => String(value));
+                    if (modelKeys.some(key => keys.includes(key))) return true;
+                    return !!(task && task.key && model.key && String(task.key).startsWith(String(model.key) + '_'));
+                };
+                for (let i = 0; i < lists.length; i++) {
+                    const hit = lists[i].find(modelMatches);
+                    if (hit) return hit;
+                }
+                const name = String(modelName || (task && (task.name || task.model_name)) || '').trim();
+                if (!name) return null;
+                const baseName = (value) => String(value || '').split('（')[0].split(' (')[0].trim();
+                for (let j = 0; j < lists.length; j++) {
+                    const hit = lists[j].find(model => model && (model.name === name || baseName(model.name) === name));
+                    if (hit) return hit;
+                }
+                return null;
+            }
+
+            function normalizeRestoredVideoImageMode(imageMode) {
+                if (imageMode === 'multi_reference' || imageMode === 'first_last_with_ref') return 'multi_reference';
+                if (imageMode === 'first_last_frame') return 'first_last_frame';
+                return '';
+            }
+
+            function resolveTaskFromMeta(meta) {
+                if (!meta || meta.task_type == null || !window.TaskConfig || typeof window.TaskConfig.getTaskById !== 'function') {
+                    return null;
+                }
+                return window.TaskConfig.getTaskById(meta.task_type)
+                    || window.TaskConfig.getTaskById(Number(meta.task_type))
+                    || null;
+            }
+
+            function metaImageUrls(meta) {
+                const images = [];
+                const push = (url) => {
+                    if (isHttpUrl(url) && !images.includes(url)) images.push(url);
+                };
+                (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).forEach(push);
+                (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).forEach(push);
+                return images;
+            }
+
+            function inferVideoImageModeFromMeta(meta) {
+                const frames = (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
+                const refs = (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                if (refs.length > 0 || frames.length > 2) return 'multi_reference';
+                if (frames.length > 0) return 'first_last_frame';
+                if (isHttpUrl(meta && meta.reference_video) || isHttpUrl(meta && meta.reference_audio)) return 'multi_reference';
+                return '';
+            }
+
+            function restoreGenerationReferenceMedia(meta, genType) {
+                clearAllMedia();
+                const images = metaImageUrls(meta);
+                images.forEach((url, index) => {
+                    if (index === 0) {
+                        uploadedImageUrl.value = url;
+                        uploadedImageServerUrl.value = url;
+                        uploadedImageFile.value = null;
+                        hasUploadedImage.value = true;
                     } else {
-                        const model = [...allImageToVideoModels.value, ...allTextToVideoModels.value].find(matches);
-                        if (model) {
-                            selectedVideoModelKey.value = model.key || '';
-                            selectedVideoModelName.value = model.name;
-                        }
+                        referenceImageFiles.value.push({ file: null, url, serverUrl: url });
+                    }
+                    addMediaItem(null, 'image', url, { serverUrl: url, thumbnailUrl: url });
+                });
+                if (genType === 'video') {
+                    if (isHttpUrl(meta.reference_video)) {
+                        addMediaItem(null, 'video', meta.reference_video, { serverUrl: meta.reference_video });
+                    }
+                    if (isHttpUrl(meta.reference_audio)) {
+                        addMediaItem(null, 'audio', meta.reference_audio, { serverUrl: meta.reference_audio });
                     }
                 }
+                return images.length;
+            }
 
-                // 比例（仅恢复当前可选值，避免选中悬空选项）
-                if (meta.ratio && currentRatios.value.some(r => r.value === meta.ratio)) {
-                    hasUserSelectedRatio.value = true;
-                    selectedRatio.value = meta.ratio;
+            function applyRestoredGenerationModel(genType, meta) {
+                const task = resolveTaskFromMeta(meta);
+                const hasRefs = metaImageUrls(meta).length > 0
+                    || (genType === 'video' && (isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio)));
+                const pools = genType === 'image'
+                    ? (hasRefs
+                        ? [allImageEditModels.value, allImageModels.value]
+                        : [allImageModels.value, allImageEditModels.value])
+                    : (hasRefs
+                        ? [allImageToVideoModels.value, allTextToVideoModels.value]
+                        : [allTextToVideoModels.value, allImageToVideoModels.value]);
+                const model = findModelOptionForGeneration([currentModels.value, ...pools], task, meta.model_name)
+                    || findModelOptionForGeneration(pools, task, meta.model_name);
+                if (!model) return false;
+                if (genType === 'image') {
+                    selectedImageModel.value = model.name;
+                    selectedImageModelKey.value = model.key || '';
+                } else {
+                    selectedVideoModelName.value = model.name;
+                    selectedVideoModelKey.value = model.key || '';
                 }
-                // 时长（视频）
-                if (genType === 'video' && meta.duration != null && meta.duration !== '' &&
-                    currentDurationOptions.value.includes(Number(meta.duration))) {
-                    selectedDuration.value = Number(meta.duration);
-                    durationInputText.value = String(meta.duration);
-                }
-                // 分辨率
-                const resolution = genType === 'video' ? (meta.resolution || meta.image_size) : meta.image_size;
-                if (genType === 'image' && resolution && currentResolutions.value.includes(resolution)) {
-                    selectedResolution.value = resolution;
-                } else if (genType === 'video' && resolution) {
-                    selectedVideoResolution.value = resolution;
-                }
+                return true;
+            }
 
-                // 参考素材回填：服务端 URL 直接加入（不重新上传），与灵感页带图跳转同模式。
-                // reference_images（多参考）与 frame_images（首尾帧/图片编辑参考图）合并带回
-                clearAllMedia();
-                const refs = [
-                    ...(Array.isArray(meta.reference_images) ? meta.reference_images : []),
-                    ...(Array.isArray(meta.frame_images) ? meta.frame_images : [])
-                ].filter(isHttpUrl);
-                refs.forEach(url => {
-                    const imgItem = { file: null, previewUrl: url, serverUrl: url, uploading: false, uploadFailed: false };
-                    agentImageFiles.value.push(imgItem);
-                    addMediaItem(null, 'image', url, { serverUrl: url, thumbnailUrl: url, agentImageItem: imgItem });
+            function applyRestoredVideoResolution(raw) {
+                const value = String(raw || '').trim();
+                if (!value) return;
+                const options = currentVideoResolutionOptions.value || [];
+                if (!options.length) {
+                    selectedVideoResolution.value = value;
+                    return;
+                }
+                const hit = options.find(option => {
+                    const optionValue = String(option && option.value || '');
+                    const optionLabel = String(option && option.label || '');
+                    return optionValue.toLowerCase() === value.toLowerCase()
+                        || optionLabel.toLowerCase() === value.toLowerCase();
                 });
-                if (isHttpUrl(meta.reference_video)) {
-                    addMediaItem(null, 'video', meta.reference_video, { serverUrl: meta.reference_video });
-                }
-                if (isHttpUrl(meta.reference_audio)) {
-                    addMediaItem(null, 'audio', meta.reference_audio, { serverUrl: meta.reference_audio });
-                }
+                if (hit) selectedVideoResolution.value = hit.value;
+            }
 
-                if (inputTextarea.value) inputTextarea.value.focus();
-                showNotice(refs.length > 0
-                    ? window.t('gen_edit_restored_with_refs', { count: refs.length })
-                    : window.t('gen_edit_restored'));
+            function applyRestoredGenerationScalars(genType, meta) {
+                if (meta.ratio) {
+                    hasUserSelectedRatio.value = true;
+                    selectedRatio.value = String(meta.ratio);
+                }
+                refreshModelSettings();
+                if (meta.ratio && availableRatios.value.includes(String(meta.ratio))) {
+                    hasUserSelectedRatio.value = true;
+                    selectedRatio.value = String(meta.ratio);
+                }
+                if (genType === 'video') {
+                    const durNum = Number(meta.duration);
+                    if (meta.duration != null && meta.duration !== '' && Number.isFinite(durNum)) {
+                        const hit = currentDurationOptions.value.find(opt => opt !== 'auto' && Number(opt) === durNum);
+                        if (hit != null) selectDuration(hit);
+                    }
+                    applyRestoredVideoResolution(meta.resolution || meta.image_size);
+                    return;
+                }
+                const uiRes = imageSizeToUiResolution(meta.image_size || meta.resolution, imageResolutionLabels());
+                if (uiRes && availableResolutions.value.includes(uiRes)) {
+                    selectedResolution.value = uiRes;
+                }
+            }
+
+            // 把某次生成的参数恢复到输入区（重新编辑）：先切到图片或视频模式，
+            // 再回填提示词、模型、比例、时长、分辨率、参考图/视频/音频。恢复后用户可微调再发送。
+            async function restoreGenerationParamsToEditor(genType, meta) {
+                const normalizedType = genType === 'video' ? 'video' : 'image';
+                restoringGenerationParams = true;
+                try {
+                    inputText.value = String((meta && meta.prompt) || '');
+                    autoResize();
+                    showSettingsPanel.value = false;
+                    showModelPanel.value = false;
+                    showRatioPanel.value = false;
+                    showDurationPanel.value = false;
+                    showDropdown.value = false;
+                    if (activeView.value !== 'generate') switchView('generate');
+
+                    const typeObj = creationTypes.find(t => t.key === normalizedType);
+                    if (typeObj) selectType(typeObj);
+
+                    if (normalizedType === 'video') {
+                        const mode = normalizeRestoredVideoImageMode(meta.image_mode) || inferVideoImageModeFromMeta(meta);
+                        if (mode) videoImageMode.value = mode;
+                        if (meta.enable_face_mask === true) processFace.value = true;
+                        else if (meta.enable_face_mask === false) processFace.value = false;
+                    }
+
+                    const refCount = restoreGenerationReferenceMedia(meta, normalizedType);
+                    applyRestoredGenerationModel(normalizedType, meta);
+                    applyRestoredGenerationScalars(normalizedType, meta);
+                    // 模式切换和参考图会排队改模型的监听；标志仍为 true 时它们直接返回。
+                    // 刷新后再写一遍，避免监听把比例/分辨率打回默认档。
+                    await nextTick();
+                    applyRestoredGenerationModel(normalizedType, meta);
+                    applyRestoredGenerationScalars(normalizedType, meta);
+                    await nextTick();
+
+                    if (inputTextarea.value) inputTextarea.value.focus();
+                    showNotice(refCount > 0
+                        ? window.t('gen_edit_restored_with_refs', { count: refCount })
+                        : window.t('gen_edit_restored'));
+                } finally {
+                    restoringGenerationParams = false;
+                }
             }
 
             async function handleGeneratedResultEdit(btn) {
@@ -2422,7 +2618,7 @@
                         showError(window.t('gen_details_unavailable'));
                         return;
                     }
-                    restoreGenerationParamsToEditor(genType, meta);
+                    await restoreGenerationParamsToEditor(genType, meta);
                 } finally {
                     btn.disabled = false;
                 }
@@ -2464,7 +2660,8 @@
 
                     let apiUrl = '';
                     if (genType === 'image') {
-                        if (meta.image_size && meta.image_size !== 'auto') form.append('image_size', String(meta.image_size));
+                        const regenImageSize = uiResolutionToImageSize(meta.image_size, imageResolutionLabels());
+                        if (regenImageSize) form.append('image_size', regenImageSize);
                         if (frameImages.length > 0 && categories.includes('image_edit')) {
                             form.append('ratio', String(meta.ratio || '1:1'));
                             form.append('ref_image_urls', frameImages.join(','));
@@ -3070,17 +3267,20 @@
                     form.append('auth_token', authToken.value);
 
                     let apiUrl = '';
+                    const urlOnlyImages = collectUrlOnlyImageUrls();
+                    const hasImageFile = !!uploadedImageFile.value
+                        || referenceImageFiles.value.some(ref => ref && ref.file);
 
-                    if (hasUploadedImage.value && uploadedImageFile.value) {
-                        // 图片编辑/图生图
-                        form.append('image', uploadedImageFile.value);
+                    if (hasImageFile || urlOnlyImages.length > 0) {
+                        // 图片编辑/图生图：本地文件走 image，重新编辑带回的服务端 URL 走 ref_image_urls
+                        if (uploadedImageFile.value) form.append('image', uploadedImageFile.value);
+                        referenceImageFiles.value.forEach(ref => {
+                            if (ref && ref.file && ref.file !== uploadedImageFile.value) form.append('image', ref.file);
+                        });
+                        if (urlOnlyImages.length > 0) form.append('ref_image_urls', urlOnlyImages.join(','));
                         form.append('ratio', selectedRatio.value);
                         form.append('count', String(generationCount.value));
-                        if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                            const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                            const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
-                            form.append('image_size', sizeVal);
-                        }
+                        appendSelectedImageSize(form);
                         // 获取 task_id
                         const taskId = window.TaskConfig?.getTaskIdByKey
                             ? window.TaskConfig.getTaskIdByKey(selectedModelKey.value, 'image_edit')
@@ -3094,11 +3294,7 @@
                         // 文生图
                         form.append('aspect_ratio', selectedRatio.value);
                         form.append('count', String(generationCount.value));
-                        if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                            const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                            const sizeVal = sizeMap[selectedResolution.value] || selectedResolution.value;
-                            form.append('image_size', sizeVal);
-                        }
+                        appendSelectedImageSize(form);
                         // 获取 task_id
                         const taskId = window.TaskConfig?.getTaskIdByKey
                             ? window.TaskConfig.getTaskIdByKey(selectedModelKey.value, 'text_to_image')
@@ -3606,8 +3802,11 @@
 
                     let apiUrl = '';
 
-                    const hasFileImage = uploadedImageFile.value || referenceImageFiles.value.length > 0 || mediaItems.value.some(m => m.type === 'image' && m.originalFile);
-                    const hasUrlImage = hasUploadedImage.value && uploadedImageUrl.value;
+                    const hasFileImage = !!uploadedImageFile.value
+                        || referenceImageFiles.value.some(ref => ref && ref.file)
+                        || mediaItems.value.some(m => m.type === 'image' && m.originalFile);
+                    const urlOnlyImages = collectUrlOnlyImageUrls();
+                    const hasUrlImage = urlOnlyImages.length > 0;
                     const hasAnyImage = hasFileImage || hasUrlImage;
                     const hasVideoOrAudio = mediaItems.value.some(m => m.type === 'video' || m.type === 'audio');
                     const shortKey = selectedModelKey.value ? selectedModelKey.value.split('_image_to_video')[0].split('_text_to_video')[0] : '';
@@ -3635,8 +3834,8 @@
                             });
                             allImageFiles.forEach(file => form.append('images', file));
                         } else if (hasUrlImage) {
-                            // URL 图片（如从已生成图片直接转视频，无 File 对象）
-                            form.append('image_urls', uploadedImageUrl.value);
+                            // URL 图片（重新编辑带回的参考图、或从已生成图片直接转视频，无 File 对象）
+                            form.append('image_urls', urlOnlyImages.join(','));
                         }
 
                         // 添加参考音频/视频（从 mediaItems 获取已上传的文件）
@@ -3653,11 +3852,10 @@
                         const audioUrls = [];
                         const videoUrls = [];
                         mediaItems.value.forEach(m => {
-                            if (m.type === 'audio' && m.fileUrl) {
-                                audioUrls.push(m.fileUrl);
-                            } else if (m.type === 'video' && m.fileUrl) {
-                                videoUrls.push(m.fileUrl);
-                            }
+                            const url = isReusableMediaUrl(m.serverUrl) ? m.serverUrl : (isReusableMediaUrl(m.fileUrl) ? m.fileUrl : '');
+                            if (!url) return;
+                            if (m.type === 'audio' && !audioUrls.includes(url)) audioUrls.push(url);
+                            else if (m.type === 'video' && !videoUrls.includes(url)) videoUrls.push(url);
                         });
                         if (audioUrls.length > 0) {
                             form.append('audio_urls', audioUrls.join(','));
@@ -3993,10 +4191,8 @@
                         ? window.TaskConfig.getTaskIdByKey(selectedImageModelKey.value, imageCategory)
                         : undefined;
                     if (imageTaskId) imagePreferences.task_id = imageTaskId;
-                    if (selectedResolution.value && selectedResolution.value !== 'auto') {
-                        const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                        imagePreferences.resolution = sizeMap[selectedResolution.value] || selectedResolution.value;
-                    }
+                    const preferredImageSize = uiResolutionToImageSize(selectedResolution.value, imageResolutionLabels());
+                    if (preferredImageSize) imagePreferences.resolution = preferredImageSize;
 
                     const taskResponse = await fetch(`/api/session/${sessionId}/task`, {
                         method: 'POST',
@@ -5890,11 +6086,12 @@
 
             // 根据当前选中模型刷新比例和分辨率
             function refreshModelSettings() {
-                if (!window.TaskConfig || !selectedModel.value) return;
-                const model = currentModels.value.find(m => m.name === selectedModel.value);
-                const modelKey = model ? model.key : '';
+                if (!window.TaskConfig) return;
+                const model = currentModels.value.find(m => m.name === selectedModel.value)
+                    || currentModels.value.find(m => m.key && m.key === selectedModelKey.value);
+                const modelKey = (model && model.key) || selectedModelKey.value;
                 if (!modelKey) return;
-                selectedModelKey.value = modelKey;
+                if (model && model.key) selectedModelKey.value = model.key;
 
                 // 获取比例选项；空列表表示该模型不提供比例选择，不要回落到默认档
                 const ratios = window.TaskConfig.getRatioOptions(modelKey);
@@ -5922,10 +6119,11 @@
                         availableResolutions.value = [];
                     } else {
                         const mappedSizes = sizes.map(s => {
-                            if (s === '1K') return '1K';
-                            if (s === '2K') return window.t('resolution_2k');
-                            if (s === '4K') return window.t('resolution_4k');
-                            return s;
+                            const upper = String(s || '').trim().toUpperCase();
+                            if (upper === '1K') return '1K';
+                            if (upper === '2K') return window.t('resolution_2k');
+                            if (upper === '4K') return window.t('resolution_4k');
+                            return upper || s;
                         });
                         availableResolutions.value = ['auto', ...mappedSizes];
                     }
@@ -5936,7 +6134,9 @@
 
                 // 视频模式下更新默认时长（videoModelConfigs 使用简短 key）
                 if (isVideoMode.value) {
-                    const shortKey = model ? model.value : '';
+                    const shortKey = model
+                        ? model.value
+                        : String(modelKey).split('_image_to_video')[0].split('_text_to_video')[0];
                     const config = shortKey ? videoModelConfigs.value[shortKey] : null;
                     if (config && config.durations && config.durations.length > 0) {
                         if (selectedDuration.value !== 'auto' && !config.durations.includes(selectedDuration.value)) {
@@ -7608,8 +7808,7 @@
                         : null;
                     if (!taskId || !userId.value || !worldId.value) return;
                     // 解析分辨率为后端格式（auto 不传）
-                    const sizeMap = { '1K': '1K', [window.t('resolution_2k')]: '2K', [window.t('resolution_4k')]: '4K' };
-                    const resolvedResolution = selectedResolution.value === 'auto' ? null : (sizeMap[selectedResolution.value] || selectedResolution.value);
+                    const resolvedResolution = uiResolutionToImageSize(selectedResolution.value, imageResolutionLabels()) || null;
                     await syncMediaPreference('image', mode, taskId, {
                         ratio: selectedRatio.value,
                         resolution: resolvedResolution,
@@ -7800,6 +7999,7 @@
             // 监听 mediaType 变化，持久化并重置选中模型
             Vue.watch(mediaType, async (newType, oldType) => {
                 localStorage.setItem('marketing_media_type', newType);
+                if (restoringGenerationParams) return;
                 // Agent 模式下从 image 切换到 video 时，清理 agentImageFiles 和 agentVideoFiles
                 if (selectedType.value === 'agent' && oldType === 'image' && newType === 'video') {
                     agentImageFiles.value.forEach(img => {
@@ -7834,6 +8034,7 @@
 
             // 监听 hasUploadedImage 变化，在视频模式下自动切换文生/图生视频模型
             Vue.watch(hasUploadedImage, async (newVal, oldVal) => {
+                if (restoringGenerationParams) return;
                 if (oldVal === newVal) return;
                 if (!isVideoMode.value) {
                     const slot = newVal ? 'image.image_edit' : 'image.text_to_image';
@@ -7906,6 +8107,7 @@
 
             // 监听视频生成方式变化，仅在切换时同步参考图状态，不再清空已上传图片
             Vue.watch(videoImageMode, (newMode, oldMode) => {
+                if (restoringGenerationParams) return;
                 if (oldMode === newMode) return;
                 if (isVideoMode.value && hasUploadedImage.value) {
                     const slot = ['multi_reference', 'first_last_with_ref'].includes(newMode)
@@ -7932,6 +8134,7 @@
 
             // 监听选中模型变化，更新默认时长（videoModelConfigs 使用简短 key）
             Vue.watch(selectedModelKey, (newKey) => {
+                if (restoringGenerationParams) return;
                 if (!isVideoMode.value || !newKey) return;
                 const model = currentModels.value.find(m => m.key === newKey);
                 const shortKey = model ? model.value : '';

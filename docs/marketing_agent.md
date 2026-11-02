@@ -314,8 +314,8 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 1. **参数元数据条**（`.gen-meta-bar`，样式对齐即梦结果卡）：`模型名 | 时长s | 比例 | 分辨率 | 详细信息ⓘ`。数据来自 `GET /api/get-status` 新增的 `task.meta`（后端 `server.py::_build_task_meta_payload`，从 ai_tools 记录提取 `task_type`/`model_name`/`ratio`/`duration`/`image_size`/`resolution`(extra_config)/`image_mode`/`enable_face_mask`/`prompt`/`reference_images`(多参考 JSON)/`frame_images`(image_path 逗号分隔，即图片编辑参考图与图生视频首尾帧)/`reference_video`/`reference_audio`；任何字段异常仅告警不抛，不影响状态轮询主流程）。同时元数据写入卡片 `data-gen-type/model/ratio/duration/resolution` 属性随结果 HTML 持久化到会话历史，刷新/重进会话后元数据条仍可展示（属性已加入 `web/js/security.js` DOMPurify 白名单）。旧消息无 data-gen-* 属性时自然降级为不显示元数据条。
 2. **详细信息面板**：点击「详细信息」按 `data-tool-id` 懒加载 `get-status` 拉全量参数（含完整提示词），以 DOM `textContent` 渲染（提示词是不可信文本，不拼 HTML），再次点击收起。
-3. **重新编辑**（`data-regen-edit` + 事件委托 `handleGeneratedResultEdit`）：点击时按 `data-tool-id` 拉取元数据并恢复到输入区——提示词回填输入框、模型按 `task_type` 经 `TaskConfig.getTaskById` 反查回填（图片/视频模型池分开）、比例/时长/分辨率恢复为当前可选值内的原值（避免选中悬空选项）、参考图/视频/音频以服务端 URL 直接加入媒体条（不重新上传，与灵感页带图跳转同模式），成功后绿色 notice-toast 提示（新增 `noticeMessage` 状态与 `.notice-toast` 样式，区别于红色 error-toast）。
-4. **重新生成**（`data-regen-submit` + `handleGeneratedResultRegenerate`）：不经 LLM 编排，按原参数直接重提任务——图片按有无参考图走 `/api/image-edit`（`ref_image_urls`，需 task 类别含 image_edit）或 `/api/text-to-image`；视频按 `image_mode` 走 `/api/ai-app-run-image`（首尾帧→`image_urls`、多参考→`reference_image_urls`，附 `audio_urls`/`video_urls`/`enable_face_mask`）或 `/api/ai-app-run`，`task_id` 直接复用 ai_tools.type，count 固定 1。提交后复用直连链路：占位气泡 → `__PENDING_TASK__` 标记入库 → `startImage/VideoStatusCheck` 轮询 → `persistDirectGenerationResult` 替换为含元数据条与操作按钮的结果卡。
+3. **重新编辑**（`data-regen-edit` + 事件委托 `handleGeneratedResultEdit`）：点击时按 `data-tool-id` 拉取元数据，并**先把底部创作类型从智能体切到图片模式或视频模式**（`selectType`），再把该次生成的参数写进对应模式的输入栏。提示词回填输入框；模型按 `task_type` 经 `TaskConfig.getTaskById` 反查，在当前模式的模型池里按 key / short_key / 显示名匹配（Seedream 5.0 与 5.0 Pro 不会互相串）。比例、时长、分辨率在切到目标模型并刷新可选项之后再写入，因此 9:16、2K、3K 会落在该模型自己的档位上，而不是沿用智能体模式里另一套模型的选项。图片分辨率回填要经过界面文案映射：落库 `2K`/`4K` 对应「高清 2K」「超清 4K」，`3K`（Seedream 5.0 / 5.0 Pro）保持 `3K`。视频同时恢复 `image_mode`（多参考 / 首尾帧）和人脸遮盖开关。参考图/视频/音频以服务端 URL 直接加入媒体条（不重新上传）；图片编辑的 URL 再发送时走 `/api/image-edit` 的 `ref_image_urls`，图生视频的 URL 再发送时走 `image_urls`。回填期间 `restoringGenerationParams` 挡住模式、参考图和模型监听，避免它们把刚恢复的模型改回偏好默认值。成功后绿色 notice-toast 提示（`noticeMessage` / `.notice-toast`，区别于红色 error-toast）。用户接着点发送时，请求使用这套已恢复的模型、比例、分辨率和参考图。
+4. **重新生成**（`data-regen-submit` + `handleGeneratedResultRegenerate`）：不经 LLM 编排，按原参数直接重提任务——图片按有无参考图走 `/api/image-edit`（`ref_image_urls`，需 task 类别含 image_edit）或 `/api/text-to-image`，`image_size` 经同一档位映射提交（`2K`/`3K`/`4K` 与重新编辑一致）；视频按 `image_mode` 走 `/api/ai-app-run-image`（首尾帧→`image_urls`、多参考→`reference_image_urls`，附 `audio_urls`/`video_urls`/`enable_face_mask`）或 `/api/ai-app-run`，`task_id` 直接复用 ai_tools.type，比例、时长、分辨率沿用 meta，count 固定 1。提交后复用直连链路：占位气泡 → `__PENDING_TASK__` 标记入库 → `startImage/VideoStatusCheck` 轮询 → `persistDirectGenerationResult` 替换为含元数据条与操作按钮的结果卡。
 
 安全与兼容注意：`data-gen-*`/`data-regen-*` 属性值均为参数快照（不含 URL 与提示词，提示词点击时才拉取），构建时经 `escapeHtml` 转义；`bindGeneratedMediaDelegation` 中元数据条/详情面板区域内的点击先于「点击放大」分支短路返回，避免面板在 `data-modal-src` 卡片内部被冒泡误判为放大请求。`tests/js/test_marketing_agent_digital_human_single_video.js` 对 `buildGeneratedMediaRowsHtml` 的静态断言窗口由 1600 放宽至 2600 字符（图片行模板加入元数据条与操作按钮后变长）。
 
@@ -371,7 +371,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 ### 分辨率选择
 
-图片模式下显示分辨率选项，通过 `TaskConfig.getSizeOptions(modelKey)` 动态获取。选项前自动添加 `auto`（自动根据模型选择最佳分辨率）。分辨率映射：`1K` -> `1K`，`2K` -> 高清 2K，`4K` -> 超清 4K。
+图片模式下显示分辨率选项，通过 `TaskConfig.getSizeOptions(modelKey)` 动态获取。选项前自动添加 `auto`（自动根据模型选择最佳分辨率）。分辨率映射：`1K` -> `1K`，`2K` -> 高清 2K，`4K` -> 超清 4K，其余档位（如 Seedream 的 `3K`）按原样显示。重新编辑把落库档位映射回这些选项后再选中，再次发送时再映射回 `2K`/`3K`/`4K` 提交。
 
 Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指令中说明分辨率，专家不再向用户追问清晰度选项，而是直接选择当前模型支持的最低输出分辨率。例如模型支持 1K/2K/4K 时默认 1K，支持 2K/3K 时默认 2K。只有用户主动表达“高清”“大图”“印刷”“海报大图”等需求时，才按需求选择更高分辨率。
 
@@ -454,7 +454,7 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 #### 图片/视频模式
 
-图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。
+图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。有本地文件，或重新编辑带回的参考图 URL 时走图片编辑（URL 放在 `ref_image_urls`）；否则走文生图。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。重新编辑带回的参考图没有 File 对象，图生视频按 URL 列表提交 `image_urls`。
 
 #### 视频压缩
 
