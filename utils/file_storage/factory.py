@@ -58,6 +58,8 @@ def get_file_storage(
     secret_key = qiniu_config.get("secret_key") or ""
     bucket_name = qiniu_config.get("bucket_name") or ""
     cdn_domain = qiniu_config.get("cdn_domain") or ""
+    # 浏览器直传域名覆盖（可选；空则 QiniuFileStorage 经 UC 按 AK+bucket 自动解析）
+    upload_host = qiniu_config.get("upload_host") or ""
 
     if not (access_key and secret_key and bucket_name and cdn_domain):
         raise ValueError(f"file_storage.{section} 配置不完整（缺 access_key/secret_key/bucket_name/cdn_domain）")
@@ -72,6 +74,7 @@ def get_file_storage(
             secret_key=secret_key,
             bucket_name=bucket_name,
             cdn_domain=cdn_domain,
+            upload_host=upload_host,
         )
         _storage_instances[cache_key] = inst
         return inst

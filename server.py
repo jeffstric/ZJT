@@ -105,9 +105,6 @@ from config.constant import (
     VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
     WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
     WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT,
-    WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT,
-    QINIU_UC_QUERY_URL,
-    QINIU_UPLOAD_REGION_URL,
     QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
@@ -7007,14 +7004,12 @@ async def upload_workflow_asset(
         )
 
 
-# ===== 工作流素材前端直传七牛（视频/图片/音频；CDN 未启用时前端自动降级 multipart）=====
-# 流程：upload-token（token 绑定 key + fsizeLimit）→ 浏览器 XHR 直传七牛（不占服务器带宽）→
-# upload-confirm 服务端从七牛回源下载到本地（大小+魔数校验）→ 本地落盘成功才入库。
+# ===== 工作流素材前端直传（视频/图片/音频；CDN 未启用时前端自动降级 multipart）=====
+# 流程：upload-token（经 BaseFileStorage.get_browser_upload_info 颁发直传凭证，
+# 七牛/OSS/S3 等品牌协议封装在各自存储实现内）→ 浏览器 XHR 直传存储（不占服务器带宽）→
+# upload-confirm 服务端从存储回源下载到本地（大小+魔数校验）→ 本地落盘成功才入库。
 # 本地文件为主副本、CDN 为加速层；mapping 建立时 cloud_path 已置位，
 # 首个播放请求直接 302 命中 CDN，消除 multipart 链路"本地 206→302"的服务中切换竞态。
-
-# 直传域名解析缓存：(access_key, bucket_name) -> "https://host"，进程内复用
-_qiniu_direct_upload_host_cache = {}
 
 # confirm 回源下载专用长寿线程池（模块级，禁用 with 上下文——红线第 10 条）：
 # 线程不可取消，慢速滴流下载会让线程存活超过 wait_for 时限；用独立小池隔离，
@@ -7069,38 +7064,6 @@ def _download_cdn_asset_to_local(download_url: str, final_path: str, ext: str,
                 os.remove(tmp_path)
         except OSError:
             logger.warning(f"清理直传回源半成品失败: {tmp_path}")
-
-
-async def _resolve_qiniu_direct_upload_host(section: str = "qiniu_long_term") -> str:
-    """解析七牛直传域名：配置覆盖 → UC 按 AK+bucket 查询（缓存）→ 默认华东域名。
-
-    不同 bucket 所在区域的上传域名不同（复用华东 z0 域名会 400），
-    world-import 用的 upload.qiniup.com 只对默认短期桶成立，不可照搬。
-    """
-    configured = (get_dynamic_config_value("file_storage", section, "upload_host", default="") or "").strip()
-    if configured:
-        return configured if configured.startswith("http") else f"https://{configured}"
-
-    access_key = (get_dynamic_config_value("file_storage", section, "access_key", default="") or "").strip()
-    bucket_name = (get_dynamic_config_value("file_storage", section, "bucket_name", default="") or "").strip()
-    cache_key = (access_key, bucket_name)
-    if cache_key in _qiniu_direct_upload_host_cache:
-        return _qiniu_direct_upload_host_cache[cache_key]
-
-    try:
-        async with httpx.AsyncClient(timeout=WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT) as client:
-            resp = await client.get(QINIU_UC_QUERY_URL, params={"ak": access_key, "bucket": bucket_name})
-            data = resp.json()
-        up = (data or {}).get("up") or {}
-        main_hosts = ((up.get("acc") or {}).get("main")
-                      or ((up.get("old_acc") or {}).get("main")) or [])
-        if main_hosts and isinstance(main_hosts[0], str) and main_hosts[0]:
-            host = f"https://{main_hosts[0]}"
-            _qiniu_direct_upload_host_cache[cache_key] = host
-            return host
-    except Exception as e:
-        logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
-    return QINIU_UPLOAD_REGION_URL
 
 
 @app.post('/api/video-workflow/upload-token')
@@ -7175,26 +7138,32 @@ async def upload_workflow_asset_direct_token(
 
     info = generate_upload_filename(prefix="workflow", extension=ext)
     key = f"{UploadPathConstants.UPLOAD_ROOT}/workflow/{auth_user_id}/{info.filename}"
-    token = storage.get_upload_token(
+    # 面向 BaseFileStorage 接口颁发直传信息：七牛 form 协议 / OSS PostObject /
+    # S3 presigned PUT 等品牌细节全部封装在各存储实现内，端点不感知。
+    # 后端不支持浏览器直传（无该方法——鸭子类型存储 / 方法返回 None）时降级 multipart
+    #（hasattr 防御同 world-upload-token 端点先例）。
+    get_upload_info = getattr(storage, "get_browser_upload_info", None)
+    if get_upload_info is None:
+        return JSONResponse({
+            "code": 0,
+            "message": "当前存储后端不支持前端直传，走服务器上传",
+            "data": {"direct_upload": False, "reason": "backend_unsupported"}
+        })
+    upload_info = await get_upload_info(
         key=key,
+        max_bytes=max_bytes,
         expires=QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
-        policy={
-            'fileType': 0,  # 标准存储
-            'fsizeLimit': max_bytes,
-            'returnBody': '{"key":"$(key)","hash":"$(etag)","fsize":"$(fsize)"}',
-        },
     )
-    upload_host = await _resolve_qiniu_direct_upload_host()
+    if not upload_info:
+        return JSONResponse({
+            "code": 0,
+            "message": "当前存储后端不支持前端直传，走服务器上传",
+            "data": {"direct_upload": False, "reason": "backend_unsupported"}
+        })
     return JSONResponse({
         "code": 0,
         "message": "success",
-        "data": {
-            "direct_upload": True,
-            "upload_url": upload_host,
-            "token": token,
-            "key": key,
-            "expires": QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
-        }
+        "data": upload_info
     })
 
 

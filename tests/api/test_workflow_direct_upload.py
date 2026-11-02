@@ -9,7 +9,6 @@
 - confirm 成功：回源落盘后返回本站永久 URL，mapping 以"本地为主副本"注册
 - confirm 幂等：mapping 已存在直接返回 URL
 """
-import asyncio
 import os
 import pytest
 from unittest.mock import MagicMock
@@ -62,21 +61,38 @@ def cdn_disabled(monkeypatch):
 
 
 class _FakeStorage:
-    """qiniu_long_term 存储替身：token 颁发参数可捕获，stat 可编程"""
+    """qiniu_long_term 存储替身：实现直传接口（端点只依赖 BaseFileStorage 接口方法）"""
 
-    def __init__(self, stat_result=None):
+    def __init__(self, stat_result=None, upload_url="https://upload.test.example.com"):
         self.stat_result = stat_result
-        self.upload_token_calls = []
+        self.upload_url = upload_url
+        self.browser_upload_calls = []
 
-    def get_upload_token(self, key=None, expires=3600, policy=None):
-        self.upload_token_calls.append({"key": key, "expires": expires, "policy": policy})
-        return "fake-upload-token"
+    async def get_browser_upload_info(self, key, max_bytes, expires=1800):
+        self.browser_upload_calls.append({"key": key, "max_bytes": max_bytes, "expires": expires})
+        return {
+            "direct_upload": True,
+            "upload_url": self.upload_url,
+            "token": "fake-upload-token",
+            "key": key,
+            "expires": expires,
+        }
 
     async def stat(self, key):
         return self.stat_result
 
     def get_download_url(self, key, expires=7200, attname=None):
         return f"https://cdn-download.test/{key}?e=1&token=sig"
+
+
+class _UnsupportedStorage:
+    """不支持浏览器直传的后端（基类默认语义）"""
+
+    async def stat(self, key):
+        return None
+
+    def get_download_url(self, key, expires=7200, attname=None):
+        return f"https://cdn-download.test/{key}"
 
 
 def _patch_storage(monkeypatch, storage):
@@ -92,15 +108,6 @@ def _patch_mapping_lookup(monkeypatch, existing):
         MediaFileMappingModel, "get_by_local_path",
         staticmethod(lambda local_path: existing),
     )
-
-
-def _patch_resolver(monkeypatch, host="https://upload.test.example.com"):
-    import server
-
-    async def _fake_resolve(section="qiniu_long_term"):
-        return host
-
-    monkeypatch.setattr(server, "_resolve_qiniu_direct_upload_host", _fake_resolve)
 
 
 # ========== upload-token ==========
@@ -119,10 +126,9 @@ def test_token_disabled_cdn_returns_fallback(client, cdn_disabled):
 
 
 def test_token_success_binds_key_and_fsize_limit(client, cdn_enabled, monkeypatch):
-    """CDN 启用：key 绑定当前用户目录，policy 带 fsizeLimit，返回直传域名"""
+    """CDN 启用：key 绑定当前用户目录，直传信息经接口方法颁发（含大小上限）"""
     storage = _FakeStorage()
     _patch_storage(monkeypatch, storage)
-    _patch_resolver(monkeypatch)
 
     resp = client.post(
         "/api/video-workflow/upload-token",
@@ -136,9 +142,24 @@ def test_token_success_binds_key_and_fsize_limit(client, cdn_enabled, monkeypatc
     assert data["key"].endswith(".mp4")
     assert data["token"] == "fake-upload-token"
     assert data["upload_url"] == "https://upload.test.example.com"
-    call = storage.upload_token_calls[0]
+    call = storage.browser_upload_calls[0]
     assert call["key"] == data["key"]
-    assert call["policy"]["fsizeLimit"] == MediaUploadSafetyConstants.MAX_VIDEO_SIZE
+    assert call["max_bytes"] == MediaUploadSafetyConstants.MAX_VIDEO_SIZE
+
+
+def test_token_unsupported_backend_falls_back(client, cdn_enabled, monkeypatch):
+    """存储后端不支持浏览器直传（接口默认语义）：降级 multipart"""
+    _patch_storage(monkeypatch, _UnsupportedStorage())
+
+    resp = client.post(
+        "/api/video-workflow/upload-token",
+        data={"filename": "clip.mp4", "size": 1024},
+        headers={"Authorization": "valid-token"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["direct_upload"] is False
+    assert data["reason"] == "backend_unsupported"
 
 
 def test_token_rejects_disallowed_extension(client, cdn_enabled):
@@ -183,70 +204,6 @@ def test_token_tiff_falls_back_to_multipart(client, cdn_enabled):
     data = resp.json()["data"]
     assert data["direct_upload"] is False
     assert data["reason"] == "tiff_unsupported"
-
-
-# ========== resolve host（UC 域名解析） ==========
-
-def test_resolve_host_prefers_config_override(monkeypatch):
-    """配置显式覆盖 upload_host 时优先（不发起 UC 查询）"""
-    import server
-
-    monkeypatch.setattr(
-        server, "get_dynamic_config_value",
-        lambda *keys, **kwargs: "cdn-up.example.com" if keys[-1] == "upload_host" else "ak",
-    )
-    host = asyncio.run(server._resolve_qiniu_direct_upload_host())
-    assert host == "https://cdn-up.example.com"
-
-
-def test_resolve_host_uses_process_cache(monkeypatch):
-    """UC 查询结果进程内缓存，命中缓存不重复查询"""
-    import server
-
-    monkeypatch.setattr(
-        server, "get_dynamic_config_value",
-        lambda *keys, **kwargs: (
-            "" if keys[-1] == "upload_host"
-            else ("ak" if keys[-1] == "access_key" else "bucket")
-        ),
-    )
-    server._qiniu_direct_upload_host_cache[("ak", "bucket")] = "https://cached.example.com"
-    try:
-        host = asyncio.run(server._resolve_qiniu_direct_upload_host())
-        assert host == "https://cached.example.com"
-    finally:
-        server._qiniu_direct_upload_host_cache.pop(("ak", "bucket"), None)
-
-
-def test_resolve_host_falls_back_to_default_when_uc_fails(monkeypatch):
-    """UC 查询异常时回退默认华东上传域名（QINIU_UPLOAD_REGION_URL）"""
-    import server
-    import httpx
-
-    class _BoomClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            raise RuntimeError("uc down")
-
-        async def __aexit__(self, *exc):
-            return False
-
-    monkeypatch.setattr(
-        server, "get_dynamic_config_value",
-        lambda *keys, **kwargs: (
-            "" if keys[-1] == "upload_host"
-            else ("ak" if keys[-1] == "access_key" else "bucket")
-        ),
-    )
-    monkeypatch.setattr(httpx, "AsyncClient", _BoomClient)
-    server._qiniu_direct_upload_host_cache.pop(("ak", "bucket"), None)
-    try:
-        host = asyncio.run(server._resolve_qiniu_direct_upload_host())
-        assert host == server.QINIU_UPLOAD_REGION_URL
-    finally:
-        server._qiniu_direct_upload_host_cache.pop(("ak", "bucket"), None)
 
 
 # ========== upload-confirm ==========

@@ -142,29 +142,43 @@ upload-token（token 绑定 key + fsizeLimit + returnBody，30min 过期）
 **改动**：
 
 - `config/constant.py`：`WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT`（回源下载
-  wait_for 硬上限 300s）、`WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT`（httpx 空闲
-  超时 60s，线程不可取消只能靠它收敛）、`WORKFLOW_DIRECT_UPLOAD_UC_QUERY_TIMEOUT`、
-  `QINIU_UC_QUERY_URL`
+  wait_for 硬上限 300s）、`WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT`（httpx 单次
+  读空闲超时 60s——注意非总时长，线程不可取消只能靠它收敛）
+- `utils/file_storage/`（**端点层面向接口，不绑定存储品牌**）：
+  - `BaseFileStorage` 新增两个默认方法：`stat()`（返回 None）、
+    `get_browser_upload_info(key, max_bytes, expires)`（返回 None = 该后端
+    不支持浏览器直传，端点自动降级 multipart）。换 OSS/S3 等后端只需实现
+    `get_browser_upload_info`（OSS PostObject / S3 presigned PUT），端点零改动
+  - `QiniuFileStorage.get_browser_upload_info()`：颁发绑定 key + fsizeLimit +
+    returnBody 的 form 直传凭证；七牛协议细节（UC 区域查询 URL、占位符语法、
+    `DEFAULT_BROWSER_UPLOAD_HOST`）全部封装在本实现内
+  - `QiniuFileStorage._resolve_browser_upload_host()`：构造参数 `upload_host`
+    覆盖 → 七牛 UC 按 AK+bucket 查询区域域名（进程内按 (AK, bucket) 二元组
+    缓存，同 AK 不同桶区域可能不同）→ 默认华东 `upload.qiniup.com`（UC 失败
+    且桶不在华东时直传会 400，前端自动降级 multipart 兜底；可用
+    `file_storage.{section}.upload_host` 配置固定，factory 透传构造）
+  - `QiniuFileStorage.stat()`：BucketManager 核实文件存在/大小，防伪造 confirm
+  - `factory.py`：透传 section 配置的 `upload_host`（`_load_config` 已合并
+    DB 动态覆盖）
 - `server.py`：`POST /api/video-workflow/upload-token`（key=`upload/workflow/{uid}/...`
-  绑定登录用户 + 扩展名白名单 + 大小预校验）、
+  绑定登录用户 + 扩展名白名单 + 大小预校验（含 size<=0 拒绝）+ `getattr`
+  防御鸭子类型存储，同 world-upload-token 先例）、
   `POST /api/video-workflow/upload-confirm`（key 归属校验防跨用户/路径穿越、
-  七牛 stat 核实、回源下载、幂等）、`_download_cdn_asset_to_local()`（同步
-  实现，`asyncio.wait_for(asyncio.to_thread(...))` 包裹，临时文件 finally 清理）、
-  `_resolve_qiniu_direct_upload_host()`（配置 `upload_host` 覆盖 → 七牛 UC
-  按 AK+bucket 查询区域域名并缓存 → 默认华东 `QINIU_UPLOAD_REGION_URL`；
-  不同 bucket 区域域名不同，照搬 world-import 的 upload.qiniup.com 会 400）
+  stat 核实、回源下载、幂等）、`_download_cdn_asset_to_local()`（同步实现，
+  `asyncio.wait_for(loop.run_in_executor(专用线程池, ...))` 包裹；**confirm
+  专用长寿线程池**隔离默认执行器——线程不可取消，慢速滴流下载存活超 wait_for
+  不会拖累其他 to_thread；临时文件名带 uuid，同 key 并发 confirm 不互写）
 - `utils/media_mapping_util.py`：`register_direct_uploaded_mapping()`——
   cloud_path 直接置位、不触发 `trigger_cdn_upload`、幂等复用
-- `utils/file_storage/`：`BaseFileStorage.stat()` 默认返回 None（不破坏既有
-  子类），`QiniuFileStorage.stat()` 经 BucketManager 实现防伪造 confirm 核实
 - `web/js/api.js`：`uploadFile()` 优先 `uploadFileDirectToCdn()`（token → XHR
   直传 → confirm），失败降级走原 multipart 路径；认证仍走 Authorization 头
-  （红线14），上传凭证只进七牛 form 体（七牛直传协议要求）
+  （红线14），上传凭证只进存储 form 体（直传协议要求）
 
-测试：`tests/api/test_workflow_direct_upload.py`（15 用例：token 降级/颁发/
-白名单/超限/TIFF、UC 域名解析三分支、confirm 跨用户/穿越/白名单/stat 缺失/
+测试：`tests/api/test_workflow_direct_upload.py`（17 用例：token 降级/颁发/
+白名单/超限/非法 size/TIFF/不支持后端、confirm 跨用户/穿越/白名单/stat 缺失/
 成功落盘注册/幂等/超限）+ `tests/cdn/test_register_direct_uploaded_mapping.py`
-（6 用例）。
+（5 用例）+ `tests/utils/test_qiniu_storage.py`（新增 6 用例：直传信息颁发/
+基类默认 None/域名解析覆盖/UC 成功缓存/UC 失败回退）。
 
 ## 生效链路
 

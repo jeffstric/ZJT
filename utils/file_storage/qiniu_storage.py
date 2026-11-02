@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import qiniu
 import qiniu.config as _qiniu_config
+import httpx
 
 from config.constant import (
     QINIU_HTTP_CONNECTION_TIMEOUT,
@@ -49,6 +50,10 @@ def _setup_qiniu_logger() -> logging.Logger:
 
 logger = _setup_qiniu_logger()
 
+# 浏览器直传域名解析缓存：(access_key, bucket_name) -> "https://host"，进程内复用。
+# 同 AK 不同 bucket（短期/长期桶）区域可能不同，必须按二元组缓存。
+_browser_upload_host_cache = {}
+
 
 class QiniuFileStorage(BaseFileStorage):
     """
@@ -57,12 +62,22 @@ class QiniuFileStorage(BaseFileStorage):
     使用七牛云SDK进行文件上传和下载链接生成
     """
 
+    # ===== 浏览器直传（七牛 form 直传协议；非七牛后端不走这段）=====
+    # 华东 z0 默认上传域名。不同 bucket 区域域名不同（复用会 400），
+    # 解析优先级：配置 upload_host 覆盖 → UC 按 AK+bucket 查询（进程内缓存）→ 本默认值。
+    DEFAULT_BROWSER_UPLOAD_HOST = "https://upload.qiniup.com"
+    UC_QUERY_URL = "https://uc.qbox.me/v4/query"
+    UC_QUERY_TIMEOUT = 5
+    # 七牛 form 直传成功响应体（returnBody 占位符为七牛语法）
+    _BROWSER_UPLOAD_RETURN_BODY = '{"key":"$(key)","hash":"$(etag)","fsize":"$(fsize)"}'
+
     def __init__(
         self,
         access_key: str,
         secret_key: str,
         bucket_name: str,
-        cdn_domain: str
+        cdn_domain: str,
+        upload_host: str = ""
     ):
         """
         初始化七牛云存储
@@ -72,11 +87,13 @@ class QiniuFileStorage(BaseFileStorage):
             secret_key: 七牛云 Secret Key
             bucket_name: 存储空间名称
             cdn_domain: CDN 加速域名
+            upload_host: 浏览器直传域名覆盖（空则按 bucket 区域经 UC 查询自动解析）
         """
         self.access_key = access_key
         self.secret_key = secret_key
         self.bucket_name = bucket_name
         self.cdn_domain = cdn_domain
+        self.upload_host_override = (upload_host or "").strip()
 
         # 初始化七牛云认证
         self._auth = qiniu.Auth(access_key, secret_key)
@@ -386,6 +403,72 @@ class QiniuFileStorage(BaseFileStorage):
             self._sync_stat,
             key
         )
+
+    async def get_browser_upload_info(
+        self,
+        key: str,
+        max_bytes: int,
+        expires: int = 1800
+    ) -> Optional[dict]:
+        """
+        颁发浏览器直传七牛的信息（七牛 form 直传协议）
+
+        token 绑定单一 key + fsizeLimit + 短时效，浏览器只能上传到服务端
+        指定的对象。协议细节（UC 区域查询域名、returnBody 占位符）全部封装
+        在本实现内，端点层经 BaseFileStorage.get_browser_upload_info 调用。
+
+        Args:
+            key: 目标对象 key（如 "upload/workflow/12/xxx.mp4"）
+            max_bytes: 文件大小上限（写入 fsizeLimit，七牛侧强校验）
+            expires: 上传凭证有效期（秒）
+
+        Returns:
+            dict: {direct_upload, upload_url, token, key, expires}
+        """
+        return {
+            "direct_upload": True,
+            "upload_url": await self._resolve_browser_upload_host(),
+            "token": self.get_upload_token(
+                key=key,
+                expires=expires,
+                policy={
+                    'fileType': 0,  # 标准存储
+                    'fsizeLimit': max_bytes,
+                    'returnBody': self._BROWSER_UPLOAD_RETURN_BODY,
+                },
+            ),
+            "key": key,
+            "expires": expires,
+        }
+
+    async def _resolve_browser_upload_host(self) -> str:
+        """解析浏览器直传域名：构造传入的配置覆盖 → UC 按 AK+bucket 查询（缓存）→ 默认华东域名"""
+        override = self.upload_host_override
+        if override:
+            return override if override.startswith("http") else f"https://{override}"
+
+        cache_key = (self.access_key, self.bucket_name)
+        cached = _browser_upload_host_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            async with httpx.AsyncClient(timeout=self.UC_QUERY_TIMEOUT) as client:
+                resp = await client.get(
+                    self.UC_QUERY_URL,
+                    params={"ak": self.access_key, "bucket": self.bucket_name},
+                )
+                data = resp.json()
+            up = (data or {}).get("up") or {}
+            main_hosts = ((up.get("acc") or {}).get("main")
+                          or ((up.get("old_acc") or {}).get("main")) or [])
+            if main_hosts and isinstance(main_hosts[0], str) and main_hosts[0]:
+                host = f"https://{main_hosts[0]}"
+                _browser_upload_host_cache[cache_key] = host
+                return host
+        except Exception as e:
+            logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
+        return self.DEFAULT_BROWSER_UPLOAD_HOST
 
     def _sync_delete(self, key: str) -> bool:
         """同步删除文件"""

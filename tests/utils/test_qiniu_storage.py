@@ -112,5 +112,140 @@ class TestGetPublicUrlScheme(unittest.TestCase):
         self.assertIn("attname=%E4%B8%96%E7%95%8C.zip", url)
 
 
+
+class TestGetBrowserUploadInfo(unittest.TestCase):
+    """测试 get_browser_upload_info 直传信息颁发（七牛 form 直传协议封装）"""
+
+    def _make_storage(self, upload_host=""):
+        with patch('utils.file_storage.qiniu_storage.qiniu.Auth'):
+            from utils.file_storage.qiniu_storage import QiniuFileStorage
+            storage = QiniuFileStorage(
+                access_key="fake_ak",
+                secret_key="fake_sk",
+                bucket_name="fake_bucket",
+                cdn_domain="cdn.example.com",
+                upload_host=upload_host,
+            )
+            storage._auth = MagicMock()
+            return storage
+
+    def test_returns_token_bound_to_key_with_fsize_limit(self):
+        """token 经 get_upload_token 颁发，policy 带 fsizeLimit 与 returnBody"""
+        storage = self._make_storage(upload_host="https://up.example.com")
+        with patch.object(storage, 'get_upload_token', return_value='tok') as mock_token:
+            import asyncio
+            info = asyncio.run(storage.get_browser_upload_info("upload/workflow/1/a.mp4", 200 * 1024 * 1024))
+        self.assertEqual(info["direct_upload"], True)
+        self.assertEqual(info["upload_url"], "https://up.example.com")
+        self.assertEqual(info["key"], "upload/workflow/1/a.mp4")
+        self.assertEqual(info["token"], "tok")
+        policy = mock_token.call_args[1]['policy']
+        self.assertEqual(policy['fsizeLimit'], 200 * 1024 * 1024)
+        self.assertIn('$(key)', policy['returnBody'])
+
+    def test_base_class_default_returns_none(self):
+        """基类默认不支持浏览器直传（如 RunningHub 后端），端点据此降级"""
+        import asyncio
+        from utils.file_storage.base import BaseFileStorage
+
+        class _Minimal(BaseFileStorage):
+            async def upload_data(self, key, data, content_type=None):
+                raise NotImplementedError
+
+            async def upload_file(self, key, file_path, content_type=None):
+                raise NotImplementedError
+
+            def get_download_url(self, key, expires=3600):
+                return key
+
+            def get_public_url(self, key):
+                return key
+
+            async def delete(self, key):
+                return True
+
+        self.assertIsNone(asyncio.run(_Minimal().get_browser_upload_info("k", 100)))
+
+
+class TestResolveBrowserUploadHost(unittest.TestCase):
+    """测试直传域名解析：配置覆盖 → UC 查询（缓存）→ 默认华东域名"""
+
+    def _make_storage(self, upload_host=""):
+        with patch('utils.file_storage.qiniu_storage.qiniu.Auth'):
+            from utils.file_storage.qiniu_storage import QiniuFileStorage
+            return QiniuFileStorage(
+                access_key="fake_ak",
+                secret_key="fake_sk",
+                bucket_name="fake_bucket",
+                cdn_domain="cdn.example.com",
+                upload_host=upload_host,
+            )
+
+    def tearDown(self):
+        import utils.file_storage.qiniu_storage as qiniu_mod
+        qiniu_mod._browser_upload_host_cache.pop(("fake_ak", "fake_bucket"), None)
+
+    def test_override_preferred_without_uc_query(self):
+        """构造传入 upload_host 覆盖时直接使用，不发 UC 查询"""
+        import asyncio
+        storage = self._make_storage(upload_host="up.example.com")
+        host = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host, "https://up.example.com")
+
+    def test_uc_query_success_parses_and_caches(self):
+        """UC 查询成功解析 acc.main 首个域名并写入进程缓存"""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        storage = self._make_storage()
+
+        class _FakeResp:
+            def json(self):
+                return {"up": {"acc": {"main": ["upload-cn-east-2.qiniup.com"]}}}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, params=None):
+                return _FakeResp()
+
+        with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', _FakeClient):
+            host = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host, "https://upload-cn-east-2.qiniup.com")
+        # 第二次命中缓存：换一个会抛异常的 client 仍返回缓存值
+        with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', side_effect=RuntimeError):
+            host2 = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host2, "https://upload-cn-east-2.qiniup.com")
+
+    def test_uc_query_failure_falls_back_to_default(self):
+        """UC 查询异常回退默认华东上传域名（此时直传可能 400，端点侧前端降级 multipart 兜底）"""
+        import asyncio
+        import utils.file_storage.qiniu_storage as qiniu_mod
+
+        storage = self._make_storage()
+
+        class _BoomClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                raise RuntimeError("uc down")
+
+            async def __aexit__(self, *exc):
+                return False
+
+        with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', _BoomClient):
+            host = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host, qiniu_mod.QiniuFileStorage.DEFAULT_BROWSER_UPLOAD_HOST)
+
+
+
 if __name__ == '__main__':
     unittest.main()
