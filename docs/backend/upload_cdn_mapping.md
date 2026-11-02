@@ -118,7 +118,7 @@ cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路�
 **方案**（浏览器直传，服务器只做确认与落主副本）：
 
 ```
-upload-token（token 绑定 key + fsizeLimit + returnBody，30min 过期）
+upload-token（token 绑定 key + fsizeLimit + insertOnly + returnBody，30min 过期）
   → 浏览器 XHR 直传七牛（进度可观测，不经服务器）
   → upload-confirm：七牛 stat 核实 → 签名 URL 流式回源下载到本地素材目录
     （临时文件 + 大小上限 + 魔数校验 + os.replace 原子落盘）
@@ -150,16 +150,20 @@ upload-token（token 绑定 key + fsizeLimit + returnBody，30min 过期）
     不支持浏览器直传，端点自动降级 multipart）。换 OSS/S3 等后端只需实现
     `get_browser_upload_info`（OSS PostObject / S3 presigned PUT），端点零改动
   - `QiniuFileStorage.get_browser_upload_info()`：颁发绑定 key + fsizeLimit +
-    returnBody 的 form 直传凭证；七牛协议细节（UC 区域查询 URL、占位符语法、
+    insertOnly + returnBody 的 form 直传凭证。insertOnly=1 禁止覆盖同一 key：
+    confirm 成功后 `cdn_redirect_middleware` 按 cloud_path 302，不再重做魔数
+    校验。七牛协议细节（UC 区域查询 URL、占位符语法、
     `DEFAULT_BROWSER_UPLOAD_HOST`）全部封装在本实现内
   - `QiniuFileStorage._resolve_browser_upload_host()`：构造参数 `upload_host`
-    覆盖 → 七牛 UC 按 AK+bucket 查询区域域名（进程内按 (AK, bucket) 二元组
-    缓存，同 AK 不同桶区域可能不同）→ 默认华东 `upload.qiniup.com`（UC 失败
-    且桶不在华东时直传会 400，前端自动降级 multipart 兜底；可用
-    `file_storage.{section}.upload_host` 配置固定，factory 透传构造）
+    覆盖 → 七牛 UC `GET /v4/query` 按 `hosts[0].up.domains`（空则 `up.old`）
+    解析上传域名（进程内按 (AK, bucket) 二元组缓存，同 AK 不同桶区域可能不同；
+    非 2xx、旧版 `up.acc.main` 或没有域名时不写缓存）→ 默认华东
+    `upload.qiniup.com`（UC 失败且桶不在华东时直传会 400，前端自动降级
+    multipart 兜底；可用 `file_storage.{section}.upload_host` 配置固定，
+    factory 透传构造）
   - `QiniuFileStorage.stat()`：BucketManager 核实文件存在/大小，防伪造 confirm
-  - `factory.py`：透传 section 配置的 `upload_host`（`_load_config` 已合并
-    DB 动态覆盖）
+  - `factory.py`：透传 section 配置的 `upload_host`。`_load_config` 的 DB
+    动态覆盖包含 `upload_host`，实例缓存键也包含它，只改直传域名会换新实例
 - `server.py`：`POST /api/video-workflow/upload-token`（key=`upload/workflow/{uid}/...`
   绑定登录用户 + 扩展名白名单 + 大小预校验（含 size<=0 拒绝）+ `getattr`
   防御鸭子类型存储，同 world-upload-token 先例）、
@@ -177,8 +181,9 @@ upload-token（token 绑定 key + fsizeLimit + returnBody，30min 过期）
 测试：`tests/api/test_workflow_direct_upload.py`（17 用例：token 降级/颁发/
 白名单/超限/非法 size/TIFF/不支持后端、confirm 跨用户/穿越/白名单/stat 缺失/
 成功落盘注册/幂等/超限）+ `tests/cdn/test_register_direct_uploaded_mapping.py`
-（5 用例）+ `tests/utils/test_qiniu_storage.py`（新增 6 用例：直传信息颁发/
-基类默认 None/域名解析覆盖/UC 成功缓存/UC 失败回退）。
+（5 用例）+ `tests/utils/test_qiniu_storage.py`（直传信息颁发含 insertOnly/
+基类默认 None/域名解析覆盖/UC v4 domains 缓存/domains 为空走 up.old/
+旧版 up.acc.main 不解析且不缓存/UC 失败回退）。
 
 ## 生效链路
 

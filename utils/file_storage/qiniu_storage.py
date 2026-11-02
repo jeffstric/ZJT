@@ -55,6 +55,30 @@ logger = _setup_qiniu_logger()
 _browser_upload_host_cache = {}
 
 
+def _upload_host_from_uc_v4(data) -> Optional[str]:
+    """从 UC /v4/query 响应取出浏览器上传域名。
+
+    v4 是 hosts[].up.domains（备选 up.old），不是旧版 up.acc.main。
+    """
+    if not isinstance(data, dict):
+        return None
+    hosts = data.get("hosts")
+    if not isinstance(hosts, list) or not hosts or not isinstance(hosts[0], dict):
+        return None
+    up = hosts[0].get("up")
+    if not isinstance(up, dict):
+        return None
+    for field in ("domains", "old"):
+        domains = up.get(field)
+        if not isinstance(domains, list):
+            continue
+        for item in domains:
+            if isinstance(item, str) and item.strip():
+                host = item.strip()
+                return host if host.startswith("http") else f"https://{host}"
+    return None
+
+
 class QiniuFileStorage(BaseFileStorage):
     """
     七牛云文件存储实现
@@ -413,9 +437,10 @@ class QiniuFileStorage(BaseFileStorage):
         """
         颁发浏览器直传七牛的信息（七牛 form 直传协议）
 
-        token 绑定单一 key + fsizeLimit + 短时效，浏览器只能上传到服务端
-        指定的对象。协议细节（UC 区域查询域名、returnBody 占位符）全部封装
-        在本实现内，端点层经 BaseFileStorage.get_browser_upload_info 调用。
+        token 绑定单一 key + fsizeLimit + insertOnly + 短时效，浏览器只能新增
+        服务端指定的对象，不能覆盖。confirm 之后播放会 302 到该 key，不再重做
+        魔数校验，因此凭证必须拒绝覆盖。协议细节（UC 区域查询域名、returnBody
+        占位符）全部封装在本实现内，端点层经 BaseFileStorage.get_browser_upload_info 调用。
 
         Args:
             key: 目标对象 key（如 "upload/workflow/12/xxx.mp4"）
@@ -434,6 +459,8 @@ class QiniuFileStorage(BaseFileStorage):
                 policy={
                     'fileType': 0,  # 标准存储
                     'fsizeLimit': max_bytes,
+                    # confirm 成功后 CDN 302 不再校验内容，同一 key 不能被覆盖
+                    'insertOnly': 1,
                     'returnBody': self._BROWSER_UPLOAD_RETURN_BODY,
                 },
             ),
@@ -458,14 +485,13 @@ class QiniuFileStorage(BaseFileStorage):
                     self.UC_QUERY_URL,
                     params={"ak": self.access_key, "bucket": self.bucket_name},
                 )
+                resp.raise_for_status()
                 data = resp.json()
-            up = (data or {}).get("up") or {}
-            main_hosts = ((up.get("acc") or {}).get("main")
-                          or ((up.get("old_acc") or {}).get("main")) or [])
-            if main_hosts and isinstance(main_hosts[0], str) and main_hosts[0]:
-                host = f"https://{main_hosts[0]}"
+            host = _upload_host_from_uc_v4(data)
+            if host:
                 _browser_upload_host_cache[cache_key] = host
                 return host
+            logger.warning("七牛 UC 区域查询未返回上传域名，回退默认上传域名")
         except Exception as e:
             logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
         return self.DEFAULT_BROWSER_UPLOAD_HOST

@@ -130,7 +130,7 @@ class TestGetBrowserUploadInfo(unittest.TestCase):
             return storage
 
     def test_returns_token_bound_to_key_with_fsize_limit(self):
-        """token 经 get_upload_token 颁发，policy 带 fsizeLimit 与 returnBody"""
+        """token 经 get_upload_token 颁发，policy 带 fsizeLimit、insertOnly 与 returnBody"""
         storage = self._make_storage(upload_host="https://up.example.com")
         with patch.object(storage, 'get_upload_token', return_value='tok') as mock_token:
             import asyncio
@@ -141,6 +141,7 @@ class TestGetBrowserUploadInfo(unittest.TestCase):
         self.assertEqual(info["token"], "tok")
         policy = mock_token.call_args[1]['policy']
         self.assertEqual(policy['fsizeLimit'], 200 * 1024 * 1024)
+        self.assertEqual(policy['insertOnly'], 1)
         self.assertIn('$(key)', policy['returnBody'])
 
     def test_base_class_default_returns_none(self):
@@ -193,15 +194,25 @@ class TestResolveBrowserUploadHost(unittest.TestCase):
         self.assertEqual(host, "https://up.example.com")
 
     def test_uc_query_success_parses_and_caches(self):
-        """UC 查询成功解析 acc.main 首个域名并写入进程缓存"""
+        """UC v4 查询解析 hosts[0].up.domains 首个域名并写入进程缓存"""
         import asyncio
-        from unittest.mock import AsyncMock
 
         storage = self._make_storage()
 
         class _FakeResp:
+            def raise_for_status(self):
+                return None
+
             def json(self):
-                return {"up": {"acc": {"main": ["upload-cn-east-2.qiniup.com"]}}}
+                return {
+                    "hosts": [{
+                        "region": "cn-east-2",
+                        "up": {
+                            "domains": ["upload-cn-east-2.qiniup.com", "up-cn-east-2.qiniup.com"],
+                            "old": ["upload-cn-east-2.qbox.me"],
+                        },
+                    }]
+                }
 
         class _FakeClient:
             def __init__(self, *args, **kwargs):
@@ -223,6 +234,72 @@ class TestResolveBrowserUploadHost(unittest.TestCase):
         with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', side_effect=RuntimeError):
             host2 = asyncio.run(storage._resolve_browser_upload_host())
         self.assertEqual(host2, "https://upload-cn-east-2.qiniup.com")
+
+    def test_uc_v4_falls_back_to_old_when_domains_empty(self):
+        """domains 为空时使用 up.old，仍按 v4 结构解析"""
+        import asyncio
+
+        storage = self._make_storage()
+
+        class _FakeResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"hosts": [{"up": {"domains": [], "old": ["upload-z1.qbox.me"]}}]}
+
+        class _FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, params=None):
+                return _FakeResp()
+
+        with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', _FakeClient):
+            host = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host, "https://upload-z1.qbox.me")
+
+    def test_legacy_acc_main_is_not_parsed(self):
+        """旧版 up.acc.main 不是 v4 响应，不能当成上传域名，也不写入缓存"""
+        import asyncio
+        import utils.file_storage.qiniu_storage as qiniu_mod
+
+        storage = self._make_storage()
+        calls = {"n": 0}
+
+        class _LegacyResp:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"up": {"acc": {"main": ["upload-z2.qiniup.com"]}}}
+
+        class _LegacyClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def get(self, url, params=None):
+                calls["n"] += 1
+                return _LegacyResp()
+
+        with patch('utils.file_storage.qiniu_storage.httpx.AsyncClient', _LegacyClient):
+            host = asyncio.run(storage._resolve_browser_upload_host())
+            host2 = asyncio.run(storage._resolve_browser_upload_host())
+        self.assertEqual(host, qiniu_mod.QiniuFileStorage.DEFAULT_BROWSER_UPLOAD_HOST)
+        self.assertEqual(host2, qiniu_mod.QiniuFileStorage.DEFAULT_BROWSER_UPLOAD_HOST)
+        self.assertEqual(calls["n"], 2)
 
     def test_uc_query_failure_falls_back_to_default(self):
         """UC 查询异常回退默认华东上传域名（此时直传可能 400，端点侧前端降级 multipart 兜底）"""
