@@ -410,6 +410,20 @@ QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES = 1800
 # 前端直传 key 前缀，便于后台批量清理与统计。
 WORLD_IMPORT_KEY_PREFIX = "world_import"
 
+# ===== 工作流素材前端直传（视频/图片/音频；省服务器进出带宽，根治播放 206→302 切换竞态）=====
+# 流程：upload-token（经 BaseFileStorage.get_browser_upload_info 颁发直传凭证，
+# 各存储后端的直传协议细节封装在各自实现内）→ 浏览器 XHR 直传存储 →
+# upload-confirm 时服务端从存储回源下载到本地（大小 + 魔数校验）→ 本地落盘成功
+# 才插入 media_file_mapping（cloud_path 直接置位）。本地文件为主副本、CDN 为加速层，
+# mapping 建立时 CDN 上已有文件，首个播放请求即 302 命中，无"本地 206→302"中途换源窗口。
+# server.auto_upload_to_cdn=false 时 token 接口直接返回 direct_upload=false，
+# 前端降级走既有 multipart 上传，行为与直传功能上线前完全一致。
+# confirm 回源下载总超时（秒）：asyncio.wait_for 硬上限（超时红线第 9/10 条）。
+WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT = 300
+# 回源下载 httpx 空闲超时（秒）：约束单次读阻塞上限，避免 wait_for 超时后
+# 工作线程仍在无进度地挂着（线程无法被取消，只能靠 httpx 自身超时收敛）。
+WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT = 60
+
 # ===== 大世界导入：后端限速下载与共享文件任务 =====
 # 限速下载速率上限（字节/秒）：避免拉取大 zip 打满服务器出口带宽影响其他接口/用户。
 WORLD_IMPORT_DOWNLOAD_RATE_BPS = 20 * 1024 * 1024   # 默认 20 MB/s

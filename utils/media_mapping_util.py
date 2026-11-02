@@ -157,6 +157,68 @@ def register_uploaded_file_mapping(
         return None
 
 
+def register_direct_uploaded_mapping(
+    user_id: Optional[int],
+    local_path: str,
+    entity_type: int,
+    policy_code: str,
+    file_size: Optional[int] = None,
+    source_id: Optional[int] = None,
+) -> Optional[int]:
+    """
+    前端直传七牛素材的 mapping 注册（cloud_path 直接置位，不再触发服务端上传）。
+
+    与 register_uploaded_file_mapping 的差异：直传文件已在七牛，无需 trigger_cdn_upload
+    重复上传；本地文件由 upload-confirm 在调用本函数前回源落盘并校验（大小+魔数），
+    本地为主副本、CDN 为加速层，与 multipart 链路落定后的终态一致。
+
+    幂等：同路径已注册时直接返回现有 mapping id（cloud_path 为空则补置位）。
+    本函数绝不抛异常——注册失败只记 warning，返回 None。
+
+    Args:
+        user_id: 上传用户 ID（可为 None）
+        local_path: 相对项目根、含 upload/ 前缀的 POSIX 路径（与七牛 key 相同），
+            如 "upload/workflow/12/xxx.mp4"
+        entity_type: MediaFileEntity 枚举值（如 WORKFLOW）
+        policy_code: MediaFilePolicy 策略（用户长期资产用 NEVER_EXPIRE）
+        file_size: 文件大小（字节），confirm 阶段从七牛 stat/回源下载实测获得
+        source_id: 关联业务记录 ID（可选）
+
+    Returns:
+        mapping_id；注册失败返回 None
+    """
+    try:
+        from model.media_file_mapping import MediaFileMappingModel
+        from utils.mime_type import get_mime_type_from_extension
+
+        if not local_path:
+            return None
+
+        existing = MediaFileMappingModel.get_by_local_path(local_path)
+        if existing:
+            if not existing.cloud_path:
+                MediaFileMappingModel.update_cloud_path(local_path, local_path)
+            return existing.id
+
+        ext = os.path.splitext(local_path)[1].lower()
+        mapping_id = MediaFileMappingModel.create(
+            user_id=user_id,
+            local_path=local_path,
+            cloud_path=local_path,
+            policy_code=policy_code,
+            entity_type=entity_type,
+            source_id=source_id,
+            media_type=get_mime_type_from_extension(ext),
+            original_url=None,
+            file_size=file_size,
+        )
+        logger.info(f"Registered direct-upload CDN mapping {mapping_id} for: {local_path}")
+        return mapping_id
+    except Exception as e:
+        logger.warning(f"注册直传 CDN mapping 失败（不影响上传主流程）: {local_path}, {e}")
+        return None
+
+
 def ensure_entity_image_mapping(
     user_id,
     image_url: str,
