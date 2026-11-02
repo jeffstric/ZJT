@@ -1135,6 +1135,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
     DriverKey.VIDEO_ENHANCE: DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,  # RunningHub 视频高清修复（OpenAPI v2 AI App）
     DriverKey.QWEN_2_1_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,  # qwenimage2.1（图片编辑 + 文生图）
+    DriverKey.MOSS_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1,  # moss 文生图（仅文生图）
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API

@@ -965,6 +965,13 @@ def register_all_drivers():
     except ImportError as e:
         logger.warning(f"Failed to import RunninghubAiAppImageV1Driver: {e}")
 
+    try:
+        from .runninghub_ai_app_moss_v1_driver import RunninghubAiAppMossV1Driver
+        # 注册 moss 文生图（RunningHub OpenAPI v2 AI App，仅文生图）
+        VideoDriverFactory.register_driver(DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1, RunninghubAiAppMossV1Driver)
+    except ImportError as e:
+        logger.warning(f"Failed to import RunninghubAiAppMossV1Driver: {e}")
+
     # Grok 通用聚合站点驱动注册（无条件注册，配置检查在运行时进行）
     try:
         from .grok_common_v1_driver import (
