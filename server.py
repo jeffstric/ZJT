@@ -6,6 +6,7 @@ import uvicorn
 import httpx
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 import math
@@ -7015,11 +7016,19 @@ async def upload_workflow_asset(
 # 直传域名解析缓存：(access_key, bucket_name) -> "https://host"，进程内复用
 _qiniu_direct_upload_host_cache = {}
 
-# 回源下载的同步实现（工作线程中执行；线程不可取消，靠 httpx 自身超时收敛）。
+# confirm 回源下载专用长寿线程池（模块级，禁用 with 上下文——红线第 10 条）：
+# 线程不可取消，慢速滴流下载会让线程存活超过 wait_for 时限；用独立小池隔离，
+# 避免占满默认执行器（asyncio.to_thread 共享池）拖累 multipart 落盘等其他 to_thread 调用。
+_confirm_download_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cdn-confirm-dl")
+
+# 回源下载的同步实现（工作线程中执行；线程不可取消，靠 httpx 自身超时收敛：
+# WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT 是"单次读空闲超时"而非总时长，
+# 慢速但持续的下载可存活超过 wait_for 时限，wait_for 只决定接口多早放弃并降级）。
 # 临时文件在 finally 中清理（超时红线第 10 条：被 wait_for 包装的 coroutine 必须自清理）。
 def _download_cdn_asset_to_local(download_url: str, final_path: str, ext: str,
                                  expected_size: int, max_bytes: int) -> int:
-    tmp_path = final_path + ".download_tmp"
+    # tmp 名带 uuid：同 key 并发 confirm（前端超时重试）不会互写同一临时文件
+    tmp_path = f"{final_path}.{uuid.uuid4().hex[:8]}.download_tmp"
     total = 0
     try:
         timeout = WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT
@@ -7136,6 +7145,11 @@ async def upload_workflow_asset_direct_token(
         return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
 
     max_bytes = max_upload_size_for_ext(ext)
+    if size is not None and size <= 0:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "文件大小非法"}
+        )
     if size is not None and size > max_bytes:
         return JSONResponse(
             status_code=400,
@@ -7281,14 +7295,17 @@ async def confirm_workflow_asset_direct_upload(
             content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
         )
 
-    # 回源下载到本地素材目录（主副本）；本地落盘成功才入库
+    # 回源下载到本地素材目录（主副本）；本地落盘成功才入库。
+    # 用 confirm 专用线程池（隔离默认执行器），wait_for 只约束接口侧放弃时限；
+    # 线程本身不可取消，靠 httpx 单次读空闲超时自然收敛（见 _download_cdn_asset_to_local 注释）。
     asset_dir = get_upload_subdir("workflow", str(auth_user_id))
     final_path = os.path.join(asset_dir, filename)
     download_url = storage.get_download_url(key, expires=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT)
     started = time.monotonic()
     try:
         total = await asyncio.wait_for(
-            asyncio.to_thread(
+            asyncio.get_running_loop().run_in_executor(
+                _confirm_download_executor,
                 _download_cdn_asset_to_local,
                 download_url, final_path, ext, expected_size, max_bytes
             ),

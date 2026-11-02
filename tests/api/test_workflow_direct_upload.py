@@ -161,6 +161,17 @@ def test_token_rejects_oversize(client, cdn_enabled):
     assert resp.status_code == 400
 
 
+def test_token_rejects_nonpositive_size(client, cdn_enabled):
+    """非法大小（负数/0）预校验 400，不依赖七牛 fsizeLimit 兜底"""
+    for bad_size in ("-1", "0"):
+        resp = client.post(
+            "/api/video-workflow/upload-token",
+            data={"filename": "clip.mp4", "size": bad_size},
+            headers={"Authorization": "valid-token"},
+        )
+        assert resp.status_code == 400, bad_size
+
+
 def test_token_tiff_falls_back_to_multipart(client, cdn_enabled):
     """TIFF 需服务端转码 PNG，直传 key 会与转码产物脱节 → 走 multipart"""
     resp = client.post(
