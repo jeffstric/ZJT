@@ -4022,17 +4022,17 @@
           const videoModelEl = nodeEl.querySelector('.shot-frame-video-model');
           const videoDurationEl = nodeEl.querySelector('.shot-frame-video-duration');
           
-          // 恢复视频生成模式（先恢复模式，再填充模型列表）
-          if(nodeData.data.videoMode) {
-            node.data.videoMode = nodeData.data.videoMode;
-            if (typeof nodeEl._syncVideoModeButtons === 'function') {
-              nodeEl._syncVideoModeButtons(nodeData.data.videoMode);
-            } else {
-              const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
-              modeBtns.forEach(btn => {
-                btn.classList.toggle('is-active', btn.dataset.mode === nodeData.data.videoMode);
-              });
-            }
+          // 恢复视频生成模式（先恢复模式，再填充模型列表）。
+          // 新建分镜默认是参考生视频；没有 videoMode 的旧工作流仍按首帧生视频复原。
+          const restoredVideoMode = nodeData.data.videoMode || 'first_last_frame';
+          node.data.videoMode = restoredVideoMode;
+          if (typeof nodeEl._syncVideoModeButtons === 'function') {
+            nodeEl._syncVideoModeButtons(restoredVideoMode);
+          } else {
+            const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
+            modeBtns.forEach(btn => {
+              btn.classList.toggle('is-active', btn.dataset.mode === restoredVideoMode);
+            });
           }
 
           // 恢复分镜模型选择器（确保已保存的值在下拉框中可见）

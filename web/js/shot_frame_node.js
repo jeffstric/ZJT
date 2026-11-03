@@ -53,9 +53,10 @@
       }
       const shotData = opts && opts.shotData ? opts.shotData : {};
       
-      // 默认模型：图片优先使用 gpt-image-2
+      // 默认模型：图片优先使用 gpt-image-2。
+      // 新建分镜的视频模式是参考生视频，默认模型走参考生视频性价比档。
       let defaultImageModel = 'gpt-image-2';
-      let defaultVideoModel = 'wan22';
+      let defaultVideoModel = 'minimax_h3_r2v';
       if(window.TaskConfig && window.TaskConfig.isLoaded()) {
         const imageOptions = window.TaskConfig.getModelOptionsForCategory('image_edit');
         const gptImage2 = imageOptions.find(o => o.value === 'gpt-image-2');
@@ -65,11 +66,16 @@
           defaultImageModel = imageOptions[0].value;
         }
         const videoOptions = window.TaskConfig.getModelOptionsForCategory('image_to_video');
-        if(videoOptions.length > 0) defaultVideoModel = videoOptions[0].value;
+        const referenceOptions = videoOptions.filter(opt => {
+          const modes = opt.supportedImageModes || [];
+          return modes.includes('multi_reference');
+        });
+        const videoPool = referenceOptions.length > 0 ? referenceOptions : videoOptions;
+        if(videoPool.length > 0) defaultVideoModel = videoPool[0].value;
         // 默认优先目录「性价比」档（与下方 populate 一致）
-        if (window.ModelCatalog && videoOptions.length > 0) {
+        if (window.ModelCatalog && videoPool.length > 0) {
           const catalog = window.TaskConfig.getCatalog ? window.TaskConfig.getCatalog() : null;
-          const valueHit = window.ModelCatalog.findTaskByTrack(videoOptions, 'video.image_to_video', catalog, 'value');
+          const valueHit = window.ModelCatalog.findTaskByTrack(videoPool, 'video.reference_to_video', catalog, 'value');
           if (valueHit && valueHit.value) defaultVideoModel = valueHit.value;
         }
       }
@@ -151,7 +157,7 @@
           videoDuration: 5,
           videoModel: inheritedVideoModel,
           videoResolution: opts?.data?.videoResolution || opts?.videoResolution || '',
-          videoMode: 'first_last_frame',  // 'first_last_frame' | 'multi_reference'
+          videoMode: 'multi_reference',  // 新建默认参考生视频；旧数据缺字段时仍回首帧模式
           processFace: opts?.data?.processFace ?? false,  // 是否处理人脸（仅 seedance2.0 商业版生效）
         }
       };
@@ -286,10 +292,10 @@
               <div class="field field-always-visible shot-frame-video-mode-field" style="margin-top: 8px;">
                 <div class="label" data-i18n="video_gen_mode_label">${window.t ? window.t('video_gen_mode_label') : '视频生成模式'}</div>
                 <div class="shot-frame-video-mode-toggle">
-                  <button type="button" class="video-mode-btn is-active" data-mode="first_last_frame" data-i18n="video_mode_first_frame">${window.t ? window.t('video_mode_first_frame') : '首帧模式'}</button>
-                  <button type="button" class="video-mode-btn" data-mode="multi_reference" data-i18n="video_mode_reference">${window.t ? window.t('video_mode_reference') : '参考模式'}</button>
+                  <button type="button" class="video-mode-btn" data-mode="first_last_frame" data-i18n="video_mode_first_frame">${window.t ? window.t('video_mode_first_frame') : '首帧模式'}</button>
+                  <button type="button" class="video-mode-btn is-active" data-mode="multi_reference" data-i18n="video_mode_reference">${window.t ? window.t('video_mode_reference') : '参考模式'}</button>
                 </div>
-                <div class="video-mode-hint" data-i18n="video_mode_hint_first_frame" style="font-size:11px; color:#6b7280; margin-top:4px;">${window.t ? window.t('video_mode_hint_first_frame') : '先生成分镜图作为视频首帧'}</div>
+                <div class="video-mode-hint" data-i18n="video_mode_hint_reference" style="font-size:11px; color:#6b7280; margin-top:4px;">${window.t ? window.t('video_mode_hint_reference') : '使用角色、场景、道具参考图生成视频。已设置的首尾帧显示在只读的首尾帧提示词里'}</div>
               </div>
               <div class="field field-always-visible" style="margin-top: 8px;">
                 <div class="label" data-i18n="shot_group_video_model_label">${window.t ? window.t('shot_group_video_model_label') : '视频模型'}</div>
@@ -1440,8 +1446,9 @@
       // 暴露更新引用的方法供外部调用
       node.updateReferences = updateShotReferences;
 
-      // 初始渲染
+      // 初始渲染。新建节点默认参考生视频，这里同步提示文案和参考图可见性。
       updateShotReferences();
+      updateModeUI();
 
       // ============ 引用匹配与显示逻辑结束 ============
 
