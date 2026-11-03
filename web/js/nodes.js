@@ -777,8 +777,6 @@
     // 场景选择弹窗事件监听
     const locationModalClose = document.getElementById('locationModalClose');
     const locationModal = document.getElementById('locationModal');
-    const locationWorldSelect = document.getElementById('locationWorldSelect');
-    const locationSearchInput = document.getElementById('locationSearchInput');
 
     if(locationModalClose){
       locationModalClose.addEventListener('click', (e) => {
@@ -793,26 +791,9 @@
       });
     }
 
-    if(locationWorldSelect){
-      locationWorldSelect.addEventListener('change', (e) => {
-        const worldId = e.target.value;
-        loadLocationsForWorld(worldId);
-      });
-    }
-
-    if(locationSearchInput){
-      let searchTimeout;
-      locationSearchInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-          const keyword = e.target.value.trim();
-          const worldId = locationWorldSelect ? locationWorldSelect.value : '';
-          if(worldId){
-            loadLocationsForWorld(worldId, keyword);
-          }
-        }, 300);
-      });
-    }
+    // 搜索和切换世界只由 events.js 的 loadLocations 渲染。
+    // 这里再绑一次会在约 300ms 后用 .location-card 盖掉可点击列表；
+    // 从画布打开时没有分镜上下文，卡片点击会被 selectLocation 直接返回。
 
     function renderShotGroupEditForm(shotGroupData, maxGroupDuration){
       const groupId = shotGroupData.groupId || shotGroupData.group_id || '';
@@ -1377,6 +1358,11 @@
     }
 
     async function loadLocationsForWorld(worldId, keyword = ''){
+      // 与画布场景弹窗共用同一套列表。再画 .location-card 会盖掉可点击结果。
+      if(typeof loadLocations === 'function'){
+        return loadLocations(worldId, keyword);
+      }
+
       const locationList = document.getElementById('locationList');
       if(!locationList) return;
 
@@ -1426,8 +1412,17 @@
             `;
 
             // hover 由 CSS .location-card:hover 处理，兼容暗色
+            // 分镜里打开时写入当前分镜；画布里打开时创建场景节点。
             locationCard.addEventListener('click', () => {
-              selectLocation(location);
+              if(currentLocationSelectionContext){
+                selectLocation(location);
+                return;
+              }
+              if(typeof createLocationNode !== 'function') return;
+              const nodeId = createLocationNode(location);
+              closeLocationModal();
+              if(typeof renderMinimap === 'function') renderMinimap();
+              if(typeof startNodePlacing === 'function') startNodePlacing(nodeId);
             });
 
             locationList.appendChild(locationCard);
