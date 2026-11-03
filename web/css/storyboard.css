@@ -3291,6 +3291,45 @@ button {
     flex-shrink: 0;
 }
 
+/* 生成中的视频卡要放下「取消」。16:9 扁盒大约 84×47，overflow:hidden 会裁掉文字按钮。 */
+.candidate-video-grid .candidate-thumb.is-loading {
+    aspect-ratio: auto;
+    height: auto;
+    min-height: 86px;
+}
+
+.candidate-video-cancel {
+    position: relative;
+    z-index: 6;
+    margin-top: 2px;
+    padding: 0 8px;
+    height: 18px;
+    border-radius: 9px;
+    border: 1px solid #dc2626;
+    background: #fff;
+    color: #dc2626;
+    font-size: 10px;
+    line-height: 16px;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.candidate-video-cancel:hover:not(:disabled),
+.candidate-video-cancel:focus-visible {
+    background: #dc2626;
+    color: #fff;
+}
+
+.candidate-video-cancel:disabled,
+.candidate-video-cancel.is-busy {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+.candidate-placeholder.candidate-cancelled {
+    color: #64748b;
+}
+
 .candidate-video-thumb {
     position: relative;
     flex: 1 1 auto;

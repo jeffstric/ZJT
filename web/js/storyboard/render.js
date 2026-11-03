@@ -1900,12 +1900,50 @@ function isCandidateTaskFailed(status) {
 }
 
 function isCandidateTaskRunning(status) {
-    // ai_tools: 0=PENDING, 1=PROCESSING, 6=DOWNLOADING；也兼容字符串态。
-    // 口径与 polling.js hasRunning 一致：下载中仍算进行中
-    return status === 0 || status === 1 || status === 6
+    // ai_tools: 0=PENDING, 1=PROCESSING, 3=SYNC_QUEUED, 4=WAITING_PARAM_PREPARE,
+    // 5=WAITING_BEFORE_FINISH, 6=DOWNLOADING。排队态也要出生成占位，视频卡上才能取消。
+    return status === 0 || status === 1 || status === 3 || status === 4 || status === 5 || status === 6
+        || status === '0' || status === '1' || status === '3' || status === '4' || status === '5' || status === '6'
         || status === 'pending' || status === 'running'
         || status === 'queued' || status === 'processing'
         || status === 'downloading';
+}
+
+function isCandidateTaskCancelled(status) {
+    return status === -2 || status === '-2' || status === 'cancelled' || status === 'CANCELLED';
+}
+
+function isCandidateTaskCompleted(status) {
+    return status === 2 || status === '2' || status === 'completed' || status === 'success' || status === 'SUCCESS';
+}
+
+function sceneVideoCancelPhase(aiToolId) {
+    const key = aiToolId == null || aiToolId === '' ? '' : String(aiToolId);
+    if (!key) return '';
+    return state.sceneVideoCancelByToolId?.[key] || '';
+}
+
+/** 仅视频生成占位可取消。图片候选、失败、已完成、已取消都不出按钮。 */
+function isCandidateVideoCancellable(kind, status, aiToolId) {
+    if (kind !== 'video' || aiToolId == null || aiToolId === '') return false;
+    const phase = sceneVideoCancelPhase(aiToolId);
+    if (phase === 'cancelled') return false;
+    if (isCandidateTaskFailed(status) || isCandidateTaskCancelled(status) || isCandidateTaskCompleted(status)) return false;
+    return true;
+}
+
+function renderCandidateVideoCancelButton(aiToolId) {
+    const key = String(aiToolId);
+    const phase = sceneVideoCancelPhase(key);
+    const busy = phase === 'busy' || phase === 'cancelling';
+    const label = busy
+        ? i18nT('status_video_cancelling', '取消中')
+        : i18nT('btn_cancel', '取消');
+    const title = i18nT('ai_task_cancel_queue_title', '任务仍在排队（尚未提交上游）时可取消，取消后自动退还算力');
+    return `<button type="button" class="candidate-video-cancel${busy ? ' is-busy' : ''}"
+            data-action="cancel-scene-video" data-ai-tool-id="${escapeHtml(key)}"
+            title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}"
+            ${busy ? 'disabled aria-busy="true"' : ''}>${escapeHtml(label)}</button>`;
 }
 
 function renderCandidateTimelineButton(aiToolId, extraClass = '') {
@@ -1931,11 +1969,28 @@ function renderCandidatePlaceholder(status, kind = 'image', error, aiToolId) {
             ${renderCandidateTimelineButton(aiToolId)}
         </div>`;
     }
+    const cancelPhase = kind === 'video' ? sceneVideoCancelPhase(aiToolId) : '';
+    const cancelled = kind === 'video' && (isCandidateTaskCancelled(status) || cancelPhase === 'cancelled');
+    if (cancelled) {
+        const label = i18nT('status_video_cancelled', '已取消');
+        return `<div class="candidate-placeholder candidate-cancelled">
+            ${icon('close', 16)}
+            <span>${label}</span>
+            ${renderCandidateTimelineButton(aiToolId)}
+        </div>`;
+    }
     // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
-    const label = kind === 'video' ? i18nT('status_video_generating', '视频生成中') : i18nT('status_generating', '生成中');
-    return `<div class="candidate-placeholder candidate-loading">
+    const cancelling = cancelPhase === 'busy' || cancelPhase === 'cancelling';
+    const label = cancelling
+        ? i18nT('status_video_cancelling', '取消中')
+        : (kind === 'video' ? i18nT('status_video_generating', '视频生成中') : i18nT('status_generating', '生成中'));
+    const cancelButton = isCandidateVideoCancellable(kind, status, aiToolId)
+        ? renderCandidateVideoCancelButton(aiToolId)
+        : '';
+    return `<div class="candidate-placeholder candidate-loading${cancelling ? ' is-cancelling' : ''}">
         ${icon('loading', 18)}
         <span>${label}</span>
+        ${cancelButton}
         ${renderCandidateTimelineButton(aiToolId)}
     </div>`;
 }
@@ -3742,6 +3797,23 @@ export function patchCenter() {
     return Boolean(next);
 }
 
+/** 右侧候选区签名。取消标记和视频任务状态变化也要触发重绘。 */
+function candidateSidebarSig(scene) {
+    return [
+        scene.id,
+        scene.selectedFirstFrameId || '',
+        scene.selectedVideoId || '',
+        scene.firstFrameUrl || '',
+        scene.videoUrl || '',
+        JSON.stringify(state.sceneCandidates?.[scene.id] || null),
+        JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null),
+        JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null),
+        JSON.stringify(state.sceneVideoCancelByToolId || null),
+        scene.taskStatus?.video ?? '',
+        scene.taskStatus?.video_ai_tool_id ?? '',
+    ].join('|');
+}
+
 /** 右侧候选 */
 export function patchCandidates() {
     const scene = getCurrentScene();
@@ -3752,7 +3824,7 @@ export function patchCandidates() {
     tmp.innerHTML = renderRightSidebar(scene);
     const newAside = tmp.querySelector('.right-sidebar');
     if (!newAside) return false;
-    const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
+    const nextSig = candidateSidebarSig(scene);
     if (rightSidebar.dataset.candidateSig === nextSig) return true;
     rightSidebar.innerHTML = newAside.innerHTML;
     rightSidebar.dataset.candidateSig = nextSig;
@@ -4350,7 +4422,7 @@ export function updateCurrentSceneDetail(scene) {
         const newAside = tmp.querySelector('.right-sidebar');
         if (newAside) {
             const nextHtml = newAside.innerHTML;
-            const nextSig = `${scene.id}|${scene.selectedFirstFrameId || ''}|${scene.selectedVideoId || ''}|${scene.firstFrameUrl || ''}|${scene.videoUrl || ''}|${JSON.stringify(state.sceneCandidates?.[scene.id] || null)}|${JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null)}|${JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null)}`;
+            const nextSig = candidateSidebarSig(scene);
             if (rightSidebar.dataset.candidateSig !== nextSig) {
                 rightSidebar.innerHTML = nextHtml;
                 rightSidebar.dataset.candidateSig = nextSig;
