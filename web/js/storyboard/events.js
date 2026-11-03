@@ -633,6 +633,76 @@ async function handleDeleteSceneCandidate(target) {
     }
 }
 
+function videoToolCancelKey(aiToolId) {
+    return aiToolId == null || aiToolId === '' ? '' : String(aiToolId);
+}
+
+function markSceneVideoCancelled(scene, aiToolId) {
+    const key = videoToolCancelKey(aiToolId);
+    if (!scene || !key) return;
+    const videos = state.sceneCandidates?.[scene.id]?.videos || [];
+    videos.forEach((item) => {
+        if (videoToolCancelKey(item.aiToolId) !== key) return;
+        item.status = -2;
+        if (!String(item.url || '').trim()) item.url = '';
+    });
+    if (!scene.taskStatus) scene.taskStatus = {};
+    if (videoToolCancelKey(scene.taskStatus.video_ai_tool_id) === key) {
+        scene.taskStatus.video = -2;
+    }
+}
+
+async function refreshPowerAfterVideoCancel() {
+    try {
+        const power = await api.fetchComputingPower();
+        state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
+        rerender([Region.HEADER_POWER]);
+    } catch (_) { /* 余额刷新失败不阻断取消结果 */ }
+}
+
+async function handleCancelSceneVideo(target) {
+    const scene = getCurrentScene();
+    if (!scene) return;
+    const key = videoToolCancelKey(target.dataset.aiToolId);
+    if (!key) return;
+    if (!state.sceneVideoCancelByToolId) state.sceneVideoCancelByToolId = {};
+    if (state.sceneVideoCancelByToolId[key]) return;
+
+    const confirmed = window.confirm(t(
+        'ai_task_cancel_confirm',
+        '确认取消该排队中的任务？取消后将退还已扣算力。',
+    ));
+    if (!confirmed) return;
+
+    state.sceneVideoCancelByToolId[key] = 'busy';
+    rerender([Region.CANDIDATES]);
+    try {
+        const result = await api.cancelAiToolTask(key);
+        if (!result || !result.success) {
+            delete state.sceneVideoCancelByToolId[key];
+            notify((result && result.message) || t('ai_task_cancel_failed', '取消任务失败'));
+            return;
+        }
+        if (result.status === 'CANCELLING') {
+            state.sceneVideoCancelByToolId[key] = 'cancelling';
+            showToast(t('ai_task_cancel_pending', '取消中，当前步骤结束后退还算力'), 'success');
+        } else {
+            state.sceneVideoCancelByToolId[key] = 'cancelled';
+            markSceneVideoCancelled(scene, key);
+            showToast(t('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+            refreshPowerAfterVideoCancel();
+        }
+        pollSceneTaskStatus(scene.id);
+    } catch (error) {
+        delete state.sceneVideoCancelByToolId[key];
+        notify(error.message || t('ai_task_cancel_failed', '取消任务失败'));
+    } finally {
+        if (String(state.currentSceneId) === String(scene.id)) {
+            rerender([Region.CANDIDATES]);
+        }
+    }
+}
+
 function applySelectedCandidateToScene(scene, assetType, assetId, url) {
     if (!scene) return;
     if (assetType === 'first_frame') {
@@ -3299,6 +3369,17 @@ export function bindEvents() {
             event.stopPropagation();
             if (candidateDeleteTarget.disabled) return;
             await handleDeleteSceneCandidate(candidateDeleteTarget);
+            return;
+        }
+
+        // 必须早于候选卡选中：取消按钮在 data-candidate-id 卡片内部。
+        // 不用 .ai-task-cancel-btn：时间轴脚本的捕获监听会把非画布节点的点击吞掉。
+        const candidateCancelTarget = event.target.closest('[data-action="cancel-scene-video"]');
+        if (candidateCancelTarget) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (candidateCancelTarget.disabled) return;
+            await handleCancelSceneVideo(candidateCancelTarget);
             return;
         }
 

@@ -225,6 +225,7 @@ bootstrap 中实现优先级（仅首次无保存值时）：
 - 播放启动后异步调用相同的 `selectSceneAsset` 接口持久化 `selected_video_id`。接口失败时用 `candidate_selection_state.js` 的快照恢复原 `selectedVideoId`、URL、预览类型及候选 selected 标志，并重新局部刷新。
 - 浏览器若拒绝自动播放，不回滚已选中的视频；主预览保留原生 controls，用户可以手动继续播放。
 - 全流程只使用 Region 分区刷新。播放中的主预览继续受 `isPreviewMediaBusy()` 保护，轮询不会通过全量 `innerHTML` 拆掉 video。
+- 视频仍在生成、候选卡没有可播放地址时，占位卡上显示「取消」。它调用 `POST /api/ai-tool/{id}/cancel`，只取消还在排队的任务；已经提交上游时接口返回 409，卡片继续显示生成中。取消成功后占位变为「已取消」。分镜图候选没有这个按钮。生成中的视频卡会加高，避免窄栏 16:9 扁盒把按钮裁掉。
 
 效果：底部分镜序列统一为较小的横向黑底胶片框（`180x101.25`），竖屏图高度 100% 显示并左右自然留黑边，和上方 preview 的显示方式一致；横屏图也不裁切。切换 `workflowRatio` 时无需刷新即生效（rerender 重写 `data-ratio`）。
 
