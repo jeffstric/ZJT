@@ -83,6 +83,8 @@ def _extract_balanced_json_objects(text: str) -> List[Dict[str, Any]]:
                     try:
                         parsed = json.loads(candidate)
                     except (json.JSONDecodeError, ValueError):
+                        # 配平但不是合法 JSON 时必须离开当前 '{'，否则外层 while 停在原地死循环
+                        i += 1
                         break
                     if isinstance(parsed, dict):
                         objects.append(parsed)
@@ -179,24 +181,48 @@ def _default_model_task_id(user_id: int, world_id: int, mode: str) -> Optional[i
     return int(DEFAULT_TEXT_TO_IMAGE_TASK_ID)
 
 
+def _world_field(item: Any, name: str) -> Any:
+    if isinstance(item, dict):
+        return item.get(name)
+    return getattr(item, name, None)
+
+
+def _assert_world_owner(world_user_id: Any, user_id: int) -> None:
+    if world_user_id not in (None, '') and int(world_user_id) != int(user_id):
+        raise AgentImageGenerationError(403, 'world_forbidden', '世界不属于当前用户')
+
+
 def _resolve_world(user_id: int, world_id: Optional[int]) -> int:
-    """world_id 显式传入时校验归属；缺省取用户最近更新的第一个世界。"""
+    """world_id 显式传入时校验归属；缺省取该用户最近更新的世界。"""
     if world_id not in (None, ''):
         world = WorldModel.get_by_id(int(world_id))
         if not world:
             raise AgentImageGenerationError(404, 'world_not_found', f'世界不存在: {world_id}')
-        world_user_id = getattr(world, 'user_id', None)
-        if world_user_id not in (None, '') and int(world_user_id) != int(user_id):
-            raise AgentImageGenerationError(403, 'world_forbidden', '世界不属于当前用户')
+        _assert_world_owner(getattr(world, 'user_id', None), user_id)
         return int(world_id)
 
-    page = WorldModel.list_by_user(user_id=int(user_id), page=1, page_size=1)
+    # 共享空间下 list_by_user 默认不过滤 user_id；这里必须限定本人，避免选到别人的世界
+    page = WorldModel.list_by_user(
+        user_id=int(user_id),
+        page=1,
+        page_size=1,
+        order_by='update_time',
+        order_direction='DESC',
+        restrict_to_user=True,
+    )
     items = (page or {}).get('data') or []
     if not items:
         raise AgentImageGenerationError(
             400, 'world_required', '未指定 world_id 且当前用户没有可用世界，请先创建世界或显式传入 world_id'
         )
-    return int(getattr(items[0], 'id', 0) or items[0].get('id'))
+    item = items[0]
+    _assert_world_owner(_world_field(item, 'user_id'), user_id)
+    item_id = _world_field(item, 'id')
+    if item_id in (None, '', 0):
+        raise AgentImageGenerationError(
+            400, 'world_required', '未指定 world_id 且当前用户没有可用世界，请先创建世界或显式传入 world_id'
+        )
+    return int(item_id)
 
 
 def _normalize_reference_urls(reference_image: Optional[str]) -> List[str]:
@@ -246,6 +272,28 @@ class AgentImageGenerationService:
             )
         return exchange
 
+    def identify_connection(self, connection_text: Optional[str], agent_token: Optional[str]) -> Dict[str, Any]:
+        """校验 agent token 并返回 user_id。不签发登录会话，供状态轮询使用。"""
+        token = (agent_token or '').strip()
+        if not token and connection_text:
+            token = extract_agent_token(connection_text) or ''
+        if not token:
+            raise AgentImageGenerationError(
+                400, 'missing_agent_token',
+                '连接信息中未找到 agent_token：请粘贴首页「智能体连接」复制的完整信息，或直接传 agent_token'
+            )
+        try:
+            resolved = AgentAuthService.resolve_agent_user(token)
+        except AgentAuthError as exc:
+            raise AgentImageGenerationError(
+                exc.status_code, exc.error_code, exc.message,
+            ) from exc
+        if not resolved.get('user_id'):
+            raise AgentImageGenerationError(
+                401, 'invalid_agent_token', 'agent token 无效或已过期'
+            )
+        return resolved
+
     def resolve_model(
         self,
         user_id: int,
@@ -283,7 +331,7 @@ class AgentImageGenerationService:
         reference_image: Optional[str] = None,
         ratio: Optional[str] = None,
         image_size: Optional[str] = None,
-        count: int = 1,
+        count: Optional[int] = None,
     ) -> Dict[str, Any]:
         """提交生图任务（文生图 / 图生图），返回 project_ids 与轮询指引。"""
         if not prompt or not str(prompt).strip():
@@ -292,14 +340,20 @@ class AgentImageGenerationService:
             raise AgentImageGenerationError(
                 400, 'invalid_mode', "mode 必须为 auto / text_to_image / image_edit"
             )
-        try:
-            count = int(count)
-        except (TypeError, ValueError):
-            count = 0
-        if count < 1 or count > AGENT_CLI_IMAGE_MAX_COUNT:
-            raise AgentImageGenerationError(
-                400, 'invalid_count', f'count 必须为 1-{AGENT_CLI_IMAGE_MAX_COUNT} 之间的整数'
-            )
+        # 未传 count/ratio 时允许世界偏好兜底；显式传入则锁定，避免被 image_preferences 改张数和比例
+        count_locked = count is not None
+        ratio_locked = bool(str(ratio or '').strip())
+        if count_locked:
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                count = 0
+            if count < 1 or count > AGENT_CLI_IMAGE_MAX_COUNT:
+                raise AgentImageGenerationError(
+                    400, 'invalid_count', f'count 必须为 1-{AGENT_CLI_IMAGE_MAX_COUNT} 之间的整数'
+                )
+        else:
+            count = 1
 
         reference_urls = _normalize_reference_urls(reference_image)
         if mode == 'auto':
@@ -325,10 +379,12 @@ class AgentImageGenerationService:
                 world_id=str(resolved_world_id),
                 auth_token=auth_token,
                 prompt=str(prompt).strip(),
-                aspect_ratio=ratio or '9:16',
+                aspect_ratio=(str(ratio).strip() if ratio_locked else '9:16'),
                 count=count,
                 image_size=image_size,
                 task_type=model_info['task_id'],
+                lock_ratio=ratio_locked,
+                lock_count=count_locked,
             )
         else:
             result = edit_image(
@@ -337,10 +393,12 @@ class AgentImageGenerationService:
                 auth_token=auth_token,
                 prompt=str(prompt).strip(),
                 image_url=','.join(reference_urls),
-                aspect_ratio=ratio or '9:16',
+                aspect_ratio=(str(ratio).strip() if ratio_locked else '9:16'),
                 count=count,
                 image_size=image_size,
                 task_type=model_info['task_id'],
+                lock_ratio=ratio_locked,
+                lock_count=count_locked,
             )
 
         if not isinstance(result, dict) or not result.get('success'):

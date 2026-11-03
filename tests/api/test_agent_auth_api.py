@@ -147,8 +147,15 @@ def test_generate_image_moss_with_reference_rejected(monkeypatch):
     assert "仅支持文生图" in data["error"]
 
 
+def _patch_identify(monkeypatch, user_id=7):
+    monkeypatch.setattr(
+        "services.agent_image_service.AgentAuthService.resolve_agent_user",
+        lambda raw_token: {"success": True, "user_id": user_id, "token_type": "agent"},
+    )
+
+
 def test_image_status_returns_terminal(monkeypatch):
-    _patch_exchange(monkeypatch)
+    _patch_identify(monkeypatch)
     monkeypatch.setattr(
         "services.agent_image_service.AIToolModel.get_by_id",
         lambda project_id: SimpleNamespace(
@@ -165,8 +172,28 @@ def test_image_status_returns_terminal(monkeypatch):
     assert data["result_url"] == "http://x/a.png"
 
 
+def test_image_status_does_not_mint_session(monkeypatch):
+    minted = []
+    monkeypatch.setattr(
+        "services.agent_auth_service.UserTokensModel.create",
+        lambda *args, **kwargs: minted.append(args) or 1,
+    )
+    _patch_identify(monkeypatch)
+    monkeypatch.setattr(
+        "services.agent_image_service.AIToolModel.get_by_id",
+        lambda project_id: SimpleNamespace(
+            id=501, user_id=7, status=1, result_url=None, message=None),
+    )
+    response = _client().post(
+        "/api/agent-auth/image-status",
+        json={"agent_token": "agt_abc123", "project_id": 501},
+    )
+    assert response.status_code == 200
+    assert minted == []
+
+
 def test_image_status_owner_isolation(monkeypatch):
-    _patch_exchange(monkeypatch, user_id=7)
+    _patch_identify(monkeypatch, user_id=7)
     monkeypatch.setattr(
         "services.agent_image_service.AIToolModel.get_by_id",
         lambda project_id: SimpleNamespace(id=501, user_id=99, status=2, result_url="http://x", message=None),

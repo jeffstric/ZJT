@@ -44,9 +44,13 @@ class AgentImageGenerationRequest(BaseModel):
     reference_image: Optional[str] = Field(
         None, description="图生图参考图 URL，多张英文逗号分隔；有值时走图片编辑"
     )
-    ratio: Optional[str] = Field(None, description="图片比例，如 9:16 / 16:9 / 1:1")
+    ratio: Optional[str] = Field(
+        None, description="图片比例，如 9:16 / 16:9 / 1:1。缺省时用世界生图偏好，没有偏好则为 9:16；显式传入不会被偏好覆盖"
+    )
     image_size: Optional[str] = Field(None, description="分辨率档位 1K/2K/3K/4K，按模型支持范围")
-    count: int = Field(1, ge=1, description="生成张数")
+    count: Optional[int] = Field(
+        None, description="生成张数 1-4。缺省时用世界生图偏好，没有偏好则为 1；显式传入不会被偏好覆盖"
+    )
     wait: bool = Field(False, description="true 时同步等待生成完成（受 wait_timeout 限制）")
     wait_timeout: int = Field(
         AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS, ge=5, le=600,
@@ -165,13 +169,14 @@ async def get_agent_image_status(request: AgentImageStatusRequest):
     """智能体 CLI 轮询生图结果：agent_token（或连接信息）+ project_id → ai_tools 状态。"""
     service = AgentImageGenerationService()
     try:
-        exchange = await asyncio.to_thread(
-            service.exchange_connection, request.connection_info, request.agent_token
+        # 轮询只取 user_id。exchange 会往 user_tokens 插入 24 小时登录会话，不能按轮询间隔重复签发
+        identity = await asyncio.to_thread(
+            service.identify_connection, request.connection_info, request.agent_token
         )
     except AgentImageGenerationError as exc:
         return _image_error_response(exc)
 
-    user_id = int(exchange["user_id"])
+    user_id = int(identity["user_id"])
     try:
         status = await asyncio.to_thread(service.get_project_status, request.project_id, user_id)
     except AgentImageGenerationError as exc:

@@ -19,12 +19,12 @@
 | `agent_token` | string | 二选一 | 已有明文 agent_token 时直接传 |
 | `prompt` | string | ✅ | 提示词（文生图为画面描述；图生图为编辑指令） |
 | `model` | string | ❌ | 模型名 / key / short_key / 任务 id（如 `moss`、`qwenimage2.1`、`53`）。缺省：用户 CLI 媒体偏好（首页弹窗「CLI 媒体偏好」tab，surface=storyboard_cli）→ 平台默认文生图模型 |
-| `world_id` | int | ❌ | 世界 ID。缺省取用户最近更新的第一个世界（无世界且未传则报 `world_required`） |
+| `world_id` | int | ❌ | 世界 ID。缺省取**当前用户** `update_time` 最新的世界（共享空间也按 `user_id` 过滤；无世界且未传则报 `world_required`） |
 | `mode` | string | ❌ | `auto`（默认，按有无参考图自动分流）/ `text_to_image` / `image_edit` |
 | `reference_image` | string | ❌ | 图生图参考图 URL，多张英文逗号分隔。有值 → 图片编辑链路 |
-| `ratio` | string | ❌ | 比例（`9:16` / `16:9` / `1:1` 等），缺省 `9:16` |
-| `image_size` | string | ❌ | 分辨率档位 `1K`/`2K`/`3K`/`4K`（按模型支持范围，moss 为 1K/2K/4K） |
-| `count` | int | ❌ | 生成张数 1-4（默认 1） |
+| `ratio` | string | ❌ | 比例（`9:16` / `16:9` / `1:1` 等）。未传时用该世界 `image_preferences` 的非 auto 比例，没有则为 `9:16`。显式传入不会被世界偏好覆盖 |
+| `image_size` | string | ❌ | 分辨率档位 `1K`/`2K`/`3K`/`4K`（按模型支持范围，moss 为 1K/2K/4K）。未传时用世界偏好或模型默认档；显式传入按传入档位校验 |
+| `count` | int | ❌ | 生成张数 1-4。未传时用世界偏好里 1-4 的 `count`，没有则为 1。显式传入按该张数扣算力，不会被世界偏好改写 |
 | `wait` | bool | ❌ | `true` 时同步轮询首个 project 到终态（默认 false 立即返回 project_ids） |
 | `wait_timeout` | int | ❌ | 同步等待上限秒（默认 180，最大 600；超时返回 `submitted` + `wait_timeout=true`，可继续用 image-status 轮询） |
 
@@ -58,7 +58,7 @@
 
 | 字段 | 说明 |
 |------|------|
-| `connection_info` / `agent_token` | 与生图请求一致的凭据字段（二选一） |
+| `connection_info` / `agent_token` | 与生图请求一致的凭据字段（二选一）。只校验 token 并取出 `user_id`，**不**调用 exchange，不往 `user_tokens` 插入登录会话 |
 | `project_id` | 生图返回的 project_ids 之一 |
 
 ### 响应
@@ -123,7 +123,10 @@ curl -s -X POST "$BASE_URL/api/agent-auth/image-status" \
 
 ## 实现要点
 
-- **连接信息解析**：`_extract_balanced_json_objects` 用引号状态机做括号配平提取，容忍粘贴文本前后的中文说明与不配平伪 JSON（跳过而非报错）
+- **连接信息解析**：`_extract_balanced_json_objects` 用引号状态机做括号配平提取。不配平的块、以及花括号配平但不是合法 JSON 的块都会跳过并继续扫描，避免停在同一个 `{` 上占住线程池
+- **参数锁定**：显式 `ratio` / `count` 传给 `generate_text_to_image` / `edit_image` 时带 `lock_ratio` / `lock_count`，世界级 `image_preferences` 不能改写这两项。未传的比例、张数、分辨率仍回落到世界偏好，再落到接口默认（比例 `9:16`、张数 1、分辨率按模型）
+- **缺省世界**：`WorldModel.list_by_user(..., order_by='update_time', restrict_to_user=True)`，共享空间同样只选本人世界；返回行的 `user_id` 再核一次归属
+- **状态轮询**：`/image-status` 走 `identify_connection` → `AgentAuthService.resolve_agent_user`，只读校验 agent token。登录会话只在真正提交生图的 `exchange_token` 里签发一次
 - **非阻塞红线**：exchange / 生图提交 / 状态查询均为同步 DB/HTTP 调用，端点内一律 `asyncio.to_thread` 包装；`wait` 轮询在 async 层 `asyncio.sleep` + `to_thread` 逐次查（AGENTS.md 红线 1）
 - **常量**：轮询间隔 / 等待上限 / 张数上限在 `config/constant.py`（`AGENT_CLI_IMAGE_*`）
 - **模型校验**：`UnifiedConfigRegistry.matches_identifier` 口径反查；按 `category`/`categories` 校验模式能力，moss（TaskTypeId.MOSS_IMAGE=53，仅 `TEXT_TO_IMAGE`）带参考图会被拒绝

@@ -56,6 +56,12 @@ class TestExtractAgentToken:
         text = '{"agent_token": "agt_{not_a_block}", "note": " escapes \\" inside"}'
         assert extract_agent_token(text) == "agt_{not_a_block}"
 
+    def test_skips_balanced_but_invalid_json(self):
+        # 花括号配平但不是合法 JSON 时必须继续扫描，不能停在同一个 '{'
+        assert extract_agent_token('{bad}') is None
+        assert extract_agent_token('说明 {token} 后面 {"agent_token": "agt_ok"}') == "agt_ok"
+        assert extract_agent_token('{bad,} {"token": "t2"}') == "t2"
+
 
 class TestResolveModelConfig:
     def test_moss_by_name_supports_text_to_image(self):
@@ -146,6 +152,21 @@ class TestExchangeConnection:
         assert exc.value.error_code == "invalid_agent_token"
 
 
+class TestIdentifyConnection:
+    def test_returns_user_without_exchange(self, service, monkeypatch):
+        monkeypatch.setattr(
+            mod.AgentAuthService, "resolve_agent_user",
+            MagicMock(return_value={"success": True, "user_id": 7, "token_type": "agent"}),
+        )
+        exchange = MagicMock()
+        monkeypatch.setattr(mod.AgentAuthService, "exchange_token", exchange)
+        result = service.identify_connection(CONNECTION_TEXT, None)
+        assert result["user_id"] == 7
+        args = mod.AgentAuthService.resolve_agent_user.call_args
+        assert args[0][0] == "agt_abc123"
+        exchange.assert_not_called()
+
+
 class TestGenerate:
     def _mock_world(self, monkeypatch, world_id=1):
         monkeypatch.setattr(
@@ -216,6 +237,31 @@ class TestGenerate:
             service.generate(7, "tok", prompt="p")
         assert exc.value.error_code == "world_required"
 
+    def test_default_world_uses_latest_updated_owned_world(self, service, monkeypatch):
+        listed = {}
+
+        def _list_by_user(**kwargs):
+            listed.update(kwargs)
+            return {"data": [{"id": 8, "user_id": 7}]}
+
+        monkeypatch.setattr(mod.WorldModel, "list_by_user", _list_by_user)
+        self._mock_default_pref(monkeypatch)
+        self._mock_mcp(monkeypatch, {"success": True, "project_ids": [1]})
+        result = service.generate(7, "tok", prompt="p", model="moss")
+        assert result["world_id"] == 8
+        assert listed["order_by"] == "update_time"
+        assert listed["restrict_to_user"] is True
+        assert listed["user_id"] == 7
+
+    def test_default_world_rejects_foreign_row(self, service, monkeypatch):
+        monkeypatch.setattr(
+            mod.WorldModel, "list_by_user",
+            MagicMock(return_value={"data": [{"id": 3, "user_id": 99}]}),
+        )
+        with pytest.raises(AgentImageGenerationError) as exc:
+            service.generate(7, "tok", prompt="p", model="moss")
+        assert exc.value.error_code == "world_forbidden"
+
     def test_text_to_image_submission_with_moss(self, service, monkeypatch):
         self._mock_world(monkeypatch)
         self._mock_default_pref(monkeypatch)
@@ -245,6 +291,20 @@ class TestGenerate:
         assert kwargs["prompt"] == "一只戴墨镜的橘猫"
         assert kwargs["aspect_ratio"] == "9:16"
         assert kwargs["task_type"] == 53
+        assert kwargs["lock_ratio"] is True
+        assert kwargs["lock_count"] is False
+        assert kwargs["count"] == 1
+
+    def test_explicit_count_is_locked(self, service, monkeypatch):
+        self._mock_world(monkeypatch)
+        self._mock_default_pref(monkeypatch)
+        fake = self._mock_mcp(monkeypatch, {"success": True, "project_ids": [102]})
+        service.generate(7, "tok", prompt="p", model="moss", count=1, ratio="1:1")
+        kwargs = fake.generate_text_to_image.call_args.kwargs
+        assert kwargs["count"] == 1
+        assert kwargs["aspect_ratio"] == "1:1"
+        assert kwargs["lock_count"] is True
+        assert kwargs["lock_ratio"] is True
 
     def test_auto_mode_routes_to_image_edit(self, service, monkeypatch):
         self._mock_world(monkeypatch)
