@@ -1478,12 +1478,14 @@ AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
 AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
 AI_TOOL_STATUS_CANCELLED = AIToolStatus.CANCELLED
 
-# 排队阶段可取消的 ai_tools 状态集合（尚未调用上游提交接口、未产生上游成本）：
-#   PENDING(0)             调度队列等待提交
-#   SYNC_QUEUED(3)         已入同步进程池队列、worker 尚未执行
-#   WAITING_PARAM_PREPARE(4) 预处理流水线排队中
-# 取消与调度器提交均以条件 UPDATE（CAS）互斥：取消成功后调度器抢占必失败，
-# 保证「已取消的任务绝不再被调用上游接口」（详见 docs/video/queued_task_cancel_design.md）。
+# 排队阶段可取消的 ai_tools 状态集合（尚未调用主生成上游接口）：
+#   PENDING(0)             调度队列等待提交。取消接口立即 CAS 到 CANCELLED 并退款。
+#   SYNC_QUEUED(3)         已入同步进程池队列、worker 尚未执行。同上，立即取消。
+#   WAITING_PARAM_PREPARE(4) 预处理流水线中。步骤尚未 PROCESSING 时立即取消；
+#     已有步骤在途时只记 cancel_requested=1，该步骤结束后再落 CANCELLED 并退款。
+# 开工/推进闸门（0→1、3→1、4→0 等）附加 AND cancel_requested = 0。
+# 业务代码禁止 AIToolsModel.update*(status=...) 无条件改状态，必须走 transition_status
+# （CI scripts/lint_ai_tool_status_cas.py）。详见 docs/video/queued_task_cancel_design.md。
 AI_TOOL_CANCELLABLE_STATUSES = (
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_SYNC_QUEUED,

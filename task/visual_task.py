@@ -42,6 +42,7 @@ from config.constant import (
     AI_TOOL_STATUS_SYNC_QUEUED,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
     AI_TOOL_STATUS_WAITING_BEFORE_FINISH,
+    AI_TOOL_STATUS_DOWNLOADING,
     AI_TOOL_STATUS_CANCELLED,
     TASK_STATUS_QUEUED,
     TASK_STATUS_PROCESSING,
@@ -56,9 +57,12 @@ from config.constant import (
     VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
     get_sync_orphan_grace_seconds
 )
-from model.ai_tool_pipeline_steps import PipelineStepStatus, PipelineStage, PipelineStepType
+from model.ai_tool_pipeline_steps import (
+    PipelineStepStatus, PipelineStage, PipelineStepType, PipelineStepModel,
+)
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from config.constant import AI_TOOL_CANCELLABLE_STATUSES, AI_TOOL_ACTIVE_STATUSES
+from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 from utils.content_moderation_error import classify_content_moderation
 
@@ -332,7 +336,8 @@ async def _submit_new_task(ai_tool):
             # CAS 0→4：与用户取消（0/3/4→CANCELLED）互斥。抢占失败说明任务已被
             # 取消（或状态异常），放弃进入流水线，避免取消后仍分发预处理步骤。
             if AIToolsModel.transition_status(
-                task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_WAITING_PARAM_PREPARE
+                task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                block_if_cancel_requested=True,
             ) == 0:
                 _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'param_prepare')
                 return True
@@ -391,7 +396,8 @@ async def _submit_new_task(ai_tool):
                 # 先 CAS 0→3（SYNC_QUEUED）再入池：与用户取消互斥。抢占失败说明
                 # 任务已被取消，不入池；worker 侧执行前还会 CAS 3→1 再校验一次。
                 if AIToolsModel.transition_status(
-                    task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_SYNC_QUEUED
+                    task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_SYNC_QUEUED,
+                    block_if_cancel_requested=True,
                 ) == 0:
                     _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'sync_pool_dispatch')
                     return True
@@ -424,7 +430,12 @@ async def _submit_new_task(ai_tool):
         if mock_enabled:
             mock = visual_async_submit_result(ai_tool_type)
             project_id = mock["project_id"]
-            AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+            if AIToolsModel.transition_status(
+                task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_PROCESSING,
+                block_if_cancel_requested=True, project_id=project_id,
+            ) == 0:
+                _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'mock_submit')
+                return True
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
             logger.info(f"[MOCK] visual async submit short-circuit task={task_id} pid={project_id}")
             return PROCESS_RESULT_IN_FLIGHT
@@ -479,7 +490,8 @@ async def _submit_new_task(ai_tool):
         # DB 行锁保证串行：抢占成功则取消接口必然失败（409），取消成功则此处必然
         # affected=0 —— 已取消的任务绝不会再被调用上游接口。
         if AIToolsModel.transition_status(
-            task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_PROCESSING
+            task_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_PROCESSING,
+            block_if_cancel_requested=True,
         ) == 0:
             _log_cancel_guard_rejected(task_id, ai_tool.user_id, 'upstream_submit')
             return True
@@ -605,7 +617,16 @@ async def _submit_new_task(ai_tool):
                 media_type=media_type,
             )
             final_url = postprocess.result_url
-            AIToolsModel.update_with_cdn_sync(task_id, result_url=final_url, status=AI_TOOL_STATUS_COMPLETED, completed_time=datetime.now())
+            completed = AIToolsModel.transition_with_cdn_sync(
+                task_id,
+                [AI_TOOL_STATUS_PROCESSING],
+                AI_TOOL_STATUS_COMPLETED,
+                result_url=final_url,
+                completed_time=datetime.now(),
+            )
+            if not completed:
+                logger.info(f"Sync task {task_id} completion CAS missed, keep current state")
+                return PROCESS_RESULT_SUCCESS
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
 
             # 标记当前实现方尝试为成功
@@ -641,8 +662,15 @@ async def _submit_new_task(ai_tool):
                 user_id=ai_tool.user_id
             )
         
-        # 更新 AITools 和 Tasks 表状态
-        AIToolsModel.update(task_id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+        # 提交已成功。只在仍为 PROCESSING 时写下 project_id，避免覆盖期间落成的终态。
+        if AIToolsModel.transition_status(
+            task_id,
+            [AI_TOOL_STATUS_PROCESSING],
+            AI_TOOL_STATUS_PROCESSING,
+            project_id=project_id,
+        ) == 0:
+            logger.info(f"Task {task_id} project_id write skipped, status left PROCESSING")
+            return PROCESS_RESULT_IN_FLIGHT
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
         
         # 如果是 RunningHub 任务，更新槽位的 project_id
@@ -734,7 +762,11 @@ async def _check_task_status(ai_tool):
                 )
                 return PROCESS_RESULT_IN_FLIGHT  # 本轮无需重试计数/退避
         logger.warning(f"AI tool {task_id} has no project_id while status=PROCESSING and not in sync executor, resetting to PENDING")
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PENDING)
+        if AIToolsModel.transition_status(
+            task_id, [AI_TOOL_STATUS_PROCESSING], AI_TOOL_STATUS_PENDING
+        ) == 0:
+            logger.info(f"AI tool {task_id} orphan reset CAS missed, keep current state")
+            return PROCESS_RESULT_IN_FLIGHT
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_QUEUED, try_count=0, next_trigger=datetime.now())
         return PROCESS_RESULT_IN_FLIGHT  # 已自行重置 try_count/next_trigger，外层不得再退避覆盖
     
@@ -883,6 +915,28 @@ async def _check_task_status(ai_tool):
         )
 
 
+def _param_prepare_cancel_gate(ai_tool_id: int):
+    """预处理阶段看到取消请求时：在途步骤则等待，否则落 CANCELLED 并退款。
+
+    Returns:
+        "wait": 仍有步骤 PROCESSING，本轮不改终态
+        "done": 已是或已落成 CANCELLED
+        None: 未请求取消
+    """
+    current = AIToolsModel.get_by_id(ai_tool_id)
+    if current is None:
+        return None
+    if current.status == AI_TOOL_STATUS_CANCELLED:
+        return "done"
+    if not cancel_requested_flag(current):
+        return None
+    if PipelineStepModel.has_processing_for_ai_tool(ai_tool_id):
+        logger.info(f"Task {ai_tool_id} cancel requested, wait for in-flight pipeline step")
+        return "wait"
+    commit_deferred_cancel(ai_tool_id)
+    return "done"
+
+
 def _check_pipeline_stage(ai_tool, stage):
     """
     检查流水线阶段状态，推进 ai_tool
@@ -907,6 +961,13 @@ def _check_pipeline_stage(ai_tool, stage):
     """
     from task.pipeline_processor import PipelineProcessor
 
+    if stage == PipelineStage.PARAM_PREPARE:
+        gate = _param_prepare_cancel_gate(ai_tool.id)
+        if gate == "wait":
+            return False
+        if gate == "done":
+            return True
+
     all_steps = PipelineProcessor.get_all_steps(ai_tool.id, stage)
     if stage == PipelineStage.BEFORE_FINISH:
         all_steps = [
@@ -917,7 +978,8 @@ def _check_pipeline_stage(ai_tool, stage):
         # 无步骤，直接回到主流程（CAS 4→0：任务被取消时不推进）
         if stage == PipelineStage.PARAM_PREPARE:
             if AIToolsModel.transition_status(
-                ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING
+                ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING,
+                block_if_cancel_requested=True,
             ) > 0:
                 TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
         return PROCESS_RESULT_IN_FLIGHT
@@ -939,7 +1001,21 @@ def _check_pipeline_stage(ai_tool, stage):
                 None
             )
             error_msg = failed_step.error_message if failed_step else "数据预处理失败"
-            AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_FAILED, message=f"数据预处理失败: {error_msg}", completed_time=datetime.now())
+            failed_affected = AIToolsModel.transition_status(
+                ai_tool.id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                message=f"数据预处理失败: {error_msg}",
+                completed_time=datetime.now(),
+                block_if_cancel_requested=True,
+            )
+            if failed_affected == 0:
+                gate = _param_prepare_cancel_gate(ai_tool.id)
+                if gate == "wait":
+                    return False
+                if gate == "done":
+                    return True
+                fresh = AIToolsModel.get_by_id(ai_tool.id)
+                if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
+                    return True
             TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_FAILED)
             _refund_computing_power(ai_tool, f"数据预处理失败: {error_msg}")
             logger.info(f"Task {ai_tool.id} failed: param_prepare step failed")
@@ -952,13 +1028,18 @@ def _check_pipeline_stage(ai_tool, stage):
             if remaining:
                 # 还有重试机会，继续等待
                 return False
-            # 所有重试耗尽 → 最终失败
-            AIToolsModel.update(
+            # 所有重试耗尽 → 最终失败（CAS，不覆盖 CANCELLED）
+            retry_failed = AIToolsModel.transition_status(
                 ai_tool.id,
-                status=AI_TOOL_STATUS_FAILED,
+                list(AI_TOOL_ACTIVE_STATUSES),
+                AI_TOOL_STATUS_FAILED,
                 message=ai_tool.message or "所有重试失败",
-                completed_time=datetime.now()
+                completed_time=datetime.now(),
             )
+            if retry_failed == 0:
+                fresh = AIToolsModel.get_by_id(ai_tool.id)
+                if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
+                    return True
             TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_FAILED)
             _refund_computing_power(ai_tool, "所有重试失败")
 
@@ -989,8 +1070,12 @@ def _check_pipeline_stage(ai_tool, stage):
         # 预处理完成：应用结果并回到 PENDING（CAS 4→0：与取消接口互斥）
         PipelineProcessor.apply_results(ai_tool, stage)
         if AIToolsModel.transition_status(
-            ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING
+            ai_tool.id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING,
+            block_if_cancel_requested=True,
         ) == 0:
+            gate = _param_prepare_cancel_gate(ai_tool.id)
+            if gate == "wait":
+                return False
             logger.info(f"Task {ai_tool.id} cancel guard rejected param_prepare completion, skip advancing")
             return True
         TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_QUEUED)
@@ -1036,9 +1121,12 @@ async def _handle_task_success(project_id, task_id, media_url):
             # 派发到下载队列，解耦主循环：置 DOWNLOADING + tasks 退出主队列 + 入队。
             # M1：仅 DB 异常才 fallback 同步下载；正在处理/正常入队都直接 return True
             # （终态 COMPLETED + mark attempt + TASK_COMPLETED 日志由 worker 完成）
-            from config.constant import AI_TOOL_STATUS_DOWNLOADING
             from model.download_queue import DownloadQueueModel
-            AIToolsModel.update_by_project_id(project_id=project_id, status=AI_TOOL_STATUS_DOWNLOADING)
+            if AIToolsModel.transition_status(
+                task_id, [AI_TOOL_STATUS_PROCESSING], AI_TOOL_STATUS_DOWNLOADING
+            ) == 0:
+                logger.info(f"Task {task_id} DOWNLOADING CAS missed, skip download dispatch")
+                return True
             AIToolsLogModel.log(task_id, AIToolsLogEvent.DOWNLOAD_STARTED,
                                project_id=project_id,
                                message="上游成功，已派发到下载队列",
@@ -1077,12 +1165,19 @@ async def _handle_task_success(project_id, task_id, media_url):
                            duration_ms=download_ms,
                            detail={'source_url': media_url, 'final_url': final_url})
         
-        AIToolsModel.update_by_project_id_with_cdn_sync(
-            project_id=project_id,
+        completed = AIToolsModel.transition_with_cdn_sync(
+            task_id,
+            [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],
+            AI_TOOL_STATUS_COMPLETED,
             result_url=final_url,
-            status=AI_TOOL_STATUS_COMPLETED,
-            completed_time=datetime.now()
+            completed_time=datetime.now(),
         )
+        if not completed:
+            logger.info(f"Task {task_id} success CAS missed, keep current state")
+            fresh = AIToolsModel.get_by_id(task_id)
+            if fresh and fresh.status in (AI_TOOL_STATUS_CANCELLED, AI_TOOL_STATUS_COMPLETED):
+                return True
+            return False
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
 
         # 标记当前实现方尝试为成功
@@ -1151,6 +1246,15 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         if cancelled_check and cancelled_check.status == AI_TOOL_STATUS_CANCELLED:
             logger.info(f"Task {task_id} already cancelled by user, skip failure handling")
             return True
+        if cancel_requested_flag(cancelled_check):
+            if PipelineStepModel.has_processing_for_ai_tool(task_id):
+                logger.info(f"Task {task_id} cancel requested, wait for in-flight step")
+                return False
+            if commit_deferred_cancel(task_id):
+                return True
+            fresh = AIToolsModel.get_by_id(task_id)
+            if fresh and fresh.status == AI_TOOL_STATUS_CANCELLED:
+                return True
     except Exception as e:
         logger.warning(f"Cancel check failed for task {task_id}: {e}")
 
@@ -1173,20 +1277,21 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         logger.warning(f"Failed to mark attempt as failed for task {task_id}: {e}")
 
     try:
-        if project_id:
-            AIToolsModel.update_by_project_id(
-                project_id=project_id,
-                status=AI_TOOL_STATUS_FAILED,
-                message=reason,
-                completed_time=datetime.now()
-            )
-        else:
-            AIToolsModel.update(
-                task_id,
-                status=AI_TOOL_STATUS_FAILED,
-                message=reason,
-                completed_time=datetime.now()
-            )
+        failed_affected = AIToolsModel.transition_status(
+            task_id,
+            list(AI_TOOL_ACTIVE_STATUSES),
+            AI_TOOL_STATUS_FAILED,
+            message=reason,
+            completed_time=datetime.now(),
+        )
+        if failed_affected == 0:
+            fresh = AIToolsModel.get_by_id(task_id)
+            if fresh and fresh.status == AI_TOOL_STATUS_CANCELLED:
+                logger.info(f"Task {task_id} became CANCELLED, skip failure write")
+                return True
+            if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
+                logger.info(f"Task {task_id} failure CAS missed, keep current state")
+                return True
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
         
         # 释放 RunningHub 槽位

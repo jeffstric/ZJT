@@ -36,6 +36,7 @@ class TestAIToolsTransitionStatus(unittest.TestCase):
         self.assertEqual(affected, 1)
         sql, params = mock_exec.call_args[0]
         self.assertIn("WHERE id = %s AND status IN (", sql)
+        self.assertNotIn("cancel_requested", sql)
         self.assertIn("status = %s", sql)
         # 参数顺序必须与占位符一致：SET(status,message) → WHERE id → IN(...)
         # （曾因 record_id 放末尾导致 WHERE id 绑定到 PENDING=0、永远 0 行命中，
@@ -54,11 +55,32 @@ class TestAIToolsTransitionStatus(unittest.TestCase):
         self.assertEqual(affected, 1)
         sql, params = mock_exec.call_args[0]
         self.assertIn("WHERE id = %s AND status IN (%s)", sql)
+        self.assertNotIn("cancel_requested", sql)
         self.assertEqual(params, (AI_TOOL_STATUS_PROCESSING, 7, AI_TOOL_STATUS_PENDING))
 
     def test_single_int_from_status_accepted(self):
         affected, _ = self._run(9, AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_PROCESSING)
         self.assertEqual(affected, 1)
+
+    def test_block_if_cancel_requested_appends_predicate(self):
+        _, mock_exec = self._run(
+            7, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_PROCESSING,
+            block_if_cancel_requested=True,
+        )
+        sql, params = mock_exec.call_args[0]
+        self.assertIn("AND cancel_requested = 0", sql)
+        self.assertNotIn("cancel_requested = 1", sql)
+        self.assertEqual(params, (AI_TOOL_STATUS_PROCESSING, 7, AI_TOOL_STATUS_PENDING))
+
+    def test_require_cancel_requested_appends_predicate(self):
+        _, mock_exec = self._run(
+            7, list(AI_TOOL_CANCELLABLE_STATUSES), AI_TOOL_STATUS_CANCELLED,
+            require_cancel_requested=True,
+        )
+        sql, params = mock_exec.call_args[0]
+        self.assertIn("AND cancel_requested = 1", sql)
+        self.assertEqual(params[0], AI_TOOL_STATUS_CANCELLED)
+        self.assertEqual(params[1], 7)
 
     def test_affected_zero_propagates(self):
         from model import ai_tools as mod
@@ -246,7 +268,8 @@ class TestPipelineStageAdvanceCancelGuard(unittest.TestCase):
 
         self.assertEqual(result, mod.PROCESS_RESULT_IN_FLIGHT)
         mock_cas.assert_called_once_with(
-            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING
+            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING,
+            block_if_cancel_requested=True,
         )
         mock_tasks.assert_not_called()
 
@@ -283,7 +306,8 @@ class TestPipelineStageAdvanceCancelGuard(unittest.TestCase):
         self.assertTrue(result)
         mock_apply.assert_called_once()
         mock_cas.assert_called_once_with(
-            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING
+            77, [mod.AI_TOOL_STATUS_WAITING_PARAM_PREPARE], mod.AI_TOOL_STATUS_PENDING,
+            block_if_cancel_requested=True,
         )
         mock_tasks.assert_not_called()
 
@@ -298,6 +322,118 @@ class TestPipelineStageAdvanceCancelGuard(unittest.TestCase):
         self.assertEqual(result, mod.PROCESS_RESULT_IN_FLIGHT)
         mock_tasks.assert_called_once_with(77, status=mod.TASK_STATUS_QUEUED)
 
+    def test_cancel_requested_commits_without_advance(self):
+        from task import visual_task as mod
+        from task.pipeline_processor import PipelineProcessor
+
+        ai_tool = MagicMock()
+        ai_tool.id = 77
+        current = MagicMock(
+            status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=1,
+        )
+        with patch.object(PipelineProcessor, "get_all_steps", return_value=[]):
+            with patch.object(PipelineProcessor, "apply_results") as mock_apply:
+                with patch.object(mod.AIToolsModel, "get_by_id", return_value=current):
+                    with patch.object(mod.AIToolsModel, "transition_status") as mock_cas:
+                        with patch.object(mod.PipelineStepModel, "has_processing_for_ai_tool", return_value=False):
+                            with patch.object(mod, "commit_deferred_cancel", return_value=True) as mock_commit:
+                                result = mod._check_pipeline_stage(
+                                    ai_tool, mod.PipelineStage.PARAM_PREPARE
+                                )
+        self.assertTrue(result)
+        mock_apply.assert_not_called()
+        mock_cas.assert_not_called()
+        mock_commit.assert_called_once_with(77)
+
+    def test_cancel_requested_waits_while_step_processing(self):
+        from task import visual_task as mod
+
+        ai_tool = MagicMock()
+        ai_tool.id = 77
+        current = MagicMock(
+            status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=1,
+        )
+        with patch.object(mod.AIToolsModel, "get_by_id", return_value=current):
+            with patch.object(mod.PipelineStepModel, "has_processing_for_ai_tool", return_value=True):
+                with patch.object(mod, "commit_deferred_cancel") as mock_commit:
+                    result = mod._check_pipeline_stage(
+                        ai_tool, mod.PipelineStage.PARAM_PREPARE
+                    )
+        self.assertFalse(result)
+        mock_commit.assert_not_called()
+
+
+class TestDeferredDispatchCancel(unittest.TestCase):
+    """取消标识落下之后，dispatch_step 不得调用 driver.execute。"""
+
+    def _make_step(self):
+        from model.ai_tool_pipeline_steps import PipelineStep
+        return PipelineStep(
+            id=55, ai_tool_id=9, stage='param_prepare',
+            step_type='face_mask', status=0,
+        )
+
+    def test_dispatch_skips_execute_when_cancel_requested_before_claim(self):
+        from task import pipeline_processor as mod
+
+        step = self._make_step()
+        tool = MagicMock(status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=1)
+        with patch.object(mod.PipelineDriverFactory, "create_driver") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch.object(mod, "AIToolsModel") as mock_ai_tools:
+                mock_ai_tools.get_by_id.return_value = tool
+                with patch.object(mod.PipelineStepModel, "try_update_status", return_value=1):
+                    with patch("task.queued_cancel.commit_deferred_cancel", return_value=True) as mock_commit:
+                        ok = asyncio.run(mod.PipelineProcessor.dispatch_step(step))
+        self.assertFalse(ok)
+        mock_create.return_value.execute.assert_not_called()
+        mock_commit.assert_called_once_with(9)
+
+    def test_dispatch_aborts_after_step_cas_when_flag_lands(self):
+        from task import pipeline_processor as mod
+        from model.ai_tool_pipeline_steps import PipelineStepStatus
+
+        step = self._make_step()
+        before = MagicMock(status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=0)
+        after = MagicMock(status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=1)
+        with patch.object(mod.PipelineDriverFactory, "create_driver") as mock_create:
+            mock_create.return_value = MagicMock()
+            with patch.object(mod, "AIToolsModel") as mock_ai_tools:
+                mock_ai_tools.get_by_id.side_effect = [before, after]
+                with patch.object(mod.PipelineStepModel, "try_update_status", return_value=1) as mock_step:
+                    with patch("task.queued_cancel.commit_deferred_cancel", return_value=True):
+                        ok = asyncio.run(mod.PipelineProcessor.dispatch_step(step))
+        self.assertFalse(ok)
+        mock_create.return_value.execute.assert_not_called()
+        mock_step.assert_any_call(
+            55, PipelineStepStatus.PROCESSING, PipelineStepStatus.CANCELLED,
+            error_message='任务已被用户取消',
+        )
+
+
+class TestCommitDeferredCancelIdleGuard(unittest.TestCase):
+    def test_does_not_transition_while_step_processing(self):
+        from task.queued_cancel import commit_deferred_cancel
+
+        with patch(
+            "model.ai_tool_pipeline_steps.PipelineStepModel.has_processing_for_ai_tool",
+            return_value=True,
+        ):
+            with patch("model.ai_tools.AIToolsModel.transition_status") as mock_cas:
+                ok = commit_deferred_cancel(9)
+        self.assertFalse(ok)
+        mock_cas.assert_not_called()
+
+    def test_should_defer_only_for_param_prepare(self):
+        from task.queued_cancel import should_defer_cancel
+
+        preparing = MagicMock(status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=0)
+        pending = MagicMock(status=AI_TOOL_STATUS_PENDING, cancel_requested=0)
+        flagged = MagicMock(status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE, cancel_requested=1)
+        self.assertTrue(should_defer_cancel(preparing, True))
+        self.assertFalse(should_defer_cancel(preparing, False))
+        self.assertFalse(should_defer_cancel(pending, True))
+        self.assertTrue(should_defer_cancel(flagged, False))
 
 
 if __name__ == "__main__":

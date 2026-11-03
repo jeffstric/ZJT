@@ -645,6 +645,28 @@ class PipelineStepModel:
             raise
 
     @staticmethod
+    def has_processing_for_ai_tool(ai_tool_id: int) -> bool:
+        """该任务是否已有步骤处于 PROCESSING（调用已在途或即将执行）。"""
+        sql = """
+            SELECT 1 AS hit FROM ai_tool_pipeline_steps
+            WHERE ai_tool_id = %s AND status = %s
+            LIMIT 1
+        """
+        try:
+            result = execute_query(
+                sql, (ai_tool_id, PipelineStepStatus.PROCESSING), fetch_one=True
+            )
+            return bool(result)
+        except pymysql.MySQLError as e:
+            logger.error(f"Failed to check processing steps for ai_tool {ai_tool_id}: {e}")
+            raise
+        except Exception as e:
+            logger.error(
+                f"Failed to check processing steps for ai_tool {ai_tool_id} (unexpected): {e}"
+            )
+            raise
+
+    @staticmethod
     def has_steps(ai_tool_id: int, stage: str) -> bool:
         """检查某 ai_tool 某阶段是否存在步骤（不限状态）"""
         sql = """

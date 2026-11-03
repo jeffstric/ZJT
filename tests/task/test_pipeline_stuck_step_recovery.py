@@ -46,10 +46,11 @@ class TestRecoverStuckProcessingSteps(unittest.TestCase):
     def _run(self, coro):
         return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
 
+    @patch('task.pipeline_processor.AIToolsModel.get_by_id', return_value=MagicMock(cancel_requested=0))
     @patch('task.pipeline_processor.PipelineProcessor._check_ai_tool_stage_completion')
     @patch('task.pipeline_processor.PipelineStepModel')
     @patch.object(_const.PipelineConfig, 'STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS', 3600)
-    def test_recovers_steps_without_premature_completion_check(self, MockStepModel, mock_check):
+    def test_recovers_steps_without_premature_completion_check(self, MockStepModel, mock_check, _mock_tool):
         """超时步骤被批量置 FAILED，且不得调用 _check_ai_tool_stage_completion 抢跑"""
         from task.pipeline_processor import PipelineProcessor
 

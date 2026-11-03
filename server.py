@@ -73,8 +73,10 @@ from config.constant import (
     AI_TOOL_STATUS_FAILED,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
     AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_DOWNLOADING,
     AI_TOOL_STATUS_CANCELLED,
     AI_TOOL_CANCELLABLE_STATUSES,
+    AI_TOOL_ACTIVE_STATUSES,
     TASK_STATUS_CANCELLED,
     TASK_STATUS_QUEUED,
     AI_AUDIO_STATUS_PENDING,
@@ -2389,10 +2391,11 @@ async def runninghub_status(
             if results:
                 try:
                     result_url = results[0].file_url
-                    AIToolsModel.update_by_project_id(
-                        project_id=project_id,
+                    AIToolsModel.transition_with_cdn_sync(
+                        task_record.id,
+                        [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],
+                        AI_TOOL_STATUS_COMPLETED,
                         result_url=result_url,
-                        status=AI_TOOL_STATUS_COMPLETED
                     )
                 except Exception as db_error:
                     logger.error(f"Failed to update database record: {db_error}")
@@ -2410,11 +2413,12 @@ async def runninghub_status(
                 ]
             })
         elif status == TaskStatus.FAILED:
-            AIToolsModel.update_by_project_id(
-                project_id=project_id,
-                status=AI_TOOL_STATUS_FAILED
+            failed_affected = AIToolsModel.transition_status(
+                task_record.id,
+                list(AI_TOOL_ACTIVE_STATUSES),
+                AI_TOOL_STATUS_FAILED,
             )
-            if CHECK_AUTH_TOKEN and auth_token:
+            if (failed_affected or task_record.status == AI_TOOL_STATUS_FAILED) and CHECK_AUTH_TOKEN and auth_token:
                 # 幂等防重复退费（与 v2 分支共用，模式说明见函数 docstring）
                 await _refund_failed_runninghub_task(task_record, auth_token, project_id)
             return JSONResponse({
@@ -2685,8 +2689,13 @@ async def get_status(
                 AI_TOOL_STATUS_SYNC_QUEUED,
                 AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
             ):
-                # 排队中（尚未调用上游提交接口）：前端据此展示「取消排队」入口
-                status_str = "QUEUED"
+                # 排队中（尚未调用上游提交接口）：前端据此展示「取消排队」入口。
+                # 预处理步骤在途时取消只记标识，状态仍是 4，对外报 CANCELLING。
+                from task.queued_cancel import cancel_requested_flag
+                if cancel_requested_flag(task_record):
+                    status_str = "CANCELLING"
+                else:
+                    status_str = "QUEUED"
             elif status == AI_TOOL_STATUS_CANCELLED:
                 status_str = "CANCELLED"
                 reason_payload = reason or "任务已取消"
@@ -2732,8 +2741,23 @@ async def cancel_queued_ai_tool_task(
     """
     from model.ai_tools_log import AIToolsLogEvent
     from model.ai_tool_pipeline_steps import PipelineStepModel
+    from task.queued_cancel import cancel_requested_flag, should_defer_cancel
 
     user_id = getattr(request.state, 'user_id', None)
+
+    def _cancelled_payload(message: str):
+        return {
+            "code": 0,
+            "message": message,
+            "data": {"ai_tool_id": ai_tool_id, "status": "CANCELLED"},
+        }
+
+    def _cancelling_payload():
+        return {
+            "code": 0,
+            "message": "取消中，当前步骤结束后退还算力",
+            "data": {"ai_tool_id": ai_tool_id, "status": "CANCELLING"},
+        }
 
     try:
         task_record = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
@@ -2742,6 +2766,42 @@ async def cancel_queued_ai_tool_task(
 
         if user_id is not None and task_record.user_id and task_record.user_id != user_id:
             raise HTTPException(status_code=403, detail="无权取消该任务")
+
+        if task_record.status == AI_TOOL_STATUS_CANCELLED:
+            return _cancelled_payload("任务已取消")
+
+        # 预处理步骤已经在跑：只记取消标识，等该步骤结束后再改终态并退款。
+        # 再次点击且标识已在、状态仍是 4 时同样返回 CANCELLING，不报 409。
+        has_processing = False
+        if task_record.status == AI_TOOL_STATUS_WAITING_PARAM_PREPARE:
+            has_processing = await asyncio.to_thread(
+                PipelineStepModel.has_processing_for_ai_tool, ai_tool_id
+            )
+        if should_defer_cancel(task_record, has_processing):
+            if not cancel_requested_flag(task_record):
+                flagged = await asyncio.to_thread(
+                    AIToolsModel.request_cancel,
+                    ai_tool_id,
+                    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                )
+                if flagged == 0:
+                    fresh = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
+                    if fresh and fresh.status == AI_TOOL_STATUS_CANCELLED:
+                        return _cancelled_payload("任务已取消")
+                    if not fresh or not cancel_requested_flag(fresh):
+                        task_record = fresh or task_record
+                    else:
+                        return _cancelling_payload()
+                else:
+                    await asyncio.to_thread(
+                        AIToolsLogModel.log, ai_tool_id, AIToolsLogEvent.USER_CANCELLED,
+                        user_id=task_record.user_id,
+                        status_to=task_record.status,
+                        message="用户请求取消，等待当前预处理步骤结束",
+                    )
+                    return _cancelling_payload()
+            else:
+                return _cancelling_payload()
 
         # 核心互斥：仅当仍处于可取消的排队状态时才置 CANCELLED（affected=0 → 已开始/已完成）
         affected = await asyncio.to_thread(
@@ -5592,9 +5652,10 @@ async def _submit_segmented_digital_human(
             except Exception as e:
                 logger.warning(f"[分段提交回滚] 段 {seg_id} tasks 置失败异常: {e}")
             try:
-                AIToolsModel.update(
+                AIToolsModel.transition_status(
                     seg_id,
-                    status=AI_TOOL_STATUS_FAILED,
+                    list(AI_TOOL_ACTIVE_STATUSES),
+                    AI_TOOL_STATUS_FAILED,
                     message=reason,
                     completed_time=datetime.now()
                 )

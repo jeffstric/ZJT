@@ -325,7 +325,7 @@
         const allSuccess = tasks.every(t => t.status === 'SUCCESS');
         const anyFailed = tasks.some(t => t.status === 'FAILED');
         const anyCancelled = tasks.some(t => t.status === 'CANCELLED');
-        const anyRunning = tasks.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+        const anyRunning = tasks.some(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLING');
 
         // 为每个任务提取结果和错误信息
         const taskDetails = tasks.map(task => {
@@ -338,7 +338,7 @@
           };
         });
 
-        // 全局状态判断（QUEUED 排队中与 RUNNING 同为未终态；CANCELLED 是终态）
+        // 全局状态判断（QUEUED / CANCELLING 与 RUNNING 同为未终态；CANCELLED 是终态）
         let globalStatus = 'RUNNING';
         if(allSuccess){
           globalStatus = 'SUCCESS';
@@ -380,7 +380,8 @@
       let data = null;
       try { data = await res.json(); } catch(e) { /* 非 JSON 响应 */ }
       if(res.ok && data && data.code === 0){
-        return { success: true };
+        var payload = data.data || {};
+        return { success: true, status: payload.status || 'CANCELLED' };
       }
       return {
         success: false,

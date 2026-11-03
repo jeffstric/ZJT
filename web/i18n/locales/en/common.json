@@ -94,7 +94,9 @@
   "ai_task_cancel_queue_title": "Cancels a task still queuing (not yet submitted upstream); computing power is refunded automatically",
   "ai_task_cancel_confirm": "Cancel this queued task? The deducted computing power will be refunded.",
   "ai_task_cancel_done": "Task cancelled, computing power will be refunded",
+  "ai_task_cancel_pending": "Cancelling. Computing power is refunded after the current step finishes",
   "ai_task_cancel_failed": "Failed to cancel task",
   "ai_task_cancelled": "Cancelled (power refunded)",
+  "ai_task_cancelling": "Cancelling. Computing power is refunded after the current step finishes",
   "ai_task_status_queued": "Queued..."
 }

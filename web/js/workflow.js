@@ -511,7 +511,7 @@
           // return，标记分支成为死代码——刷新后已取消节点永远卡「生成中」。
           if(result.tasks && window.AiToolTimeline && typeof window.AiToolTimeline.setNodeCancelVisible === 'function'){
             const runningIds = new Set(
-              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLED')
+              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLED' || t.status === 'CANCELLING')
                 .map(t => String(t.project_id))
             );
             state.nodes.forEach(node => {
@@ -523,6 +523,8 @@
               if(!task) return;
               if(task.status === 'CANCELLED'){
                 window.AiToolTimeline.markNodeCancelled(node.id);
+              } else if(task.status === 'CANCELLING' && typeof window.AiToolTimeline.markNodeCancelling === 'function'){
+                window.AiToolTimeline.markNodeCancelling(node.id);
               } else {
                 window.AiToolTimeline.setNodeCancelVisible(node.id, task.status === 'QUEUED');
                 // 排队中（尚未提交上游）时明确提示，与「生成中」区分

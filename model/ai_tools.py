@@ -126,6 +126,7 @@ class AITool:
         self.user_id = kwargs.get('user_id')
         self.type = kwargs.get('type')
         self.status = kwargs.get('status')
+        self.cancel_requested = int(kwargs.get('cancel_requested') or 0)
         self.message = kwargs.get('message')
         self.image_size = kwargs.get('image_size')
         self.completed_time = kwargs.get('completed_time')
@@ -157,6 +158,7 @@ class AITool:
             'user_id': self.user_id,
             'type': self.type,
             'status': self.status,
+            'cancel_requested': self.cancel_requested,
             'message': self.message,
             'image_size': self.image_size,
             'completed_time': self.completed_time.isoformat() if self.completed_time else None,
@@ -458,6 +460,8 @@ class AIToolsModel:
         to_status: int,
         message: Optional[str] = None,
         completed_time: Optional[datetime] = None,
+        block_if_cancel_requested: bool = False,
+        require_cancel_requested: bool = False,
         **extra_fields
     ) -> int:
         """
@@ -474,7 +478,11 @@ class AIToolsModel:
             to_status: 目标状态
             message: 可选，同时更新的 message 字段
             completed_time: 可选，同时更新的 completed_time 字段
-            **extra_fields: 其他允许字段（如 project_id）
+            block_if_cancel_requested: 为真时附加 AND cancel_requested = 0，
+                开工/推进（0→1、3→1、4→0）不会抢走已请求取消的任务
+            require_cancel_requested: 为真时附加 AND cancel_requested = 1，
+                延迟取消的终态落库只命中用户已经请求取消的行
+            **extra_fields: 其他允许字段（project_id、implementation、result_url）
 
         Returns:
             影响的行数（0 表示当前状态不在 from_statuses，迁移未发生）
@@ -485,7 +493,7 @@ class AIToolsModel:
         if not from_statuses:
             return 0
 
-        allowed_extras = ('project_id', 'implementation')
+        allowed_extras = ('project_id', 'implementation', 'result_url')
         update_fields = ["status = %s"]
         params = [to_status]
         if message is not None:
@@ -506,9 +514,14 @@ class AIToolsModel:
         # 拒绝提交（真实数据库复现发现，单测因断言了错序参数未拦截）。
         params.append(record_id)
         params.extend(from_statuses)
+        where_extra = ""
+        if block_if_cancel_requested:
+            where_extra += " AND cancel_requested = 0"
+        if require_cancel_requested:
+            where_extra += " AND cancel_requested = 1"
         sql = (
             f"UPDATE ai_tools SET {', '.join(update_fields)} "
-            f"WHERE id = %s AND status IN ({placeholders})"
+            f"WHERE id = %s AND status IN ({placeholders}){where_extra}"
         )
         try:
             affected = execute_update(sql, tuple(params))
@@ -516,6 +529,44 @@ class AIToolsModel:
         except Exception as e:
             logger.error(f"Failed to transition AI tool {record_id} {from_statuses}->{to_status}: {e}")
             raise
+
+    @staticmethod
+    def request_cancel(record_id: int, from_status: int) -> int:
+        """记下取消意图，不改 status。仅当任务仍处于 from_status 且尚未标记时命中。"""
+        sql = (
+            "UPDATE ai_tools SET cancel_requested = 1 "
+            "WHERE id = %s AND status = %s AND cancel_requested = 0"
+        )
+        try:
+            return execute_update(sql, (record_id, int(from_status)))
+        except Exception as e:
+            logger.error(f"Failed to request cancel for AI tool {record_id}: {e}")
+            raise
+
+    @staticmethod
+    def transition_with_cdn_sync(
+        record_id: int,
+        from_statuses,
+        to_status: int,
+        result_url: Optional[str] = None,
+        completed_time: Optional[datetime] = None,
+        message: Optional[str] = None,
+    ) -> int:
+        """条件迁移到终态后再做 CDN 映射。CAS 未命中时不写 result_url、不建映射。"""
+        extras = {}
+        if result_url is not None:
+            extras['result_url'] = result_url
+        affected = AIToolsModel.transition_status(
+            record_id,
+            from_statuses,
+            to_status,
+            message=message,
+            completed_time=completed_time,
+            **extras,
+        )
+        if affected and result_url:
+            AIToolsModel.update_with_cdn_sync(record_id, result_url=result_url)
+        return affected
 
     @staticmethod
     def get_by_id(record_id: int) -> Optional[AITool]:
@@ -1163,6 +1214,7 @@ CREATE TABLE IF NOT EXISTS `ai_tools` (
   `user_id` int DEFAULT NULL COMMENT '用户id',
   `type` tinyint DEFAULT NULL COMMENT '类型（1-图片编辑，2-ai视频生成，3-图片生成视频，4-图片高清）',
   `status` tinyint DEFAULT NULL COMMENT '状态: 0-未处理, 1-正在处理, -1-处理失败, 2-处理完成',
+  `cancel_requested` tinyint NOT NULL DEFAULT 0 COMMENT '用户已请求取消（预处理在途时推迟终态与退款）',
   `message` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci COMMENT '错误信息',
   `image_size` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL COMMENT '图片尺寸（1k,2k.4k）',
   `completed_time` datetime DEFAULT NULL COMMENT '完成时间',

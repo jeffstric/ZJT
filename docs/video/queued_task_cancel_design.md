@@ -187,4 +187,39 @@ SELECT id, user_id, type, status, create_time FROM ai_tools
 SELECT id, user_id, status, message, completed_time FROM ai_tools WHERE status = -2;
 -- 取消事件轨迹
 SELECT * FROM ai_tools_log WHERE ai_tool_id = ? AND event_type IN ('user_cancelled','cancel_guard_rejected');
+-- 已请求取消、尚未落终态（预处理步骤在途）
+SELECT id, user_id, status, cancel_requested FROM ai_tools
+ WHERE cancel_requested = 1 AND status = 4;
 ```
+
+## 11. 预处理步骤在途：延迟取消
+
+`WAITING_PARAM_PREPARE` 期间，`dispatch_step` 可能已经把步骤抢成 PROCESSING，并调用
+人脸遮罩 / H3 提示词优化等上游。这时立刻把任务改成 CANCELLED 并退款，上游请求仍会
+完成，平台仍要付这次预处理费用。
+
+因此只在「状态是 4 且已有步骤 PROCESSING」（或标识已经写下）时走延迟取消：
+
+1. 取消接口只执行 `request_cancel`（`cancel_requested=1`），不改 status、不退款。
+   响应 `data.status=CANCELLING`。再次点击且状态仍是 4，仍返回 CANCELLING。
+2. `dispatch_step` 在 `execute` 之前若看到 CANCELLED 或 `cancel_requested`，把本步骤
+   标为 CANCELLED，不调用上游。步骤 CAS 抢到 PROCESSING 之后再读一次，命中则回滚
+   该步骤并不调用上游。
+3. 仍有其它步骤 PROCESSING 时，`commit_deferred_cancel` 不退款。当前步骤结束后，
+   阶段检查不再 `4→0`、不再派发下一步，CAS 到 CANCELLED（要求 `cancel_requested=1`）
+   并退款一次。
+4. PENDING / SYNC_QUEUED，以及状态 4 但没有 PROCESSING 步骤，仍走原来的立即 CAS + 退款。
+   「检查时还没有 PROCESSING，随后步骤才抢到」由提交前的再次读取挡住上游调用。
+
+已经发出的 HTTP 无法撤回。延迟取消只保证**下一次**上游调用不会发出，退款发生在
+在途步骤返回之后。
+
+开工与推进（`0→4`、`0→3`、`0→1`、`3→1`、`4→0`）的 `transition_status` 带
+`block_if_cancel_requested=True`（`AND cancel_requested=0`）。业务代码不得再对
+`AIToolsModel.update` / `update_with_cdn_sync` / `update_by_project_id` /
+`update_by_project_id_with_cdn_sync` 传 `status=`，否则会无条件覆盖 CANCELLED。
+CI `scripts/lint_ai_tool_status_cas.py`（S1）拦截这类调用。状态迁移走
+`transition_status` 或 `transition_with_cdn_sync`。
+
+列 `ai_tools.cancel_requested` 由迁移 `no_161_20261103_add_ai_tools_cancel_requested`（revision `no_161_ai_tools_cancel_req`）添加。
+前端轮询把该标识显示为「取消中」，`node.data.cancelRequested` 写入工作流快照，刷新后恢复。

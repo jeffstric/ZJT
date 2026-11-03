@@ -388,6 +388,7 @@
         var ids = nodeTaskIds(node);
         if (!ids.length) return;
         var cancelledText = '✗ ' + tr('ai_task_cancelled', '已取消（算力已退还）');
+        var cancellingText = tr('ai_task_cancelling', '取消中，当前步骤结束后退还算力');
 
         if (node.type === 'image' && !node.data.url) {
             var placeholder = el.querySelector('.image-generating-placeholder');
@@ -399,6 +400,9 @@
                     placeholder.classList.add('is-failed');
                     var cancelledLabel = placeholder.querySelector('.image-generating-label');
                     if (cancelledLabel) cancelledLabel.textContent = cancelledText;
+                } else if (node.data.cancelRequested) {
+                    var cancellingLabel = placeholder.querySelector('.image-generating-label');
+                    if (cancellingLabel) cancellingLabel.textContent = cancellingText;
                 }
                 ensureNodeCancelBtn(placeholder, node);
             }
@@ -408,9 +412,12 @@
             if (statusField && statusEl) {
                 statusField.style.display = 'block';
                 if (!node.data.url) {
-                    // 重载恢复：快照已持久化的取消终态直接渲染，不等远端纠正
+                    // 重载恢复：快照已持久化的取消终态 / 取消中直接渲染
                     if (node.data.cancelled) {
                         statusEl.textContent = cancelledText;
+                        statusEl.style.color = '#9ca3af';
+                    } else if (node.data.cancelRequested) {
+                        statusEl.textContent = cancellingText;
                         statusEl.style.color = '#9ca3af';
                     } else {
                         statusEl.textContent = tr('timeline_generating', '生成中...');
@@ -436,7 +443,7 @@
         btn.textContent = tr('ai_task_cancel_queue', '取消排队');
         container.appendChild(btn);
         // 初始可见性由节点状态决定（已取消/已出结果的节点不显示）
-        if (node && node.data && (node.data.cancelled || node.data.url)) {
+        if (node && node.data && (node.data.cancelled || node.data.cancelRequested || node.data.url)) {
             btn.style.display = 'none';
         }
         return btn;
@@ -458,7 +465,10 @@
                 // 完整标记（写「✗ 已取消」终态文案）：覆盖快照未持久化取消态的
                 // 重载场景（如保存晚于取消），仅 persistOnly 会把节点留在「生成中」
                 markNodeCancelled(node.id);
+            } else if (task.status === 'CANCELLING') {
+                markNodeCancelling(node.id);
             } else {
+                if (node.data) node.data.cancelRequested = false;
                 setNodeCancelVisible(node.id, task.status === 'QUEUED');
             }
         }).catch(function () { /* 查询失败保持乐观显示，点击时后端兜底校验 */ })
@@ -473,6 +483,32 @@
         Array.prototype.forEach.call(btns, function (btn) {
             btn.style.display = visible ? '' : 'none';
         });
+    }
+
+    /** 取消已受理、算力尚未退还：隐藏按钮，写入 cancelRequested 供工作流重载恢复。 */
+    function markNodeCancelling(nodeId) {
+        var node = findNode(nodeId);
+        if (!node) return;
+        node.data.cancelRequested = true;
+        setNodeCancelVisible(nodeId, false);
+        var el = nodeEl(nodeId);
+        if (!el) return;
+        var text = tr('ai_task_cancelling', '取消中，当前步骤结束后退还算力');
+        if (node.type === 'image') {
+            var placeholder = el.querySelector('.image-generating-placeholder');
+            if (placeholder) {
+                var label = placeholder.querySelector('.image-generating-label');
+                if (label) label.textContent = text;
+            }
+        } else if (node.type === 'video') {
+            var statusField = el.querySelector('.video-status-field');
+            var statusEl = el.querySelector('.video-status');
+            if (statusField && statusEl) {
+                statusField.style.display = 'block';
+                statusEl.textContent = text;
+                statusEl.style.color = '#9ca3af';
+            }
+        }
     }
 
     /** 节点标记「已取消」终态：状态行/占位提示 + 隐藏取消按钮 + 持久化（重载恢复） */
@@ -516,9 +552,16 @@
         setNodeCancelVisible(node.id, false);
         var done = function (result) {
             if (result && result.success) {
-                markNodeCancelled(node.id);
-                if (typeof showToast === 'function') {
-                    showToast(tr('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+                if (result.status === 'CANCELLING') {
+                    markNodeCancelling(node.id);
+                    if (typeof showToast === 'function') {
+                        showToast(tr('ai_task_cancel_pending', '取消中，当前步骤结束后退还算力'), 'success');
+                    }
+                } else {
+                    markNodeCancelled(node.id);
+                    if (typeof showToast === 'function') {
+                        showToast(tr('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+                    }
                 }
                 if (typeof fetchComputingPower === 'function') {
                     try { fetchComputingPower(); } catch (e) { /* 刷新算力失败不阻断 */ }
@@ -630,6 +673,7 @@
         failNode: failNode,
         makeTimelineButton: makeTimelineButton,
         markNodeCancelled: markNodeCancelled,
+        markNodeCancelling: markNodeCancelling,
         setNodeCancelVisible: setNodeCancelVisible
     };
 })();

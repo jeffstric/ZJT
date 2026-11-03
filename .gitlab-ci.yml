@@ -83,6 +83,16 @@ lint:migration_names:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
 
+# ai_tools 状态写入必须走 CAS（S1）。无条件 update(status=) 会覆盖 CANCELLED。
+lint:ai_tool_status_cas:
+  stage: lint
+  image: m.daocloud.io/docker.io/library/python:3.10-slim
+  script:
+    - python scripts/lint_ai_tool_status_cas.py
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
 # execute_tool 鸭子类型签名一致性 lint（T1）
 lint:tool_executor_signature:
   stage: lint

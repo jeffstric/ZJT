@@ -214,7 +214,10 @@ class TestImplementationRetryPipelineDriverExecute(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertIn('result_data', result)
         self.assertEqual(result['result_data']['new_implementation_name'], 'kling_duomi_v1')
-        MockAIToolsModel.update.assert_called_once()
+        MockAIToolsModel.transition_status.assert_called_once()
+        transition_kwargs = MockAIToolsModel.transition_status.call_args.kwargs
+        assert transition_kwargs['message'] == ''
+        assert transition_kwargs['project_id'] is None
         MockTasksModel.update_by_task_id.assert_called_once()
 
     @patch('task.pipeline_drivers.implementation_retry_driver.get_implementation_id', return_value=2)

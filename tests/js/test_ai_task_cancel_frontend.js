@@ -28,7 +28,7 @@ assert.doesNotMatch(cancelFn, /auth_token[=:]/, '取消请求不得把 token 拼
 
 // ---- api.js：终态判定纳入 CANCELLED；QUEUED 视为未终态 ----
 assert.match(apiJs, /anyCancelled = tasks\.some\(t => t\.status === 'CANCELLED'\)/, '应统计 CANCELLED 任务');
-assert.match(apiJs, /anyRunning = tasks\.some\(t => t\.status === 'RUNNING' \|\| t\.status === 'QUEUED'\)/, 'QUEUED 应视为未终态');
+assert.match(apiJs, /anyRunning = tasks\.some\(t => t\.status === 'RUNNING' \|\| t\.status === 'QUEUED' \|\| t\.status === 'CANCELLING'\)/, 'QUEUED 与 CANCELLING 应视为未终态');
 
 // ---- ai_tool_timeline.js：取消按钮、节点状态与委托 ----
 assert.match(timelineJs, /ai-task-cancel-btn/, '应存在取消按钮类名');
@@ -87,8 +87,10 @@ const i18nKeys = [
   'ai_task_cancel_queue',
   'ai_task_cancel_confirm',
   'ai_task_cancel_done',
+  'ai_task_cancel_pending',
   'ai_task_cancel_failed',
   'ai_task_cancelled',
+  'ai_task_cancelling',
   'ai_task_status_queued',
 ];
 for (const key of i18nKeys) {
