@@ -11,7 +11,11 @@ from model.implementation_attempts import (
     ImplementationAttemptModel,
     ATTEMPT_STATUS_IN_PROGRESS,
 )
-from config.constant import AI_TOOL_STATUS_PENDING, TASK_STATUS_QUEUED
+from config.constant import (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_WAITING_BEFORE_FINISH,
+    TASK_STATUS_QUEUED,
+)
 from config.unified_config import get_implementation_id
 
 logger = logging.getLogger(__name__)
@@ -75,15 +79,21 @@ class ImplementationRetryPipelineDriver(BasePipelineDriver):
                 'new_implementation_name': target_implementation,
             }
 
-            # 先写入新实现方，再记录尝试；tasks 最后变为 QUEUED。
-            # generate_video 只抓取 QUEUED，因而不会在新实现方就绪前提交任务。
-            AIToolsModel.update(
+            # 只从 WAITING_BEFORE_FINISH 拉回 PENDING。affected=0 时不把 tasks 改回 QUEUED，
+            # 避免覆盖已经取消或已经离开该状态的任务。
+            affected = AIToolsModel.transition_status(
                 ai_tool.id,
+                [AI_TOOL_STATUS_WAITING_BEFORE_FINISH],
+                AI_TOOL_STATUS_PENDING,
+                message="",
                 implementation=target_impl_id,
-                status=AI_TOOL_STATUS_PENDING,
                 project_id=None,
-                message=None,
             )
+            if affected == 0:
+                return {
+                    'success': False,
+                    'error': '任务状态已变化，未重新入队',
+                }
 
             from datetime import datetime as dt
             try:

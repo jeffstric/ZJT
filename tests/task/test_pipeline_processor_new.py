@@ -157,7 +157,7 @@ class TestApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(mock_ai_tool, 'param_prepare')
 
-        mock_ai_tools_model.update.assert_called_once_with(100, video_path='http://example.com/masked_video.mp4')
+        mock_ai_tools_model.update_only_fields.assert_called_once_with(100, video_path='http://example.com/masked_video.mp4')
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -177,7 +177,7 @@ class TestApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(mock_ai_tool, 'param_prepare')
 
-        mock_ai_tools_model.update.assert_not_called()
+        mock_ai_tools_model.update_only_fields.assert_not_called()
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -210,8 +210,8 @@ class TestApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(mock_ai_tool, 'param_prepare')
 
-        mock_ai_tools_model.update.assert_called_once()
-        kwargs = mock_ai_tools_model.update.call_args.kwargs
+        mock_ai_tools_model.update_only_fields.assert_called_once()
+        kwargs = mock_ai_tools_model.update_only_fields.call_args.kwargs
         extra = _json.loads(kwargs["extra_config"])
         self.assertEqual(extra["h3_prompt_optimize"]["optimized_prompt"], "优化后")
         self.assertIs(extra["h3_prompt_optimize"]["has_dialogue"], False)
@@ -234,7 +234,7 @@ class TestApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(mock_ai_tool, 'param_prepare')
 
-        mock_ai_tools_model.update.assert_not_called()
+        mock_ai_tools_model.update_only_fields.assert_not_called()
 
 
 if __name__ == '__main__':

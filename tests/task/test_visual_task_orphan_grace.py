@@ -39,7 +39,7 @@ def _patch_orphan_dependencies(monkeypatch, grace_seconds=300):
     def _record_update(*args, **kwargs):
         updates.append((args, kwargs))
 
-    monkeypatch.setattr(visual_task.AIToolsModel, "update", staticmethod(_record_update))
+    monkeypatch.setattr(visual_task.AIToolsModel, "transition_status", staticmethod(_record_update))
     monkeypatch.setattr(
         visual_task.TasksModel, "update_by_task_id", staticmethod(_record_update)
     )
@@ -65,8 +65,8 @@ def test_orphan_reset_still_fires_after_grace_expires(monkeypatch):
     result = asyncio.run(visual_task._check_task_status(ai_tool))
 
     assert result == visual_task.PROCESS_RESULT_IN_FLIGHT
-    assert len(updates) == 2  # AIToolsModel.update + TasksModel.update_by_task_id
-    assert updates[0][1].get("status") == visual_task.AI_TOOL_STATUS_PENDING
+    assert len(updates) == 2  # transition_status + TasksModel.update_by_task_id
+    assert updates[0][0][2] == visual_task.AI_TOOL_STATUS_PENDING
 
 
 def test_orphan_reset_immediate_when_grace_disabled(monkeypatch):

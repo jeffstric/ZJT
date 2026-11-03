@@ -20,12 +20,15 @@ def test_retry_handoff_uses_attempt_number_and_queues_task_last():
     calls = []
 
     with patch.object(module, 'get_implementation_id', return_value=3), \
-            patch.object(module.AIToolsModel, 'update', side_effect=lambda *a, **k: calls.append('ai_tool')), \
+            patch.object(module.AIToolsModel, 'transition_status', side_effect=lambda *a, **k: calls.append('ai_tool') or 1) as transition, \
             patch.object(module.TasksModel, 'update_by_task_id', side_effect=lambda *a, **k: calls.append('task_queued')), \
             patch.object(module, 'ImplementationAttemptModel', create=True) as attempts:
         attempts.create.side_effect = lambda *a, **k: calls.append('attempt')
         result = asyncio.run(module.ImplementationRetryPipelineDriver().execute(step, ai_tool))
 
+    assert transition.call_args.kwargs['message'] == ''
+    assert transition.call_args.kwargs['project_id'] is None
+    assert transition.call_args.kwargs['implementation'] == 3
     assert result['success'] is True
     assert 'step_finalized' not in result
     attempts.create.assert_called_once()
@@ -38,7 +41,7 @@ def test_legacy_step_falls_back_to_step_order_attempt_number():
     ai_tool = MagicMock(id=10, implementation=1)
 
     with patch.object(module, 'get_implementation_id', return_value=2), \
-            patch.object(module.AIToolsModel, 'update'), \
+            patch.object(module.AIToolsModel, 'transition_status', return_value=1), \
             patch.object(module.TasksModel, 'update_by_task_id'), \
             patch.object(module, 'ImplementationAttemptModel', create=True) as attempts:
         result = asyncio.run(module.ImplementationRetryPipelineDriver().execute(step, ai_tool))
@@ -52,7 +55,7 @@ def test_ai_tool_update_failure_does_not_queue_task():
     ai_tool = MagicMock(id=10, implementation=1)
 
     with patch.object(module, 'get_implementation_id', return_value=2), \
-            patch.object(module.AIToolsModel, 'update', side_effect=RuntimeError('db down')), \
+            patch.object(module.AIToolsModel, 'transition_status', side_effect=RuntimeError('db down')), \
             patch.object(module.TasksModel, 'update_by_task_id') as update_task:
         result = asyncio.run(module.ImplementationRetryPipelineDriver().execute(step, ai_tool))
 

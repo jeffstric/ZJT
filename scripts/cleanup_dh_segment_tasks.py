@@ -48,6 +48,7 @@ from config.constant import (  # noqa: E402
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_PROCESSING,
     AI_TOOL_STATUS_FAILED,
+    AI_TOOL_ACTIVE_STATUSES,
     TASK_STATUS_FAILED,
     TASK_TYPE_GENERATE_VIDEO,
 )
@@ -144,9 +145,10 @@ def main() -> int:
                 TasksModel.update(row.id, status=TASK_STATUS_FAILED) if row else 0
             )
             # 2) 任务主记录置失败
-            AIToolsModel.update(
+            AIToolsModel.transition_status(
                 ai_tool_id,
-                status=AI_TOOL_STATUS_FAILED,
+                list(AI_TOOL_ACTIVE_STATUSES),
+                AI_TOOL_STATUS_FAILED,
                 message=FAIL_REASON,
             )
             # 3) 退费（幂等）

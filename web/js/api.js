@@ -324,8 +324,9 @@
         const tasks = data.tasks;
         const allSuccess = tasks.every(t => t.status === 'SUCCESS');
         const anyFailed = tasks.some(t => t.status === 'FAILED');
-        const anyRunning = tasks.some(t => t.status === 'RUNNING');
-        
+        const anyCancelled = tasks.some(t => t.status === 'CANCELLED');
+        const anyRunning = tasks.some(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLING');
+
         // 为每个任务提取结果和错误信息
         const taskDetails = tasks.map(task => {
           const results = extractResultsArray(task);
@@ -337,12 +338,14 @@
           };
         });
 
-        // 全局状态判断
+        // 全局状态判断（QUEUED / CANCELLING 与 RUNNING 同为未终态；CANCELLED 是终态）
         let globalStatus = 'RUNNING';
         if(allSuccess){
           globalStatus = 'SUCCESS';
         } else if(anyFailed && !anyRunning){
           globalStatus = 'FAILED';
+        } else if(anyCancelled && !anyRunning){
+          globalStatus = 'CANCELLED';
         }
         
         return { 
@@ -364,6 +367,27 @@
           error: singleError
         };
       }
+    }
+
+    // 取消排队中的任务（仅后端认定的排队阶段可取消；已提交上游会返回 409）
+    async function cancelQueuedAiTask(aiToolId){
+      const authToken = getAuthToken();
+      const headers = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+      const res = await fetch(`/api/ai-tool/${aiToolId}/cancel`, {
+        method: 'POST',
+        headers
+      });
+      let data = null;
+      try { data = await res.json(); } catch(e) { /* 非 JSON 响应 */ }
+      if(res.ok && data && data.code === 0){
+        var payload = data.data || {};
+        return { success: true, status: payload.status || 'CANCELLED' };
+      }
+      return {
+        success: false,
+        message: (data && data.message) || '取消任务失败',
+        status: res.status
+      };
     }
 
     // 获取版本信息

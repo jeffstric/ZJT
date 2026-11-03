@@ -60,10 +60,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         tool_id = self._create_test_tool()
 
         # 调用被测函数
-        result = self.AIToolsModel.update_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=tool_id,
             result_url='/upload/test_result.jpg',
-            status=2,
             user_id=self.test_user_id
         )
 
@@ -80,7 +79,7 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         )
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0]['result_url'], '/upload/test_result.jpg')
-        self.assertEqual(updated[0]['status'], 2)
+        self.assertEqual(updated[0]['status'], 1)
         # media_mapping_id 应为 NULL
         self.assertIsNone(updated[0]['media_mapping_id'])
 
@@ -102,12 +101,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         tool_id = self._create_test_tool()
 
         # 调用被测函数
-        from config.constant import AI_TOOL_STATUS_COMPLETED
-
-        result = self.AIToolsModel.update_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=tool_id,
             result_url='/upload/test_video.mp4',
-            status=AI_TOOL_STATUS_COMPLETED,
             user_id=self.test_user_id
         )
 
@@ -124,7 +120,7 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         )
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0]['result_url'], '/upload/test_video.mp4')
-        self.assertEqual(updated[0]['status'], AI_TOOL_STATUS_COMPLETED)
+        self.assertEqual(updated[0]['status'], 1)
         # media_mapping_id 应不为 NULL
         self.assertIsNotNone(updated[0]['media_mapping_id'])
         mapping_id = updated[0]['media_mapping_id']
@@ -154,10 +150,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         tool_id = self._create_test_tool()
 
         # 调用被测函数（使用外网 URL）
-        result = self.AIToolsModel.update_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=tool_id,
             result_url='https://external-cdn.com/video.mp4',
-            status=2,
             user_id=self.test_user_id
         )
 
@@ -205,10 +200,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         self._connection.commit()
 
         # 调用被测函数
-        result = self.AIToolsModel.update_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=tool_id,
             result_url='/upload/new_result.jpg',
-            status=2,
             user_id=self.test_user_id
         )
 
@@ -252,10 +246,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         self._connection.commit()
 
         # 调用被测函数
-        result = self.AIToolsModel.update_by_project_id_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
             project_id=project_id,
             result_url='/upload/proj_result.jpg',
-            status=2,
             user_id=self.test_user_id
         )
 
@@ -300,12 +293,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         self._connection.commit()
 
         # 调用被测函数
-        from config.constant import AI_TOOL_STATUS_COMPLETED
-
-        result = self.AIToolsModel.update_by_project_id_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
             project_id=project_id,
             result_url='/upload/proj_video.mp4',
-            status=AI_TOOL_STATUS_COMPLETED
         )
 
         # 验证返回值
@@ -321,7 +311,7 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         )
         self.assertEqual(len(updated), 1)
         self.assertEqual(updated[0]['result_url'], '/upload/proj_video.mp4')
-        self.assertEqual(updated[0]['status'], AI_TOOL_STATUS_COMPLETED)
+        self.assertEqual(updated[0]['status'], 1)
         # media_mapping_id 应不为 NULL
         self.assertIsNotNone(updated[0]['media_mapping_id'])
         mapping_id = updated[0]['media_mapping_id']
@@ -346,10 +336,9 @@ class TestAIToolsCDNIntegration(DatabaseTestCase):
         }
 
         # 调用被测函数（使用不存在的 project_id）
-        result = self.AIToolsModel.update_by_project_id_with_cdn_sync(
+        result = self.AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
             project_id='nonexistent_project_id',
             result_url='/upload/result.jpg',
-            status=2
         )
 
         # 验证返回 0（未找到记录）

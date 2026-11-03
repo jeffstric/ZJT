@@ -32,6 +32,7 @@ from config.constant import (
     DOWNLOAD_COMPLETION_MARGIN_SECONDS,
     LICENSE_DENIED_RESCHEDULE_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
+    AI_TOOL_STATUS_DOWNLOADING,
     GeneratedVideoFaceGridTrimConstants,
 )
 from task.license_rebootstrap_task import is_non_transient_error
@@ -130,12 +131,18 @@ async def _process_one(row: dict) -> None:
                 media_type=media_type,
             )
             final_url = postprocess.result_url
-            AIToolsModel.update_by_project_id_with_cdn_sync(
-                project_id=project_id,
+            completed = AIToolsModel.transition_with_cdn_sync(
+                ai_tool_id,
+                [AI_TOOL_STATUS_DOWNLOADING],
+                AI_TOOL_STATUS_COMPLETED,
                 result_url=final_url,
-                status=AI_TOOL_STATUS_COMPLETED,
                 completed_time=datetime.now(),
             )
+            if not completed:
+                logger.warning(
+                    f"download_queue id={row_id} ai_tool={ai_tool_id} completion CAS missed"
+                )
+                return
             DownloadQueueModel.mark_success(row_id, final_url)
             # 标记当前实现方尝试成功（原 _handle_task_success 终态处理一并挪到 worker）
             try:
@@ -196,12 +203,18 @@ async def _process_one(row: dict) -> None:
         else:
             # 达 max_try：用 remote_url 兜底 COMPLETED（H3）
             try:
-                AIToolsModel.update_by_project_id_with_cdn_sync(
-                    project_id=project_id,
+                completed = AIToolsModel.transition_with_cdn_sync(
+                    ai_tool_id,
+                    [AI_TOOL_STATUS_DOWNLOADING],
+                    AI_TOOL_STATUS_COMPLETED,
                     result_url=remote_url,
-                    status=AI_TOOL_STATUS_COMPLETED,
                     completed_time=datetime.now(),
                 )
+                if not completed:
+                    logger.warning(
+                        f"download_queue id={row_id} ai_tool={ai_tool_id} giveup CAS missed"
+                    )
+                    return
                 DownloadQueueModel.mark_failed(row_id, f"gave up after {max_try} tries: {err}")
                 try:
                     from model.implementation_attempts import ImplementationAttemptModel, ATTEMPT_STATUS_SUCCESS

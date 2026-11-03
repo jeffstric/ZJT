@@ -194,6 +194,7 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         AI_TOOL_STATUS_PROCESSING,
         AI_TOOL_STATUS_COMPLETED,
         AI_TOOL_STATUS_FAILED,
+        AI_TOOL_STATUS_SYNC_QUEUED,
         TASK_STATUS_PROCESSING,
         TASK_STATUS_COMPLETED,
         TASK_STATUS_FAILED,
@@ -204,8 +205,23 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
     )
 
     try:
+        # CAS 3→1（SYNC_QUEUED→PROCESSING）：与用户取消（0/3/4→CANCELLED）互斥。
+        # 抢占失败说明任务在池队列中等待期间被用户取消 —— 绝不调用上游接口，
+        # 直接返回（取消接口已完成退款与终态落库）。
+        if AIToolsModel.transition_status(
+            task_id, [AI_TOOL_STATUS_SYNC_QUEUED], AI_TOOL_STATUS_PROCESSING,
+            block_if_cancel_requested=True,
+        ) == 0:
+            logger.info(f"[SyncTask] Task {task_id} cancel guard rejected, skip execution (already cancelled or state changed)")
+            return SyncTaskResult(
+                task_id=task_id,
+                ai_tool_type=ai_tool_type,
+                success=True,
+                result_url=None,
+                error="cancelled",
+                error_type="CANCELLED",
+            )
         # 更新状态为处理中
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_PROCESSING)
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
 
         # ===== E2E Mock 短路（同步子进程，覆盖所有 13 个 sync_mode 实现）=====
@@ -937,20 +953,39 @@ class SyncTaskExecutor:
         """
         from model import AIToolsModel, TasksModel
         from config.constant import (
+            AI_TOOL_STATUS_PROCESSING,
             AI_TOOL_STATUS_COMPLETED,
+            AI_TOOL_STATUS_CANCELLED,
             TASK_STATUS_COMPLETED,
         )
 
         task_id = result.task_id
 
+        # 用户已取消（排队阶段）：保留 CANCELLED 终态，不写 COMPLETED/FAILED，
+        # 也不再触发退款（取消接口已退款且幂等流水号相同）
+        if result.error_type == "CANCELLED":
+            logger.info(f"[SyncTaskExecutor] Task {task_id} was cancelled before execution, keep terminal state")
+            return
+        try:
+            current = AIToolsModel.get_by_id(task_id)
+            if current and current.status == AI_TOOL_STATUS_CANCELLED:
+                logger.info(f"[SyncTaskExecutor] Task {task_id} already cancelled, skip result handling")
+                return
+        except Exception as e:
+            logger.warning(f"[SyncTaskExecutor] Cancel check failed for task {task_id}: {e}")
+
         if result.success:
-            # 任务成功
-            AIToolsModel.update_with_cdn_sync(
+            # 任务成功。CAS 未命中（已取消或已终态）时不写 COMPLETED、不结算。
+            completed = AIToolsModel.transition_with_cdn_sync(
                 task_id,
+                [AI_TOOL_STATUS_PROCESSING],
+                AI_TOOL_STATUS_COMPLETED,
                 result_url=result.result_url,
-                status=AI_TOOL_STATUS_COMPLETED,
-                completed_time=datetime.now()
+                completed_time=datetime.now(),
             )
+            if not completed:
+                logger.info(f"[SyncTaskExecutor] Task {task_id} completion CAS missed, keep current state")
+                return
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_COMPLETED)
 
             # 标记当前实现方尝试为成功
@@ -986,7 +1021,12 @@ class SyncTaskExecutor:
             ai_tool_type: AI工具类型
         """
         from model import AIToolsModel, TasksModel
-        from config.constant import AI_TOOL_STATUS_FAILED, TASK_STATUS_FAILED
+        from config.constant import (
+            AI_TOOL_ACTIVE_STATUSES,
+            AI_TOOL_STATUS_CANCELLED,
+            AI_TOOL_STATUS_FAILED,
+            TASK_STATUS_FAILED,
+        )
 
         # 委托给 visual_task 的统一失败处理（尝试 before_finish 重试）
         try:
@@ -1004,8 +1044,28 @@ class SyncTaskExecutor:
         except Exception as e:
             logger.error(f"[SyncTaskExecutor] Unified handler failed for task {task_id}: {e}")
 
-        # 兜底：直接标记失败
-        AIToolsModel.update(task_id, status=AI_TOOL_STATUS_FAILED, message=error, completed_time=datetime.now())
+        # 兜底：条件迁移到 FAILED，不覆盖 CANCELLED
+        from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
+        from model.ai_tool_pipeline_steps import PipelineStepModel
+        fallback_tool = AIToolsModel.get_by_id(task_id)
+        if cancel_requested_flag(fallback_tool):
+            if PipelineStepModel.has_processing_for_ai_tool(task_id):
+                logger.info(f"[SyncTaskExecutor] Task {task_id} cancel requested, wait for in-flight step")
+                return
+            if commit_deferred_cancel(task_id):
+                return
+        failed_affected = AIToolsModel.transition_status(
+            task_id,
+            list(AI_TOOL_ACTIVE_STATUSES),
+            AI_TOOL_STATUS_FAILED,
+            message=error,
+            completed_time=datetime.now(),
+        )
+        if failed_affected == 0:
+            fresh = AIToolsModel.get_by_id(task_id)
+            if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
+                logger.info(f"[SyncTaskExecutor] Task {task_id} failure CAS missed, keep current state")
+                return
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
 
         try:

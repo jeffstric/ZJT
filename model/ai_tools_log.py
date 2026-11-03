@@ -34,6 +34,8 @@ class AIToolsLogEvent:
     RETRY_SCHEDULED = 'retry_scheduled'                # 失败，安排重试（next_trigger）
     MAX_RETRY_EXCEEDED = 'max_retry_exceeded'          # 超过最大重试次数，终态失败
     TASK_COMPLETED = 'task_completed'                  # 任务终态成功
+    USER_CANCELLED = 'user_cancelled'                  # 用户取消排队任务（终态 CANCELLED）
+    CANCEL_GUARD_REJECTED = 'cancel_guard_rejected'    # 提交前 CAS 抢占失败（任务已被取消），放弃调用上游
     EXCEPTION = 'exception'                            # 流程中出现未预期异常
     PIPELINE_STEP = 'pipeline_step'                    # 流水线步骤事件（预留）
 

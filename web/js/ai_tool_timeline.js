@@ -8,13 +8,18 @@
  * - open(taskIds)            打开时间轴弹窗，taskIds 支持 number / number[]（多个时顶部可切换）
  * - close()                  关闭弹窗
  * - markNodeGenerating(id)   video_workflow 专用：结果节点（image/video）绑定 project_id 后
- *                            显示「生成中」状态行/占位 + 查看状态按钮（含工作流重载恢复）
+ *                            显示「生成中」状态行/占位 + 查看状态按钮 + 「取消排队」按钮（含工作流重载恢复）
  * - settleNodeResult(node)   video_workflow 专用：url 到位后隐藏占位 / 状态行标记成功
  * - failNode(id, message)    video_workflow 专用：状态行/占位标记失败（按钮保留可查时间轴）
+ * - markNodeCancelled(id, persistOnly) video_workflow 专用：状态行/占位标记「已取消」终态
+ * - setNodeCancelVisible(id, visible)   video_workflow 专用：同步「取消排队」按钮可见性
  *
- * 节点内按钮（.ai-task-timeline-btn）由全局 click 委托处理：
- * 优先读 data-task-ids（storyboard 候选卡），否则回溯最近 .node[data-node-id]
- * 从 video_workflow 的全局 state.nodes 取 projectIds / project_id / aiToolsId。
+ * 节点内按钮由全局 click 委托处理：
+ * - .ai-task-timeline-btn 优先读 data-task-ids（storyboard 候选卡），否则回溯最近
+ *   .node[data-node-id] 从 video_workflow 的全局 state.nodes 取 projectIds / project_id / aiToolsId。
+ * - .ai-task-cancel-btn 仅排队中的任务显示；点击调 POST /api/ai-tool/{id}/cancel，
+ *   后端以条件更新与调度器互斥（已提交上游的任务取消会被 409 拒绝），
+ *   保证「已取消的任务绝不会再被调用上游接口」。
  *
  * 安全：所有动态文本一律 DOM API + textContent 渲染，不拼接 HTML。
  */
@@ -23,15 +28,15 @@
 
     var REFRESH_INTERVAL_MS = 5000;
     // 与后端 AIToolStatus 对齐：0 PENDING / 1 PROCESSING / 2 COMPLETED / 3 SYNC_QUEUED /
-    // 4 WAITING_PARAM_PREPARE / 5 WAITING_BEFORE_FINISH / 6 DOWNLOADING / -1 FAILED
+    // 4 WAITING_PARAM_PREPARE / 5 WAITING_BEFORE_FINISH / 6 DOWNLOADING / -1 FAILED / -2 CANCELLED
     var RUNNING_STATUSES = [0, 1, 3, 4, 5, 6];
     var STATUS_LABELS = {
         0: '排队中', 1: '处理中', 2: '已完成', 3: '排队中',
-        4: '准备参数', 5: '收尾中', 6: '下载中', '-1': '失败'
+        4: '准备参数', 5: '收尾中', 6: '下载中', '-1': '失败', '-2': '已取消'
     };
     var STATUS_CLASSES = {
         0: 'is-pending', 1: 'is-running', 2: 'is-done', 3: 'is-pending',
-        4: 'is-running', 5: 'is-running', 6: 'is-running', '-1': 'is-failed'
+        4: 'is-running', 5: 'is-running', 6: 'is-running', '-1': 'is-failed', '-2': 'is-failed'
     };
     var EVENT_LABELS = {
         record_created: '记录创建', task_started: '开始处理', slot_delayed: '槽位延迟',
@@ -39,7 +44,7 @@
         upstream_succeeded: '上游成功', upstream_failed: '上游失败', download_started: '开始下载',
         download_completed: '下载完成', cdn_uploaded: 'CDN上传', retry_scheduled: '安排重试',
         max_retry_exceeded: '重试上限', task_completed: '任务完成', exception: '异常',
-        pipeline_step: '流水线步骤'
+        user_cancelled: '用户取消', cancel_guard_rejected: '取消拦截', pipeline_step: '流水线步骤'
     };
 
     function tr(key, fallback) {
@@ -382,19 +387,200 @@
         if (!el) return;
         var ids = nodeTaskIds(node);
         if (!ids.length) return;
+        var cancelledText = '✗ ' + tr('ai_task_cancelled', '已取消（算力已退还）');
+        var cancellingText = tr('ai_task_cancelling', '取消中，当前步骤结束后退还算力');
 
         if (node.type === 'image' && !node.data.url) {
             var placeholder = el.querySelector('.image-generating-placeholder');
             if (placeholder) {
                 placeholder.style.display = 'flex';
+                // 重载恢复：快照已持久化的取消终态直接渲染，不等远端纠正
+                //（此前无条件走生成占位，刷新后已取消节点卡「生成中」）
+                if (node.data.cancelled) {
+                    placeholder.classList.add('is-failed');
+                    var cancelledLabel = placeholder.querySelector('.image-generating-label');
+                    if (cancelledLabel) cancelledLabel.textContent = cancelledText;
+                } else if (node.data.cancelRequested) {
+                    var cancellingLabel = placeholder.querySelector('.image-generating-label');
+                    if (cancellingLabel) cancellingLabel.textContent = cancellingText;
+                }
+                ensureNodeCancelBtn(placeholder, node);
             }
         } else if (node.type === 'video') {
             var statusField = el.querySelector('.video-status-field');
             var statusEl = el.querySelector('.video-status');
             if (statusField && statusEl) {
                 statusField.style.display = 'block';
-                if (!node.data.url) statusEl.textContent = tr('timeline_generating', '生成中...');
+                if (!node.data.url) {
+                    // 重载恢复：快照已持久化的取消终态 / 取消中直接渲染
+                    if (node.data.cancelled) {
+                        statusEl.textContent = cancelledText;
+                        statusEl.style.color = '#9ca3af';
+                    } else if (node.data.cancelRequested) {
+                        statusEl.textContent = cancellingText;
+                        statusEl.style.color = '#9ca3af';
+                    } else {
+                        statusEl.textContent = tr('timeline_generating', '生成中...');
+                    }
+                }
+                var row = statusField.querySelector('.video-status-row');
+                if (row) ensureNodeCancelBtn(row, node);
             }
+        }
+        // 重载恢复/刚提交时先乐观展示「取消排队」，随后按真实状态纠正
+        // （QUEUED 保留按钮 / RUNNING 隐藏 / CANCELLED 直接标记已取消）
+        syncNodeCancelFromRemote(node, ids[0]);
+    }
+
+    /** 在容器内创建（幂等）「取消排队」按钮并绑定节点上下文 */
+    function ensureNodeCancelBtn(container, node) {
+        var btn = container.querySelector('.ai-task-cancel-btn');
+        if (btn) return btn;
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'ai-task-cancel-btn';
+        btn.title = tr('ai_task_cancel_queue_title', '任务仍在排队（尚未提交上游）时可取消，取消后自动退还算力');
+        btn.textContent = tr('ai_task_cancel_queue', '取消排队');
+        container.appendChild(btn);
+        // 初始可见性由节点状态决定（已取消/已出结果的节点不显示）
+        if (node && node.data && (node.data.cancelled || node.data.cancelRequested || node.data.url)) {
+            btn.style.display = 'none';
+        }
+        return btn;
+    }
+
+    /** 按任务真实状态同步「取消排队」按钮可见性与节点终态显示（fire-and-forget） */
+    var cancelSyncInflight = {};  // nodeId -> bool（模块级，不进工作流快照）
+    function syncNodeCancelFromRemote(node, taskId) {
+        if (!taskId || !Number.isFinite(taskId)) return;
+        if (cancelSyncInflight[node.id]) return;
+        cancelSyncInflight[node.id] = true;
+        var token = authToken();
+        fetch('/api/get-status/' + taskId, {
+            headers: token ? { 'Authorization': 'Bearer ' + token } : {}
+        }).then(function (res) { return res.json(); }).then(function (data) {
+            var task = (data && data.tasks && data.tasks[0]) || null;
+            if (!task) return;
+            if (task.status === 'CANCELLED') {
+                // 完整标记（写「✗ 已取消」终态文案）：覆盖快照未持久化取消态的
+                // 重载场景（如保存晚于取消），仅 persistOnly 会把节点留在「生成中」
+                markNodeCancelled(node.id);
+            } else if (task.status === 'CANCELLING') {
+                markNodeCancelling(node.id);
+            } else {
+                if (node.data) node.data.cancelRequested = false;
+                setNodeCancelVisible(node.id, task.status === 'QUEUED');
+            }
+        }).catch(function () { /* 查询失败保持乐观显示，点击时后端兜底校验 */ })
+          .then(function () { cancelSyncInflight[node.id] = false; });
+    }
+
+    /** 设置节点「取消排队」按钮可见性（排队中显示，已提交上游/终态隐藏） */
+    function setNodeCancelVisible(nodeId, visible) {
+        var el = nodeEl(nodeId);
+        if (!el) return;
+        var btns = el.querySelectorAll('.ai-task-cancel-btn');
+        Array.prototype.forEach.call(btns, function (btn) {
+            btn.style.display = visible ? '' : 'none';
+        });
+    }
+
+    /** 取消已受理、算力尚未退还：隐藏按钮，写入 cancelRequested 供工作流重载恢复。 */
+    function markNodeCancelling(nodeId) {
+        var node = findNode(nodeId);
+        if (!node) return;
+        node.data.cancelRequested = true;
+        setNodeCancelVisible(nodeId, false);
+        var el = nodeEl(nodeId);
+        if (!el) return;
+        var text = tr('ai_task_cancelling', '取消中，当前步骤结束后退还算力');
+        if (node.type === 'image') {
+            var placeholder = el.querySelector('.image-generating-placeholder');
+            if (placeholder) {
+                var label = placeholder.querySelector('.image-generating-label');
+                if (label) label.textContent = text;
+            }
+        } else if (node.type === 'video') {
+            var statusField = el.querySelector('.video-status-field');
+            var statusEl = el.querySelector('.video-status');
+            if (statusField && statusEl) {
+                statusField.style.display = 'block';
+                statusEl.textContent = text;
+                statusEl.style.color = '#9ca3af';
+            }
+        }
+    }
+
+    /** 节点标记「已取消」终态：状态行/占位提示 + 隐藏取消按钮 + 持久化（重载恢复） */
+    function markNodeCancelled(nodeId, persistOnly) {
+        var node = findNode(nodeId);
+        if (!node) return;
+        node.data.cancelled = true;
+        setNodeCancelVisible(nodeId, false);
+        if (persistOnly) return;
+        var el = nodeEl(nodeId);
+        if (!el) return;
+        var text = tr('ai_task_cancelled', '已取消（算力已退还）');
+        if (node.type === 'image') {
+            var placeholder = el.querySelector('.image-generating-placeholder');
+            if (placeholder) {
+                placeholder.classList.add('is-failed');
+                var label = placeholder.querySelector('.image-generating-label');
+                if (label) label.textContent = '✗ ' + text;
+            }
+        } else if (node.type === 'video') {
+            var statusField = el.querySelector('.video-status-field');
+            var statusEl = el.querySelector('.video-status');
+            if (statusField && statusEl) {
+                statusField.style.display = 'block';
+                statusEl.textContent = '✗ ' + text;
+                statusEl.style.color = '#9ca3af';
+            }
+        }
+    }
+
+    /** 执行取消：调后端接口（后端条件更新保证互斥：已提交上游的任务返回 409） */
+    function requestNodeCancel(node) {
+        var ids = nodeTaskIds(node);
+        if (!ids.length) return;
+        var taskId = ids[0];
+        var confirmed = window.confirm(
+            tr('ai_task_cancel_confirm', '确认取消该排队中的任务？取消后将退还已扣算力。')
+        );
+        if (!confirmed) return;
+        // 防重复点击：按钮立即隐藏，失败时恢复
+        setNodeCancelVisible(node.id, false);
+        var done = function (result) {
+            if (result && result.success) {
+                if (result.status === 'CANCELLING') {
+                    markNodeCancelling(node.id);
+                    if (typeof showToast === 'function') {
+                        showToast(tr('ai_task_cancel_pending', '取消中，当前步骤结束后退还算力'), 'success');
+                    }
+                } else {
+                    markNodeCancelled(node.id);
+                    if (typeof showToast === 'function') {
+                        showToast(tr('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+                    }
+                }
+                if (typeof fetchComputingPower === 'function') {
+                    try { fetchComputingPower(); } catch (e) { /* 刷新算力失败不阻断 */ }
+                }
+            } else {
+                // 409 等失败：恢复按钮（若任务仍在排队）并提示
+                var msg = (result && result.message) || tr('ai_task_cancel_failed', '取消任务失败');
+                if (typeof showToast === 'function') {
+                    showToast(msg, 'error');
+                }
+                setNodeCancelVisible(node.id, true);
+            }
+        };
+        if (typeof cancelQueuedAiTask === 'function') {
+            cancelQueuedAiTask(taskId).then(done).catch(function () {
+                done({ success: false, message: tr('ai_task_cancel_failed', '取消任务失败') });
+            });
+        } else if (typeof showToast === 'function') {
+            showToast(tr('ai_task_cancel_failed', '取消任务失败'), 'error');
         }
     }
 
@@ -403,6 +589,7 @@
         if (!node) return;
         var el = nodeEl(node.id);
         if (!el) return;
+        setNodeCancelVisible(node.id, false);
         if (node.type === 'image') {
             var placeholder = el.querySelector('.image-generating-placeholder');
             if (placeholder) placeholder.style.display = 'none';
@@ -423,6 +610,7 @@
         if (!node) return;
         var el = nodeEl(nodeId);
         if (!el) return;
+        setNodeCancelVisible(nodeId, false);
         var text = '✗ ' + (message || tr('timeline_generate_failed', '生成失败'));
         if (node.type === 'image') {
             var placeholder = el.querySelector('.image-generating-placeholder');
@@ -447,6 +635,17 @@
     // 捕获阶段处理并在命中时 stopPropagation：候选卡/画布节点的点击委托
     // （如 storyboard 的选中候选、video_workflow 的节点选中）不会误触发。
     document.addEventListener('click', function (e) {
+        var cancelBtn = e.target && e.target.closest ? e.target.closest('.ai-task-cancel-btn') : null;
+        if (cancelBtn) {
+            e.preventDefault();
+            e.stopPropagation();
+            var nodeHost = cancelBtn.closest('.node[data-node-id]');
+            if (nodeHost) {
+                var cancelNode = findNode(parseInt(nodeHost.dataset.nodeId, 10));
+                if (cancelNode) requestNodeCancel(cancelNode);
+            }
+            return;
+        }
         var btn = e.target && e.target.closest ? e.target.closest('.ai-task-timeline-btn') : null;
         if (!btn) return;
         e.preventDefault();
@@ -472,6 +671,9 @@
         markNodeGenerating: markNodeGenerating,
         settleNodeResult: settleNodeResult,
         failNode: failNode,
-        makeTimelineButton: makeTimelineButton
+        makeTimelineButton: makeTimelineButton,
+        markNodeCancelled: markNodeCancelled,
+        markNodeCancelling: markNodeCancelling,
+        setNodeCancelVisible: setNodeCancelVisible
     };
 })();

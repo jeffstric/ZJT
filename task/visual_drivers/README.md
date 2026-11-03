@@ -141,19 +141,25 @@ def _submit_new_task(ai_tool):
         
         # 根据错误类型处理
         if error_type == "USER":
-            # 用户错误，直接返回给用户
-            AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_FAILED, message=error)
+            # 用户错误，直接返回给用户。status 只能走 CAS，不能用 update_only_fields。
+            AIToolsModel.transition_status(
+                ai_tool.id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                message=error,
+            )
         else:
             # 系统错误，已通过 Sentry 报警
             error_detail = result.get("error_detail", "")
             logger.error(f"System error: {error}, detail: {error_detail}")
-            AIToolsModel.update(ai_tool.id, status=AI_TOOL_STATUS_FAILED, message=error)
+            AIToolsModel.transition_status(
+                ai_tool.id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                message=error,
+            )
         
         return False
     
-    # 更新数据库
+    # 写入 project_id。status 已在提交前 CAS 到 PROCESSING，这里只补字段。
     project_id = result.get("project_id")
-    AIToolsModel.update(ai_tool.id, project_id=project_id, status=AI_TOOL_STATUS_PROCESSING)
+    AIToolsModel.update_only_fields(ai_tool.id, project_id=project_id)
     
     return True
 
@@ -175,21 +181,21 @@ def _check_task_status(ai_tool):
         image_url = result.get("image_url")
         result_url = video_url or image_url
         
-        AIToolsModel.update_by_project_id(
-            project_id=ai_tool.project_id,
+        AIToolsModel.transition_with_cdn_sync(
+            ai_tool.id,
+            [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],
+            AI_TOOL_STATUS_COMPLETED,
             result_url=result_url,
-            status=AI_TOOL_STATUS_COMPLETED,
-            completed_time=datetime.now()
+            completed_time=datetime.now(),
         )
         return True
     elif status == "FAILED":
         error = result.get("error", "Unknown error")
         error_type = result.get("error_type", "SYSTEM")
         
-        AIToolsModel.update_by_project_id(
-            project_id=ai_tool.project_id,
-            status=AI_TOOL_STATUS_FAILED,
-            message=error
+        AIToolsModel.transition_status(
+            ai_tool.id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+            message=error,
         )
         return True
     else:

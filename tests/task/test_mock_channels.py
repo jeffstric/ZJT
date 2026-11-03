@@ -74,7 +74,10 @@ class TestVisualAsyncSubmit:
         result = asyncio.run(vt._submit_new_task(ai_tool))
 
         assert result == vt.PROCESS_RESULT_IN_FLIGHT
-        aitools.update.assert_called_once_with(1002, status=vt.AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
+        # 进入预处理流水线走条件状态迁移（CAS 0→4，与用户取消互斥）
+        aitools.transition_status.assert_called_once_with(
+            1002, [vt.AI_TOOL_STATUS_PENDING], vt.AI_TOOL_STATUS_WAITING_PARAM_PREPARE
+        )
         tasks.update_by_task_id.assert_called_once_with(1002, status=vt.TASK_STATUS_WAITING_PARAM_PREPARE)
 
     def test_sync_mode_is_submitted_to_executor_under_mock(self, mock_enabled, monkeypatch):
@@ -106,7 +109,10 @@ class TestVisualAsyncSubmit:
 
         assert result == vt.PROCESS_RESULT_IN_FLIGHT
         executor.submit.assert_called_once_with(1003, 5, "sync_impl")
-        aitools.update.assert_any_call(1003, status=vt.AI_TOOL_STATUS_SYNC_QUEUED)
+        # 入池前先 CAS 0→3（SYNC_QUEUED），与用户取消互斥
+        aitools.transition_status.assert_any_call(
+            1003, [vt.AI_TOOL_STATUS_PENDING], vt.AI_TOOL_STATUS_SYNC_QUEUED
+        )
 
 
 # ──────────────── §5.3 TTS 音频 submit ────────────────
