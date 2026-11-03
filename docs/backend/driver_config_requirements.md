@@ -43,6 +43,7 @@ duomi:
 - `minimax_h3_reference_runninghub_v1` - MiniMax H3 参考生视频（任务类型 37，最多 9 张参考图）
 - `minimax_h3_keyframe_ref_runninghub_v1` - MiniMax H3 首帧参考混合生视频（任务类型 50，隐藏任务；参考模式点名首尾帧时提交，最多 3 张图 + 2 路音频）
 - `digital_human_minimax_h3_runninghub_v1` - MiniMax H3 数字人（任务类型 35）
+- `runninghub_ai_app_moss_v1` - Moss 文生图（任务类型 53，仅文生图；详见 docs/drivers/runninghub_ai_app_moss_v1_driver.md）
 
 配置示例：
 ```yaml

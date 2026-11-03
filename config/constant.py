@@ -1135,6 +1135,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
     DriverKey.VIDEO_ENHANCE: DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,  # RunningHub 视频高清修复（OpenAPI v2 AI App）
     DriverKey.QWEN_2_1_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,  # qwenimage2.1（图片编辑 + 文生图）
+    DriverKey.MOSS_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1,  # moss 文生图（仅文生图）
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -1508,6 +1509,15 @@ AI_TOOL_ACTIVE_STATUSES = (
 # RUNNING 轮询与失败重试共用：上游任务完成到被调度器发现之间的空窗最坏 = 此封顶值
 # （360s 时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
+
+
+# ===== 智能体 CLI 直接生图接口（POST /api/agent-auth/generate-image）=====
+# 用户从首页「智能体连接」弹窗复制的 CLI 信息（含 agent_token）可直接调用本接口生图。
+# 服务端编排见 services/agent_image_service.py + api/agent_auth.py；文档见
+# docs/backend/agent_image_generation_api.md
+AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS = 3   # wait=true 时的 ai_tools 轮询间隔（秒）
+AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS = 180  # wait=true 的同步等待上限（秒），超时返回 submitted 供继续轮询
+AGENT_CLI_IMAGE_MAX_COUNT = 4               # 单次生成图片张数上限（与前端文生图一致）
 
 
 # ===== 下载队列（download_queue）解耦配置 =====
