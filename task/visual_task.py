@@ -360,7 +360,7 @@ async def _submit_new_task(ai_tool):
         if implementation_name:
             implementation_id = get_implementation_id(implementation_name)
             if implementation_id > 0:
-                AIToolsModel.update(task_id, implementation=implementation_id)
+                AIToolsModel.update_only_fields(task_id, implementation=implementation_id)
                 logger.info(f"Recorded implementation {implementation_name} (id: {implementation_id}) for task {task_id}")
                 AIToolsLogModel.log(task_id, AIToolsLogEvent.IMPLEMENTATION_SELECTED,
                                    user_id=ai_tool.user_id,

@@ -2,13 +2,17 @@
 """
 Lint unconditional ai_tools status writes (S1).
 
-`AIToolsModel.update` / `update_with_cdn_sync` / `update_by_project_id` /
-`update_by_project_id_with_cdn_sync` 的 WHERE 不带 status 条件。业务代码若传入
-`status=`，会把用户刚写入的 CANCELLED 覆盖成 PROCESSING / COMPLETED / FAILED。
-状态迁移必须走 `transition_status` 或 `transition_with_cdn_sync`，并写明 from_statuses。
+字段更新函数已改名为 `update_only_fields` / `update_only_fields_with_cdn_sync` /
+`update_only_fields_by_project_id` / `update_only_fields_by_project_id_with_cdn_sync`。
+它们的签名里没有 status，运行时传入会抛 TypeError。
 
-只拦截关键字参数名恰好为 status 的调用。`**kwargs` 无法静态判断，不报。
-`model/ai_tools.py` 内部转发、tests/、temp/、enterprise/ 不扫描。
+两条都报 S1：
+  - 调用已删除的旧名 `update` / `update_with_cdn_sync` /
+    `update_by_project_id` / `update_by_project_id_with_cdn_sync`（不论有没有 status=）
+  - 给新函数传入关键字 `status=`
+
+状态迁移必须走 `transition_status` 或 `transition_with_cdn_sync`，并写明 from_statuses。
+`**kwargs` 无法静态判断，不报。`model/ai_tools.py` 内部转发、tests/、temp/、enterprise/ 不扫描。
 
 Usage:
   python scripts/lint_ai_tool_status_cas.py
@@ -24,11 +28,18 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-STATUS_METHODS = {
+REMOVED_METHODS = {
     "update",
     "update_with_cdn_sync",
     "update_by_project_id",
     "update_by_project_id_with_cdn_sync",
+}
+
+FIELD_METHODS = {
+    "update_only_fields",
+    "update_only_fields_with_cdn_sync",
+    "update_only_fields_by_project_id",
+    "update_only_fields_by_project_id_with_cdn_sync",
 }
 
 EXCLUDED_DIRS = {
@@ -77,14 +88,22 @@ class StatusWriteVisitor(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in STATUS_METHODS and _is_ai_tools_model(func.value):
-            for keyword in node.keywords:
-                if keyword.arg == "status":
-                    self.findings.append(Finding(
-                        self.path,
-                        keyword.lineno,
-                        f"S1 {func.attr}() 禁止传入 status=；请改用 AIToolsModel.transition_status / transition_with_cdn_sync",
-                    ))
+        if isinstance(func, ast.Attribute) and _is_ai_tools_model(func.value):
+            if func.attr in REMOVED_METHODS:
+                self.findings.append(Finding(
+                    self.path,
+                    func.lineno,
+                    f"S1 AIToolsModel.{func.attr}() 已改为 update_only_fields*，不能改 status。"
+                    "状态迁移用 transition_status / transition_with_cdn_sync",
+                ))
+            elif func.attr in FIELD_METHODS:
+                for keyword in node.keywords:
+                    if keyword.arg == "status":
+                        self.findings.append(Finding(
+                            self.path,
+                            keyword.lineno,
+                            f"S1 {func.attr}() 不能传入 status=；请改用 transition_status / transition_with_cdn_sync",
+                        ))
         self.generic_visit(node)
 
 

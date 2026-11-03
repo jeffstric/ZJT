@@ -311,7 +311,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
     def test_no_completed_steps_skips(self, MockStepModel, MockAITools):
-        """没有已完成的步骤时，不调用 AIToolsModel.update"""
+        """没有已完成的步骤时，不调用 AIToolsModel.update_only_fields"""
         ai_tool = self._make_ai_tool(ai_tool_id=10)
         from model import PipelineStepStatus
         pending_step = self._make_step(
@@ -328,7 +328,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
     def test_non_face_mask_step_ignored(self, MockStepModel, MockAITools):
-        """已完成的非 face_mask 类型步骤不触发 AIToolsModel.update"""
+        """已完成的非 face_mask 类型步骤不触发 AIToolsModel.update_only_fields"""
         ai_tool = self._make_ai_tool(ai_tool_id=10)
         from model import PipelineStepStatus
         completed_step = self._make_step(

@@ -565,7 +565,7 @@ class AIToolsModel:
             **extras,
         )
         if affected and result_url:
-            AIToolsModel.update_with_cdn_sync(record_id, result_url=result_url)
+            AIToolsModel.update_only_fields_with_cdn_sync(record_id, result_url=result_url)
         return affected
 
     @staticmethod
@@ -732,25 +732,38 @@ class AIToolsModel:
             raise
      
     @staticmethod
-    def update(
+    def _reject_status_field(fields: dict) -> None:
+        """无条件 UPDATE 不能改 status，否则会覆盖 CANCELLED。"""
+        if "status" in fields:
+            raise TypeError(
+                "update_only_fields 不能修改 status。"
+                "状态迁移用 AIToolsModel.transition_status(from_statuses=...)"
+                " 或 transition_with_cdn_sync。"
+            )
+
+    @staticmethod
+    def update_only_fields(
         record_id: int,
-        **kwargs
+        **fields_except_status
     ) -> int:
         """
-        Update AI tool record
+        只更新非状态字段。签名里没有 status，传入会抛 TypeError。
 
         Args:
             record_id: Record ID
-            **kwargs: Fields to update (prompt, type, image_path, duration, ratio,
-                     project_id, transaction_id, result_url, user_id, status, message, image_size, completed_time, extra_config, reference_images, implementation)
+            **fields_except_status: prompt, type, image_path, duration, ratio,
+                     project_id, transaction_id, result_url, user_id, message,
+                     image_size, completed_time, extra_config, reference_images,
+                     implementation, media_mapping_id, audio_path, video_path
 
         Returns:
             Number of affected rows
         """
-        # Build update fields
+        AIToolsModel._reject_status_field(fields_except_status)
+        kwargs = fields_except_status
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'project_id', 'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation', 'media_mapping_id', 'audio_path', 'video_path'
+            'project_id', 'transaction_id', 'result_url', 'user_id', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'implementation', 'media_mapping_id', 'audio_path', 'video_path'
         ]
         
         update_fields = []
@@ -777,13 +790,13 @@ class AIToolsModel:
             raise
 
     @staticmethod
-    def update_with_cdn_sync(
+    def update_only_fields_with_cdn_sync(
         record_id: int,
         result_url: Optional[str] = None,
-        **kwargs
+        **fields_except_status
     ) -> int:
         """
-        更新 AI 工具记录，并创建 media_file_mapping 触发 CDN 上传
+        更新非状态字段，并创建 media_file_mapping 触发 CDN 上传。不能改 status。
 
         - result_url 保持本地路径不变
         - 创建 media_file_mapping 记录用于 CDN 上传
@@ -792,18 +805,20 @@ class AIToolsModel:
         Args:
             record_id: Record ID
             result_url: 结果 URL（如果有）
-            **kwargs: 其他要更新的字段
+            **fields_except_status: 其他非状态字段
 
         Returns:
             Number of affected rows
         """
+        AIToolsModel._reject_status_field(fields_except_status)
+        kwargs = fields_except_status
         # 检查是否已经有 media_mapping_id
         existing = AIToolsModel.get_by_id(record_id)
         if existing and existing.media_mapping_id:
             logger.info(f"record_id={record_id} 已有 media_mapping_id={existing.media_mapping_id}，跳过创建")
             if result_url is not None:
                 kwargs['result_url'] = result_url
-            return AIToolsModel.update(record_id, **kwargs)
+            return AIToolsModel.update_only_fields(record_id, **kwargs)
 
         media_mapping_id = None
 
@@ -864,7 +879,7 @@ class AIToolsModel:
         if result_url is not None:
             kwargs['result_url'] = result_url
 
-        affected = AIToolsModel.update(record_id, **kwargs)
+        affected = AIToolsModel.update_only_fields(record_id, **kwargs)
         if media_mapping_id is not None:
             _log_event(record_id, AIToolsLogEvent.CDN_UPLOADED,
                        user_id=kwargs.get('user_id'),
@@ -873,23 +888,18 @@ class AIToolsModel:
         return affected
 
     @staticmethod
-    def update_by_project_id(
+    def update_only_fields_by_project_id(
         project_id: str,
-        **kwargs
+        **fields_except_status
     ) -> int:
         """
-        Update AI tool record by project ID
-        
-        Args:
-            project_id: Project ID
-            **kwargs: Fields to update
-        
-        Returns:
-            Number of affected rows
+        按 project_id 更新非状态字段。传入 status 会抛 TypeError。
         """
+        AIToolsModel._reject_status_field(fields_except_status)
+        kwargs = fields_except_status
         allowed_fields = [
             'prompt', 'type', 'image_path', 'duration', 'ratio',
-            'transaction_id', 'result_url', 'user_id', 'status', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'media_mapping_id', 'audio_path', 'video_path'
+            'transaction_id', 'result_url', 'user_id', 'message', 'image_size', 'completed_time', 'extra_config', 'reference_images', 'media_mapping_id', 'audio_path', 'video_path'
         ]
         
         update_fields = []
@@ -916,13 +926,13 @@ class AIToolsModel:
             raise
 
     @staticmethod
-    def update_by_project_id_with_cdn_sync(
+    def update_only_fields_by_project_id_with_cdn_sync(
         project_id: str,
         result_url: Optional[str] = None,
-        **kwargs
+        **fields_except_status
     ) -> int:
         """
-        更新 AI 工具记录（按 project_id），并创建 media_file_mapping 触发 CDN 上传
+        按 project_id 更新非状态字段，并创建 media_file_mapping。不能改 status。
 
         - result_url 保持本地路径不变
         - 创建 media_file_mapping 记录用于 CDN 上传
@@ -931,11 +941,13 @@ class AIToolsModel:
         Args:
             project_id: Project ID
             result_url: 结果 URL（如果有）
-            **kwargs: 其他要更新的字段
+            **fields_except_status: 其他非状态字段
 
         Returns:
             Number of affected rows
         """
+        AIToolsModel._reject_status_field(fields_except_status)
+        kwargs = fields_except_status
         # 先查询获取 record_id
         tool = AIToolsModel.get_by_project_id(project_id)
         if not tool:
@@ -948,14 +960,14 @@ class AIToolsModel:
             logger.info(f"project_id={project_id} 为分段中间产物，跳过 CDN 上传")
             if result_url is not None:
                 kwargs['result_url'] = result_url
-            return AIToolsModel.update_by_project_id(project_id, **kwargs)
+            return AIToolsModel.update_only_fields_by_project_id(project_id, **kwargs)
 
         # 如果已经有 media_mapping_id，不再重复创建
         if tool.media_mapping_id:
             logger.info(f"project_id={project_id} 已有 media_mapping_id={tool.media_mapping_id}，跳过创建")
             if result_url is not None:
                 kwargs['result_url'] = result_url
-            return AIToolsModel.update_by_project_id(project_id, **kwargs)
+            return AIToolsModel.update_only_fields_by_project_id(project_id, **kwargs)
 
         record_id = tool.id
         media_mapping_id = None
@@ -1017,7 +1029,7 @@ class AIToolsModel:
         if result_url is not None:
             kwargs['result_url'] = result_url
 
-        affected = AIToolsModel.update_by_project_id(project_id, **kwargs)
+        affected = AIToolsModel.update_only_fields_by_project_id(project_id, **kwargs)
         if media_mapping_id is not None:
             _log_event(record_id, AIToolsLogEvent.CDN_UPLOADED,
                        project_id=project_id,

@@ -93,6 +93,27 @@ class TestAIToolsTransitionStatus(unittest.TestCase):
             )
 
 
+class TestUpdateOnlyFieldsRejectsStatus(unittest.TestCase):
+    """字段更新函数签名里没有 status，传入必须在碰数据库之前失败。"""
+
+    def test_update_only_fields_rejects_status(self):
+        from model.ai_tools import AIToolsModel
+        with self.assertRaises(TypeError):
+            AIToolsModel.update_only_fields(1, status=2, message="x")
+
+    def test_update_only_fields_by_project_id_rejects_status(self):
+        from model.ai_tools import AIToolsModel
+        with self.assertRaises(TypeError):
+            AIToolsModel.update_only_fields_by_project_id("p", status=2)
+
+    def test_cdn_wrappers_reject_status_before_lookup(self):
+        from model.ai_tools import AIToolsModel
+        with self.assertRaises(TypeError):
+            AIToolsModel.update_only_fields_with_cdn_sync(1, result_url="u", status=2)
+        with self.assertRaises(TypeError):
+            AIToolsModel.update_only_fields_by_project_id_with_cdn_sync("p", status=2)
+
+
 class TestTasksTransitionStatus(unittest.TestCase):
     def test_sql_predicates(self):
         from model import tasks as mod

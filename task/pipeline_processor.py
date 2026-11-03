@@ -395,7 +395,7 @@ class PipelineProcessor:
                             )
 
             if updates:
-                AIToolsModel.update(ai_tool.id, **updates)
+                AIToolsModel.update_only_fields(ai_tool.id, **updates)
 
     # ==================== 调度器入口 ====================
 

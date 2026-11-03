@@ -52,7 +52,10 @@ tasks = TasksModel.list_by_type_and_status(task_type, status_list=[0, 1])
 if _check_task_expiration(task):
     # 标记任务为失败
     TasksModel.update_by_task_id(task.task_id, status=-1)
-    AIToolsModel.update(task.task_id, status=-1, message="任务已过期", completed_time=datetime.now())
+    AIToolsModel.transition_status(
+        task.task_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+        message="任务已过期", completed_time=datetime.now(),
+    )
 ```
 
 **过期判断逻辑**：
@@ -67,7 +70,10 @@ if _check_task_expiration(task):
 if _check_max_retry_exceeded(task):
     # 标记任务为失败
     TasksModel.update_by_task_id(task.task_id, status=-1)
-    AIToolsModel.update(task.task_id, status=-1, message=f"超过最大重试次数({MAX_RETRY_COUNT})", completed_time=datetime.now())
+    AIToolsModel.transition_status(
+        task.task_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+        message=f"超过最大重试次数({MAX_RETRY_COUNT})", completed_time=datetime.now(),
+    )
 
     # 退还算力
     # 释放 RunningHub 槽位

@@ -1484,8 +1484,7 @@ AI_TOOL_STATUS_CANCELLED = AIToolStatus.CANCELLED
 #   WAITING_PARAM_PREPARE(4) 预处理流水线中。步骤尚未 PROCESSING 时立即取消；
 #     已有步骤在途时只记 cancel_requested=1，该步骤结束后再落 CANCELLED 并退款。
 # 开工/推进闸门（0→1、3→1、4→0 等）附加 AND cancel_requested = 0。
-# 业务代码禁止 AIToolsModel.update*(status=...) 无条件改状态，必须走 transition_status
-# （CI scripts/lint_ai_tool_status_cas.py）。详见 docs/video/queued_task_cancel_design.md。
+# 状态迁移走 AIToolsModel.transition_status，字段更新走 update_only_fields（不接受 status）。
 AI_TOOL_CANCELLABLE_STATUSES = (
     AI_TOOL_STATUS_PENDING,
     AI_TOOL_STATUS_SYNC_QUEUED,

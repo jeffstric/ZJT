@@ -5749,7 +5749,7 @@ async def _submit_segmented_digital_human(
         # 5) 回写各段 compose_id（仅作排查线索；权威来源是 compose_jobs.segment_ai_tool_ids）
         for item in created:
             try:
-                AIToolsModel.update(
+                AIToolsModel.update_only_fields(
                     item['id'],
                     extra_config=json.dumps({
                         "max_edge": max_edge,

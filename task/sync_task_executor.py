@@ -953,6 +953,7 @@ class SyncTaskExecutor:
         """
         from model import AIToolsModel, TasksModel
         from config.constant import (
+            AI_TOOL_STATUS_PROCESSING,
             AI_TOOL_STATUS_COMPLETED,
             AI_TOOL_STATUS_CANCELLED,
             TASK_STATUS_COMPLETED,

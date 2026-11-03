@@ -289,7 +289,7 @@ def _bump_download_attempts(seg) -> int:
     attempts = int(extra.get('compose_download_attempts') or 0) + 1
     extra['compose_download_attempts'] = attempts
     try:
-        AIToolsModel.update(seg.id, extra_config=json.dumps(extra, ensure_ascii=False))
+        AIToolsModel.update_only_fields(seg.id, extra_config=json.dumps(extra, ensure_ascii=False))
     except Exception as e:
         logger.warning(f"[compose_job] 段 {seg.id} 记录下载次数失败: {e}")
     return attempts
@@ -371,7 +371,7 @@ def _self_download_segment(seg) -> Optional[str]:
         return None
 
     try:
-        AIToolsModel.update(seg.id, result_url=local_url)
+        AIToolsModel.update_only_fields(seg.id, result_url=local_url)
     except Exception as e:
         logger.warning(f"[compose_job] 段 {seg.id} 回写本地 result_url 失败: {e}")
         return None

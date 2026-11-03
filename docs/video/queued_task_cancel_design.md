@@ -215,11 +215,12 @@ SELECT id, user_id, status, cancel_requested FROM ai_tools
 在途步骤返回之后。
 
 开工与推进（`0→4`、`0→3`、`0→1`、`3→1`、`4→0`）的 `transition_status` 带
-`block_if_cancel_requested=True`（`AND cancel_requested=0`）。业务代码不得再对
-`AIToolsModel.update` / `update_with_cdn_sync` / `update_by_project_id` /
-`update_by_project_id_with_cdn_sync` 传 `status=`，否则会无条件覆盖 CANCELLED。
-CI `scripts/lint_ai_tool_status_cas.py`（S1）拦截这类调用。状态迁移走
-`transition_status` 或 `transition_with_cdn_sync`。
+`block_if_cancel_requested=True`（`AND cancel_requested=0`）。字段更新走
+`update_only_fields`（及 `update_only_fields_with_cdn_sync`、
+`update_only_fields_by_project_id`、`update_only_fields_by_project_id_with_cdn_sync`）。
+这些函数的参数里没有 `status`，传入会抛 `TypeError`。状态迁移走
+`transition_status` 或 `transition_with_cdn_sync`。CI
+`scripts/lint_ai_tool_status_cas.py`（S1）会拦住旧函数名和 `status=`。
 
 列 `ai_tools.cancel_requested` 由迁移 `no_161_20261103_add_ai_tools_cancel_requested`（revision `no_161_ai_tools_cancel_req`）添加。
 前端轮询把该标识显示为「取消中」，`node.data.cancelRequested` 写入工作流快照，刷新后恢复。

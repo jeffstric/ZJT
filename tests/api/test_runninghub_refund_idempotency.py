@@ -19,11 +19,13 @@ import pytest
 
 def _task_record():
     return SimpleNamespace(
+        id=100,
         user_id=1,
         type=1,
         transaction_id="charge-abc-123",  # 提交时的扣费流水号
         duration=None,
         implementation=None,
+        status=0,
     )
 
 
@@ -41,8 +43,8 @@ def env(monkeypatch):
         staticmethod(lambda pid: _task_record()),
     )
     monkeypatch.setattr(
-        server_mod.AIToolsModel, "update_by_project_id",
-        staticmethod(lambda **kw: 1),
+        server_mod.AIToolsModel, "transition_status",
+        staticmethod(lambda *args, **kwargs: 1),
     )
     monkeypatch.setattr(
         server_mod.RunningHubClient, "check_status",

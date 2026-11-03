@@ -103,7 +103,7 @@ def _dispatch_storyboard_first_frame_grid_split(
         from model.ai_tool_pipeline_steps import PipelineStage, PipelineStepModel, PipelineStepType
         from task.pipeline_processor import PipelineProcessor
 
-        AIToolsModel.update(ai_tool_id, result_url=local_image_url)
+        AIToolsModel.update_only_fields(ai_tool_id, result_url=local_image_url)
 
         # 组装当前宫格的完整 params（fallback 新建与预建 step 校准共用）。
         # 重试后 grid_image_path/grid_result_url/cells 可能已变化，必须用最新值覆盖。

@@ -22,20 +22,21 @@ def write_py(root: Path, relative: str, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_flags_status_keyword(tmp_path):
+def test_flags_old_name_and_status_keyword(tmp_path):
     write_py(tmp_path, "task/example.py", """
-AIToolsModel.update(1, status=2, message="x")
-AIToolsModel.update_with_cdn_sync(1, result_url="u", status=2)
+AIToolsModel.update(1, result_url="u")
+AIToolsModel.update_only_fields(1, status=2, message="x")
+AIToolsModel.update_only_fields_with_cdn_sync(1, result_url="u", status=2)
 """)
     result = run_lint(tmp_path)
     assert result.returncode == 1
-    assert result.stdout.count("S1") == 2
+    assert result.stdout.count("S1") == 3
 
 
 def test_ignores_kwargs_and_non_status_fields(tmp_path):
     write_py(tmp_path, "task/example.py", """
-AIToolsModel.update(1, result_url="u")
-AIToolsModel.update(1, **updates)
+AIToolsModel.update_only_fields(1, result_url="u")
+AIToolsModel.update_only_fields(1, **updates)
 """)
     result = run_lint(tmp_path)
     assert result.returncode == 0, result.stdout
