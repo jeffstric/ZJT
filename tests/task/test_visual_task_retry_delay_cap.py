@@ -33,6 +33,7 @@ with purged_modules('task.visual_task'), stub_modules({
         PipelineStepStatus=MagicMock(),
         PipelineStage=MagicMock(),
         PipelineStepType=MagicMock(),
+        PipelineStepModel=MagicMock(),
     ),
     'model.ai_tools_log': module_stub(
         'model.ai_tools_log',

@@ -30,6 +30,7 @@ with purged_modules('task.visual_task'), stub_modules({
         PipelineStepStatus=MagicMock(),
         PipelineStage=MagicMock(),
         PipelineStepType=MagicMock(),
+        PipelineStepModel=MagicMock(),
     ),
     'model.ai_tools_log': module_stub(
         'model.ai_tools_log',
@@ -47,6 +48,7 @@ with purged_modules('task.visual_task'), stub_modules({
         AI_TOOL_STATUS_SYNC_QUEUED=3,
         AI_TOOL_STATUS_WAITING_PARAM_PREPARE=4,
         AI_TOOL_STATUS_WAITING_BEFORE_FINISH=5,
+        AI_TOOL_STATUS_DOWNLOADING=6,
         AI_TOOL_STATUS_CANCELLED=-2,
         AI_TOOL_CANCELLABLE_STATUSES=(0, 3, 4),
         AI_TOOL_ACTIVE_STATUSES=(0, 1, 3, 4, 5, 6),

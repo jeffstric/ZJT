@@ -273,7 +273,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_called_once_with(
+        MockAITools.update_only_fields.assert_called_once_with(
             10, video_path='/path/to/masked_video.mp4'
         )
 
@@ -298,12 +298,12 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        kwargs = MockAITools.update.call_args.kwargs or {}
+        kwargs = MockAITools.update_only_fields.call_args.kwargs or {}
         if not kwargs:
-            args, kwargs = MockAITools.update.call_args
-            # update(id, prompt=..., extra_config=...)
-        self.assertEqual(MockAITools.update.call_args[0][0], 34)
-        called_kwargs = MockAITools.update.call_args[1]
+            args, kwargs = MockAITools.update_only_fields.call_args
+            # update_only_fields(id, prompt=..., extra_config=...)
+        self.assertEqual(MockAITools.update_only_fields.call_args[0][0], 34)
+        called_kwargs = MockAITools.update_only_fields.call_args[1]
         self.assertEqual(called_kwargs['prompt'], 'optimized english prompt')
         self.assertIn('old prompt', called_kwargs['extra_config'])
         self.assertIn('optimized english prompt', called_kwargs['extra_config'])
@@ -323,7 +323,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_not_called()
+        MockAITools.update_only_fields.assert_not_called()
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -340,7 +340,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_not_called()
+        MockAITools.update_only_fields.assert_not_called()
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -357,7 +357,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_not_called()
+        MockAITools.update_only_fields.assert_not_called()
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -368,7 +368,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'before_finish')
 
-        MockAITools.update.assert_not_called()
+        MockAITools.update_only_fields.assert_not_called()
 
     @patch('task.pipeline_processor.AIToolsModel')
     @patch('task.pipeline_processor.PipelineStepModel')
@@ -395,7 +395,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_called_once_with(
+        MockAITools.update_only_fields.assert_called_once_with(
             10, video_path='/path/to/masked.mp4'
         )
 
@@ -417,7 +417,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_called_once_with(
+        MockAITools.update_only_fields.assert_called_once_with(
             10, image_path='/upload/cache/masked_first.png,last.png'
         )
 
@@ -439,7 +439,7 @@ class TestPipelineProcessorApplyResults(unittest.TestCase):
 
         PipelineProcessor.apply_results(ai_tool, 'param_prepare')
 
-        MockAITools.update.assert_called_once_with(
+        MockAITools.update_only_fields.assert_called_once_with(
             10, reference_images='["ref1.png", "/upload/cache/masked_ref2.png"]'
         )
 

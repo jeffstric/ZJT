@@ -52,6 +52,7 @@ def _install_module_stubs():
     pipeline_steps.PipelineStepStatus = MagicMock()
     pipeline_steps.PipelineStage = MagicMock()
     pipeline_steps.PipelineStepType = MagicMock()
+    pipeline_steps.PipelineStepModel = MagicMock()
     # visual_task 顶层 from model.ai_tool_pipeline_steps import PipelineStage, ...
     pipeline_steps.PipelineStage.PARAM_PREPARE = 'param_prepare'
     pipeline_steps.PipelineStage.BEFORE_FINISH = 'before_finish'
@@ -86,6 +87,7 @@ def _install_module_stubs():
     constant.AI_TOOL_STATUS_SYNC_QUEUED = 3
     constant.AI_TOOL_STATUS_WAITING_PARAM_PREPARE = 4
     constant.AI_TOOL_STATUS_WAITING_BEFORE_FINISH = 5
+    constant.AI_TOOL_STATUS_DOWNLOADING = 6
     constant.AI_TOOL_STATUS_CANCELLED = -2
     constant.AI_TOOL_CANCELLABLE_STATUSES = (0, 3, 4)
     constant.AI_TOOL_ACTIVE_STATUSES = (0, 1, 3, 4, 5, 6)
