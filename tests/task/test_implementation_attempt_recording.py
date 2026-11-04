@@ -52,6 +52,7 @@ def _install_module_stubs():
     pipeline_steps.PipelineStepStatus = MagicMock()
     pipeline_steps.PipelineStage = MagicMock()
     pipeline_steps.PipelineStepType = MagicMock()
+    pipeline_steps.PipelineStepModel = MagicMock()
     # visual_task 顶层 from model.ai_tool_pipeline_steps import PipelineStage, ...
     pipeline_steps.PipelineStage.PARAM_PREPARE = 'param_prepare'
     pipeline_steps.PipelineStage.BEFORE_FINISH = 'before_finish'
@@ -86,6 +87,10 @@ def _install_module_stubs():
     constant.AI_TOOL_STATUS_SYNC_QUEUED = 3
     constant.AI_TOOL_STATUS_WAITING_PARAM_PREPARE = 4
     constant.AI_TOOL_STATUS_WAITING_BEFORE_FINISH = 5
+    constant.AI_TOOL_STATUS_DOWNLOADING = 6
+    constant.AI_TOOL_STATUS_CANCELLED = -2
+    constant.AI_TOOL_CANCELLABLE_STATUSES = (0, 3, 4)
+    constant.AI_TOOL_ACTIVE_STATUSES = (0, 1, 3, 4, 5, 6)
     constant.TASK_STATUS_QUEUED = 0
     constant.TASK_STATUS_PROCESSING = 1
     constant.TASK_STATUS_COMPLETED = 2
@@ -93,6 +98,7 @@ def _install_module_stubs():
     constant.TASK_STATUS_SYNC_QUEUED = 3
     constant.TASK_STATUS_WAITING_PARAM_PREPARE = 4
     constant.TASK_STATUS_WAITING_BEFORE_FINISH = 5
+    constant.TASK_STATUS_CANCELLED = -2
     constant.RUNNINGHUB_TASK_TYPES = []
     constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
     constant.VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96

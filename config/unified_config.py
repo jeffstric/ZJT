@@ -1450,6 +1450,9 @@ class DriverImplementation:
     # qwenimage2.1（RunningHub AI App 实现，图片编辑 + 文生图）
     RUNNINGHUB_AI_APP_IMAGE_V1 = 'runninghub_ai_app_image_v1'
 
+    # moss 文生图（RunningHub AI App 实现，仅文生图）
+    RUNNINGHUB_AI_APP_MOSS_V1 = 'runninghub_ai_app_moss_v1'
+
     # Grok
     GROK_DUOMI_V1 = 'grok_duomi_v1'
     GROK_COMMON_SITE0_V1 = 'grok_common_site0_v1'
@@ -1621,6 +1624,10 @@ class DriverImplementationId:
     SEEDANCE_2_0_MINI_TOPENROUTER_V1 = 105
     SEEDANCE_2_5_TOPENROUTER_V1 = 106
 
+    # moss 文生图（RunningHub OpenAPI v2 AI App）。未登记时落库 implementation=0，
+    # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
+    RUNNINGHUB_AI_APP_MOSS_V1 = 107
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1650,6 +1657,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_mini_volcengine_v1': DriverImplementationId.SEEDANCE_2_0_MINI_VOLCENGINE_V1,
     'qwen_multi_angle_runninghub_v1': DriverImplementationId.QWEN_MULTI_ANGLE_RUNNINGHUB_V1,
     'runninghub_ai_app_image_v1': DriverImplementationId.RUNNINGHUB_AI_APP_IMAGE_V1,
+    'runninghub_ai_app_moss_v1': DriverImplementationId.RUNNINGHUB_AI_APP_MOSS_V1,
     'veo3_common_site1_v1': DriverImplementationId.VEO3_COMMON_SITE1_V1,
     'duomi_gpt_image_v1': DriverImplementationId.DUOMI_GPT_IMAGE_V1,
     'gpt_image_common_site0_v1': DriverImplementationId.GPT_IMAGE_COMMON_SITE0_V1,
@@ -1832,6 +1840,9 @@ class DriverKey:
     # qwenimage2.1（同一工作流支持图片编辑与文生图）
     QWEN_2_1_IMAGE = 'qwen_2_1_image'
 
+    # moss 文生图（仅文生图，不支持图片编辑与宫格）
+    MOSS_IMAGE = 'moss_image'
+
     # 文生图
     SEEDREAM_TEXT_TO_IMAGE = 'seedream_text_to_image'
     GPT_IMAGE_2 = 'gpt_image_2'
@@ -1995,6 +2006,7 @@ class TaskTypeId:
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
         'QWEN_2_1_IMAGE': 'qwenimage2.1',
+        'MOSS_IMAGE': 'moss 文生图',
         'GPT_IMAGE_2': 'GPT Image 2 文生图',
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
@@ -2048,6 +2060,7 @@ class TaskTypeId:
     QWEN_MULTI_ANGLE_IMAGE = 24
     QWEN_IMAGE_EDIT = 38
     QWEN_2_1_IMAGE = 52
+    MOSS_IMAGE = 53
     GPT_IMAGE_2 = 25
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
@@ -2348,6 +2361,29 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=18,
         supports_grid_image=False,
         max_multi_ref_images=6,  # 工作流图片节点 17-22 共 6 个
+    ),
+    UnifiedTaskConfig(
+        # moss 文生图。RunningHub AI App 工作流（ai-app 2112932052181016578），
+        # 仅支持文生图：主分类即 TEXT_TO_IMAGE、categories 留空，前端图片编辑
+        # 列表不会出现；驱动对带参考图的提交直接拒绝。不支持宫格生图。
+        # 节点映射：nodeId 8 aspect_ratio/megapixels、nodeId 1 提示词、
+        # nodeId 13 步数、nodeId 18 Lora 权重。
+        id=TaskTypeId.MOSS_IMAGE,
+        key='moss',
+        short_key='moss',
+        name='moss',
+        model_name='moss',
+        category=TaskCategory.TEXT_TO_IMAGE,
+        provider=TaskProvider.RUNNINGHUB,
+        driver_name=DriverKey.MOSS_IMAGE,
+        implementation=DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1,
+        computing_power=1,
+        supported_ratios=['1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'],
+        supported_sizes=['1K', '2K', '4K'],  # 映射为工作流 megapixels 1/2/4（百万像素）
+        default_ratio='9:16',  # 上游工作流默认 1088x1920（9:16 + 2MP）
+        default_size='2K',
+        sort_order=17,
+        supports_grid_image=False,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.QWEN_IMAGE_EDIT,
@@ -4075,6 +4111,16 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='qwenimage2.1 图片接口（图片编辑 + 文生图）',
         sort_order=7510.0,
+        required_config_keys=['runninghub.api_key']
+    ),
+    ImplementationConfig(
+        name=DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1,
+        display_name='RunningHub',
+        driver_class='RunninghubAiAppMossV1Driver',
+        default_computing_power=1,
+        enabled=True,
+        description='moss 文生图接口（仅文生图）',
+        sort_order=7511.0,
         required_config_keys=['runninghub.api_key']
     ),
     ImplementationConfig(

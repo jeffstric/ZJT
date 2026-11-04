@@ -21,7 +21,12 @@ def anchorize_script(script_content: str) -> List[Dict[str, Any]]:
     """对原始剧本建立稳定锚点。
 
     锚点优先用自然段（空行分隔的块）；若单段过长，再按场景/幕标记或换行细化。
-    锚点化绝不改变原文内容或顺序。每个 block 记录行号范围、内容 sha256 和原文。
+    超过 SEGMENT_MAX_SOURCE_CHARS 的单 block 按自然边界（空行/换行/句读）切细：
+    block 是规划模型不可再分的引用单元——分段校验要求每个 block 恰好归属一段，
+    而 quality 编译要求每个 segment 原文不超过该上限，超长 block 会让规划无解
+    （重试必败，2026-11-02 task 286/287 事故）。
+    锚点化绝不改变原文内容或顺序。每个 block 记录行号范围、内容 sha256 和原文；
+    切细产生的多个 block 共享原 block 的行号范围（仅辅助元数据，无下游消费）。
 
     见设计文档 §6.1。
     """
@@ -33,23 +38,30 @@ def anchorize_script(script_content: str) -> List[Dict[str, Any]]:
     current: List[str] = []
     start_line = 1
 
+    def _append_blocks(content: str, block_start_line: int, block_end_line: int) -> None:
+        max_chars = ScriptSplitConstants.SEGMENT_MAX_SOURCE_CHARS
+        parts = (
+            split_text_at_natural_boundaries(content, max_chars)
+            if len(content) > max_chars
+            else [content]
+        )
+        for part in parts:
+            blocks.append({
+                "block_id": f"block_{len(blocks) + 1:04d}",
+                "start_line": block_start_line,
+                "end_line": block_end_line,
+                "content_sha256": hashlib.sha256(part.encode("utf-8")).hexdigest(),
+                "content": part,
+            })
+
     def _flush(end_line: int):
         nonlocal current
         if not current:
             return
         content = "\n".join(current).rstrip()
-        if not content:
-            current = []
-            return
-        block_id = f"block_{len(blocks) + 1:04d}"
-        blocks.append({
-            "block_id": block_id,
-            "start_line": start_line,
-            "end_line": end_line,
-            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "content": content,
-        })
         current = []
+        if content:
+            _append_blocks(content, start_line, end_line)
 
     # 按空行切自然段；同时尊重场景/幕标记作为强制边界
     for i, line in enumerate(lines, start=1):
@@ -68,16 +80,9 @@ def anchorize_script(script_content: str) -> List[Dict[str, Any]]:
         current.append(line)
     _flush(len(lines))
 
-    # 兜底：整个剧本无空行且无标记 → 整篇作为一个 block
+    # 兜底：整个剧本无空行且无标记 → 整篇作为起始 block（超长时同样切细）
     if not blocks and script_content.strip():
-        content = script_content.rstrip()
-        blocks.append({
-            "block_id": "block_0001",
-            "start_line": 1,
-            "end_line": len(lines),
-            "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "content": content,
-        })
+        _append_blocks(script_content.rstrip(), 1, len(lines))
     return blocks
 
 

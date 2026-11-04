@@ -1832,8 +1832,12 @@
       }
     }
     
+    // 后返回的搜索结果不能盖掉更新的一次请求
+    let locationListRequestSeq = 0;
+
     // 加载场景列表
     async function loadLocations(worldId, keyword = '') {
+      const requestSeq = ++locationListRequestSeq;
       const authToken = getAuthToken();
       const userId = getUserId();
 
@@ -1845,6 +1849,7 @@
       }
       
       const listEl = document.getElementById('locationList');
+      if (!listEl || requestSeq !== locationListRequestSeq) return;
       
       if (!worldId) {
         listEl.innerHTML = '<div style="text-align: center; color: #9ca3af; padding: 40px 20px;">请先选择世界</div>';
@@ -1856,7 +1861,8 @@
       try {
         const url = new URL('/api/locations', window.location.origin);
         url.searchParams.append('world_id', worldId);
-        if (keyword) url.searchParams.append('keyword', keyword);
+        const trimmedKeyword = String(keyword || '').trim();
+        if (trimmedKeyword) url.searchParams.append('keyword', trimmedKeyword);
         
         const response = await fetch(url, {
           headers: {
@@ -1866,6 +1872,7 @@
         });
         
         const result = await response.json();
+        if (requestSeq !== locationListRequestSeq) return;
         
         if (result.code === 0 && result.data && result.data.data) {
           if (result.data.data.length === 0) {
@@ -1909,6 +1916,7 @@
           });
         }
       } catch (error) {
+        if (requestSeq !== locationListRequestSeq) return;
         console.error('加载场景列表失败:', error);
         listEl.innerHTML = '<div style="text-align: center; color: #ef4444; padding: 40px 20px;">加载失败</div>';
       }
@@ -2877,15 +2885,22 @@
       document.getElementById('locationModal').classList.remove('show');
     });
     
+    let locationSearchTimer = null;
     document.getElementById('locationWorldSelect').addEventListener('change', (e) => {
-      loadLocations(e.target.value);
+      clearTimeout(locationSearchTimer);
+      const keyword = document.getElementById('locationSearchInput')?.value || '';
+      loadLocations(e.target.value, keyword);
     });
     
     document.getElementById('locationSearchInput').addEventListener('input', (e) => {
-      const worldId = document.getElementById('locationWorldSelect').value;
-      if (worldId) {
-        loadLocations(worldId, e.target.value);
-      }
+      const keyword = e.target.value;
+      clearTimeout(locationSearchTimer);
+      locationSearchTimer = setTimeout(() => {
+        const worldId = document.getElementById('locationWorldSelect').value;
+        if (worldId) {
+          loadLocations(worldId, keyword);
+        }
+      }, 300);
     });
     
     // 道具模态框事件

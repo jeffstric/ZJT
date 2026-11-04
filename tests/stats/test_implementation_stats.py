@@ -186,7 +186,7 @@ class TestAIToolsImplementationField(DatabaseTestCase):
         )
 
         # 更新 implementation
-        AIToolsModel.update(tool_id, implementation=2)
+        AIToolsModel.update_only_fields(tool_id, implementation=2)
 
         # 验证更新
         result = self.execute_query(

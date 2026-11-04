@@ -235,6 +235,32 @@ export async function cancelScriptSplitTask(taskId) {
     return result.data;
 }
 
+/**
+ * 取消排队中的 ai_tools 任务。与画布 cancelQueuedAiTask 同一接口。
+ * 不走 request()：那个前缀是 /api/storyboard。409 必须带回服务端文案，不能抛掉。
+ * 认证只放 Authorization 头，禁止把 auth_token 拼进 URL。
+ */
+export async function cancelAiToolTask(aiToolId) {
+    const id = encodeURIComponent(String(aiToolId ?? '').trim());
+    const resp = await fetch(`/api/ai-tool/${id}/cancel`, {
+        method: 'POST',
+        headers: authHeaders(false),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (resp.status === 401 || resp.status === 403) {
+        handleAuthError(resp.status, data);
+    }
+    if (resp.ok && data && data.code === 0) {
+        const payload = data.data || {};
+        return { success: true, status: payload.status || 'CANCELLED', message: data.message || '' };
+    }
+    return {
+        success: false,
+        message: (data && (data.message || data.detail || data.error)) || t('ai_task_cancel_failed', '取消任务失败'),
+        status: resp.status,
+    };
+}
+
 // ==================== 分镜 ====================
 export async function addScene(storyboardId, data) {
     return request(`/${storyboardId}/scene`, { method: 'POST', body: JSON.stringify(data) });

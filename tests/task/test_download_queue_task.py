@@ -43,8 +43,10 @@ def _patch_common(monkeypatch, *, download_result=None, download_error=None):
     )
     monkeypatch.setattr(
         download_worker.AIToolsModel,
-        "update_by_project_id_with_cdn_sync",
-        lambda **kwargs: captured["updates"].append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: captured["updates"].append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(
         download_worker.DownloadQueueModel,

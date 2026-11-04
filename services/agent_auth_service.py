@@ -56,7 +56,7 @@ class AgentAuthService:
         }
 
     @staticmethod
-    def exchange_token(raw_token: str, device_uuid: Optional[str] = None) -> Dict[str, Any]:
+    def _load_exchangeable_agent(raw_token: str):
         token = UserApiTokensModel.get_valid_by_raw_token(
             raw_token,
             required_scope=AgentAuthConstants.SCOPE_AUTH_EXCHANGE,
@@ -68,6 +68,23 @@ class AgentAuthService:
         user = UsersModel.get_by_id(int(token.user_id))
         if not user or int(getattr(user, "status", 0) or 0) != 1:
             raise AgentAuthError(403, "user_unavailable", "user is disabled or not found")
+        return token, user
+
+    @staticmethod
+    def resolve_agent_user(raw_token: str) -> Dict[str, Any]:
+        """校验 agent token 并返回属主。不写入 user_tokens。"""
+        token, _user = AgentAuthService._load_exchangeable_agent(raw_token)
+        return {
+            "success": True,
+            "user_id": int(token.user_id),
+            "token_id": int(token.id),
+            "token_type": token.token_type,
+            "scopes": list(token.scopes),
+        }
+
+    @staticmethod
+    def exchange_token(raw_token: str, device_uuid: Optional[str] = None) -> Dict[str, Any]:
+        token, _user = AgentAuthService._load_exchangeable_agent(raw_token)
 
         device = device_uuid or AgentAuthConstants.DEFAULT_DEVICE_UUID
         auth_token = generate_token(int(token.user_id), device)

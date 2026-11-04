@@ -503,8 +503,53 @@
             onTaskUpdate(result.tasks);
           }
 
-          if(result.status === 'SUCCESS' || result.status === 'FAILED'){
-            // SUCCESS或FAILED都表示所有任务已完成，调用onComplete处理
+          // 集中同步各结果节点「取消排队」按钮可见性（按 project_id 反查节点，
+          // 所有 pollVideoStatus 消费方共用；仅排队中的任务显示）
+          // ⚠️ 过滤集合必须包含 CANCELLED：已取消任务的节点要走到下方
+          // markNodeCancelled 分支写「✗ 已取消」终态（重载恢复依赖此路径）。
+          // 此前只收 RUNNING/QUEUED，CANCELLED 节点在 runningIds 检查处提前
+          // return，标记分支成为死代码——刷新后已取消节点永远卡「生成中」。
+          if(result.tasks && window.AiToolTimeline && typeof window.AiToolTimeline.setNodeCancelVisible === 'function'){
+            const runningIds = new Set(
+              result.tasks.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLED' || t.status === 'CANCELLING')
+                .map(t => String(t.project_id))
+            );
+            state.nodes.forEach(node => {
+              if(!node.data || !node.data.project_id) return;
+              if(node.data.url) return; // 已有结果，无需同步
+              const pid = String(node.data.project_id);
+              if(!runningIds.has(pid)) return;
+              const task = result.tasks.find(t => String(t.project_id) === pid);
+              if(!task) return;
+              if(task.status === 'CANCELLED'){
+                window.AiToolTimeline.markNodeCancelled(node.id, false, task.error);
+              } else if(task.status === 'CANCELLING' && typeof window.AiToolTimeline.markNodeCancelling === 'function'){
+                window.AiToolTimeline.markNodeCancelling(node.id);
+              } else if(node.data.cancelRequested && task.status === 'QUEUED' && typeof window.AiToolTimeline.markNodeCancelling === 'function'){
+                window.AiToolTimeline.markNodeCancelling(node.id);
+              } else if(task.status === 'RUNNING' && node.data.cancelRequested){
+                node.data.cancelRequested = false;
+                window.AiToolTimeline.setNodeCancelVisible(node.id, false);
+              } else {
+                const showCancel = task.status === 'QUEUED' && !node.data.cancelRequested && !node.data.cancelled;
+                window.AiToolTimeline.setNodeCancelVisible(node.id, showCancel);
+                // 排队中（尚未提交上游）时明确提示，与「生成中」区分
+                if(task.status === 'QUEUED'){
+                  const nodeEl2 = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);
+                  const queuedText = window.t ? window.t('ai_task_status_queued') : '排队中...';
+                  if(nodeEl2){
+                    const vs = nodeEl2.querySelector('.video-status');
+                    if(vs && !vs.textContent.startsWith('✓') && !vs.textContent.startsWith('✗')) vs.textContent = queuedText;
+                    const il = nodeEl2.querySelector('.image-generating-label');
+                    if(il && !il.textContent.startsWith('✓') && !il.textContent.startsWith('✗')) il.textContent = queuedText;
+                  }
+                }
+              }
+            });
+          }
+
+          if(result.status === 'SUCCESS' || result.status === 'FAILED' || result.status === 'CANCELLED'){
+            // SUCCESS/FAILED/CANCELLED 都表示所有任务已达终态，调用onComplete处理
             // onComplete会根据每个任务的详细状态来更新视频节点
             onComplete(result);
           } else {
@@ -1895,6 +1940,10 @@
         // 刷新视频分辨率选项（配置加载后模型支持情况可能变化）
         if (typeof node.updateShotFrameResolutionOptions === 'function') {
           node.updateShotFrameResolutionOptions(node.data.videoModel);
+        }
+        // 同步刷新时长选项（模型可能已迁移，旧档位对新模型非法，如万相3.0 的 30秒 残留到 MiniMax H3）
+        if (typeof node.updateShotFrameDurationOptions === 'function') {
+          node.updateShotFrameDurationOptions(node.data.videoModel);
         }
         if (typeof node.updateLastFrameAvailability === 'function') {
           node.updateLastFrameAvailability();
@@ -3979,17 +4028,17 @@
           const videoModelEl = nodeEl.querySelector('.shot-frame-video-model');
           const videoDurationEl = nodeEl.querySelector('.shot-frame-video-duration');
           
-          // 恢复视频生成模式（先恢复模式，再填充模型列表）
-          if(nodeData.data.videoMode) {
-            node.data.videoMode = nodeData.data.videoMode;
-            if (typeof nodeEl._syncVideoModeButtons === 'function') {
-              nodeEl._syncVideoModeButtons(nodeData.data.videoMode);
-            } else {
-              const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
-              modeBtns.forEach(btn => {
-                btn.classList.toggle('is-active', btn.dataset.mode === nodeData.data.videoMode);
-              });
-            }
+          // 恢复视频生成模式（先恢复模式，再填充模型列表）。
+          // 新建分镜默认是参考生视频；没有 videoMode 的旧工作流仍按首帧生视频复原。
+          const restoredVideoMode = nodeData.data.videoMode || 'first_last_frame';
+          node.data.videoMode = restoredVideoMode;
+          if (typeof nodeEl._syncVideoModeButtons === 'function') {
+            nodeEl._syncVideoModeButtons(restoredVideoMode);
+          } else {
+            const modeBtns = nodeEl.querySelectorAll('.video-mode-btn');
+            modeBtns.forEach(btn => {
+              btn.classList.toggle('is-active', btn.dataset.mode === restoredVideoMode);
+            });
           }
 
           // 恢复分镜模型选择器（确保已保存的值在下拉框中可见）

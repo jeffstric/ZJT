@@ -237,6 +237,34 @@
   margin-left: 8px;
 }
 
+/* 「取消排队」按钮（仅排队中的任务显示；点击后由后端条件更新与调度器互斥） */
+.ai-task-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  border: 1px solid #f3c6c6;
+  background: transparent;
+  color: #c04747;
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ai-task-cancel-btn:hover {
+  color: #a32f2f;
+  border-color: #a32f2f;
+  background: rgba(192, 71, 71, 0.06);
+}
+
+.ai-task-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .video-status-row {
   display: flex;
   align-items: center;

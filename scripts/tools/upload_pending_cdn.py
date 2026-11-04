@@ -19,7 +19,7 @@
 
 处理两批数据：
     批次 A — ai_tools 表中"处理完成且 result_url 指向本地 /upload/，但尚未创建
-            media_file_mapping"的记录。复用 AIToolsModel.update_with_cdn_sync()
+            media_file_mapping"的记录。复用 AIToolsModel.update_only_fields_with_cdn_sync()
             （内部会创建 mapping + 触发 CDNUtil.trigger_cdn_upload + 写事件日志）。
     批次 B — media_file_mapping 表中"曾创建过映射但上传失败（cloud_path 为空）"的
             历史记录。直接调 CDNUtil.trigger_cdn_upload() 重新上传。
@@ -235,7 +235,7 @@ def _process_batch_a(rows, force):
             # 复用现有 CDN 同步入口：内部会检查 enable_cdn、创建 mapping、
             # 触发 trigger_cdn_upload、回写 media_mapping_id、写 CDN_UPLOADED 日志。
             # 传入 user_id 供 mapping 关联用户。
-            AIToolsModel.update_with_cdn_sync(
+            AIToolsModel.update_only_fields_with_cdn_sync(
                 record_id, result_url=result_url, user_id=user_id
             )
             # 读回刚创建的 mapping_id 用于收尾轮询

@@ -840,6 +840,7 @@ const AdminApp = {
                 label: '',
                 maxSlots: 1,
                 enabled: true,
+                keyType: 'standard', // standard=普通密钥, wallet=钱包密钥（并发满时兜底）
                 loading: false
             },
             
@@ -3985,6 +3986,16 @@ const AdminApp = {
             return map[String(status)] || 'active';
         },
 
+        // 密钥类型样式映射
+        rhKeyTypeClass(keyType) {
+            return keyType === 'wallet' ? 'key-type-wallet' : 'key-type-standard';
+        },
+
+        // 密钥类型文案映射
+        rhKeyTypeText(keyType) {
+            return keyType === 'wallet' ? this.t('rh_key_type_wallet') : this.t('rh_key_type_standard');
+        },
+
         // 查看密钥明文
         async viewRunninghubKeyRaw(index) {
             try {
@@ -4007,6 +4018,7 @@ const AdminApp = {
             this.rhKeyEditModal.label = item.label || '';
             this.rhKeyEditModal.maxSlots = item.max_slots || 1;
             this.rhKeyEditModal.enabled = item.enabled !== false;
+            this.rhKeyEditModal.keyType = item.key_type === 'wallet' ? 'wallet' : 'standard';
             this.rhKeyEditModal.show = true;
         },
 
@@ -4028,7 +4040,8 @@ const AdminApp = {
                 const payload = {
                     max_slots: this.rhKeyEditModal.maxSlots,
                     label: this.rhKeyEditModal.label,
-                    enabled: this.rhKeyEditModal.enabled
+                    enabled: this.rhKeyEditModal.enabled,
+                    key_type: this.rhKeyEditModal.keyType
                 };
                 if (this.rhKeyEditModal.apiKey.trim()) {
                     payload.api_key = this.rhKeyEditModal.apiKey.trim();
@@ -5543,7 +5556,8 @@ const AdminApp = {
                 'happy_horse_image_to_video': 'Happy Horse 图生视频',
                 'happy_horse_reference_to_video': 'Happy Horse 参考生视频',
                 'qwen_multi_angle_image_edit': 'Qwen 多角度图片编辑',
-                'qwen_2_1_image': 'qwenimage2.1'
+                'qwen_2_1_image': 'qwenimage2.1',
+                'moss_image': 'moss 文生图'
             };
             return keyMap[driverKey] || driverKey;
         },

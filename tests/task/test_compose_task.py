@@ -106,8 +106,14 @@ def captured(monkeypatch):
         lambda compose_id, ids: store["job_segment_ids"].append((compose_id, list(ids))) or 1,
     )
     monkeypatch.setattr(
-        compose_task.AIToolsModel, "update",
+        compose_task.AIToolsModel, "update_only_fields",
         lambda record_id, **fields: store["ai_update"].append((record_id, fields)) or 1,
+    )
+    monkeypatch.setattr(
+        compose_task.AIToolsModel, "transition_status",
+        lambda record_id, _from_statuses, to_status, **fields: store["ai_update"].append(
+            (record_id, {"status": to_status, **fields})
+        ) or 1,
     )
     monkeypatch.setattr(
         compose_task, "_refund_segment",

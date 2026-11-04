@@ -65,8 +65,11 @@ class PipelineProcessor:
         step_ids = PipelineProcessor.create_param_prepare_steps(ai_tool_id, ai_tool_type)
         if not step_ids:
             return False
-        from config.constant import AI_TOOL_STATUS_WAITING_PARAM_PREPARE
-        AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_WAITING_PARAM_PREPARE)
+        from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_WAITING_PARAM_PREPARE
+        AIToolsModel.transition_status(
+            ai_tool_id, [AI_TOOL_STATUS_PENDING], AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            block_if_cancel_requested=True,
+        )
         logger.info(
             "Attached %s param_prepare step(s) for ai_tool %s, status -> WAITING_PARAM_PREPARE",
             len(step_ids),
@@ -163,8 +166,6 @@ class PipelineProcessor:
             )
             return False
 
-        PipelineStepModel.update_status(step.id, PipelineStepStatus.PROCESSING)
-
         # 获取关联的 ai_tool
         ai_tool = AIToolsModel.get_by_id(step.ai_tool_id)
         if not ai_tool:
@@ -176,9 +177,46 @@ class PipelineProcessor:
             )
             return False
 
+        # 用户已取消，或已请求取消：绝不执行（不调用步骤背后的 LLM/上游接口）。
+        from config.constant import AI_TOOL_STATUS_CANCELLED
+        from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
+        if ai_tool.status == AI_TOOL_STATUS_CANCELLED or cancel_requested_flag(ai_tool):
+            logger.info(f"Step {step.id} skipped: ai_tool {step.ai_tool_id} cancel before claim")
+            PipelineStepModel.try_update_status(
+                step.id, PipelineStepStatus.PENDING, PipelineStepStatus.CANCELLED,
+                error_message='任务已被用户取消'
+            )
+            if cancel_requested_flag(ai_tool) and ai_tool.status != AI_TOOL_STATUS_CANCELLED:
+                commit_deferred_cancel(step.ai_tool_id)
+            return False
+
+        # CAS PENDING→PROCESSING：与取消接口的步骤取消（PENDING→CANCELLED）互斥。
+        # 抢占失败说明步骤已被取消/已被他方处理，跳过执行。
+        if PipelineStepModel.try_update_status(
+            step.id, PipelineStepStatus.PENDING, PipelineStepStatus.PROCESSING
+        ) == 0:
+            logger.info(f"Step {step.id} CAS PENDING->PROCESSING rejected (state changed), skip dispatch")
+            return False
+
+        # 抢到步骤之后、调用上游之前再读一次。取消可能刚落库或刚写下 cancel_requested。
+        fresh = AIToolsModel.get_by_id(step.ai_tool_id)
+        if fresh is None or fresh.status == AI_TOOL_STATUS_CANCELLED or cancel_requested_flag(fresh):
+            logger.info(
+                f"Step {step.id} aborted before execute: ai_tool {step.ai_tool_id} "
+                f"status={getattr(fresh, 'status', None)} cancel_requested="
+                f"{getattr(fresh, 'cancel_requested', None)}"
+            )
+            PipelineStepModel.try_update_status(
+                step.id, PipelineStepStatus.PROCESSING, PipelineStepStatus.CANCELLED,
+                error_message='任务已被用户取消'
+            )
+            if fresh is not None and cancel_requested_flag(fresh) and fresh.status != AI_TOOL_STATUS_CANCELLED:
+                commit_deferred_cancel(step.ai_tool_id)
+            return False
+
         # 执行步骤
         try:
-            result = await driver.execute(step, ai_tool)
+            result = await driver.execute(step, fresh)
 
             if result.get('success'):
                 async_task_id = result.get('async_task_id')
@@ -357,7 +395,7 @@ class PipelineProcessor:
                             )
 
             if updates:
-                AIToolsModel.update(ai_tool.id, **updates)
+                AIToolsModel.update_only_fields(ai_tool.id, **updates)
 
     # ==================== 调度器入口 ====================
 
@@ -508,22 +546,38 @@ class PipelineProcessor:
         if not stuck_steps:
             return 0
 
-        step_ids = [s.id for s in stuck_steps]
+        from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
+
         logger.error(
             "Recovering %s stuck PROCESSING step(s) without async_task_id: ids=%s, "
             "ai_tools=%s (ai_tool 终态化与退款由 visual_task._check_pipeline_stage 完成)",
-            len(step_ids), step_ids,
+            len(stuck_steps), [s.id for s in stuck_steps],
             sorted({s.ai_tool_id for s in stuck_steps}),
         )
-        PipelineStepModel.fail_processing_steps_by_ids(
-            step_ids,
-            error_message=(
-                "步骤卡死回收：PROCESSING 状态超过 "
-                f"{PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS} 秒"
-                "且无 async_task_id（dispatch 异常中断遗留），已自动标记失败"
-            ),
+        stuck_message = (
+            "步骤卡死回收：PROCESSING 状态超过 "
+            f"{PipelineConfig.STUCK_PROCESSING_WITHOUT_ASYNC_TASK_TIMEOUT_SECONDS} 秒"
+            "且无 async_task_id（dispatch 异常中断遗留），已自动标记失败"
         )
-        return len(step_ids)
+        fail_ids = []
+        cancel_tool_ids = []
+        for step in stuck_steps:
+            tool = AIToolsModel.get_by_id(step.ai_tool_id)
+            if cancel_requested_flag(tool):
+                PipelineStepModel.try_update_status(
+                    step.id,
+                    PipelineStepStatus.PROCESSING,
+                    PipelineStepStatus.CANCELLED,
+                    error_message="任务已被用户取消",
+                )
+                cancel_tool_ids.append(step.ai_tool_id)
+            else:
+                fail_ids.append(step.id)
+        if fail_ids:
+            PipelineStepModel.fail_processing_steps_by_ids(fail_ids, error_message=stuck_message)
+        for ai_tool_id in sorted(set(cancel_tool_ids)):
+            commit_deferred_cancel(ai_tool_id)
+        return len(stuck_steps)
 
     @staticmethod
     async def _process_single_step(step: PipelineStep):
@@ -628,6 +682,11 @@ class PipelineProcessor:
                 return
 
             if not any(s.status == PipelineStepStatus.PROCESSING for s in pending):
+                from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
+                current_for_cancel = AIToolsModel.get_by_id(ai_tool_id)
+                if cancel_requested_flag(current_for_cancel):
+                    commit_deferred_cancel(ai_tool_id)
+                    return
                 next_pending = next((s for s in managed_steps if s.status == PipelineStepStatus.PENDING), None)
                 if next_pending:
                     logger.info(f"Dispatching next pending step {next_pending.id} for ai_tool {ai_tool_id}")
@@ -636,23 +695,49 @@ class PipelineProcessor:
 
         # 所有步骤已结束（没有 PENDING/PROCESSING 了）
         if stage == PipelineStage.PARAM_PREPARE:
-            from model import AIToolsModel
-            from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_FAILED
+            from model import TasksModel
+            from config.constant import (
+                AI_TOOL_STATUS_PENDING,
+                AI_TOOL_STATUS_FAILED,
+                AI_TOOL_STATUS_CANCELLED,
+                AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                TASK_STATUS_QUEUED,
+            )
+
+            current = AIToolsModel.get_by_id(ai_tool_id)
+            if current and current.status == AI_TOOL_STATUS_CANCELLED:
+                # 用户已取消：保持 CANCELLED 终态，不应用结果、不推进回 PENDING、
+                # 不覆盖为 FAILED（否则任务会被重新提交上游，违反取消互斥）
+                logger.info(f"ai_tool {ai_tool_id} cancelled during param_prepare, keep CANCELLED")
+                return
+            from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
+            if cancel_requested_flag(current):
+                commit_deferred_cancel(ai_tool_id)
+                logger.info(f"ai_tool {ai_tool_id} cancel_requested, commit CANCELLED instead of advancing")
+                return
 
             if len(completed) == total:
                 # 全部完成：先回写步骤结果，再推进到 PENDING，避免 visual_task 抢先提交旧参数
-                current = AIToolsModel.get_by_id(ai_tool_id)
+                # CAS 4→0：与取消接口（4→CANCELLED）互斥，且 cancel_requested=0 才推进
                 if current:
                     PipelineProcessor.apply_results(current, stage)
-                AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_PENDING)
-                logger.info(f"ai_tool {ai_tool_id} param_prepare all completed, status -> PENDING")
+                if AIToolsModel.transition_status(
+                    ai_tool_id, [AI_TOOL_STATUS_WAITING_PARAM_PREPARE], AI_TOOL_STATUS_PENDING,
+                    block_if_cancel_requested=True,
+                ) > 0:
+                    TasksModel.update_by_task_id(ai_tool_id, status=TASK_STATUS_QUEUED)
+                    logger.info(f"ai_tool {ai_tool_id} param_prepare all completed, status -> PENDING")
             elif failed:
-                # 有失败：标记 ai_tool 失败
-                AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_FAILED, completed_time=datetime.now())
+                # 有失败：条件迁移，不覆盖 CANCELLED
+                from config.constant import AI_TOOL_ACTIVE_STATUSES
+                AIToolsModel.transition_status(
+                    ai_tool_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                    completed_time=datetime.now(),
+                )
                 logger.warning(f"ai_tool {ai_tool_id} param_prepare has {len(failed)} failed steps, status -> FAILED")
 
         elif stage == PipelineStage.BEFORE_FINISH:
-            from model import AIToolsModel, TasksModel
+            from model import TasksModel
             from config.constant import AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_FAILED, TASK_STATUS_QUEUED, TASK_STATUS_FAILED
 
             if len(completed) == total:
@@ -663,6 +748,10 @@ class PipelineProcessor:
                     logger.info(f"ai_tool {ai_tool_id} before_finish all completed, tasks -> QUEUED")
             elif failed:
                 # 所有重试耗尽 → 最终失败
-                AIToolsModel.update(ai_tool_id, status=AI_TOOL_STATUS_FAILED, completed_time=datetime.now())
+                from config.constant import AI_TOOL_ACTIVE_STATUSES
+                AIToolsModel.transition_status(
+                    ai_tool_id, list(AI_TOOL_ACTIVE_STATUSES), AI_TOOL_STATUS_FAILED,
+                    completed_time=datetime.now(),
+                )
                 TasksModel.update_by_task_id(ai_tool_id, status=TASK_STATUS_FAILED)
                 logger.warning(f"ai_tool {ai_tool_id} before_finish all failed, status -> FAILED")

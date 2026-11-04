@@ -4,10 +4,52 @@ ComputingPowerService 算力服务 - 对应Go的handler/computing_power.go
 from typing import Optional, Dict, Any
 import logging
 
+import pymysql
+
 from model.computing_power import ComputingPowerModel, ComputingPower
 from model.computing_power_log import ComputingPowerLogModel
+from model.database import (
+    transaction,
+    execute_query_in_transaction,
+    execute_insert_in_transaction,
+    execute_update_in_transaction,
+)
+
+ALREADY_PROCESSED_MESSAGE = "该交易已处理"
+_POWER_LOG_INSERT_SQL = """
+    INSERT INTO computing_power_log
+    (user_id, behavior, computing_power, `from`, `to`, message, note, transaction_id)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+"""
 
 logger = logging.getLogger(__name__)
+
+
+def _duplicate_key_text(exc: BaseException) -> str:
+    args = getattr(exc, "args", ()) or ()
+    if len(args) > 1:
+        return str(args[1]).lower()
+    return str(exc).lower()
+
+
+def _is_duplicate_transaction(exc: BaseException) -> bool:
+    """唯一索引冲突且落在 transaction_id 上，视为这笔流水已经入过账。"""
+    if not isinstance(exc, pymysql.err.IntegrityError):
+        return False
+    if not exc.args or exc.args[0] != 1062:
+        return False
+    text = _duplicate_key_text(exc)
+    return "transaction_id" in text
+
+
+def _is_duplicate_user_power_row(exc: BaseException) -> bool:
+    """并发首笔加款同时插入 computing_power 行时，输掉的一方重试一次。"""
+    if not isinstance(exc, pymysql.err.IntegrityError):
+        return False
+    if not exc.args or exc.args[0] != 1062:
+        return False
+    text = _duplicate_key_text(exc)
+    return "transaction_id" not in text and "user_id" in text
 
 
 class ComputingPowerService:
@@ -87,31 +129,71 @@ class ComputingPowerService:
         
         if behavior not in ("increase", "deduct"):
             return {"success": False, "message": "无效的操作类型"}
-        
-        # 检查幂等性
-        if transaction_id and ComputingPowerLogModel.check_transaction_exists(transaction_id):
-            return {"success": False, "message": "该交易已处理"}
-        
-        # 查询当前算力
-        current_power = ComputingPowerModel.get_by_user_id(user_id)
-        
-        if not current_power:
-            if behavior == "increase":
-                # 创建新记录
-                ComputingPowerModel.create(user_id, computing_power, None)
-                
-                # 记录日志
-                ComputingPowerLogModel.create(
-                    user_id=user_id,
-                    behavior="increase",
-                    computing_power=computing_power,
-                    from_value=0,
-                    to_value=computing_power,
-                    message=message,
-                    note=note,
-                    transaction_id=transaction_id
+
+        if transaction_id is not None:
+            transaction_id = str(transaction_id).strip() or None
+
+        # 余额更新和流水插入放在同一事务里。唯一索引冲突会回滚余额，
+        # 避免「余额已加上、流水插入失败」造成双倍入账。
+        # 「该交易已处理」仍返回 success=False，微信支付/签到等调用方按文案识别幂等重放。
+        last_user_row_race = None
+        for _attempt in range(2):
+            try:
+                return ComputingPowerService._apply_power_change(
+                    user_id, computing_power, behavior, transaction_id, message, note,
                 )
-                
+            except pymysql.err.IntegrityError as exc:
+                if _is_duplicate_transaction(exc):
+                    return {"success": False, "message": ALREADY_PROCESSED_MESSAGE}
+                if _is_duplicate_user_power_row(exc) and _attempt == 0:
+                    last_user_row_race = exc
+                    continue
+                raise
+        logger.error(f"算力行并发插入重试仍失败 user_id={user_id}: {last_user_row_race}")
+        return {"success": False, "message": "算力更新失败，请重试"}
+
+    @staticmethod
+    def _apply_power_change(
+        user_id: int,
+        computing_power: int,
+        behavior: str,
+        transaction_id: Optional[str],
+        message: Optional[str],
+        note: Optional[str],
+    ) -> Dict[str, Any]:
+        with transaction() as conn:
+            current = execute_query_in_transaction(
+                conn,
+                "SELECT computing_power FROM computing_power WHERE user_id = %s FOR UPDATE",
+                (user_id,),
+                fetch_one=True,
+            )
+            if transaction_id:
+                existing = execute_query_in_transaction(
+                    conn,
+                    "SELECT id FROM computing_power_log WHERE transaction_id = %s LIMIT 1",
+                    (transaction_id,),
+                    fetch_one=True,
+                )
+                if existing:
+                    return {"success": False, "message": ALREADY_PROCESSED_MESSAGE}
+
+            if not current:
+                if behavior != "increase":
+                    return {"success": False, "message": "用户算力数据不存在，无法扣除"}
+                execute_insert_in_transaction(
+                    conn,
+                    """
+                    INSERT INTO computing_power (user_id, computing_power, expiration_time)
+                    VALUES (%s, %s, NULL)
+                    """,
+                    (user_id, computing_power),
+                )
+                execute_insert_in_transaction(
+                    conn,
+                    _POWER_LOG_INSERT_SQL,
+                    (user_id, "increase", computing_power, 0, computing_power, message, note, transaction_id),
+                )
                 return {
                     "success": True,
                     "message": "算力增加成功",
@@ -120,46 +202,37 @@ class ComputingPowerService:
                         "current_computing_power": computing_power,
                         "behavior": behavior,
                         "amount": computing_power,
-                    }
+                    },
                 }
+
+            previous_power = int(current["computing_power"] or 0)
+            if behavior == "increase":
+                new_power = previous_power + computing_power
             else:
-                return {"success": False, "message": "用户算力数据不存在，无法扣除"}
-        
-        # 计算新算力值
-        previous_power = current_power.computing_power
-        
-        if behavior == "increase":
-            new_power = previous_power + computing_power
-        else:  # deduct
-            new_power = previous_power - computing_power
-            if new_power < 0:
-                return {
-                    "success": False,
-                    "message": "算力不足，无法扣除",
-                    "data": {
-                        "current_computing_power": previous_power,
-                        "required_computing_power": computing_power,
+                new_power = previous_power - computing_power
+                if new_power < 0:
+                    return {
+                        "success": False,
+                        "message": "算力不足，无法扣除",
+                        "data": {
+                            "current_computing_power": previous_power,
+                            "required_computing_power": computing_power,
+                        },
                     }
-                }
-        
-        # 更新算力
-        ComputingPowerModel.update(user_id, new_power)
-        
-        # 记录日志
-        ComputingPowerLogModel.create(
-            user_id=user_id,
-            behavior=behavior,
-            computing_power=computing_power,
-            from_value=previous_power,
-            to_value=new_power,
-            message=message,
-            note=note,
-            transaction_id=transaction_id
-        )
-        
+
+            execute_update_in_transaction(
+                conn,
+                "UPDATE computing_power SET computing_power = %s, updated_at = NOW() WHERE user_id = %s",
+                (new_power, user_id),
+            )
+            execute_insert_in_transaction(
+                conn,
+                _POWER_LOG_INSERT_SQL,
+                (user_id, behavior, computing_power, previous_power, new_power, message, note, transaction_id),
+            )
+
         action_msg = "算力增加成功" if behavior == "increase" else "算力扣除成功"
         logger.info(f"{action_msg} - 用户ID: {user_id}, {previous_power} -> {new_power}")
-        
         return {
             "success": True,
             "message": action_msg,
@@ -168,7 +241,7 @@ class ComputingPowerService:
                 "current_computing_power": new_power,
                 "behavior": behavior,
                 "amount": computing_power,
-            }
+            },
         }
     
     @staticmethod

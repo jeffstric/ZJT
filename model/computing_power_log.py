@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS `computing_power_log` (
   KEY `idx_user_created` (`user_id`,`created_at`) USING BTREE,
   KEY `idx_behavior_created` (`behavior`,`created_at`) USING BTREE,
   KEY `idx_user_behavior_note` (`user_id`,`behavior`,`note`(100)) USING BTREE,
-  KEY `idx_transaction_id` (`transaction_id`) USING BTREE
+  UNIQUE KEY `uk_transaction_id` (`transaction_id`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
 """
 

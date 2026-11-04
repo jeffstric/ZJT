@@ -50,6 +50,63 @@ function isRenderableCandidateUrl(url) {
 }
 
 /**
+ * 本地已点取消时，进行中的旧轮询不能把占位卡写回「生成中」。
+ * 已经有可播放结果时说明取消没赶上，清掉标记并保留服务端状态。
+ * 只见到 -2 时不删标记，否则下一轮过期的 status=1 又会把卡片救活。
+ */
+function applySceneTaskCancelGuard(aiToolId, status, hasResultUrl) {
+    const key = aiToolId == null || aiToolId === '' ? '' : String(aiToolId);
+    if (!key || !state.sceneTaskCancelByToolId) return status;
+    const phase = state.sceneTaskCancelByToolId[key];
+    if (phase !== 'cancelled' && phase !== 'cancelling' && phase !== 'busy') return status;
+    if (hasResultUrl) {
+        delete state.sceneTaskCancelByToolId[key];
+        return status;
+    }
+    const numeric = Number(status);
+    if (numeric === -2 || status === 'cancelled' || status === 'CANCELLED') {
+        state.sceneTaskCancelByToolId[key] = 'cancelled';
+        return -2;
+    }
+    if (phase === 'cancelled') return -2;
+    return status;
+}
+
+/** 轮询收尾兜底：图片与视频候选、taskStatus 里的取消标记统一纠正。 */
+function applySceneTaskCancelGuardToScene(sceneId) {
+    const bucket = state.sceneCandidates?.[sceneId] || {};
+    ['videos', 'images'].forEach((listKey) => {
+        (bucket[listKey] || []).forEach((item) => {
+            item.status = applySceneTaskCancelGuard(
+                item.aiToolId,
+                item.status,
+                isRenderableCandidateUrl(item.url),
+            );
+        });
+    });
+    const scene = state.scenes.find(item => String(item.id) === String(sceneId));
+    if (!scene?.taskStatus) return;
+    const videoToolId = scene.taskStatus.video_ai_tool_id;
+    if (videoToolId != null && videoToolId !== '') {
+        const matched = (bucket.videos || []).find(item => String(item.aiToolId || '') === String(videoToolId));
+        scene.taskStatus.video = applySceneTaskCancelGuard(
+            videoToolId,
+            scene.taskStatus.video,
+            Boolean(matched && isRenderableCandidateUrl(matched.url)),
+        );
+    }
+    const frameToolId = scene.taskStatus.first_frame_ai_tool_id;
+    if (frameToolId != null && frameToolId !== '') {
+        const matched = (bucket.images || []).find(item => String(item.aiToolId || '') === String(frameToolId));
+        scene.taskStatus.first_frame = applySceneTaskCancelGuard(
+            frameToolId,
+            scene.taskStatus.first_frame,
+            Boolean(matched && isRenderableCandidateUrl(matched.url)),
+        );
+    }
+}
+
+/**
  * 宫格整图（quality 模式未拆分前）路径特征。
  * 拆分后的单格首帧在 first_frame/ 下；若用宫格整图覆盖单格 URL，缩略图会在「整图/单格」间闪烁。
  */
@@ -102,6 +159,21 @@ function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (taskInfo.ai_tool_id) {
         candidate.aiToolId = taskInfo.ai_tool_id;
     }
+    if (Number(taskInfo.cancel_requested) === 1) {
+        candidate.cancelRequested = true;
+        const key = candidate.aiToolId == null || candidate.aiToolId === '' ? '' : String(candidate.aiToolId);
+        if (key) {
+            if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+            if (state.sceneTaskCancelByToolId[key] !== 'cancelled') {
+                state.sceneTaskCancelByToolId[key] = 'cancelling';
+            }
+        }
+    }
+    candidate.status = applySceneTaskCancelGuard(
+        candidate.aiToolId,
+        candidate.status,
+        isRenderableCandidateUrl(candidate.url),
+    );
     // 失败原因（如内容违规）随候选保留，供占位符展示违规变体
     if (taskInfo.error) {
         candidate.error = taskInfo.error;
@@ -175,13 +247,28 @@ function applyTaskStatus(scene, data, requestSelection) {
     if (data.audio_embedded != null) {
         scene.audioEmbedded = Boolean(data.audio_embedded);
     }
+    const videoToolId = data.video?.ai_tool_id ?? scene.taskStatus?.video_ai_tool_id ?? null;
+    let videoStatus = videoCurrent && data.video ? data.video.status : scene.taskStatus?.video ?? null;
+    videoStatus = applySceneTaskCancelGuard(
+        videoToolId,
+        videoStatus,
+        Boolean(videoCurrent && data.video && isRenderableCandidateUrl(data.video.result_url)),
+    );
+    // 图片任务同样过取消标记防护，取消后旧轮询不能把首帧写回「生成中」
+    const frameToolId = data.first_frame?.ai_tool_id ?? scene.taskStatus?.first_frame_ai_tool_id ?? null;
+    let frameStatus = firstFrameCurrent && data.first_frame ? data.first_frame.status : scene.taskStatus?.first_frame ?? null;
+    frameStatus = applySceneTaskCancelGuard(
+        frameToolId,
+        frameStatus,
+        Boolean(firstFrameCurrent && data.first_frame && isRenderableCandidateUrl(data.first_frame.result_url)),
+    );
     scene.taskStatus = {
-        first_frame: firstFrameCurrent && data.first_frame ? data.first_frame.status : scene.taskStatus?.first_frame ?? null,
+        first_frame: frameStatus,
         last_frame: data.last_frame ? data.last_frame.status : null,
-        video: videoCurrent && data.video ? data.video.status : scene.taskStatus?.video ?? null,
+        video: videoStatus,
         // 关联任务 ID：候选列表未加载时的回退占位卡也要能查看生成状态时间轴
         first_frame_ai_tool_id: data.first_frame?.ai_tool_id ?? scene.taskStatus?.first_frame_ai_tool_id ?? null,
-        video_ai_tool_id: data.video?.ai_tool_id ?? scene.taskStatus?.video_ai_tool_id ?? null,
+        video_ai_tool_id: videoToolId,
     };
     // 后端在分镜下所有配音完成后，会把 scene.duration 同步为音频求和（浮点秒），
     // 此处即时同步到本地 state，并标记 _durationChanged 供 applySceneUpdate 刷新进度行。
@@ -253,12 +340,27 @@ function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
     if (genInfo.ai_tool_id) {
         candidate.aiToolId = genInfo.ai_tool_id;
     }
+    if (Number(genInfo.cancel_requested) === 1) {
+        candidate.cancelRequested = true;
+        const key = String(candidate.aiToolId || '');
+        if (key) {
+            if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+            if (state.sceneTaskCancelByToolId[key] !== 'cancelled') {
+                state.sceneTaskCancelByToolId[key] = 'cancelling';
+            }
+        }
+    }
     // generating 行带可播 URL 时填入候选卡（防御性：当前后端在生成/下载阶段不写
     // result_url，此路径正常不触发，占位卡仍显示「生成中」）；仅可渲染才写，
     // 已有合法 URL 不被空值清掉
     if (isRenderableCandidateUrl(genInfo.result_url)) {
         candidate.url = String(genInfo.result_url).trim();
     }
+    candidate.status = applySceneTaskCancelGuard(
+        candidate.aiToolId,
+        candidate.status,
+        isRenderableCandidateUrl(candidate.url),
+    );
     state.sceneCandidates[sceneId][listKey] = list;
 }
 
@@ -293,6 +395,7 @@ async function finishScenePolling(sceneId) {
     delete pollHadActivity[sceneId];
     try {
         await loadSceneCandidates(sceneId);
+        applySceneTaskCancelGuardToScene(sceneId);
         const scene = state.scenes.find(item => item.id === sceneId);
         if (scene) {
             const selVideo = (state.sceneCandidates[sceneId]?.videos || []).find(item => item.selected);

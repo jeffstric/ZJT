@@ -6,6 +6,7 @@ import uvicorn
 import httpx
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 import json
 import math
@@ -15,6 +16,7 @@ import logging
 import traceback
 import shutil
 import subprocess
+import sys
 import tempfile
 import hashlib
 import re
@@ -70,6 +72,13 @@ from config.constant import (
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_FAILED,
     AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+    AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_DOWNLOADING,
+    AI_TOOL_STATUS_CANCELLED,
+    AI_TOOL_CANCELLABLE_STATUSES,
+    AI_TOOL_ACTIVE_STATUSES,
+    TASK_STATUS_CANCELLED,
+    TASK_STATUS_QUEUED,
     AI_AUDIO_STATUS_PENDING,
     AI_AUDIO_STATUS_COMPLETED,
     AI_AUDIO_STATUS_FAILED,
@@ -102,6 +111,9 @@ from config.constant import (
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
     VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
+    WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
+    WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT,
+    QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
 )
 from api.auth_identity import normalize_authorization_token, resolve_authorization_user_id
 from perseids_server.utils.auth_identity import (
@@ -120,7 +132,7 @@ from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
-from utils.media_mapping_util import register_uploaded_file_mapping, upload_local_path
+from utils.media_mapping_util import register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -148,6 +160,7 @@ from utils.media_upload import (
     UploadValidationError,
     check_media_magic,
     convert_tiff_file_to_png,
+    max_upload_size_for_ext,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -2378,10 +2391,11 @@ async def runninghub_status(
             if results:
                 try:
                     result_url = results[0].file_url
-                    AIToolsModel.update_by_project_id(
-                        project_id=project_id,
+                    AIToolsModel.transition_with_cdn_sync(
+                        task_record.id,
+                        [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],
+                        AI_TOOL_STATUS_COMPLETED,
                         result_url=result_url,
-                        status=AI_TOOL_STATUS_COMPLETED
                     )
                 except Exception as db_error:
                     logger.error(f"Failed to update database record: {db_error}")
@@ -2399,11 +2413,12 @@ async def runninghub_status(
                 ]
             })
         elif status == TaskStatus.FAILED:
-            AIToolsModel.update_by_project_id(
-                project_id=project_id,
-                status=AI_TOOL_STATUS_FAILED
+            failed_affected = AIToolsModel.transition_status(
+                task_record.id,
+                list(AI_TOOL_ACTIVE_STATUSES),
+                AI_TOOL_STATUS_FAILED,
             )
-            if CHECK_AUTH_TOKEN and auth_token:
+            if (failed_affected or task_record.status == AI_TOOL_STATUS_FAILED) and CHECK_AUTH_TOKEN and auth_token:
                 # 幂等防重复退费（与 v2 分支共用，模式说明见函数 docstring）
                 await _refund_failed_runninghub_task(task_record, auth_token, project_id)
             return JSONResponse({
@@ -2503,6 +2518,70 @@ async def _get_compose_status_payload(project_id: str) -> Dict[str, Any]:
     }
 
 
+def _build_task_meta_payload(task_record) -> dict:
+    """从 ai_tools 记录提取生成参数元数据（营销智能体结果卡展示/重新编辑/重新生成用）。
+
+    字段缺失一律返回 None 而不是抛错：get-status 是高频轮询接口，
+    元数据属于附加信息，任何字段异常都不能影响状态轮询主流程。
+    """
+    meta = {
+        "task_type": None,          # unified_config 任务类型 ID（重新生成时作为 task_id 直接复用）
+        "model_name": None,         # 模型显示名（UnifiedConfigRegistry）
+        "ratio": None,
+        "duration": None,           # 视频时长（秒）
+        "image_size": None,         # 图片分辨率档位（1K/2K/4K）
+        "resolution": None,         # 视频分辨率（extra_config.resolution，如 720P/1080P）
+        "image_mode": None,         # 图生视频模式（first_last_frame/multi_reference）
+        "enable_face_mask": None,
+        "prompt": None,
+        "reference_images": [],     # 多参考模式参考图 URL 列表（reference_images JSON）
+        "frame_images": [],         # 首尾帧/图片编辑参考图 URL 列表（image_path 逗号分隔）
+        "reference_video": None,
+        "reference_audio": None,
+        "create_time": None,
+        "completed_time": None,
+    }
+    try:
+        if not task_record:
+            return meta
+        record_dict = task_record.to_dict()
+        meta["task_type"] = record_dict.get("type")
+        meta["model_name"] = record_dict.get("model_name")
+        meta["ratio"] = record_dict.get("ratio")
+        meta["duration"] = record_dict.get("duration")
+        meta["image_size"] = record_dict.get("image_size")
+        meta["prompt"] = record_dict.get("prompt")
+        meta["create_time"] = record_dict.get("create_time")
+        meta["completed_time"] = record_dict.get("completed_time")
+        meta["reference_video"] = record_dict.get("video_path")
+        meta["reference_audio"] = record_dict.get("audio_path")
+        if record_dict.get("reference_images"):
+            try:
+                parsed_refs = json.loads(record_dict["reference_images"])
+                if isinstance(parsed_refs, list):
+                    meta["reference_images"] = [
+                        item.get("url") if isinstance(item, dict) else item
+                        for item in parsed_refs
+                        if (isinstance(item, dict) and item.get("url")) or isinstance(item, str)
+                    ]
+            except (TypeError, ValueError, json.JSONDecodeError):
+                pass
+        # image_path：图片编辑的参考图 / 图生视频首尾帧（逗号分隔 URL，见
+        # /api/image-edit 与 /api/ai-app-run-image 落库逻辑），与 reference_images 分开返回
+        if record_dict.get("image_path"):
+            meta["frame_images"] = [
+                u.strip() for u in str(record_dict["image_path"]).split(',') if u.strip()
+            ]
+        from model.ai_tools import parse_extra_config_dict
+        extra = parse_extra_config_dict(record_dict.get("extra_config"))
+        meta["resolution"] = extra.get("resolution")
+        meta["image_mode"] = extra.get("image_mode")
+        meta["enable_face_mask"] = bool(extra.get("enable_face_mask")) if "enable_face_mask" in extra else None
+    except Exception as e:
+        logger.warning(f"构建任务元数据失败（不影响状态轮询）: {e}")
+    return meta
+
+
 # 注意：路径参数名为 ai_tool_id，但实际接收的值是 project_id（ComfyUI 返回的任务 ID）。
 # 前端和后台调度器传入的都是 project_id，不是 ai_tools 表的主键 ID。
 # 历史原因导致参数名与实际含义不一致，调用时请注意。
@@ -2540,7 +2619,8 @@ async def get_status(
                     "project_id": ai_tool_id,
                     "status": "NOT_FOUND",
                     "results": [],
-                    "reason": "任务记录不存在"
+                    "reason": "任务记录不存在",
+                    "meta": None,
                 })
                 continue
             
@@ -2604,6 +2684,21 @@ async def get_status(
             elif status == -1:  # Failed
                 status_str = "FAILED"
                 reason_payload = reason
+            elif status in (
+                AI_TOOL_STATUS_PENDING,
+                AI_TOOL_STATUS_SYNC_QUEUED,
+                AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+            ):
+                # 排队中（尚未调用上游提交接口）：前端据此展示「取消排队」入口。
+                # 预处理步骤在途时取消只记标识，状态仍是 4，对外报 CANCELLING。
+                from task.queued_cancel import cancel_requested_flag
+                if cancel_requested_flag(task_record):
+                    status_str = "CANCELLING"
+                else:
+                    status_str = "QUEUED"
+            elif status == AI_TOOL_STATUS_CANCELLED:
+                status_str = "CANCELLED"
+                reason_payload = reason or "任务已取消"
 
             tasks_response.append({
                 "project_id": ai_tool_id,
@@ -2611,7 +2706,9 @@ async def get_status(
                 "results": results_payload,
                 "reason": reason_payload,
                 # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
-                "is_content_violation": is_content_moderation_user_message(reason_payload)
+                "is_content_violation": is_content_moderation_user_message(reason_payload),
+                # 生成参数元数据（前端结果卡展示模型/时长/比例/分辨率与重新编辑/重新生成用）
+                "meta": _build_task_meta_payload(task_record),
             })
 
         # Multiple project_ids: return list
@@ -2623,6 +2720,156 @@ async def get_status(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to check task status: {str(e)}")
+
+
+@app.post("/api/ai-tool/{ai_tool_id}/cancel")
+@require_permission("video:view_status")
+async def cancel_queued_ai_tool_task(
+    request: Request,
+    ai_tool_id: int,
+):
+    """
+    取消排队中的 AI 任务（video_workflow 排队任务取消入口）。
+
+    仅允许取消「尚未调用上游提交接口」的排队状态（PENDING / SYNC_QUEUED /
+    WAITING_PARAM_PREPARE）。与调度器提交侧的条件更新（CAS）在同一行上互斥：
+    取消先落库 → 调度器抢占必失败（不再调用上游）；调度器先抢占 → 取消返回 409。
+    绝不出现「已取消的任务又被调用上游接口」。
+
+    取消成功后：ai_tools/tasks 双表置 CANCELLED、未执行的 pipeline 步骤连带取消、
+    幂等退还算力。
+    """
+    from model.ai_tools_log import AIToolsLogEvent
+    from model.ai_tool_pipeline_steps import PipelineStepModel
+    from task.queued_cancel import cancel_requested_flag, should_defer_cancel
+
+    user_id = getattr(request.state, 'user_id', None)
+
+    def _cancelled_payload(message: str):
+        return {
+            "code": 0,
+            "message": message,
+            "data": {"ai_tool_id": ai_tool_id, "status": "CANCELLED"},
+        }
+
+    def _cancelling_payload():
+        return {
+            "code": 0,
+            "message": "取消中，当前步骤结束后退还算力",
+            "data": {"ai_tool_id": ai_tool_id, "status": "CANCELLING"},
+        }
+
+    try:
+        task_record = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
+        if not task_record:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        if user_id is not None and task_record.user_id and task_record.user_id != user_id:
+            raise HTTPException(status_code=403, detail="无权取消该任务")
+
+        if task_record.status == AI_TOOL_STATUS_CANCELLED:
+            return _cancelled_payload("任务已取消")
+
+        # 预处理步骤已经在跑：只记取消标识，等该步骤结束后再改终态并退款。
+        # 再次点击且标识已在、状态仍是 4 时同样返回 CANCELLING，不报 409。
+        has_processing = False
+        if task_record.status == AI_TOOL_STATUS_WAITING_PARAM_PREPARE:
+            has_processing = await asyncio.to_thread(
+                PipelineStepModel.has_processing_for_ai_tool, ai_tool_id
+            )
+        if should_defer_cancel(task_record, has_processing):
+            if not cancel_requested_flag(task_record):
+                flagged = await asyncio.to_thread(
+                    AIToolsModel.request_cancel,
+                    ai_tool_id,
+                    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+                )
+                if flagged == 0:
+                    fresh = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
+                    if fresh and fresh.status == AI_TOOL_STATUS_CANCELLED:
+                        return _cancelled_payload("任务已取消")
+                    if not fresh or not cancel_requested_flag(fresh):
+                        task_record = fresh or task_record
+                    else:
+                        return _cancelling_payload()
+                else:
+                    await asyncio.to_thread(
+                        AIToolsLogModel.log, ai_tool_id, AIToolsLogEvent.USER_CANCELLED,
+                        user_id=task_record.user_id,
+                        status_to=task_record.status,
+                        message="用户请求取消，等待当前预处理步骤结束",
+                    )
+                    return _cancelling_payload()
+            else:
+                return _cancelling_payload()
+
+        # 核心互斥：仅当仍处于可取消的排队状态时才置 CANCELLED（affected=0 → 已开始/已完成）
+        affected = await asyncio.to_thread(
+            AIToolsModel.transition_status,
+            ai_tool_id,
+            list(AI_TOOL_CANCELLABLE_STATUSES),
+            AI_TOOL_STATUS_CANCELLED,
+            message="任务已被用户取消",
+            completed_time=datetime.now(),
+        )
+        if affected == 0:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "code": -1,
+                    "message": "任务已开始生成或已结束，无法取消",
+                    "data": {"ai_tool_id": ai_tool_id},
+                },
+            )
+
+        # ai_tools 已权威迁移，tasks 同步置 CANCELLED（调度器查询 [0,1] 不再拾取；
+        # 极端时序下 tasks 已被置 1，此处覆盖为 -2 后调度器本轮提交前 CAS 仍会失败）
+        await asyncio.to_thread(
+            TasksModel.update_by_task_id, ai_tool_id, status=TASK_STATUS_CANCELLED
+        )
+
+        # 未执行的预处理步骤连带取消（已在执行的步骤自然结束，结果由终态检查丢弃）
+        try:
+            await asyncio.to_thread(
+                PipelineStepModel.cancel_pending_steps_by_ai_tool, ai_tool_id
+            )
+        except Exception as e:
+            logger.warning(f"Cancel pipeline steps for ai_tool {ai_tool_id} failed: {e}")
+
+        await asyncio.to_thread(
+            AIToolsLogModel.log, ai_tool_id, AIToolsLogEvent.USER_CANCELLED,
+            user_id=task_record.user_id,
+            status_to=AI_TOOL_STATUS_CANCELLED,
+            message="用户取消排队任务",
+        )
+
+        # 幂等退费（refund-{原扣费流水号}，重复调用自动跳过）；
+        # 退款内含同步 HTTP，放线程池避免阻塞事件循环（AGENTS.md 第1条）。
+        # 返回值语义：True=成功/幂等跳过/无扣费主体；False=退费尝试失败或金额
+        # 无法解析 → 响应明示「退款处理中」，依赖上线对账名单人工补偿。
+        from task.visual_task import _refund_computing_power
+        from task.queued_cancel import apply_cancel_refund_result
+        refund_done = False
+        try:
+            refund_done = await asyncio.to_thread(
+                _refund_computing_power, task_record, "用户取消排队任务")
+        except Exception as e:
+            logger.error(f"Refund for cancelled ai_tool {ai_tool_id} failed: {e}")
+            refund_done = False
+        if not refund_done:
+            await asyncio.to_thread(apply_cancel_refund_result, ai_tool_id, False)
+
+        return {
+            "code": 0,
+            "message": "任务已取消" + ("" if refund_done else "（退款处理中，如未到账请联系客服）"),
+            "data": {"ai_tool_id": ai_tool_id, "status": "CANCELLED"},
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel ai_tool {ai_tool_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"取消任务失败: {str(e)}")
 
 
 @app.post("/api/ai-app-run")
@@ -5409,9 +5656,10 @@ async def _submit_segmented_digital_human(
             except Exception as e:
                 logger.warning(f"[分段提交回滚] 段 {seg_id} tasks 置失败异常: {e}")
             try:
-                AIToolsModel.update(
+                AIToolsModel.transition_status(
                     seg_id,
-                    status=AI_TOOL_STATUS_FAILED,
+                    list(AI_TOOL_ACTIVE_STATUSES),
+                    AI_TOOL_STATUS_FAILED,
                     message=reason,
                     completed_time=datetime.now()
                 )
@@ -5505,7 +5753,7 @@ async def _submit_segmented_digital_human(
         # 5) 回写各段 compose_id（仅作排查线索；权威来源是 compose_jobs.segment_ai_tool_ids）
         for item in created:
             try:
-                AIToolsModel.update(
+                AIToolsModel.update_only_fields(
                     item['id'],
                     extra_config=json.dumps({
                         "max_edge": max_edge,
@@ -6997,6 +7245,334 @@ async def upload_workflow_asset(
             status_code=500,
             content={"code": -1, "message": f"上传失败: {str(e)}"}
         )
+
+
+# ===== 工作流素材前端直传（视频/图片/音频；CDN 未启用时前端自动降级 multipart）=====
+# 流程：upload-token（经 BaseFileStorage.get_browser_upload_info 颁发直传凭证，
+# 七牛/OSS/S3 等品牌协议封装在各自存储实现内）→ 浏览器 XHR 直传存储（不占服务器带宽）→
+# upload-confirm 服务端从存储回源下载到本地（大小+魔数校验）→ 本地落盘成功才入库。
+# 本地文件为主副本、CDN 为加速层；mapping 建立时 cloud_path 已置位，
+# 首个播放请求直接 302 命中 CDN，消除 multipart 链路"本地 206→302"的服务中切换竞态。
+
+# confirm 回源下载专用长寿线程池（模块级，禁用 with 上下文——红线第 10 条）：
+# 线程不可取消，慢速滴流下载会让线程存活超过 wait_for 时限；用独立小池隔离，
+# 避免占满默认执行器（asyncio.to_thread 共享池）拖累 multipart 落盘等其他 to_thread 调用。
+_confirm_download_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cdn-confirm-dl")
+
+# 回源下载的同步实现（工作线程中执行；线程不可取消，靠 httpx 自身超时收敛：
+# WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT 是"单次读空闲超时"而非总时长，
+# 慢速但持续的下载可存活超过 wait_for 时限，wait_for 只决定接口多早放弃并降级）。
+# 临时文件在 finally 中清理（超时红线第 10 条：被 wait_for 包装的 coroutine 必须自清理）。
+def _download_cdn_asset_to_local(download_url: str, final_path: str, ext: str,
+                                 expected_size: int, max_bytes: int,
+                                 headers=None) -> int:
+    # tmp 名带 uuid：同 key 并发 confirm（前端超时重试）不会互写同一临时文件
+    tmp_path = f"{final_path}.{uuid.uuid4().hex[:8]}.download_tmp"
+    total = 0
+    try:
+        timeout = WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT
+        request_headers = headers or {}
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with client.stream("GET", download_url, headers=request_headers) as resp:
+                resp.raise_for_status()
+                magic_checked = False
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_bytes(MediaUploadSafetyConstants.CHUNK_SIZE):
+                        if not chunk:
+                            continue
+                        if not magic_checked:
+                            if not check_media_magic(ext, chunk[:MediaUploadSafetyConstants.MAGIC_SCAN_BYTES]):
+                                raise UploadValidationError(
+                                    f"文件内容与 {ext} 格式不符（魔数校验失败）"
+                                )
+                            magic_checked = True
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise UploadValidationError(
+                                f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"
+                            )
+                        if expected_size and total > expected_size:
+                            raise UploadValidationError("回源内容与七牛元数据大小不符")
+                        f.write(chunk)
+        if total == 0:
+            raise UploadValidationError("回源下载内容为空")
+        if expected_size and total != expected_size:
+            raise UploadValidationError(
+                f"回源内容大小不一致（期望 {expected_size} 字节，实际 {total} 字节）"
+            )
+        os.replace(tmp_path, final_path)  # 原子落盘：校验全通过才可见
+        return total
+    finally:
+        # 成功路径 tmp 已被 rename 不存在；失败路径清理半成品
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            logger.warning(f"清理直传回源半成品失败: {tmp_path}")
+
+
+@app.post('/api/video-workflow/upload-token')
+@require_permission("video_workflow:upload")
+async def upload_workflow_asset_direct_token(
+    request: Request,
+    filename: str = Form(..., description="原始文件名（用于扩展名白名单与大小上限校验）"),
+    size: Optional[int] = Form(None, description="文件大小（字节），用于预校验"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    颁发工作流素材前端直传七牛的上传凭证
+
+    仅 server.auto_upload_to_cdn=true 时可用；未启用 CDN 返回
+    data.direct_upload=false，前端降级走既有 multipart 上传（/api/video-workflow/upload），
+    行为与直传功能上线前完全一致。TIFF 素材同样返回 direct_upload=false：
+    TIFF 落盘前必须转 PNG，而直传路径服务端不碰原始字节，转码只能发生在
+    回源下载之后，key 已固定为 .tif 会与本地 .png 脱节，故统一走 multipart。
+
+    前端直传成功后必须调用 /api/video-workflow/upload-confirm。
+    """
+    auth_user_id = get_auth_user_id(request)
+    if auth_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+        )
+    mismatch = check_claimed_user_id(user_id, auth_user_id)
+    if mismatch is not None:
+        return mismatch
+
+    if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
+        return JSONResponse({
+            "code": 0,
+            "message": "CDN 未启用，走服务器上传",
+            "data": {"direct_upload": False, "reason": "cdn_disabled"}
+        })
+
+    try:
+        ext = resolve_media_extension(filename)
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+
+    max_bytes = max_upload_size_for_ext(ext)
+    if size is not None and size <= 0:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "文件大小非法"}
+        )
+    if size is not None and size > max_bytes:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
+        )
+
+    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+        return JSONResponse({
+            "code": 0,
+            "message": "TIFF 需服务端转码，走服务器上传",
+            "data": {"direct_upload": False, "reason": "tiff_unsupported"}
+        })
+
+    try:
+        from utils.file_storage import get_file_storage
+        storage = get_file_storage(section="qiniu_long_term")
+    except ValueError as e:
+        logger.error(f"直传凭证颁发失败（CDN 存储配置不完整）: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": "CDN 存储配置不完整，请联系管理员"}
+        )
+
+    info = generate_upload_filename(prefix="workflow", extension=ext)
+    key = f"{UploadPathConstants.UPLOAD_ROOT}/workflow/{auth_user_id}/{info.filename}"
+    # 面向 BaseFileStorage 接口颁发直传信息：七牛 form 协议 / OSS PostObject /
+    # S3 presigned PUT 等品牌细节全部封装在各存储实现内，端点不感知。
+    # 后端不支持浏览器直传（无该方法——鸭子类型存储 / 方法返回 None）时降级 multipart
+    #（hasattr 防御同 world-upload-token 端点先例）。
+    get_upload_info = getattr(storage, "get_browser_upload_info", None)
+    if get_upload_info is None:
+        return JSONResponse({
+            "code": 0,
+            "message": "当前存储后端不支持前端直传，走服务器上传",
+            "data": {"direct_upload": False, "reason": "backend_unsupported"}
+        })
+    upload_info = await get_upload_info(
+        key=key,
+        max_bytes=max_bytes,
+        expires=QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
+    )
+    if not upload_info:
+        return JSONResponse({
+            "code": 0,
+            "message": "当前存储后端不支持前端直传，走服务器上传",
+            "data": {"direct_upload": False, "reason": "backend_unsupported"}
+        })
+    return JSONResponse({
+        "code": 0,
+        "message": "success",
+        "data": upload_info
+    })
+
+
+@app.post('/api/video-workflow/upload-confirm')
+@require_permission("video_workflow:upload")
+async def confirm_workflow_asset_direct_upload(
+    request: Request,
+    key: str = Form(..., description="直传成功后的七牛 key（upload/workflow/{uid}/xxx.ext）"),
+    user_id: Optional[int] = Header(None, alias="X-User-Id")
+):
+    """
+    确认工作流素材直传完成：回源下载到本地（主副本）+ 校验通过后才入库
+
+    1. 校验 key 归属当前登录用户且扩展名在白名单内；
+    2. 向七牛 stat 核实文件真实存在与大小一致（防伪造登记）；
+    3. 从七牛签名 URL 流式下载到本地素材目录（临时文件 + 原子落盘，
+       大小上限与魔数校验与 multipart 链路同款防线）；
+    4. 本地文件落盘成功才插入 media_file_mapping（cloud_path 直接置位）；
+    5. 返回与 multipart 链路同款的本站永久 URL（/upload/ 路径，永不过期，
+       访问时由 cdn_redirect_middleware 现签 302 到七牛）。
+
+    幂等：mapping 已存在时直接返回 URL。任何失败前端降级走 multipart 重传。
+    """
+    auth_user_id = get_auth_user_id(request)
+    if auth_user_id is None:
+        return JSONResponse(
+            status_code=401,
+            content={"code": -1, "message": "未获取到登录身份，请重新登录"}
+        )
+    mismatch = check_claimed_user_id(user_id, auth_user_id)
+    if mismatch is not None:
+        return mismatch
+
+    if not get_config().get("server", {}).get("auto_upload_to_cdn", False):
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "CDN 未启用，直传确认不可用，请走服务器上传"}
+        )
+
+    # key 必须落在当前登录用户自己的素材目录，且不含路径穿越/嵌套段
+    expected_prefix = f"{UploadPathConstants.UPLOAD_ROOT}/workflow/{auth_user_id}/"
+    filename = os.path.basename(key.replace("\\", "/"))
+    if (not key.startswith(expected_prefix)
+            or key != expected_prefix + filename
+            or filename in ("", ".", "..")):
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "非法的文件 key"}
+        )
+
+    try:
+        ext = resolve_media_extension(filename)
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "TIFF 素材不支持直传，请走服务器上传"}
+        )
+
+    max_bytes = max_upload_size_for_ext(ext)
+
+    try:
+        from utils.file_storage import get_file_storage
+        storage = get_file_storage(section="qiniu_long_term")
+    except ValueError as e:
+        logger.error(f"直传确认失败（CDN 存储配置不完整）: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"code": -1, "message": "CDN 存储配置不完整，请联系管理员"}
+        )
+
+    # 幂等：重复 confirm（如前端重试）直接返回既有 URL
+    from model.media_file_mapping import MediaFileMappingModel
+    existing = await asyncio.to_thread(MediaFileMappingModel.get_by_local_path, key)
+    if existing:
+        file_url = build_upload_url("workflow", str(auth_user_id), filename, host=_get_request_host(request))
+        return JSONResponse({
+            "code": 0,
+            "message": "上传成功",
+            "data": {"url": file_url}
+        })
+
+    # 七牛侧核实文件真实存在（防伪造 confirm）
+    meta = await storage.stat(key)
+    if not meta:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": "七牛侧未找到该文件，请重新上传"}
+        )
+    try:
+        expected_size = int(meta.get("fsize") or 0)
+    except (TypeError, ValueError):
+        expected_size = 0
+    if expected_size > max_bytes:
+        return JSONResponse(
+            status_code=400,
+            content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
+        )
+
+    # 回源下载到本地素材目录（主副本）；本地落盘成功才入库。
+    # 用 confirm 专用线程池（隔离默认执行器），wait_for 只约束接口侧放弃时限；
+    # 线程本身不可取消，靠 httpx 单次读空闲超时自然收敛（见 _download_cdn_asset_to_local 注释）。
+    asset_dir = get_upload_subdir("workflow", str(auth_user_id))
+    final_path = os.path.join(asset_dir, filename)
+    # 七牛 confirm 走源站管理下载，不走 CDN 域名。其他后端没有该方法时仍用下载 URL。
+    # 源站域名解析失败必须落在下面的 try 里返回 502，禁止静默退回 CDN。
+    origin_builder = getattr(storage, "get_origin_download_request", None)
+    started = time.monotonic()
+    try:
+        download_headers = None
+        if callable(origin_builder):
+            origin = await asyncio.to_thread(origin_builder, key)
+            if not isinstance(origin, dict) or not origin.get("url"):
+                raise RuntimeError("七牛源站下载地址无效")
+            download_url = origin["url"]
+            download_headers = origin.get("headers") or None
+        else:
+            download_url = storage.get_download_url(
+                key, expires=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT)
+        total = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(
+                _confirm_download_executor,
+                _download_cdn_asset_to_local,
+                download_url, final_path, ext, expected_size, max_bytes, download_headers
+            ),
+            timeout=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"直传回源下载超时: key={key}, timeout={WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT}s")
+        return JSONResponse(
+            status_code=504,
+            content={"code": -1, "message": "回源下载超时，请重试或走服务器上传"}
+        )
+    except UploadValidationError as e:
+        return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
+    except Exception as e:
+        logger.error(f"直传回源下载失败: key={key}, error={e}")
+        logger.error(traceback.format_exc())
+        return JSONResponse(
+            status_code=502,
+            content={"code": -1, "message": "回源下载失败，请重试或走服务器上传"}
+        )
+    elapsed = time.monotonic() - started
+
+    # 同步 DB 调用放入工作线程，不阻塞事件循环（与 multipart 链路同款约束）
+    await asyncio.to_thread(
+        register_direct_uploaded_mapping,
+        user_id=auth_user_id,
+        local_path=key,
+        entity_type=MediaFileEntity.WORKFLOW,
+        policy_code=MediaFilePolicy.NEVER_EXPIRE,
+        file_size=total,
+    )
+    logger.info(
+        f"直传素材回源落盘完成: key={key}, size={total}, elapsed={elapsed:.2f}s"
+    )
+
+    file_url = build_upload_url("workflow", str(auth_user_id), filename, host=_get_request_host(request))
+    return JSONResponse({
+        "code": 0,
+        "message": "上传成功",
+        "data": {"url": file_url}
+    })
 
 
 class DescribeImageRequest(BaseModel):

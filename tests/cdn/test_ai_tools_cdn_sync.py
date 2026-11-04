@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 class TestAIToolsModelCDNSync(unittest.TestCase):
     """AIToolsModel CDN 同步方法单元测试"""
 
-    @patch('model.ai_tools.AIToolsModel.update')
+    @patch('model.ai_tools.AIToolsModel.update_only_fields')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_skips_when_already_has_mapping(self, mock_get_by_id, mock_update):
         """测试当已有 media_mapping_id 时跳过创建"""
@@ -23,10 +23,9 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
         from model.ai_tools import AIToolsModel
 
-        result = AIToolsModel.update_with_cdn_sync(
+        result = AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=1,
             result_url='/upload/test.jpg',
-            status=2
         )
 
         # 应该调用 update 而不是 create
@@ -35,7 +34,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
     @patch('model.ai_tools.get_config')
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
     @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
-    @patch('model.ai_tools.AIToolsModel.update')
+    @patch('model.ai_tools.AIToolsModel.update_only_fields')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_creates_mapping(
         self, mock_get_by_id, mock_update, mock_trigger, mock_create, mock_get_config
@@ -50,10 +49,9 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
         from model.ai_tools import AIToolsModel
 
-        result = AIToolsModel.update_with_cdn_sync(
+        result = AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=1,
             result_url='/upload/test.jpg',
-            status=2,
             user_id=1
         )
 
@@ -69,7 +67,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
     @patch('model.ai_tools.get_config')
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
-    @patch('model.ai_tools.AIToolsModel.update')
+    @patch('model.ai_tools.AIToolsModel.update_only_fields')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_skips_non_local_path(
         self, mock_get_by_id, mock_update, mock_create, mock_get_config
@@ -83,10 +81,9 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
         from model.ai_tools import AIToolsModel
 
-        result = AIToolsModel.update_with_cdn_sync(
+        result = AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=1,
             result_url='http://example.com/remote.jpg',
-            status=2
         )
 
         # 非本地路径不创建 mapping，只调用 update
@@ -96,7 +93,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
     @patch('model.ai_tools.get_config')
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
     @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
-    @patch('model.ai_tools.AIToolsModel.update')
+    @patch('model.ai_tools.AIToolsModel.update_only_fields')
     @patch('model.ai_tools.AIToolsModel.get_by_id')
     def test_update_with_cdn_sync_image_type_detection(
         self, mock_get_by_id, mock_update, mock_trigger, mock_create, mock_get_config
@@ -112,7 +109,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
         from model.ai_tools import AIToolsModel
 
         # 测试图片类型
-        AIToolsModel.update_with_cdn_sync(
+        AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=1,
             result_url='/upload/test_image.jpg',
             user_id=1
@@ -125,7 +122,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
         mock_create.reset_mock()
 
         # 测试视频类型
-        AIToolsModel.update_with_cdn_sync(
+        AIToolsModel.update_only_fields_with_cdn_sync(
             record_id=2,
             result_url='/upload/test_video.mp4',
             user_id=1
@@ -146,11 +143,10 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
         from model.ai_tools import AIToolsModel
         from unittest.mock import patch
 
-        with patch.object(AIToolsModel, 'update_by_project_id', return_value=1) as mock_update:
-            result = AIToolsModel.update_by_project_id_with_cdn_sync(
+        with patch.object(AIToolsModel, 'update_only_fields_by_project_id', return_value=1) as mock_update:
+            result = AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
                 project_id='proj_123',
                 result_url='/upload/test.jpg',
-                status=2
             )
 
             mock_update.assert_called_once()
@@ -159,7 +155,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
     @patch('model.ai_tools.get_config')
     @patch('model.media_file_mapping.MediaFileMappingModel.create')
     @patch('utils.cdn_util.CDNUtil.trigger_cdn_upload')
-    @patch('model.ai_tools.AIToolsModel.update_by_project_id')
+    @patch('model.ai_tools.AIToolsModel.update_only_fields_by_project_id')
     @patch('model.ai_tools.AIToolsModel.get_by_project_id')
     def test_update_by_project_id_with_cdn_sync_creates_mapping(
         self, mock_get_by_project_id, mock_update, mock_trigger, mock_create, mock_get_config
@@ -176,10 +172,9 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
         from model.ai_tools import AIToolsModel
 
-        result = AIToolsModel.update_by_project_id_with_cdn_sync(
+        result = AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
             project_id='proj_123',
             result_url='/upload/test.jpg',
-            status=2
         )
 
         mock_create.assert_called_once()
@@ -193,7 +188,7 @@ class TestAIToolsModelCDNSync(unittest.TestCase):
 
         from model.ai_tools import AIToolsModel
 
-        result = AIToolsModel.update_by_project_id_with_cdn_sync(
+        result = AIToolsModel.update_only_fields_by_project_id_with_cdn_sync(
             project_id='nonexistent',
             result_url='/upload/test.jpg'
         )

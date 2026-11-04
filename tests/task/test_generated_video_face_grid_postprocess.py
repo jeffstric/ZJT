@@ -51,8 +51,10 @@ def test_download_worker_persists_postprocessed_url_everywhere(monkeypatch):
     )
     monkeypatch.setattr(
         download_worker.AIToolsModel,
-        "update_by_project_id_with_cdn_sync",
-        lambda **kwargs: captured_updates.append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: captured_updates.append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(
         download_worker.DownloadQueueModel,
@@ -102,8 +104,10 @@ def test_download_worker_propagates_postprocess_cancellation_before_terminal_wri
     )
     monkeypatch.setattr(
         download_worker.AIToolsModel,
-        "update_by_project_id_with_cdn_sync",
-        lambda **kwargs: terminal_updates.append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: terminal_updates.append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(
         download_worker.DownloadQueueModel,
@@ -206,11 +210,14 @@ def test_visual_sync_mode_persists_postprocessed_result_before_completed(
         fake_postprocess,
         raising=False,
     )
-    monkeypatch.setattr(visual_task.AIToolsModel, "update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(visual_task.AIToolsModel, "transition_status", lambda *_args, **_kwargs: 1)
+    monkeypatch.setattr(visual_task.AIToolsModel, "update_only_fields", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(
         visual_task.AIToolsModel,
-        "update_with_cdn_sync",
-        lambda _task_id, **kwargs: updates.append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: updates.append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(visual_task.TasksModel, "update_by_task_id", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(visual_task.AIToolsLogModel, "log", lambda *_args, **_kwargs: None)
@@ -229,13 +236,15 @@ def _patch_visual_success_dependencies(monkeypatch):
 
     monkeypatch.setattr(
         visual_task.AIToolsModel,
-        "update_by_project_id",
-        lambda **_kwargs: None,
+        "transition_status",
+        lambda *_args, **_kwargs: 1,
     )
     monkeypatch.setattr(
         visual_task.AIToolsModel,
-        "update_by_project_id_with_cdn_sync",
-        lambda **kwargs: final_updates.append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: final_updates.append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(visual_task.TasksModel, "update_by_task_id", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
@@ -409,7 +418,7 @@ def test_sync_worker_postprocesses_final_worker_result(
         implementation=None,
     )
     monkeypatch.setattr(mock_interceptor, "is_mock_enabled", lambda: False)
-    monkeypatch.setattr(model.AIToolsModel, "update", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(model.AIToolsModel, "transition_status", lambda *_args, **_kwargs: 1)
     monkeypatch.setattr(model.AIToolsModel, "get_by_id", lambda *_: ai_tool)
     monkeypatch.setattr(model.TasksModel, "update_by_task_id", lambda *_args, **_kwargs: None)
     driver = SimpleNamespace(
@@ -455,8 +464,10 @@ def test_sync_result_handler_only_persists_worker_result(monkeypatch):
     )
     monkeypatch.setattr(
         model.AIToolsModel,
-        "update_with_cdn_sync",
-        lambda _task_id, **kwargs: updates.append(kwargs),
+        "transition_with_cdn_sync",
+        lambda record_id, from_statuses, to_status, result_url=None, **kwargs: updates.append(
+            {"result_url": result_url}
+        ) or 1,
     )
     monkeypatch.setattr(model.TasksModel, "update_by_task_id", lambda *_args, **_kwargs: None)
     _patch_attempt_completion(monkeypatch)

@@ -261,6 +261,7 @@ def _resolve_image_ratio_and_size_from_prefs(
     image_size: Optional[str],
     generation_snapshot: Optional[Dict[str, Any]] = None,
     apply_user_prefs: bool = True,
+    lock_ratio: bool = False,
 ) -> tuple:
     """
     解析图片宽高比与分辨率。
@@ -280,7 +281,7 @@ def _resolve_image_ratio_and_size_from_prefs(
 
     if snap_ratio:
         aspect_ratio = snap_ratio
-    elif apply_user_prefs:
+    elif apply_user_prefs and not lock_ratio:
         user_prefs = _get_image_preferences(user_id, world_id) or {}
         pref_ratio = _non_auto_pref(user_prefs.get('ratio'))
         if pref_ratio:
@@ -1156,7 +1157,9 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
                image_size: Optional[str] = None,
                item_type: Optional[int] = None, item_name: Optional[str] = None,
                force_update_exist_image: bool = False,
-               task_type: Optional[int] = None) -> Dict[str, Any]:
+               task_type: Optional[int] = None,
+               lock_ratio: bool = False,
+               lock_count: bool = False) -> Dict[str, Any]:
     """
     图片编辑（图生图）- MCP工具函数（非阻塞版本，支持后台任务处理）
 
@@ -1305,9 +1308,12 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
             aspect_ratio=aspect_ratio,
             image_size=image_size,
             generation_snapshot=generation_snapshot,
+            lock_ratio=lock_ratio,
         )
-        # 生成数量同样按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参
-        count = _resolve_generation_count_from_prefs(user_id, world_id, count)
+        # 生成数量同样按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参。
+        # lock_count 留给显式指定张数的调用方（CLI 直连），避免世界偏好改写扣费张数
+        if not lock_count:
+            count = _resolve_generation_count_from_prefs(user_id, world_id, count)
 
         # 确定 image_size
         config = UnifiedConfigRegistry.get_by_id(text_to_image_task_id)
@@ -5111,7 +5117,9 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                           grid_layout: Optional[str] = None,
                           grid_item_names: Optional[List[str]] = None,
                            target_entity_ids: Optional[List[int]] = None,
-                           task_type: Optional[int] = None) -> Dict[str, Any]:
+                           task_type: Optional[int] = None,
+                           lock_ratio: bool = False,
+                           lock_count: bool = False) -> Dict[str, Any]:
     """
     文本生成图片 - MCP工具函数（非阻塞版本，支持后台任务处理）
 
@@ -5157,6 +5165,11 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
         return {
             'success': False,
             'error': f'当前选中的模型（id={text_to_image_task_id}）不支持文生图'
+        }
+    if is_grid and not getattr(selected_config, 'supports_grid_image', False):
+        return {
+            'success': False,
+            'error': f'模型 {selected_config.name} 不支持宫格生图',
         }
     model_name = _get_model_name_by_task_id(text_to_image_task_id)
 
@@ -5261,9 +5274,12 @@ def generate_text_to_image(user_id: str, world_id: str, auth_token: str, prompt:
                 aspect_ratio=aspect_ratio,
                 image_size=image_size,
                 generation_snapshot=generation_snapshot,
+                lock_ratio=lock_ratio,
             )
-            # 生成数量按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参（4宫格自身固定 1 组）
-            count = _resolve_generation_count_from_prefs(user_id, world_id, count)
+            # 生成数量按「已由系统注入」语义处理：界面偏好覆盖 LLM 传参（4宫格自身固定 1 组）。
+            # lock_count 时保留调用方张数，供 CLI 直连按请求扣费
+            if not lock_count:
+                count = _resolve_generation_count_from_prefs(user_id, world_id, count)
         else:
             image_size_source = "argument" if image_size else "default"
 
@@ -5883,6 +5899,12 @@ def submit_grid_image_task(
     # 按 IMAGE_EDIT 模型 supported_sizes 解析目标分辨率（不支持时自动降级到最接近档位）
     from config.unified_config import UnifiedConfigRegistry
     edit_config = UnifiedConfigRegistry.get_by_id(edit_task_id)
+    if not edit_config or not getattr(edit_config, 'supports_grid_image', False):
+        rejected_name = getattr(edit_config, 'name', None) or model_name or edit_task_id
+        return {
+            'success': False,
+            'error': f'模型 {rejected_name} 不支持宫格生图',
+        }
     resolved_image_size = _pick_grid_image_size(edit_config, image_size)
     _logger.info(
         "[GRID] i2i image_size: requested=%s resolved=%s model=%s supported=%s",

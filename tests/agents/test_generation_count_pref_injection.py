@@ -27,6 +27,7 @@ config_util._config_cache["config_unit.yml"] = {
 
 from script_writer_core.mcp_tool import (  # noqa: E402
     _resolve_generation_count_from_prefs,
+    _resolve_image_ratio_and_size_from_prefs,
 )
 
 
@@ -53,6 +54,20 @@ def test_out_of_range_pref_keeps_argument():
 
 def test_non_numeric_pref_keeps_argument():
     assert _resolve_generation_count_from_prefs('u', 'w', 1, user_prefs={'count': 'auto'}) == 1
+
+
+def test_lock_ratio_keeps_caller_ratio():
+    ratio, size, source = _resolve_image_ratio_and_size_from_prefs(
+        user_id='u',
+        world_id='w',
+        aspect_ratio='9:16',
+        image_size='2K',
+        apply_user_prefs=True,
+        lock_ratio=True,
+    )
+    assert ratio == '9:16'
+    assert size == '2K'
+    assert source == 'argument'
 
 
 def test_no_prefs_dict_reads_via_getter(monkeypatch):

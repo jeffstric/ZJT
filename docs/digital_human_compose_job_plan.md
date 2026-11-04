@@ -272,5 +272,5 @@ def resolve_task_ref(task_id: str) -> TaskRef  # "compose_123" → compose_jobs�
 - `AIToolsLogModel.log(ai_tool_id=None)` 允许空段 id，事件枚举全部存在
 - `list_by_type_and_status` 含 `next_trigger <= NOW()` 过滤；`tasks.next_trigger` 默认 CURRENT_TIMESTAMP，建行即可被调度
 - CWD 相对路径 `upload/cache` 与旧驱动 `_concat_and_store`/media_cache 默认约定一致（CWD=项目根是全仓既有部署假设）
-- 段 CDN 抑制早退路径仍正常更新 status/result_url（`update_by_project_id`）
-- `completed_time`/`extra_config`/`message` 均在 `AIToolsModel.update` 白名单
+- 段 CDN 抑制早退路径更新 result_url（`update_only_fields_by_project_id`）；status 走 `transition_status`
+- `completed_time`/`extra_config`/`message` 均在 `AIToolsModel.update_only_fields` 白名单

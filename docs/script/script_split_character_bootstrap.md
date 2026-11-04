@@ -17,7 +17,12 @@
 `services/storyboard_character_bootstrap_service.py`，在 `script_split_engine.step_publish` 的
 发布硬门禁之后、location bootstrap 之前执行（`asyncio.to_thread` 包装，纯同步 DB 操作）：
 
-- 已携带 `character_db_id` 的角色直接复用，不重复入库；
+- 已携带 `character_db_id` 的角色直接复用，不重复入库；若 LLM 输出的 `name` 是
+  简称/变体（如「哈利」匹配到 db_id=哈利波特，「德拉科莉亚·马尔福」vs 库内
+  「德拉科莉亚马尔福」），按库内完整名归一化 `name` 并同步改写 `【【】】` 标记
+  （见 `docs/script/character_matching.md` §角色名称一致性修复——合并期
+  `normalize_characters_by_db_id` 已先行处理，此处兜底历史检查点恢复路径；
+  旧名恰为库内另一角色完整名时跳过，防止标记误替换；db_id 已被删除仅记 warning）；
 - **短名归一化**：LLM 输出短名（如 `奶昔`）且库内存在唯一受控别名目标
   （`奶昔_Milkshake`，复用 `script_split_character_contract._controlled_alias` 的
   `中文名_English` 命名约定）时，回填既有 db_id、把 parsed 角色 `name` 改写为完整名，
@@ -118,4 +123,10 @@ WHERE c.source = 'script_split' AND c.user_id <> w.user_id;
 
 - `tests/services/test_storyboard_character_bootstrap_service.py`：新角色入库、
   已有 db_id 复用、同名复用、短名归一化（含 shot 标记改写）、多义短名、单角色失败韧性、
-  入库属主取世界属主（admin 代跑场景）、世界行缺失回退任务发起人。
+  入库属主取世界属主（admin 代跑场景）、世界行缺失回退任务发起人；
+  已携带 db_id 的简称/分隔符变体归一化（含 shot 标记改写）、旧名与库内其他角色
+  同名不归一化、db_id 已删除保持原样。
+- `tests/services/test_script_split_character_contract.py`：
+  `normalize_characters_by_db_id`：简称与分隔符变体归一化（name + 提示词/对白标记）、
+  归一化后契约校验通过、旧名为库内其他角色完整名时跳过、db_id 未知/为空/名称已一致
+  的 no-op、name 缺失补契约完整名、同名旧名映射冲突保留首个。

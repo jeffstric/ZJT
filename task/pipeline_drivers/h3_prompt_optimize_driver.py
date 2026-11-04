@@ -119,7 +119,7 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                 used_reference_images=len(image_data_urls),
             )
             await asyncio.to_thread(
-                AIToolsModel.update,
+                AIToolsModel.update_only_fields,
                 ai_tool.id,
                 prompt=optimized,
                 extra_config=extra,

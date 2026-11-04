@@ -34,7 +34,12 @@
         'data-full-src', 'data-modal-src', 'data-tool-id', 'data-tool-title',
         'data-publish-tool-id', 'data-publish-title',
         // 资产库「入库」按钮（历史消息回放，见 web/js/asset_library.js）
-        'data-asset-add-src'
+        'data-asset-add-src',
+        // 生成结果卡元数据条与「重新编辑/重新生成」按钮（见 marketing_agent.js
+        // buildGeneratedMediaRowsHtml / bindGeneratedMediaDelegation）。值均为
+        // 服务端参数快照（模型名/比例/时长等），不含 URL 与用户输入以外的内容
+        'data-gen-type', 'data-gen-model', 'data-gen-ratio', 'data-gen-duration',
+        'data-gen-resolution', 'data-gen-detail', 'data-regen-edit', 'data-regen-submit'
     ];
 
     // 与 DOMPurify 默认一致的 URI 白名单（http/https/mailto/tel/blob + 相对地址），

@@ -121,6 +121,41 @@ class BaseFileStorage(ABC):
         """
         return []
 
+    async def stat(self, key: str) -> Optional[dict]:
+        """
+        查询文件元信息（存在性/大小/哈希），供前端直传 confirm 校验复用。
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            dict（含 fsize/hash/mimeType 等字段）；文件不存在或后端不支持时返回 None
+        """
+        return None
+
+    async def get_browser_upload_info(
+        self,
+        key: str,
+        max_bytes: int,
+        expires: int = 1800
+    ) -> Optional[dict]:
+        """
+        颁发浏览器直传信息（upload_url/token 等），供前端绕过服务器直传文件到存储。
+
+        各后端按自家直传协议实现（七牛 form 直传 / OSS PostObject / S3 presigned PUT）；
+        端点层只依赖本接口方法，不感知存储品牌。
+
+        Args:
+            key: 目标对象 key（服务端生成并绑定，防前端覆盖任意路径）
+            max_bytes: 文件大小上限（参与直传凭证的 size 限制）
+            expires: 凭证有效期（秒）
+
+        Returns:
+            dict（至少含 upload_url / token / key / expires）；
+            后端不支持浏览器直传时返回 None（端点层据此降级服务器中转上传）
+        """
+        return None
+
     async def delete_by_prefix(self, prefix: str) -> int:
         """
         删除指定前缀下的所有文件

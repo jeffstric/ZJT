@@ -1528,6 +1528,7 @@
                             <tr>
                                 <th>#</th>
                                 <th>{{ t('rh_col_label') }}</th>
+                                <th>{{ t('rh_col_key_type') }}</th>
                                 <th>{{ t('rh_col_api_key') }}</th>
                                 <th>{{ t('rh_col_slots') }}</th>
                                 <th>{{ t('rh_col_status') }}</th>
@@ -1538,12 +1539,18 @@
                         </thead>
                         <tbody>
                             <tr v-if="runninghubKeyPool.list.length === 0">
-                                <td colspan="8" style="text-align:center;">{{ t('rh_pool_empty') }}</td>
+                                <td colspan="9" style="text-align:center;">{{ t('rh_pool_empty') }}</td>
                             </tr>
                             <tr v-for="item in runninghubKeyPool.list" :key="item.index"
                                 :style="{ opacity: item.api_key_configured ? 1 : 0.5 }">
                                 <td>{{ item.index }}</td>
                                 <td>{{ item.label || '-' }}</td>
+                                <td>
+                                    <span v-if="!item.api_key_configured" style="color:#999;">—</span>
+                                    <span v-else :class="['status-badge', rhKeyTypeClass(item.key_type)]">
+                                        {{ rhKeyTypeText(item.key_type) }}
+                                    </span>
+                                </td>
                                 <td class="config-value">
                                     <template v-if="item.api_key_configured">
                                         <code>{{ item.api_key_masked }}</code>
@@ -2922,6 +2929,14 @@
                     <div class="form-group">
                         <label>{{ t('rh_col_label') }}</label>
                         <input type="text" v-model="rhKeyEditModal.label" :placeholder="t('rh_label_placeholder')">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('rh_col_key_type') }}</label>
+                        <select v-model="rhKeyEditModal.keyType">
+                            <option value="standard">{{ t('rh_key_type_standard') }}</option>
+                            <option value="wallet">{{ t('rh_key_type_wallet') }}</option>
+                        </select>
+                        <p class="form-hint">{{ t('rh_key_type_hint') }}</p>
                     </div>
                     <div class="form-group">
                         <label>{{ t('rh_col_max_slots') }} <span style="color: red;">*</span></label>

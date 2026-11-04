@@ -675,6 +675,8 @@
     "status_success": "Success",
     "status_switching": "Switching…",
     "status_switching_ellipsis": "Switching…",
+    "status_task_cancelled": "Cancelled",
+    "status_task_cancelling": "Cancelling",
     "status_unavailable": "Unavailable",
     "status_uploading": "Uploading",
     "status_video_generating": "Generating video",
