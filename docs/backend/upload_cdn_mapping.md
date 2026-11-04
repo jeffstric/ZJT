@@ -169,9 +169,11 @@ upload-token（token 绑定 key + fsizeLimit + insertOnly + returnBody，30min �
   不使用 `cdn_domain`，也不使用私有下载 URL。播放链接仍走 CDN。其他存储后端没有
   `get_origin_download_request` 时，confirm 仍用原来的下载 URL。源站域名解析或
   getfile 地址无效时 confirm 返回 502，不回退到 CDN 域名。
-- 调度任务 `cleanup_orphan_workflow_uploads`（默认 6 小时）只删除
-  `upload/workflow/` 前缀、没有 `media_file_mapping`、且 putTime 早于 24 小时的对象。
-  单次列举上限 2000、删除上限 200。putTime 缺失或查询 mapping 失败的对象不删。
+- 调度任务 `cleanup_orphan_workflow_uploads`（默认 6 小时）先把
+  `upload/workflow/` 前缀、没有 `media_file_mapping`、且 putTime 早于 24 小时的对象
+  挪到 `wait_delete/YYYY-MM-DD/<原 key>`，不覆盖已存在的目标。满 7 天后才按目录日期
+  真正删除。单次列举上限 2000，挪走和删除各自上限 200。putTime 缺失、日期解析不了，
+  或查询 mapping 失败的对象不动。移动失败时原文件留在原地。
 - `server.py`：`POST /api/video-workflow/upload-token`（key=`upload/workflow/{uid}/...`
   绑定登录用户 + 扩展名白名单 + 大小预校验（含 size<=0 拒绝）+ `getattr`
   防御鸭子类型存储，同 world-upload-token 先例）、

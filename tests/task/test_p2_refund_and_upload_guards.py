@@ -89,6 +89,80 @@ def test_qiniu_put_time_and_orphan_selection():
     assert chosen == ["upload/workflow/1/old.png"]
 
 
+def test_wait_delete_key_keeps_original_path_and_expires_by_folder_date():
+    from datetime import date
+
+    from task.qiniu_orphan_cleanup import (
+        build_wait_delete_key,
+        select_expired_wait_delete_keys,
+    )
+
+    dest = build_wait_delete_key(
+        "upload/workflow/1/old.png", "2026-11-04", "wait_delete/",
+    )
+    assert dest == "wait_delete/2026-11-04/upload/workflow/1/old.png"
+
+    today = date(2026, 11, 4)
+    items = [
+        {"key": "wait_delete/2026-10-28/upload/workflow/1/due.png"},
+        {"key": "wait_delete/2026-10-29/upload/workflow/1/keep.png"},
+        {"key": "wait_delete/2026-11-04/upload/workflow/1/today.png"},
+        {"key": "wait_delete/not-a-date/upload/workflow/1/bad.png"},
+        {"key": "wait_delete/2026-10-28/"},
+        {"key": "upload/workflow/1/old.png"},
+    ]
+    chosen = select_expired_wait_delete_keys(items, today, 7, "wait_delete/", 10)
+    assert chosen == ["wait_delete/2026-10-28/upload/workflow/1/due.png"]
+
+
+def test_orphan_cleanup_moves_before_delete(monkeypatch):
+    from datetime import date
+
+    from task.qiniu_orphan_cleanup import cleanup_orphan_workflow_uploads
+
+    old_put = int((1_700_000_000 - 86_400 - 10) * 10_000_000)
+
+    class _Storage:
+        def __init__(self):
+            self.moved = []
+            self.deleted = []
+
+        def list_object_stats(self, prefix, limit):
+            if prefix == "upload/workflow/":
+                return [{"key": "upload/workflow/1/old.png", "putTime": old_put}]
+            if prefix == "wait_delete/":
+                return [
+                    {"key": "wait_delete/2026-10-28/upload/workflow/1/due.png"},
+                    {"key": "wait_delete/2026-11-03/upload/workflow/1/recent.png"},
+                ]
+            return []
+
+        def move_sync(self, src, dst):
+            self.moved.append((src, dst))
+            return True
+
+        def delete_sync(self, key):
+            self.deleted.append(key)
+            return True
+
+    storage = _Storage()
+    monkeypatch.setattr(
+        "utils.file_storage.get_file_storage", lambda section: storage,
+    )
+    monkeypatch.setattr(
+        "model.media_file_mapping.MediaFileMappingModel.get_by_local_path",
+        staticmethod(lambda key: None),
+    )
+
+    moved = cleanup_orphan_workflow_uploads(today=date(2026, 11, 4))
+    assert moved == 1
+    assert storage.moved == [(
+        "upload/workflow/1/old.png",
+        "wait_delete/2026-11-04/upload/workflow/1/old.png",
+    )]
+    assert storage.deleted == ["wait_delete/2026-10-28/upload/workflow/1/due.png"]
+
+
 def test_origin_download_does_not_use_cdn_domain():
     from unittest.mock import MagicMock, patch
 

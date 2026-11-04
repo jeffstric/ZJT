@@ -541,6 +541,32 @@ class QiniuFileStorage(BaseFileStorage):
             logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
         return self.DEFAULT_BROWSER_UPLOAD_HOST
 
+    def move_sync(self, src_key: str, dst_key: str) -> bool:
+        """同桶移动。不覆盖已存在的目标。调度清理任务调用，不占用事件循环。"""
+        return self._sync_move(src_key, dst_key)
+
+    def _sync_move(self, src_key: str, dst_key: str) -> bool:
+        """同步移动。只有 HTTP 200 算成功，源文件不存在或目标已存在都保持原样。"""
+        src_key = str(src_key or "").strip()
+        dst_key = str(dst_key or "").strip()
+        if not src_key or not dst_key or src_key == dst_key:
+            return False
+        try:
+            bucket_manager = qiniu.BucketManager(self._auth)
+            _ret, info = bucket_manager.move(
+                self.bucket_name, src_key, self.bucket_name, dst_key, force="false",
+            )
+            status_code = getattr(info, "status_code", None)
+            if status_code == 200:
+                return True
+            logger.warning(
+                f"[七牛云] 移动文件失败: {src_key} -> {dst_key}, status_code={status_code}"
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"[七牛云] 移动文件异常: {src_key} -> {dst_key}, error={e}")
+            return False
+
     def delete_sync(self, key: str) -> bool:
         """同步删除。调度清理任务调用，不占用事件循环。"""
         return self._sync_delete(key)

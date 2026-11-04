@@ -421,12 +421,17 @@ WORLD_IMPORT_KEY_PREFIX = "world_import"
 # confirm 回源下载总超时（秒）：asyncio.wait_for 硬上限（超时红线第 9/10 条）。
 WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT = 300
 # 直传后未 confirm 的七牛对象清理宽限（秒）。必须大于上传 token 有效期，
-# 避免删掉仍在上传或尚未 confirm 的对象。只清理 upload/workflow/ 且无 mapping 的对象。
+# 避免挪走仍在上传或尚未 confirm 的对象。只处理 upload/workflow/ 且无 mapping 的对象。
 QINIU_DIRECT_UPLOAD_ORPHAN_GRACE_SECONDS = 24 * 3600
 QINIU_DIRECT_UPLOAD_ORPHAN_SCAN_LIMIT = 2000
+# 单次运行里，挪入待删目录和真正删除各自的上限。
 QINIU_DIRECT_UPLOAD_ORPHAN_DELETE_LIMIT = 200
 QINIU_DIRECT_UPLOAD_ORPHAN_INTERVAL_HOURS = 6
 QINIU_WORKFLOW_UPLOAD_KEY_PREFIX = "upload/workflow/"
+# 待删对象先挪到该前缀下，路径为 wait_delete/YYYY-MM-DD/<原 key>。
+QINIU_DIRECT_UPLOAD_WAIT_DELETE_PREFIX = "wait_delete/"
+# 待删目录里的对象再保留这么多天，之后才真正删除。
+QINIU_DIRECT_UPLOAD_WAIT_DELETE_RETAIN_DAYS = 7
 # 回源下载 httpx 空闲超时（秒）：约束单次读阻塞上限，避免 wait_for 超时后
 # 工作线程仍在无进度地挂着（线程无法被取消，只能靠 httpx 自身超时收敛）。
 WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT = 60
