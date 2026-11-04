@@ -64,7 +64,7 @@ const syncFn = timelineJs.slice(
 );
 assert.ok(syncFn.length > 100, 'syncNodeCancelFromRemote 源码段截取失败');
 assert.doesNotMatch(syncFn, /markNodeCancelled\(node\.id, true\)/, '远端纠正不得用 persistOnly（不写终态文案）');
-assert.match(syncFn, /markNodeCancelled\(node\.id\)/, '远端纠正 CANCELLED 应完整标记节点终态');
+assert.match(syncFn, /markNodeCancelled\(node\.id, false/, '远端纠正 CANCELLED 应完整标记节点终态');
 
 // ---- workflow.js：轮询终态与集中同步 ----
 const pollFn = workflowJs.slice(
@@ -72,8 +72,8 @@ const pollFn = workflowJs.slice(
   workflowJs.indexOf('// 序列化工作流数据')
 );
 assert.match(pollFn, /result\.status === 'CANCELLED'/, 'pollVideoStatus 终态判断应包含 CANCELLED');
-assert.match(pollFn, /setNodeCancelVisible\(node\.id, task\.status === 'QUEUED'\)/, '轮询应按任务状态集中同步取消按钮可见性');
-assert.match(pollFn, /markNodeCancelled\(node\.id\)/, '轮询发现 CANCELLED 时应标记节点终态');
+assert.match(pollFn, /task\.status === 'QUEUED' && !node\.data\.cancelRequested && !node\.data\.cancelled/, '轮询只在排队且本地未取消时显示取消按钮');
+assert.match(pollFn, /markNodeCancelled\(node\.id, false/, '轮询发现 CANCELLED 时应标记节点终态');
 // 修复③：轮询集中同步的过滤集合必须包含 CANCELLED——此前只收 RUNNING/QUEUED，
 // CANCELLED 节点在 runningIds 检查处提前 return，markNodeCancelled 分支不可达。
 assert.match(
