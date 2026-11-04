@@ -120,7 +120,7 @@ MySQL 行锁保证串行、先到先得：
   （图生视频/文生视频/数字人/全景/分镜/宫格等）自动获得取消能力，无需逐一改造。
 - i18n：`web/i18n/locales/{zh-CN,en}/common.json` 新增 `ai_task_cancel_*` 等 7 个 key。
 - 样式：`web/css/ai_tool_timeline.css` `.ai-task-cancel-btn`。
-- storyboard 右侧「视频候选」的生成占位卡复用同一取消接口：`web/js/storyboard/api.js` 的 `cancelAiToolTask`（POST + Authorization 头，token 不进 URL）。按钮类名是 `.candidate-video-cancel`，不要复用 `.ai-task-cancel-btn`（时间轴脚本的捕获监听只认画布节点，会吞掉故事板点击）。图片候选不取消。排队成功显示「已取消」并退算力；预处理在途为「取消中」；已开始生成为 409。
+- storyboard 右侧「视频候选」与「分镜图候选」的生成占位卡复用同一取消接口：`web/js/storyboard/api.js` 的 `cancelAiToolTask`（POST + Authorization 头，token 不进 URL）。按钮类名是 `.candidate-task-cancel`（动作 `cancel-scene-task`），不要复用 `.ai-task-cancel-btn`（时间轴脚本的捕获监听只认画布节点，会吞掉故事板点击）。排队成功显示「已取消」并退算力；预处理在途为「取消中」；已开始生成为 409。取消标记（`state.sceneTaskCancelByToolId`）对图片 `first_frame` 与视频 `video` 的候选列表和 `taskStatus` 统一防护；宫格拆分共享同一 `ai_tool_id` 的多个图片候选一并标记。
 - index.html 各工具页（AI视频/脚本/数字人/图生视频/图片编辑/视频增强/文生图）
   的历史记录状态映射补 `-2: 已取消`（灰色），取消任务在历史列表正确展示。
 

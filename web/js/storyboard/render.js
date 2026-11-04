@@ -1917,31 +1917,32 @@ function isCandidateTaskCompleted(status) {
     return status === 2 || status === '2' || status === 'completed' || status === 'success' || status === 'SUCCESS';
 }
 
-function sceneVideoCancelPhase(aiToolId) {
+function sceneTaskCancelPhase(aiToolId) {
     const key = aiToolId == null || aiToolId === '' ? '' : String(aiToolId);
     if (!key) return '';
-    return state.sceneVideoCancelByToolId?.[key] || '';
+    return state.sceneTaskCancelByToolId?.[key] || '';
 }
 
-/** 仅视频生成占位可取消。图片候选、失败、已完成、已取消都不出按钮。 */
-function isCandidateVideoCancellable(kind, status, aiToolId) {
-    if (kind !== 'video' || aiToolId == null || aiToolId === '') return false;
-    const phase = sceneVideoCancelPhase(aiToolId);
+/** 图片/视频生成占位都可取消（同一排队取消接口）。失败、已完成、已取消不出按钮。 */
+function isCandidateTaskCancellable(kind, status, aiToolId) {
+    if (kind !== 'video' && kind !== 'image') return false;
+    if (aiToolId == null || aiToolId === '') return false;
+    const phase = sceneTaskCancelPhase(aiToolId);
     if (phase === 'cancelled') return false;
     if (isCandidateTaskFailed(status) || isCandidateTaskCancelled(status) || isCandidateTaskCompleted(status)) return false;
     return true;
 }
 
-function renderCandidateVideoCancelButton(aiToolId) {
+function renderCandidateCancelButton(aiToolId) {
     const key = String(aiToolId);
-    const phase = sceneVideoCancelPhase(key);
+    const phase = sceneTaskCancelPhase(key);
     const busy = phase === 'busy' || phase === 'cancelling';
     const label = busy
-        ? i18nT('status_video_cancelling', '取消中')
+        ? i18nT('status_task_cancelling', '取消中')
         : i18nT('btn_cancel', '取消');
     const title = i18nT('ai_task_cancel_queue_title', '任务仍在排队（尚未提交上游）时可取消，取消后自动退还算力');
-    return `<button type="button" class="candidate-video-cancel${busy ? ' is-busy' : ''}"
-            data-action="cancel-scene-video" data-ai-tool-id="${escapeHtml(key)}"
+    return `<button type="button" class="candidate-task-cancel${busy ? ' is-busy' : ''}"
+            data-action="cancel-scene-task" data-ai-tool-id="${escapeHtml(key)}"
             title="${escapeHtml(title)}" aria-label="${escapeHtml(label)}"
             ${busy ? 'disabled aria-busy="true"' : ''}>${escapeHtml(label)}</button>`;
 }
@@ -1969,10 +1970,10 @@ function renderCandidatePlaceholder(status, kind = 'image', error, aiToolId) {
             ${renderCandidateTimelineButton(aiToolId)}
         </div>`;
     }
-    const cancelPhase = kind === 'video' ? sceneVideoCancelPhase(aiToolId) : '';
-    const cancelled = kind === 'video' && (isCandidateTaskCancelled(status) || cancelPhase === 'cancelled');
+    const cancelPhase = sceneTaskCancelPhase(aiToolId);
+    const cancelled = isCandidateTaskCancelled(status) || cancelPhase === 'cancelled';
     if (cancelled) {
-        const label = i18nT('status_video_cancelled', '已取消');
+        const label = i18nT('status_task_cancelled', '已取消');
         return `<div class="candidate-placeholder candidate-cancelled">
             ${icon('close', 16)}
             <span>${label}</span>
@@ -1982,10 +1983,10 @@ function renderCandidatePlaceholder(status, kind = 'image', error, aiToolId) {
     // 无合法 URL：生成中 / 排队中 / 绑定后等待首轮轮询
     const cancelling = cancelPhase === 'busy' || cancelPhase === 'cancelling';
     const label = cancelling
-        ? i18nT('status_video_cancelling', '取消中')
+        ? i18nT('status_task_cancelling', '取消中')
         : (kind === 'video' ? i18nT('status_video_generating', '视频生成中') : i18nT('status_generating', '生成中'));
-    const cancelButton = isCandidateVideoCancellable(kind, status, aiToolId)
-        ? renderCandidateVideoCancelButton(aiToolId)
+    const cancelButton = isCandidateTaskCancellable(kind, status, aiToolId)
+        ? renderCandidateCancelButton(aiToolId)
         : '';
     return `<div class="candidate-placeholder candidate-loading${cancelling ? ' is-cancelling' : ''}">
         ${icon('loading', 18)}
@@ -3797,7 +3798,7 @@ export function patchCenter() {
     return Boolean(next);
 }
 
-/** 右侧候选区签名。取消标记和视频任务状态变化也要触发重绘。 */
+/** 右侧候选区签名。取消标记和图片/视频任务状态变化也要触发重绘。 */
 function candidateSidebarSig(scene) {
     return [
         scene.id,
@@ -3808,7 +3809,9 @@ function candidateSidebarSig(scene) {
         JSON.stringify(state.sceneCandidates?.[scene.id] || null),
         JSON.stringify(state.candidateUploadsBySceneId?.[scene.id] || null),
         JSON.stringify(state.candidateDeletesBySceneId?.[scene.id] || null),
-        JSON.stringify(state.sceneVideoCancelByToolId || null),
+        JSON.stringify(state.sceneTaskCancelByToolId || null),
+        scene.taskStatus?.first_frame ?? '',
+        scene.taskStatus?.first_frame_ai_tool_id ?? '',
         scene.taskStatus?.video ?? '',
         scene.taskStatus?.video_ai_tool_id ?? '',
     ].join('|');

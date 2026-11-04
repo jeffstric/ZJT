@@ -101,7 +101,7 @@ for (const key of i18nKeys) {
 // ---- CSS：取消按钮样式存在 ----
 assert.match(css, /\.ai-task-cancel-btn\s*{/, 'CSS 应定义 .ai-task-cancel-btn');
 
-// ---- storyboard：视频候选生成占位可取消，且不复用画布按钮类名 ----
+// ---- storyboard：图片/视频候选生成占位均可取消，且不复用画布按钮类名 ----
 const sbApi = read('web/js/storyboard/api.js');
 const sbRender = read('web/js/storyboard/render.js');
 const sbEvents = read('web/js/storyboard/events.js');
@@ -120,30 +120,38 @@ assert.match(sbCancelFn, /authHeaders\(false\)/, '故事板取消应走 Authoriz
 assert.doesNotMatch(sbCancelFn, /auth_token[=:]/, '故事板取消不得把 token 拼进 URL');
 assert.doesNotMatch(sbCancelFn, /request\(/, '故事板取消不能走 /api/storyboard 前缀的 request()');
 
-assert.match(sbRender, /class="candidate-video-cancel/, '视频占位应渲染 candidate-video-cancel');
-assert.match(sbRender, /data-action="cancel-scene-video"/, '取消按钮动作应为 cancel-scene-video');
+assert.match(sbRender, /class="candidate-task-cancel/, '生成占位应渲染 candidate-task-cancel');
+assert.match(sbRender, /data-action="cancel-scene-task"/, '取消按钮动作应为 cancel-scene-task');
 assert.doesNotMatch(sbRender, /ai-task-cancel-btn/, '故事板不得复用 ai-task-cancel-btn（捕获监听会吞点击）');
-assert.match(sbRender, /kind !== 'video'/, '取消按钮只给视频候选');
-assert.match(sbRender, /status_video_cancelled/, '取消成功后占位应显示已取消');
+assert.match(sbRender, /kind !== 'video' && kind !== 'image'/, '取消按钮要同时覆盖视频与图片候选');
+assert.match(sbRender, /status_task_cancelled/, '取消成功后占位应显示已取消');
 assert.match(sbRender, /candidateSidebarSig/, '候选区签名应包含取消状态，否则按钮不刷新');
+// 签名必须包含首帧任务状态：图片候选取消/取消中不触发重绘按钮就不会出现
+const sbSig = sbRender.slice(sbRender.indexOf('function candidateSidebarSig'), sbRender.indexOf('export function patchCandidates'));
+assert.match(sbSig, /first_frame/, '候选区签名应包含首帧任务状态与任务 ID');
 
 const sbClick = sbEvents.slice(
   sbEvents.indexOf('data-action="delete-scene-candidate"'),
   sbEvents.indexOf("event.target.closest('[data-route]')"),
 );
-assert.match(sbClick, /cancel-scene-video/, '取消点击必须在候选选中之前处理');
-assert.match(sbEvents, /function handleCancelSceneVideo/, '应定义 handleCancelSceneVideo');
+assert.match(sbClick, /cancel-scene-task/, '取消点击必须在候选选中之前处理');
+assert.match(sbEvents, /function handleCancelSceneTask/, '应定义 handleCancelSceneTask');
+assert.match(sbEvents, /function markSceneTaskCancelled/, '应定义 markSceneTaskCancelled');
+assert.match(sbEvents, /\['videos', 'images'\]\.forEach/, '本地取消标记要同时处理视频与图片候选');
 assert.match(sbEvents, /cancelAiToolTask\(/, '点击应调用 cancelAiToolTask');
 assert.match(sbEvents, /result\.status === 'CANCELLING'/, '预处理在途应进入取消中');
 
-assert.match(sbPolling, /function applyVideoCancelGuard/, '轮询应挡住过期响应把已取消卡片写回生成中');
+assert.match(sbPolling, /function applySceneTaskCancelGuard/, '轮询应挡住过期响应把已取消卡片写回生成中');
 assert.match(sbPolling, /phase === 'cancelled'\) return -2/, '已取消标记在没有结果 URL 时保持 -2');
+assert.match(sbPolling, /frameStatus = applySceneTaskCancelGuard/, '首帧任务状态也要过取消标记防护');
+assert.match(sbPolling, /\['videos', 'images'\]\.forEach/, '收尾兜底要同时纠正视频与图片候选');
+assert.doesNotMatch(sbPolling, /applyVideoCancelGuard/, '旧的 video 专用防护函数名应已移除');
 
-assert.match(sbCss, /\.candidate-video-cancel\s*{/, 'CSS 应定义 .candidate-video-cancel');
+assert.match(sbCss, /\.candidate-task-cancel\s*{/, 'CSS 应定义 .candidate-task-cancel');
 assert.match(sbCss, /pointer-events:\s*auto/, '取消按钮必须能穿透 is-loading 的 pointer-events:none');
 assert.match(sbCss, /\.candidate-video-grid \.candidate-thumb\.is-loading\s*{[^}]*min-height:\s*86px/s, '生成中的视频卡要加高，避免裁掉取消按钮');
 
-for (const key of ['status_video_cancelled', 'status_video_cancelling', 'btn_cancel']) {
+for (const key of ['status_task_cancelled', 'status_task_cancelling', 'btn_cancel']) {
   assert.ok(zhStoryboard[key], `zh-CN/storyboard.json 缺少 ${key}`);
   assert.ok(enStoryboard[key], `en/storyboard.json 缺少 ${key}`);
 }
