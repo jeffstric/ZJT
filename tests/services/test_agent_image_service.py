@@ -365,6 +365,17 @@ class TestGetProjectStatus:
         assert result["status"] == "PROCESSING"
         assert result["terminal"] is False
 
+    def test_cancelled_is_terminal(self, service, monkeypatch):
+        monkeypatch.setattr(
+            mod.AIToolModel, "get_by_id",
+            MagicMock(return_value=self._tool(status=-2, message="任务已取消")),
+        )
+        result = service.get_project_status(101, 7)
+        assert result["terminal"] is True
+        assert result["status"] == "CANCELLED"
+        assert result["status_code"] == -2
+        assert "result_url" not in result
+
     def test_completed_returns_result_url(self, service, monkeypatch):
         monkeypatch.setattr(
             mod.AIToolModel, "get_by_id",

@@ -252,7 +252,7 @@ export async function cancelAiToolTask(aiToolId) {
     }
     if (resp.ok && data && data.code === 0) {
         const payload = data.data || {};
-        return { success: true, status: payload.status || 'CANCELLED' };
+        return { success: true, status: payload.status || 'CANCELLED', message: data.message || '' };
     }
     return {
         success: false,

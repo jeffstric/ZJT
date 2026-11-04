@@ -56,6 +56,7 @@ from perseids_server.client import make_perseids_request  # noqa: E402
 from utils.computing_power import (  # noqa: E402
     build_refund_transaction_id,
     is_already_refunded,
+    power_change_settled,
     resolve_refund_amount,
 )
 
@@ -106,7 +107,7 @@ def _refund(ai_tool, skip_refund: bool) -> str:
                 "transaction_id": build_refund_transaction_id(ai_tool),
             },
         )
-        return f"refunded({amount})" if success else f"failed({message})"
+        return f"refunded({amount})" if power_change_settled(success, message) else f"failed({message})"
     except Exception as e:  # noqa: BLE001
         return f"failed({e})"
 

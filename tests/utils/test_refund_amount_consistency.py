@@ -109,6 +109,12 @@ class TestRefundIdempotency(unittest.TestCase):
         from utils.computing_power import build_refund_transaction_id
 
         ai_tool = _make_ai_tool(transaction_id=None)
+        self.assertEqual(build_refund_transaction_id(ai_tool), 'refund-task-28084')
+
+    def test_build_refund_transaction_id_without_txn_or_id(self):
+        from utils.computing_power import build_refund_transaction_id
+
+        ai_tool = _make_ai_tool(transaction_id=None, task_id=None)
         self.assertIsNone(build_refund_transaction_id(ai_tool))
 
     @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
@@ -127,10 +133,18 @@ class TestRefundIdempotency(unittest.TestCase):
         mock_exists.return_value = False
         self.assertFalse(is_already_refunded(_make_ai_tool()))
 
-    def test_is_already_refunded_without_txn(self):
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    def test_is_already_refunded_without_txn_uses_task_id(self, mock_exists):
         from utils.computing_power import is_already_refunded
 
+        mock_exists.return_value = False
         self.assertFalse(is_already_refunded(_make_ai_tool(transaction_id=None)))
+        mock_exists.assert_called_once_with('refund-task-28084')
+
+    def test_is_already_refunded_without_txn_or_id(self):
+        from utils.computing_power import is_already_refunded
+
+        self.assertFalse(is_already_refunded(_make_ai_tool(transaction_id=None, task_id=None)))
 
 
 class TestRefundComputingPowerIntegration(unittest.TestCase):
@@ -213,6 +227,24 @@ class TestRefundComputingPowerIntegration(unittest.TestCase):
         result = _refund_computing_power(_make_ai_tool(), '用户取消排队任务')
 
         self.assertFalse(result, "上游退款失败应返回 False 驱动用户提示")
+
+    @patch('task.visual_task.make_perseids_request')
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    @patch('model.computing_power_log.ComputingPowerLogModel.get_deducted_power_by_transaction')
+    def test_refund_treats_already_processed_as_success(self, mock_get_deducted, mock_exists, mock_request):
+        """唯一索引撞上已入账时接口返回「该交易已处理」，退款侧必须当成成功。"""
+        from task.visual_task import _refund_computing_power
+
+        mock_get_deducted.return_value = 16
+        mock_exists.return_value = False
+        mock_request.side_effect = [
+            (True, 'ok', {'token': 'fake-token'}),
+            (False, '该交易已处理', {}),
+        ]
+
+        result = _refund_computing_power(_make_ai_tool(), '用户取消排队任务')
+
+        self.assertTrue(result)
 
     @patch('task.visual_task.make_perseids_request')
     @patch('utils.computing_power.resolve_refund_amount', return_value=0)

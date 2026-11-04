@@ -59,6 +59,7 @@ from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
 from utils.computing_power import (
     build_refund_transaction_id,
     is_already_refunded,
+    power_change_settled,
     resolve_refund_amount,
 )
 from utils.project_path import resolve_upload_url_to_local_path
@@ -224,7 +225,7 @@ def _refund_segment(ai_tool, reason: str) -> None:
                 "transaction_id": transaction_id
             }
         )
-        if success:
+        if power_change_settled(success, message):
             logger.info(f"[compose_job] 段 {ai_tool.id} 已退费 {computing_power}（{reason}）")
         else:
             logger.error(f"[compose_job] 段 {ai_tool.id} 退费失败（{reason}）: {message}")

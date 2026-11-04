@@ -1923,12 +1923,12 @@ function sceneTaskCancelPhase(aiToolId) {
     return state.sceneTaskCancelByToolId?.[key] || '';
 }
 
-/** 图片/视频生成占位都可取消（同一排队取消接口）。失败、已完成、已取消不出按钮。 */
+/** 图片/视频生成占位都可取消（同一排队取消接口）。失败、已完成、已取消、取消中不出按钮。 */
 function isCandidateTaskCancellable(kind, status, aiToolId) {
     if (kind !== 'video' && kind !== 'image') return false;
     if (aiToolId == null || aiToolId === '') return false;
     const phase = sceneTaskCancelPhase(aiToolId);
-    if (phase === 'cancelled') return false;
+    if (phase === 'cancelled' || phase === 'cancelling' || phase === 'busy') return false;
     if (isCandidateTaskFailed(status) || isCandidateTaskCancelled(status) || isCandidateTaskCompleted(status)) return false;
     return true;
 }

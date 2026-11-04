@@ -15,7 +15,7 @@
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `connection_info` | string | 二选一 | 粘贴的连接信息全文（服务端配平提取 JSON 块，取 `agent_token` / `token` 键） |
+| `connection_info` | string | 二选一 | 粘贴的连接信息全文（服务端配平提取 JSON 块，取 `agent_token` / `token` 键）。最长 8192 字符，超出返回 422。扫描也只看这段长度 |
 | `agent_token` | string | 二选一 | 已有明文 agent_token 时直接传 |
 | `prompt` | string | ✅ | 提示词（文生图为画面描述；图生图为编辑指令） |
 | `model` | string | ❌ | 模型名 / key / short_key / 任务 id（如 `moss`、`qwenimage2.1`、`53`）。缺省：用户 CLI 媒体偏好（首页弹窗「CLI 媒体偏好」tab，surface=storyboard_cli）→ 平台默认文生图模型 |
@@ -74,7 +74,7 @@
 }
 ```
 
-`terminal=true` 表示终态（COMPLETED=2 / FAILED=-1）；归属校验失败（非本人任务）返回 404 防枚举。
+`terminal=true` 表示终态（COMPLETED=2 / FAILED=-1 / CANCELLED=-2）。`wait=true` 遇到 CANCELLED 时 `status=cancelled`，文案用任务消息，不写成「图片生成失败」。归属校验失败（非本人任务）返回 404 防枚举。
 
 ## 错误码
 

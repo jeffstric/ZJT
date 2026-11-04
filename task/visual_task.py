@@ -237,7 +237,8 @@ def _refund_computing_power(ai_tool, reason: str) -> bool:
         from utils.computing_power import (
             resolve_refund_amount,
             build_refund_transaction_id,
-            is_already_refunded
+            is_already_refunded,
+            power_change_settled,
         )
 
         if is_already_refunded(ai_tool):
@@ -280,7 +281,7 @@ def _refund_computing_power(ai_tool, reason: str) -> bool:
             }
         )
 
-        if success:
+        if power_change_settled(success, message):
             logger.info(f"Task {task_id} refund ({computing_power}) processed successfully")
             return True
 
@@ -1016,6 +1017,9 @@ def _check_pipeline_stage(ai_tool, stage):
                 fresh = AIToolsModel.get_by_id(ai_tool.id)
                 if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
                     return True
+                # 本次没有赢得 FAILED。赢家负责退款；赢家在退款前崩溃时由补偿任务补。
+                logger.info(f"Task {ai_tool.id} param_prepare failure CAS missed, skip refund")
+                return True
             TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_FAILED)
             _refund_computing_power(ai_tool, f"数据预处理失败: {error_msg}")
             logger.info(f"Task {ai_tool.id} failed: param_prepare step failed")
@@ -1040,6 +1044,8 @@ def _check_pipeline_stage(ai_tool, stage):
                 fresh = AIToolsModel.get_by_id(ai_tool.id)
                 if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
                     return True
+                logger.info(f"Task {ai_tool.id} retry-exhausted failure CAS missed, skip refund")
+                return True
             TasksModel.update_by_task_id(ai_tool.id, status=TASK_STATUS_FAILED)
             _refund_computing_power(ai_tool, "所有重试失败")
 
@@ -1284,6 +1290,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             message=reason,
             completed_time=datetime.now(),
         )
+        won_failure = failed_affected > 0
         if failed_affected == 0:
             fresh = AIToolsModel.get_by_id(task_id)
             if fresh and fresh.status == AI_TOOL_STATUS_CANCELLED:
@@ -1292,7 +1299,9 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
                 logger.info(f"Task {task_id} failure CAS missed, keep current state")
                 return True
-        TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
+            logger.info(f"Task {task_id} already FAILED by another worker, skip refund")
+        if won_failure:
+            TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
         
         # 释放 RunningHub 槽位
         is_runninghub = ai_tool_type in RUNNINGHUB_TASK_TYPES
@@ -1308,6 +1317,9 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
     except Exception as db_error:
         logger.error(f"Failed to update records for failed task {project_id}: {db_error}")
         return False
+
+    if not won_failure:
+        return PROCESS_RESULT_FAILED
     
     # Refund computing power (note: auth_token not available in background task)
     try:
@@ -1321,7 +1333,8 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         from utils.computing_power import (
             resolve_refund_amount,
             build_refund_transaction_id,
-            is_already_refunded
+            is_already_refunded,
+            power_change_settled,
         )
 
         if is_already_refunded(ai_tool):
@@ -1360,7 +1373,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
                     "transaction_id": transaction_id
                 }
             )
-            if success:
+            if power_change_settled(success, message):
                 logger.info(f"Task {project_id} failed, computing power refund ({computing_power}) processed successfully")
             else:
                 logger.error(f"Task {project_id} failed, computing power refund ({computing_power}) failed: {message}")
@@ -1549,7 +1562,8 @@ def process_task_with_retry(task_type, process_func):
                             from utils.computing_power import (
                                 resolve_refund_amount,
                                 build_refund_transaction_id,
-                                is_already_refunded
+                                is_already_refunded,
+                                power_change_settled,
                             )
                             if not is_already_refunded(ai_tool):
                                 expired_refund = resolve_refund_amount(ai_tool)
@@ -1572,7 +1586,7 @@ def process_task_with_retry(task_type, process_func):
                                                 "transaction_id": refund_txn
                                             }
                                         )
-                                        if success:
+                                        if power_change_settled(success, message):
                                             logger.info(f"Expired task {task.task_id} refunded {expired_refund} computing power")
                         except Exception as e:
                             logger.warning(f"Failed to refund expired task {task.task_id}: {e}")
@@ -1607,7 +1621,8 @@ def process_task_with_retry(task_type, process_func):
                             from utils.computing_power import (
                                 resolve_refund_amount,
                                 build_refund_transaction_id,
-                                is_already_refunded
+                                is_already_refunded,
+                                power_change_settled,
                             )
 
                             if is_already_refunded(ai_tool):
@@ -1639,7 +1654,7 @@ def process_task_with_retry(task_type, process_func):
                                                 "transaction_id": transaction_id
                                             }
                                         )
-                                        if success:
+                                        if power_change_settled(success, message):
                                             logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
                         except Exception as e:
                             logger.error(f"Failed to refund computing power for task {task.task_id}: {e}")

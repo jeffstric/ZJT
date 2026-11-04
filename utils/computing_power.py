@@ -383,25 +383,41 @@ def attach_refund_to_deduct_logs(
 
 
 def build_refund_transaction_id(ai_tool) -> Optional[str]:
-    """构造幂等退费流水号：refund-{原扣费流水号}
+    """构造幂等退费流水号。
 
-    任务创建时扣费流水号与 ai_tools.transaction_id 1:1 绑定，
-    以此派生退费流水号可天然防止同一任务重复退费。
+    有扣费流水时用 refund-{原流水}。没有扣费流水但有任务 id 时用
+    refund-task-{id}，避免每次退款都换一个随机 uuid 从而绕过唯一索引。
+    两者都没有时返回 None，调用方才回退随机 uuid。
 
-    Returns:
-        幂等流水号；任务无扣费流水号时返回 None（调用方回退随机 uuid）
+    历史无流水任务若已经用随机 uuid 退过，新的稳定号对不上那笔旧退款。
+    补偿任务不处理这类任务，避免再记一笔。
     """
     transaction_id = getattr(ai_tool, 'transaction_id', None)
-    if not transaction_id:
-        return None
-    return f"{REFUND_TXN_PREFIX}{transaction_id}"
+    if transaction_id:
+        return f"{REFUND_TXN_PREFIX}{transaction_id}"
+    tool_id = getattr(ai_tool, 'id', None)
+    if type(tool_id) is int and tool_id > 0:
+        return f"{REFUND_TXN_PREFIX}task-{tool_id}"
+    return None
+
+
+def power_change_settled(success: bool, message: Optional[str]) -> bool:
+    """入账是否已经落地。
+
+    calculate_computing_power 对重复流水返回 success=False 且文案为「该交易已处理」，
+    以便微信支付等调用方继续按文案识别幂等重放。退款调用方要把这句当成成功，
+    否则会向用户展示「退款处理中」。
+    """
+    if success:
+        return True
+    return bool(message) and "该交易已处理" in str(message)
 
 
 def is_already_refunded(ai_tool) -> bool:
     """检查任务是否已退过费（幂等防重复退费）
 
-    依赖 perseids 服务将退费流水写入同一 computing_power_log 表；
-    check-then-post 存在极小竞态窗口，仅作防御性加固。
+    预检查是快路径。真正的互斥靠 computing_power_log.transaction_id 唯一索引，
+    以及余额更新与流水插入处在同一事务：冲突会回滚余额。
     """
     refund_txn = build_refund_transaction_id(ai_tool)
     if not refund_txn:

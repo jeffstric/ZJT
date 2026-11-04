@@ -159,6 +159,16 @@ function upsertSceneCandidateFromTask(sceneId, assetType, taskInfo) {
     if (taskInfo.ai_tool_id) {
         candidate.aiToolId = taskInfo.ai_tool_id;
     }
+    if (Number(taskInfo.cancel_requested) === 1) {
+        candidate.cancelRequested = true;
+        const key = candidate.aiToolId == null || candidate.aiToolId === '' ? '' : String(candidate.aiToolId);
+        if (key) {
+            if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+            if (state.sceneTaskCancelByToolId[key] !== 'cancelled') {
+                state.sceneTaskCancelByToolId[key] = 'cancelling';
+            }
+        }
+    }
     candidate.status = applySceneTaskCancelGuard(
         candidate.aiToolId,
         candidate.status,
@@ -329,6 +339,16 @@ function upsertGeneratingCandidate(sceneId, assetType, genInfo) {
     // 关联任务 ID：生成中占位卡「查看生成状态时间轴」
     if (genInfo.ai_tool_id) {
         candidate.aiToolId = genInfo.ai_tool_id;
+    }
+    if (Number(genInfo.cancel_requested) === 1) {
+        candidate.cancelRequested = true;
+        const key = String(candidate.aiToolId || '');
+        if (key) {
+            if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+            if (state.sceneTaskCancelByToolId[key] !== 'cancelled') {
+                state.sceneTaskCancelByToolId[key] = 'cancelling';
+            }
+        }
     }
     // generating 行带可播 URL 时填入候选卡（防御性：当前后端在生成/下载阶段不写
     // result_url，此路径正常不触发，占位卡仍显示「生成中」）；仅可渲染才写，

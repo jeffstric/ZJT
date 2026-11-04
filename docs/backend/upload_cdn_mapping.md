@@ -164,6 +164,16 @@ upload-token（token 绑定 key + fsizeLimit + insertOnly + returnBody，30min �
   - `QiniuFileStorage.stat()`：BucketManager 核实文件存在/大小，防伪造 confirm
   - `factory.py`：透传 section 配置的 `upload_host`。`_load_config` 的 DB
     动态覆盖包含 `upload_host`，实例缓存键也包含它，只改直传域名会换新实例
+- confirm 回源走七牛源站管理下载（`GET https://<ioHost>/getfile/<urlsafe_b64(bucket:key)>`，
+  `Authorization: QBox <token_of_request>`）。io 域名用 `Region.get_io_host` 按 bucket 解析并缓存，
+  不使用 `cdn_domain`，也不使用私有下载 URL。播放链接仍走 CDN。其他存储后端没有
+  `get_origin_download_request` 时，confirm 仍用原来的下载 URL。源站域名解析或
+  getfile 地址无效时 confirm 返回 502，不回退到 CDN 域名。
+- 调度任务 `cleanup_orphan_workflow_uploads`（默认 6 小时）先把
+  `upload/workflow/` 前缀、没有 `media_file_mapping`、且 putTime 早于 24 小时的对象
+  挪到 `wait_delete/YYYY-MM-DD/<原 key>`，不覆盖已存在的目标。满 7 天后才按目录日期
+  真正删除。单次列举上限 2000，挪走和删除各自上限 200。putTime 缺失、日期解析不了，
+  或查询 mapping 失败的对象不动。移动失败时原文件留在原地。
 - `server.py`：`POST /api/video-workflow/upload-token`（key=`upload/workflow/{uid}/...`
   绑定登录用户 + 扩展名白名单 + 大小预校验（含 size<=0 拒绝）+ `getattr`
   防御鸭子类型存储，同 world-upload-token 先例）、
@@ -178,9 +188,9 @@ upload-token（token 绑定 key + fsizeLimit + insertOnly + returnBody，30min �
   直传 → confirm），失败降级走原 multipart 路径；认证仍走 Authorization 头
   （红线14），上传凭证只进存储 form 体（直传协议要求）
 
-测试：`tests/api/test_workflow_direct_upload.py`（17 用例：token 降级/颁发/
+测试：`tests/api/test_workflow_direct_upload.py`（18 用例：token 降级/颁发/
 白名单/超限/非法 size/TIFF/不支持后端、confirm 跨用户/穿越/白名单/stat 缺失/
-成功落盘注册/幂等/超限）+ `tests/cdn/test_register_direct_uploaded_mapping.py`
+成功落盘注册/源站解析失败 502/幂等/超限）+ `tests/cdn/test_register_direct_uploaded_mapping.py`
 （5 用例）+ `tests/utils/test_qiniu_storage.py`（直传信息颁发含 insertOnly/
 基类默认 None/域名解析覆盖/UC v4 domains 缓存/domains 为空走 up.old/
 旧版 up.acc.main 不解析且不缓存/UC 失败回退）。
