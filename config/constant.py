@@ -420,6 +420,13 @@ WORLD_IMPORT_KEY_PREFIX = "world_import"
 # 前端降级走既有 multipart 上传，行为与直传功能上线前完全一致。
 # confirm 回源下载总超时（秒）：asyncio.wait_for 硬上限（超时红线第 9/10 条）。
 WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT = 300
+# 直传后未 confirm 的七牛对象清理宽限（秒）。必须大于上传 token 有效期，
+# 避免删掉仍在上传或尚未 confirm 的对象。只清理 upload/workflow/ 且无 mapping 的对象。
+QINIU_DIRECT_UPLOAD_ORPHAN_GRACE_SECONDS = 24 * 3600
+QINIU_DIRECT_UPLOAD_ORPHAN_SCAN_LIMIT = 2000
+QINIU_DIRECT_UPLOAD_ORPHAN_DELETE_LIMIT = 200
+QINIU_DIRECT_UPLOAD_ORPHAN_INTERVAL_HOURS = 6
+QINIU_WORKFLOW_UPLOAD_KEY_PREFIX = "upload/workflow/"
 # 回源下载 httpx 空闲超时（秒）：约束单次读阻塞上限，避免 wait_for 超时后
 # 工作线程仍在无进度地挂着（线程无法被取消，只能靠 httpx 自身超时收敛）。
 WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT = 60
@@ -1503,6 +1510,17 @@ AI_TOOL_ACTIVE_STATUSES = (
     AI_TOOL_STATUS_DOWNLOADING,
 )
 
+# 取消落库后的用户可见文案。退款未完成时写入 message，轮询/重载据此展示，
+# 不再把「算力已退还」写死。补偿任务退款成功后，若消息仍是待退款文案，改回已取消文案。
+CANCELLED_BY_USER_MESSAGE = "任务已被用户取消"
+CANCEL_REFUND_PENDING_MESSAGE = "任务已取消（退款处理中，如未到账请联系客服）"
+
+# 失败/取消后退款补偿：只处理近期、有扣费流水、且没有 refund-{原流水} 的任务。
+# 无 transaction_id 的任务不进入补偿（静态价兜底可能给从未扣费的任务加钱）。
+REFUND_COMPENSATION_LOOKBACK_DAYS = 7
+REFUND_COMPENSATION_BATCH_LIMIT = 50
+REFUND_COMPENSATION_INTERVAL_HOURS = 1
+
 
 # ===== 视觉任务调度退避封顶 =====
 # calculate_next_retry_delay 按 3 * 2^(try_count-1) 爬坡，封顶此值。
@@ -1518,6 +1536,8 @@ VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
 AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS = 3   # wait=true 时的 ai_tools 轮询间隔（秒）
 AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS = 180  # wait=true 的同步等待上限（秒），超时返回 submitted 供继续轮询
 AGENT_CLI_IMAGE_MAX_COUNT = 4               # 单次生成图片张数上限（与前端文生图一致）
+# 连接信息是弹窗复制的短文本（约数 KB）。超限直接 422，避免未鉴权路由上的配平扫描吃满线程。
+AGENT_CLI_CONNECTION_INFO_MAX_CHARS = 8192
 
 
 # ===== 下载队列（download_queue）解耦配置 =====

@@ -329,7 +329,7 @@ def resolve_scene_generation_bindings(
                 conn,
                 """
                     SELECT a.id, a.ai_tool_id, a.result_url AS asset_result_url,
-                           t.result_url AS tool_result_url, t.status,
+                           t.result_url AS tool_result_url, t.status, t.cancel_requested,
                            t.update_time AS tool_update_time
                     FROM storyboard_scene_asset a
                     LEFT JOIN ai_tools t ON t.id = a.ai_tool_id

@@ -17,6 +17,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from config.constant import (
+    AGENT_CLI_CONNECTION_INFO_MAX_CHARS,
     AGENT_CLI_IMAGE_MAX_COUNT,
     AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS,
     DEFAULT_TEXT_TO_IMAGE_TASK_ID,
@@ -53,6 +54,8 @@ def _extract_balanced_json_objects(text: str) -> List[Dict[str, Any]]:
     连接信息是「提示文案 + 多行 JSON」的混合文本，JSON 前后有中文说明，
     逐字符扫描并用引号状态机处理字符串内的花括号与转义。
     """
+    if text and len(text) > AGENT_CLI_CONNECTION_INFO_MAX_CHARS:
+        text = text[:AGENT_CLI_CONNECTION_INFO_MAX_CHARS]
     objects: List[Dict[str, Any]] = []
     i, n = 0, len(text)
     while i < n:
@@ -442,7 +445,7 @@ class AgentImageGenerationService:
         status_code = int(getattr(tool, 'status', 0) or 0)
         label = _status_label(status_code)
         terminal = status_code in (
-            AIToolStatus.COMPLETED, AIToolStatus.FAILED,
+            AIToolStatus.COMPLETED, AIToolStatus.FAILED, AIToolStatus.CANCELLED,
         )
         result: Dict[str, Any] = {
             'success': True,

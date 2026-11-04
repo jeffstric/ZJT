@@ -695,7 +695,12 @@ async function handleCancelSceneTask(target) {
         } else {
             state.sceneTaskCancelByToolId[key] = 'cancelled';
             markSceneTaskCancelled(scene, key);
-            showToast(t('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+            const serverMessage = result.message || '';
+            if (serverMessage.indexOf('退款处理中') !== -1) {
+                showToast(serverMessage, 'warning');
+            } else {
+                showToast(t('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+            }
             refreshPowerAfterTaskCancel();
         }
         pollSceneTaskStatus(scene.id);
@@ -4165,17 +4170,31 @@ export function bindEvents() {
                 }
             });
 
-            // 粘贴只收纯文本：防止外部 HTML 破坏 chip 结构（富文本片段会生成无 token 的未知元素）。
-            ta.addEventListener('paste', (e) => {
-                e.preventDefault();
-                const clip = e.clipboardData || window.clipboardData;
-                const text = clip ? String(clip.getData('text/plain') || '') : '';
-                if (!text) return;
-                const lines = text.replace(/\r\n?/g, '\n').split('\n');
+            // 粘贴和拖拽都只收纯文本：防止外部 HTML 破坏 chip 结构，或带入 onerror 节点。
+            const insertPlainTextIntoPromptEditor = (text) => {
+                const normalized = String(text || '').replace(/\r\n?/g, '\n');
+                if (!normalized) return;
+                const lines = normalized.split('\n');
                 lines.forEach((line, i) => {
                     if (i > 0) document.execCommand('insertLineBreak');
                     if (line) document.execCommand('insertText', false, line);
                 });
+            };
+            ta.addEventListener('paste', (e) => {
+                e.preventDefault();
+                const clip = e.clipboardData || window.clipboardData;
+                const text = clip ? String(clip.getData('text/plain') || '') : '';
+                insertPlainTextIntoPromptEditor(text);
+            });
+            ta.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+            });
+            ta.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const transfer = e.dataTransfer;
+                const text = transfer ? String(transfer.getData('text/plain') || '') : '';
+                insertPlainTextIntoPromptEditor(text);
             });
 
             // 支持输入 @ 弹出角色/道具选择

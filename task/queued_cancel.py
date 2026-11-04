@@ -91,11 +91,47 @@ def commit_deferred_cancel(ai_tool_id: int) -> bool:
     except Exception as e:
         logger.warning(f"Log deferred cancel for ai_tool {ai_tool_id} failed: {e}")
 
+    refund_done = False
     try:
         from task.visual_task import _refund_computing_power
         tool = AIToolsModel.get_by_id(ai_tool_id)
         if tool:
-            _refund_computing_power(tool, "用户取消排队任务")
+            refund_done = bool(_refund_computing_power(tool, "用户取消排队任务"))
     except Exception as e:
         logger.error(f"Refund for deferred-cancel ai_tool {ai_tool_id} failed: {e}")
+        refund_done = False
+    if not refund_done:
+        apply_cancel_refund_result(ai_tool_id, False)
     return True
+
+
+def apply_cancel_refund_result(ai_tool_id: int, refund_done: bool) -> None:
+    """退款没完成时把待退款文案写进 ai_tools.message，供轮询和刷新展示。"""
+    if refund_done:
+        return
+    try:
+        from config.constant import CANCEL_REFUND_PENDING_MESSAGE
+        from model import AIToolsModel
+        AIToolsModel.update_only_fields(ai_tool_id, message=CANCEL_REFUND_PENDING_MESSAGE)
+        logger.error(
+            "ai_tool %s cancelled but refund is pending; message persisted for the user",
+            ai_tool_id,
+        )
+    except Exception as e:
+        logger.error(f"Persist refund-pending message for ai_tool {ai_tool_id} failed: {e}")
+
+
+def clear_cancel_refund_pending_message(ai_tool) -> None:
+    """补偿退款成功后，把待退款文案改回普通取消文案。"""
+    if ai_tool is None:
+        return
+    from config.constant import CANCEL_REFUND_PENDING_MESSAGE, CANCELLED_BY_USER_MESSAGE, AI_TOOL_STATUS_CANCELLED
+    if getattr(ai_tool, "message", None) != CANCEL_REFUND_PENDING_MESSAGE:
+        return
+    if getattr(ai_tool, "status", None) != AI_TOOL_STATUS_CANCELLED:
+        return
+    try:
+        from model import AIToolsModel
+        AIToolsModel.update_only_fields(ai_tool.id, message=CANCELLED_BY_USER_MESSAGE)
+    except Exception as e:
+        logger.warning(f"Clear refund-pending message for ai_tool {ai_tool.id} failed: {e}")

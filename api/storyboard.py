@@ -1582,6 +1582,11 @@ async def _compute_insert_sort(
     return mid
 
 
+def _public_cancel_requested(value) -> int:
+    """只把真正的整数 1 暴露给前端。MagicMock 之类的真值不能当成已请求取消。"""
+    return 1 if type(value) is int and value == 1 else 0
+
+
 async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
     """从 scene 的选中指针取 asset → ai_tools 的状态/结果"""
     ptr_map = {
@@ -1601,6 +1606,7 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         'result_url': asset.result_url,
         'status': None,
         'error': None,
+        'cancel_requested': 0,
         # 关联任务 ID：前端候选卡「查看生成状态时间轴」（GET /api/ai-tools/{id}/timeline）
         'ai_tool_id': asset.ai_tool_id,
     }
@@ -1609,6 +1615,7 @@ async def _asset_task_info(scene, asset_type: str) -> Optional[dict]:
         if tool:
             info['status'] = tool.status
             info['error'] = tool.message
+            info['cancel_requested'] = _public_cancel_requested(getattr(tool, 'cancel_requested', 0))
             # 失败原因是否命中内容审核违规（前端 ContentViolation 识别用）
             info['is_content_violation'] = is_content_moderation_user_message(tool.message)
             # 仅在 asset 自身没有 result_url 时，才用 ai_tool.result_url 兜底。
@@ -1634,6 +1641,7 @@ def _generating_row_task_info(row: Optional[dict], asset_type: str) -> Optional[
         'result_url': str(row.get('asset_result_url') or row.get('tool_result_url') or '').strip(),
         'status': row.get('status'),
         'error': None,
+        'cancel_requested': _public_cancel_requested(row.get('cancel_requested')),
         # 关联任务 ID：前端生成中占位卡「查看生成状态时间轴」
         'ai_tool_id': row.get('ai_tool_id'),
     }
@@ -1676,6 +1684,9 @@ def _enrich_scene_asset_result_urls(assets: list) -> list:
             value = tool_info.get(key, getattr(tool, key, None))
             if value is not None and item.get(key) in (None, ''):
                 item[key] = value
+        item['cancel_requested'] = _public_cancel_requested(
+            tool_info.get('cancel_requested', getattr(tool, 'cancel_requested', 0))
+        )
 
         enriched.append(item)
     return enriched

@@ -522,11 +522,17 @@
               const task = result.tasks.find(t => String(t.project_id) === pid);
               if(!task) return;
               if(task.status === 'CANCELLED'){
-                window.AiToolTimeline.markNodeCancelled(node.id);
+                window.AiToolTimeline.markNodeCancelled(node.id, false, task.error);
               } else if(task.status === 'CANCELLING' && typeof window.AiToolTimeline.markNodeCancelling === 'function'){
                 window.AiToolTimeline.markNodeCancelling(node.id);
+              } else if(node.data.cancelRequested && task.status === 'QUEUED' && typeof window.AiToolTimeline.markNodeCancelling === 'function'){
+                window.AiToolTimeline.markNodeCancelling(node.id);
+              } else if(task.status === 'RUNNING' && node.data.cancelRequested){
+                node.data.cancelRequested = false;
+                window.AiToolTimeline.setNodeCancelVisible(node.id, false);
               } else {
-                window.AiToolTimeline.setNodeCancelVisible(node.id, task.status === 'QUEUED');
+                const showCancel = task.status === 'QUEUED' && !node.data.cancelRequested && !node.data.cancelled;
+                window.AiToolTimeline.setNodeCancelVisible(node.id, showCancel);
                 // 排队中（尚未提交上游）时明确提示，与「生成中」区分
                 if(task.status === 'QUEUED'){
                   const nodeEl2 = canvasEl.querySelector(`.node[data-node-id="${node.id}"]`);

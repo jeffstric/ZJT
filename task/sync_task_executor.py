@@ -1066,6 +1066,8 @@ class SyncTaskExecutor:
             if not fresh or fresh.status != AI_TOOL_STATUS_FAILED:
                 logger.info(f"[SyncTaskExecutor] Task {task_id} failure CAS missed, keep current state")
                 return
+            logger.info(f"[SyncTaskExecutor] Task {task_id} already FAILED, skip refund")
+            return
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
 
         try:

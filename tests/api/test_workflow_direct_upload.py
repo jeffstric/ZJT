@@ -279,8 +279,9 @@ def test_confirm_success_downloads_registers_and_returns_site_url(
 
     downloaded = {}
 
-    def _fake_download(download_url, final_path, ext, expected_size, max_bytes):
+    def _fake_download(download_url, final_path, ext, expected_size, max_bytes, headers=None):
         downloaded["url"] = download_url
+        downloaded["headers"] = headers
         downloaded["final_path"] = final_path
         with open(final_path, "wb") as f:
             f.write(PNG_MAGIC)
@@ -313,6 +314,38 @@ def test_confirm_success_downloads_registers_and_returns_site_url(
     # mapping 以"本地为主副本 + cloud_path 置位"语义注册
     assert registered["local_path"] == key
     assert registered["file_size"] == len(PNG_MAGIC)
+    assert downloaded["headers"] is None
+
+
+def test_confirm_origin_resolve_failure_returns_502_without_cdn_fallback(
+    client, cdn_enabled, monkeypatch, tmp_path
+):
+    """源站地址解析失败时返回 502，并且不改走 CDN 下载 URL。"""
+    import server
+
+    class _OriginFailStorage(_FakeStorage):
+        def get_origin_download_request(self, key):
+            raise RuntimeError("io host down")
+
+        def get_download_url(self, key, expires=7200, attname=None):
+            raise AssertionError("源站解析失败不得回退 CDN")
+
+    _patch_storage(monkeypatch, _OriginFailStorage(stat_result={"fsize": len(PNG_MAGIC)}))
+    _patch_mapping_lookup(monkeypatch, existing=None)
+    monkeypatch.setattr(server, "get_upload_subdir", lambda *parts, ensure=True: str(tmp_path))
+
+    def _fail_download(*args, **kwargs):
+        raise AssertionError("源站解析失败不得开始下载")
+
+    monkeypatch.setattr(server, "_download_cdn_asset_to_local", _fail_download)
+
+    resp = client.post(
+        "/api/video-workflow/upload-confirm",
+        data={"key": KEY_PREFIX_USER1 + "a.png"},
+        headers={"Authorization": "valid-token"},
+    )
+    assert resp.status_code == 502
+    assert "回源下载失败" in resp.json()["message"]
 
 
 def test_confirm_idempotent_when_mapping_exists(client, cdn_enabled, monkeypatch):

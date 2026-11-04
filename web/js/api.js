@@ -381,7 +381,7 @@
       try { data = await res.json(); } catch(e) { /* 非 JSON 响应 */ }
       if(res.ok && data && data.code === 0){
         var payload = data.data || {};
-        return { success: true, status: payload.status || 'CANCELLED' };
+        return { success: true, status: payload.status || 'CANCELLED', message: data.message || '' };
       }
       return {
         success: false,

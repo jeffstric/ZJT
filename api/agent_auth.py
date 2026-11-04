@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from config.constant import (
+    AGENT_CLI_CONNECTION_INFO_MAX_CHARS,
     AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS,
     AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS,
     AIToolStatus,
@@ -33,7 +34,10 @@ class AgentImageGenerationRequest(BaseModel):
     connection_info：首页「智能体连接」弹窗复制的完整文本（服务端自动提取 agent_token）；
     agent_token：已有明文 agent_token 时可直接传，二者至少提供一个。
     """
-    connection_info: Optional[str] = None
+    connection_info: Optional[str] = Field(
+        None, max_length=AGENT_CLI_CONNECTION_INFO_MAX_CHARS,
+        description="首页复制的连接信息，最长 8192 字符",
+    )
     agent_token: Optional[str] = None
     prompt: str
     model: Optional[str] = Field(
@@ -60,7 +64,9 @@ class AgentImageGenerationRequest(BaseModel):
 
 class AgentImageStatusRequest(BaseModel):
     """智能体 CLI 生图结果轮询请求（凭据字段与生图请求一致）。"""
-    connection_info: Optional[str] = None
+    connection_info: Optional[str] = Field(
+        None, max_length=AGENT_CLI_CONNECTION_INFO_MAX_CHARS,
+    )
     agent_token: Optional[str] = None
     project_id: int
 
@@ -149,10 +155,16 @@ async def generate_image_with_agent_connection(request: AgentImageGenerationRequ
         except AgentImageGenerationError as exc:
             return _image_error_response(exc)
         if status.get("terminal"):
-            completed = status["status_code"] == AIToolStatus.COMPLETED
-            result["status"] = "completed" if completed else "failed"
+            status_code = status["status_code"]
             result["result"] = status
-            if not completed:
+            if status_code == AIToolStatus.COMPLETED:
+                result["status"] = "completed"
+            elif status_code == AIToolStatus.CANCELLED:
+                result["status"] = "cancelled"
+                result["success"] = False
+                result["error"] = status.get("message") or "任务已取消"
+            else:
+                result["status"] = "failed"
                 result["success"] = False
                 result["error"] = status.get("message") or "图片生成失败"
             return JSONResponse(result)

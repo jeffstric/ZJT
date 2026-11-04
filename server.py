@@ -2847,13 +2847,17 @@ async def cancel_queued_ai_tool_task(
         # 退款内含同步 HTTP，放线程池避免阻塞事件循环（AGENTS.md 第1条）。
         # 返回值语义：True=成功/幂等跳过/无扣费主体；False=退费尝试失败或金额
         # 无法解析 → 响应明示「退款处理中」，依赖上线对账名单人工补偿。
+        from task.visual_task import _refund_computing_power
+        from task.queued_cancel import apply_cancel_refund_result
         refund_done = False
         try:
-            from task.visual_task import _refund_computing_power
             refund_done = await asyncio.to_thread(
                 _refund_computing_power, task_record, "用户取消排队任务")
         except Exception as e:
             logger.error(f"Refund for cancelled ai_tool {ai_tool_id} failed: {e}")
+            refund_done = False
+        if not refund_done:
+            await asyncio.to_thread(apply_cancel_refund_result, ai_tool_id, False)
 
         return {
             "code": 0,
@@ -7260,14 +7264,16 @@ _confirm_download_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefi
 # 慢速但持续的下载可存活超过 wait_for 时限，wait_for 只决定接口多早放弃并降级）。
 # 临时文件在 finally 中清理（超时红线第 10 条：被 wait_for 包装的 coroutine 必须自清理）。
 def _download_cdn_asset_to_local(download_url: str, final_path: str, ext: str,
-                                 expected_size: int, max_bytes: int) -> int:
+                                 expected_size: int, max_bytes: int,
+                                 headers=None) -> int:
     # tmp 名带 uuid：同 key 并发 confirm（前端超时重试）不会互写同一临时文件
     tmp_path = f"{final_path}.{uuid.uuid4().hex[:8]}.download_tmp"
     total = 0
     try:
         timeout = WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT
+        request_headers = headers or {}
         with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-            with client.stream("GET", download_url) as resp:
+            with client.stream("GET", download_url, headers=request_headers) as resp:
                 resp.raise_for_status()
                 magic_checked = False
                 with open(tmp_path, "wb") as f:
@@ -7508,14 +7514,26 @@ async def confirm_workflow_asset_direct_upload(
     # 线程本身不可取消，靠 httpx 单次读空闲超时自然收敛（见 _download_cdn_asset_to_local 注释）。
     asset_dir = get_upload_subdir("workflow", str(auth_user_id))
     final_path = os.path.join(asset_dir, filename)
-    download_url = storage.get_download_url(key, expires=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT)
+    # 七牛 confirm 走源站管理下载，不走 CDN 域名。其他后端没有该方法时仍用下载 URL。
+    # 源站域名解析失败必须落在下面的 try 里返回 502，禁止静默退回 CDN。
+    origin_builder = getattr(storage, "get_origin_download_request", None)
     started = time.monotonic()
     try:
+        download_headers = None
+        if callable(origin_builder):
+            origin = await asyncio.to_thread(origin_builder, key)
+            if not isinstance(origin, dict) or not origin.get("url"):
+                raise RuntimeError("七牛源站下载地址无效")
+            download_url = origin["url"]
+            download_headers = origin.get("headers") or None
+        else:
+            download_url = storage.get_download_url(
+                key, expires=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT)
         total = await asyncio.wait_for(
             asyncio.get_running_loop().run_in_executor(
                 _confirm_download_executor,
                 _download_cdn_asset_to_local,
-                download_url, final_path, ext, expected_size, max_bytes
+                download_url, final_path, ext, expected_size, max_bytes, download_headers
             ),
             timeout=WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
         )

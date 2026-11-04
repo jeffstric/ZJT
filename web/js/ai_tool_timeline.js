@@ -462,14 +462,21 @@
             var task = (data && data.tasks && data.tasks[0]) || null;
             if (!task) return;
             if (task.status === 'CANCELLED') {
-                // 完整标记（写「✗ 已取消」终态文案）：覆盖快照未持久化取消态的
-                // 重载场景（如保存晚于取消），仅 persistOnly 会把节点留在「生成中」
-                markNodeCancelled(node.id);
+                // 完整标记（写终态文案）：覆盖快照未持久化取消态的重载场景。
+                // 服务端若写了「退款处理中」，不要改写成「算力已退还」。
+                markNodeCancelled(node.id, false, task.reason || task.error);
             } else if (task.status === 'CANCELLING') {
                 markNodeCancelling(node.id);
-            } else {
+            } else if (node.data && node.data.cancelRequested && task.status === 'QUEUED') {
+                // 本地已请求取消，过期的 QUEUED 不能把按钮重新打开。
+                markNodeCancelling(node.id);
+            } else if (task.status === 'RUNNING' || task.status === 'SUCCESS') {
                 if (node.data) node.data.cancelRequested = false;
-                setNodeCancelVisible(node.id, task.status === 'QUEUED');
+                setNodeCancelVisible(node.id, false);
+            } else {
+                if (node.data && !node.data.cancelRequested) {
+                    setNodeCancelVisible(node.id, task.status === 'QUEUED');
+                }
             }
         }).catch(function () { /* 查询失败保持乐观显示，点击时后端兜底校验 */ })
           .then(function () { cancelSyncInflight[node.id] = false; });
@@ -512,15 +519,17 @@
     }
 
     /** 节点标记「已取消」终态：状态行/占位提示 + 隐藏取消按钮 + 持久化（重载恢复） */
-    function markNodeCancelled(nodeId, persistOnly) {
+    function markNodeCancelled(nodeId, persistOnly, reason) {
         var node = findNode(nodeId);
         if (!node) return;
         node.data.cancelled = true;
+        node.data.cancelRequested = false;
         setNodeCancelVisible(nodeId, false);
         if (persistOnly) return;
         var el = nodeEl(nodeId);
         if (!el) return;
-        var text = tr('ai_task_cancelled', '已取消（算力已退还）');
+        var pending = reason && String(reason).indexOf('退款处理中') !== -1;
+        var text = pending ? String(reason) : tr('ai_task_cancelled', '已取消（算力已退还）');
         if (node.type === 'image') {
             var placeholder = el.querySelector('.image-generating-placeholder');
             if (placeholder) {
@@ -548,7 +557,8 @@
             tr('ai_task_cancel_confirm', '确认取消该排队中的任务？取消后将退还已扣算力。')
         );
         if (!confirmed) return;
-        // 防重复点击：按钮立即隐藏，失败时恢复
+        // 先记下取消中，避免确认后、响应回来前的 QUEUED 轮询把按钮重新打开。
+        node.data.cancelRequested = true;
         setNodeCancelVisible(node.id, false);
         var done = function (result) {
             if (result && result.success) {
@@ -558,9 +568,14 @@
                         showToast(tr('ai_task_cancel_pending', '取消中，当前步骤结束后退还算力'), 'success');
                     }
                 } else {
-                    markNodeCancelled(node.id);
+                    var serverMessage = (result && result.message) || '';
+                    markNodeCancelled(node.id, false, serverMessage);
                     if (typeof showToast === 'function') {
-                        showToast(tr('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+                        if (serverMessage.indexOf('退款处理中') !== -1) {
+                            showToast(serverMessage, 'warning');
+                        } else {
+                            showToast(tr('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
+                        }
                     }
                 }
                 if (typeof fetchComputingPower === 'function') {
@@ -568,6 +583,7 @@
                 }
             } else {
                 // 409 等失败：恢复按钮（若任务仍在排队）并提示
+                if (node.data) node.data.cancelRequested = false;
                 var msg = (result && result.message) || tr('ai_task_cancel_failed', '取消任务失败');
                 if (typeof showToast === 'function') {
                     showToast(msg, 'error');
