@@ -380,6 +380,40 @@ class TasksModel:
             raise
     
     @staticmethod
+    def transition_status_by_task_id(
+        task_id: int,
+        from_statuses,
+        to_status: int
+    ) -> int:
+        """
+        条件状态迁移（CAS）：仅当当前 status 属于 from_statuses 时才更新为 to_status。
+
+        与 AIToolsModel.transition_status 配对使用（取消/提交抢占互斥，双表同步）。
+        tasks 表按 task_id（= ai_tools.id）定位；行不存在时返回 0，调用方按幂等处理。
+
+        Returns:
+            影响的行数（0 表示当前状态不在 from_statuses 或记录不存在）
+        """
+        if isinstance(from_statuses, int):
+            from_statuses = [from_statuses]
+        from_statuses = [int(s) for s in from_statuses]
+        if not from_statuses:
+            return 0
+
+        placeholders = ','.join(['%s'] * len(from_statuses))
+        sql = (
+            f"UPDATE tasks SET status = %s "
+            f"WHERE task_id = %s AND status IN ({placeholders})"
+        )
+        params = [to_status, task_id] + from_statuses
+        try:
+            affected_rows = execute_update(sql, tuple(params))
+            return affected_rows
+        except Exception as e:
+            logger.error(f"Failed to transition task {task_id} {from_statuses}->{to_status}: {e}")
+            raise
+
+    @staticmethod
     def increment_try_count(task_id: int) -> int:
         """
         Increment try_count for a task

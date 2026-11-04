@@ -17,6 +17,10 @@ from config.constant import StoryboardAutoGenerateConstants, VoiceReplaceConstan
 
 from config.constant import DOWNLOAD_POLL_INTERVAL
 from config.constant import LICENSE_REBOOTSTRAP_INTERVAL_SECONDS
+from config.constant import (
+    QINIU_DIRECT_UPLOAD_ORPHAN_INTERVAL_HOURS,
+    REFUND_COMPENSATION_INTERVAL_HOURS,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -582,6 +586,32 @@ def init_scheduler(app):
         replace_existing=True,
         max_instances=1,
         coalesce=True
+    )
+
+    # 失败/取消任务的退款补偿（只补有扣费流水且没有 refund- 流水的近期任务）
+    logger.info('启用退款补偿任务')
+    from task.refund_compensation import compensate_missed_refunds
+    scheduler.add_job(
+        func=compensate_missed_refunds,
+        trigger=IntervalTrigger(hours=REFUND_COMPENSATION_INTERVAL_HOURS),
+        id='compensate_missed_refunds',
+        name='Compensate missed computing-power refunds',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    # 直传后未 confirm 的七牛对象清理（宽限期长于上传 token）
+    logger.info('启用工作流直传孤儿对象清理任务')
+    from task.qiniu_orphan_cleanup import cleanup_orphan_workflow_uploads
+    scheduler.add_job(
+        func=cleanup_orphan_workflow_uploads,
+        trigger=IntervalTrigger(hours=QINIU_DIRECT_UPLOAD_ORPHAN_INTERVAL_HOURS),
+        id='cleanup_orphan_workflow_uploads',
+        name='Cleanup unconfirmed workflow uploads on Qiniu',
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
     )
 
     # 宫格生图任务处理

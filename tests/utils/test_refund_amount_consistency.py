@@ -109,6 +109,12 @@ class TestRefundIdempotency(unittest.TestCase):
         from utils.computing_power import build_refund_transaction_id
 
         ai_tool = _make_ai_tool(transaction_id=None)
+        self.assertEqual(build_refund_transaction_id(ai_tool), 'refund-task-28084')
+
+    def test_build_refund_transaction_id_without_txn_or_id(self):
+        from utils.computing_power import build_refund_transaction_id
+
+        ai_tool = _make_ai_tool(transaction_id=None, task_id=None)
         self.assertIsNone(build_refund_transaction_id(ai_tool))
 
     @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
@@ -127,10 +133,18 @@ class TestRefundIdempotency(unittest.TestCase):
         mock_exists.return_value = False
         self.assertFalse(is_already_refunded(_make_ai_tool()))
 
-    def test_is_already_refunded_without_txn(self):
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    def test_is_already_refunded_without_txn_uses_task_id(self, mock_exists):
         from utils.computing_power import is_already_refunded
 
+        mock_exists.return_value = False
         self.assertFalse(is_already_refunded(_make_ai_tool(transaction_id=None)))
+        mock_exists.assert_called_once_with('refund-task-28084')
+
+    def test_is_already_refunded_without_txn_or_id(self):
+        from utils.computing_power import is_already_refunded
+
+        self.assertFalse(is_already_refunded(_make_ai_tool(transaction_id=None, task_id=None)))
 
 
 class TestRefundComputingPowerIntegration(unittest.TestCase):
@@ -170,8 +184,9 @@ class TestRefundComputingPowerIntegration(unittest.TestCase):
         ]
 
         ai_tool = _make_ai_tool(implementation=42)
-        _refund_computing_power(ai_tool, '服务异常，请联系技术支持')
+        result = _refund_computing_power(ai_tool, '服务异常，请联系技术支持')
 
+        self.assertTrue(result, "退费成功应返回 True（取消接口据此判定是否提示退款处理中）")
         refund_call = mock_request.call_args_list[1]
         self.assertEqual(refund_call.kwargs['data']['computing_power'], 16)
         self.assertEqual(refund_call.kwargs['data']['behavior'], 'increase')
@@ -183,15 +198,68 @@ class TestRefundComputingPowerIntegration(unittest.TestCase):
     @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
     @patch('model.computing_power_log.ComputingPowerLogModel.get_deducted_power_by_transaction')
     def test_refund_skipped_when_already_refunded(self, mock_get_deducted, mock_exists, mock_request):
-        """幂等：已退过费的任务不再发起退费请求"""
+        """幂等：已退过费的任务不再发起退费请求（视为已完成，返回 True）"""
         from task.visual_task import _refund_computing_power
 
         mock_exists.return_value = True
 
-        _refund_computing_power(_make_ai_tool(), '服务异常，请联系技术支持')
+        result = _refund_computing_power(_make_ai_tool(), '服务异常，请联系技术支持')
 
+        self.assertTrue(result, "幂等跳过=钱两讫，返回 True")
         mock_request.assert_not_called()
         mock_get_deducted.assert_not_called()
+
+    @patch('task.visual_task.make_perseids_request')
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    @patch('model.computing_power_log.ComputingPowerLogModel.get_deducted_power_by_transaction')
+    def test_refund_returns_false_when_upstream_fails(self, mock_get_deducted, mock_exists, mock_request):
+        """退款上游失败必须返回 False（死代码缺陷回归锁定：取消接口的
+        「退款处理中」提示依赖此返回值，静默吞失败会使用户无感知）。"""
+        from task.visual_task import _refund_computing_power
+
+        mock_get_deducted.return_value = 16
+        mock_exists.return_value = False
+        mock_request.side_effect = [
+            (True, 'ok', {'token': 'fake-token'}),
+            (False, 'user not found', {}),
+        ]
+
+        result = _refund_computing_power(_make_ai_tool(), '用户取消排队任务')
+
+        self.assertFalse(result, "上游退款失败应返回 False 驱动用户提示")
+
+    @patch('task.visual_task.make_perseids_request')
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    @patch('model.computing_power_log.ComputingPowerLogModel.get_deducted_power_by_transaction')
+    def test_refund_treats_already_processed_as_success(self, mock_get_deducted, mock_exists, mock_request):
+        """唯一索引撞上已入账时接口返回「该交易已处理」，退款侧必须当成成功。"""
+        from task.visual_task import _refund_computing_power
+
+        mock_get_deducted.return_value = 16
+        mock_exists.return_value = False
+        mock_request.side_effect = [
+            (True, 'ok', {'token': 'fake-token'}),
+            (False, '该交易已处理', {}),
+        ]
+
+        result = _refund_computing_power(_make_ai_tool(), '用户取消排队任务')
+
+        self.assertTrue(result)
+
+    @patch('task.visual_task.make_perseids_request')
+    @patch('utils.computing_power.resolve_refund_amount', return_value=0)
+    @patch('model.computing_power_log.ComputingPowerLogModel.check_transaction_exists')
+    def test_refund_returns_false_when_amount_unresolvable(self, mock_exists, mock_resolve, mock_request):
+        """金额无法解析（扣费流水缺失且无静态配置）→ 保守返回 False，
+        宁可让免费任务用户多看一眼提示，不可让已扣费用户对退费失败无感知。"""
+        from task.visual_task import _refund_computing_power
+
+        mock_exists.return_value = False
+
+        result = _refund_computing_power(_make_ai_tool(), '用户取消排队任务')
+
+        self.assertFalse(result)
+        mock_request.assert_not_called()
 
 
 if __name__ == '__main__':

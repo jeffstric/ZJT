@@ -5,6 +5,7 @@ const {
   IMAGE_SOURCE_NODE_TYPES,
   extractMarkedCharacterNames,
   mergeShotCharacterNames,
+  videoShotCharacterNames,
   truncateRefCollection
 } = require('../js/utils.js');
 
@@ -137,6 +138,34 @@ describe('mergeShotCharacterNames', () => {
       }
     };
     expect(mergeShotCharacterNames(node)).toEqual(['土豆']);
+  });
+});
+
+describe('videoShotCharacterNames', () => {
+  test('只取生视频提示词里的角色，忽略图片提示词（ai_tools 13137）', () => {
+    const node = {
+      data: {
+        imagePrompt: '【【王福成】】指向画面右侧的【【李成建】】',
+        videoPromptText: '【【王福成】】: 你不拦？差的两万块，你出！'
+      }
+    };
+    expect(videoShotCharacterNames(node)).toEqual(['王福成']);
+  });
+
+  test('视频提示词无角色标记时返回空数组', () => {
+    const node = {
+      data: {
+        imagePrompt: '【【王福成】】独白',
+        videoPromptText: '固定镜头，河风吹过'
+      }
+    };
+    expect(videoShotCharacterNames(node)).toEqual([]);
+  });
+
+  test('videoPromptText 为空时回退 videoPrompt；空节点返回空数组', () => {
+    expect(videoShotCharacterNames({ data: { videoPrompt: '【【土豆】】出场' } })).toEqual(['土豆']);
+    expect(videoShotCharacterNames(null)).toEqual([]);
+    expect(videoShotCharacterNames({})).toEqual([]);
   });
 });
 

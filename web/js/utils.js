@@ -87,6 +87,21 @@ function mergeShotCharacterNames(node) {
 }
 
 /**
+ * 生视频参考资产收集用：只从生视频提示词提取【【角色名】】。
+ * 图片提示词的角色属于画面构成（分镜图可以画多个角色），不等于本镜
+ * 生视频要带的角色——ai_tools 13137 事故：视频提示词只点名王福成，
+ * 李成建因图片提示词被带成图3+音频2，优化提示词凭空多出一个角色并
+ * 上传了他的音色。
+ * @param {Object} node
+ * @returns {string[]}
+ */
+function videoShotCharacterNames(node) {
+  if (!node || !node.data) return [];
+  const videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';
+  return extractMarkedCharacterNames(videoPrompt);
+}
+
+/**
  * 按 max 同步裁切参考图 URL 与「图N是xxx」后缀，避免提示词编号超过实际张数。
  * @param {string[]} urls
  * @param {string[]} suffix
@@ -109,8 +124,9 @@ if (typeof window !== 'undefined') {
   window.IMAGE_SOURCE_NODE_TYPES = IMAGE_SOURCE_NODE_TYPES;
   window.getNodeImageUrl = getNodeImageUrl;
   window.isImageSourceNodeType = isImageSourceNodeType;
-  window.extractMarkedCharacterNames = extractMarkedCharacterNames;
-  window.mergeShotCharacterNames = mergeShotCharacterNames;
+    window.extractMarkedCharacterNames = extractMarkedCharacterNames;
+    window.mergeShotCharacterNames = mergeShotCharacterNames;
+    window.videoShotCharacterNames = videoShotCharacterNames;
   window.truncateRefCollection = truncateRefCollection;
   window.compressImageFile = compressImageFile;
 }
@@ -124,6 +140,7 @@ if (typeof module !== 'undefined') {
     isImageSourceNodeType,
     extractMarkedCharacterNames,
     mergeShotCharacterNames,
+    videoShotCharacterNames,
     truncateRefCollection,
     compressImageFile
   };

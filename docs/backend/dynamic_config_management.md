@@ -150,6 +150,7 @@ invalidate_dynamic_cache()
 | 分类 | 配置键示例 | 敏感 |
 |------|-----------|------|
 | 任务队列 | `task_queue.max_retry_count` | 否 |
+| 故事板批量生图调度 | `storyboard.batch_scheduler_job_limit`（调度器每轮推进的活跃批次上限，默认 10，钳制 1–200；高峰期批次排队不出图时可调大，约 30 秒热生效） | 否 |
 | Agent 算力确认 | `agent.power_confirm_threshold`（用户未自定义时的软阈值，默认 35）、`agent.power_confirm_hard_threshold`（免打扰后，多笔小额累计再确认的硬阈值，默认 200；单笔已高于该值不再因此再问） | 否 |
 | 上传限制 | `upload.max_image_size_mb` | 否 |
 | 前端调试 | `frontend.debug_password` | 是 |

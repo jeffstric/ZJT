@@ -52,6 +52,7 @@ from services.storyboard_quality_sequence import (
 from services.script_split_character_contract import (
     CHARACTER_CONTRACT_CONFIG_KEY,
     first_character_contract_error_message,
+    normalize_characters_by_db_id,
     validate_segment_character_contract,
 )
 from services.location_structure_guard import (
@@ -1746,6 +1747,18 @@ async def step_merge(task: ScriptSplitTask) -> None:
     # 回填 shot 级场景字段（db_location_id/location_name/db_location_pic）。
     # 视频工作流来源不经过发布 bootstrap，前端只能依赖这些字段匹配世界场景。
     merged = _enrich_shot_location_fields(merged, db_locations)
+    # 以 character_db_id 为真值归一化角色名：LLM 语义匹配常能正确回填
+    # db_id，但 name/【【】】标记输出简称（「哈利」→「哈利波特」）或分隔符
+    # 变体（「德拉科莉亚·马尔福」→「德拉科莉亚马尔福」），下游按名精确
+    # 查库会 miss。故事板与视频工作流来源共用 merge；发布期 bootstrap
+    # 另有同规则兜底（历史检查点恢复等绕过合并归一化的路径）。
+    character_renamed = normalize_characters_by_db_id(merged, character_contract)
+    if character_renamed:
+        _ensure_metadata_dict(merged)["character_name_normalized"] = character_renamed
+        logger.info(
+            "task %s 按 character_db_id 归一化角色名: %s",
+            task.id, character_renamed,
+        )
     character_hard_errors = validate_segment_character_contract(
         merged,
         character_contract,

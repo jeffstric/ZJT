@@ -410,9 +410,14 @@
     
     // ============ Debug 模式功能结束 ============
     
-    // 收集分镜节点中所有参考图片URL（角色、场景、道具）用于宫格生图
+    // 收集分镜节点中所有参考图片URL（角色、场景、道具）用于宫格生图/分镜组批量生视频
     // 返回 URL 列表而非 File 对象，避免不必要的下载和上传
-    async function collectReferenceImagesForGrid(allShotFrameNodes) {
+    // options.characterSource === 'video' 时角色只取生视频提示词（批量生视频链路）：
+    // 视频里没点名的角色不得带参考图与音色——图片提示词的角色属于画面构成
+    // （ai_tools 13137：视频提示词只点名王福成，李成建因图片提示词被带成图3+音频2，
+    // 优化提示词凭空多出一个角色并上传了他的音色）；默认并集（宫格生图链路不变）
+    async function collectReferenceImagesForGrid(allShotFrameNodes, options) {
+      const videoOnly = options && options.characterSource === 'video';
       const referenceImageUrls = [];  // 存储URL而非File
       const promptSuffix = [];
       let imageIndex = 1;
@@ -433,26 +438,41 @@
       for (const shotNode of allShotFrameNodes) {
         const shotData = shotNode.data.shotJson || {};
 
-        // 1. 提取角色名并获取参考图URL（图片提示词 ∪ 生视频提示词）
-        const shotCharacterNames = typeof mergeShotCharacterNames === 'function'
-          ? mergeShotCharacterNames(shotNode)
-          : (function() {
-              const names = [];
-              const pattern = /【【([^】]+)】】/g;
-              const texts = [
-                shotNode.data.imagePrompt || '',
-                shotNode.data.videoPromptText || shotNode.data.videoPrompt || ''
-              ];
-              texts.forEach(function(text) {
-                pattern.lastIndex = 0;
-                let match;
-                while ((match = pattern.exec(text)) !== null) {
-                  const name = match[1].trim();
-                  if (name && names.indexOf(name) === -1) names.push(name);
-                }
-              });
-              return names;
-            })();
+        // 1. 提取角色名并获取参考图URL（默认 图片提示词 ∪ 生视频提示词；video 模式只取生视频提示词）
+        const shotCharacterNames = videoOnly
+          ? (typeof videoShotCharacterNames === 'function'
+              ? videoShotCharacterNames(shotNode)
+              : (function() {
+                  const names = [];
+                  const pattern = /【【([^】]+)】】/g;
+                  const text = shotNode.data.videoPromptText || shotNode.data.videoPrompt || '';
+                  pattern.lastIndex = 0;
+                  let match;
+                  while ((match = pattern.exec(text)) !== null) {
+                    const name = match[1].trim();
+                    if (name && names.indexOf(name) === -1) names.push(name);
+                  }
+                  return names;
+                })())
+          : (typeof mergeShotCharacterNames === 'function'
+              ? mergeShotCharacterNames(shotNode)
+              : (function() {
+                  const names = [];
+                  const pattern = /【【([^】]+)】】/g;
+                  const texts = [
+                    shotNode.data.imagePrompt || '',
+                    shotNode.data.videoPromptText || shotNode.data.videoPrompt || ''
+                  ];
+                  texts.forEach(function(text) {
+                    pattern.lastIndex = 0;
+                    let match;
+                    while ((match = pattern.exec(text)) !== null) {
+                      const name = match[1].trim();
+                      if (name && names.indexOf(name) === -1) names.push(name);
+                    }
+                  });
+                  return names;
+                })());
         for (const characterName of shotCharacterNames) {
           if (characterName && !collectedCharacters.has(characterName)) {
             collectedCharacters.add(characterName);
@@ -757,8 +777,6 @@
     // 场景选择弹窗事件监听
     const locationModalClose = document.getElementById('locationModalClose');
     const locationModal = document.getElementById('locationModal');
-    const locationWorldSelect = document.getElementById('locationWorldSelect');
-    const locationSearchInput = document.getElementById('locationSearchInput');
 
     if(locationModalClose){
       locationModalClose.addEventListener('click', (e) => {
@@ -773,26 +791,9 @@
       });
     }
 
-    if(locationWorldSelect){
-      locationWorldSelect.addEventListener('change', (e) => {
-        const worldId = e.target.value;
-        loadLocationsForWorld(worldId);
-      });
-    }
-
-    if(locationSearchInput){
-      let searchTimeout;
-      locationSearchInput.addEventListener('input', (e) => {
-        clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => {
-          const keyword = e.target.value.trim();
-          const worldId = locationWorldSelect ? locationWorldSelect.value : '';
-          if(worldId){
-            loadLocationsForWorld(worldId, keyword);
-          }
-        }, 300);
-      });
-    }
+    // 搜索和切换世界只由 events.js 的 loadLocations 渲染。
+    // 这里再绑一次会在约 300ms 后用 .location-card 盖掉可点击列表；
+    // 从画布打开时没有分镜上下文，卡片点击会被 selectLocation 直接返回。
 
     function renderShotGroupEditForm(shotGroupData, maxGroupDuration){
       const groupId = shotGroupData.groupId || shotGroupData.group_id || '';
@@ -1357,6 +1358,11 @@
     }
 
     async function loadLocationsForWorld(worldId, keyword = ''){
+      // 与画布场景弹窗共用同一套列表。再画 .location-card 会盖掉可点击结果。
+      if(typeof loadLocations === 'function'){
+        return loadLocations(worldId, keyword);
+      }
+
       const locationList = document.getElementById('locationList');
       if(!locationList) return;
 
@@ -1406,8 +1412,17 @@
             `;
 
             // hover 由 CSS .location-card:hover 处理，兼容暗色
+            // 分镜里打开时写入当前分镜；画布里打开时创建场景节点。
             locationCard.addEventListener('click', () => {
-              selectLocation(location);
+              if(currentLocationSelectionContext){
+                selectLocation(location);
+                return;
+              }
+              if(typeof createLocationNode !== 'function') return;
+              const nodeId = createLocationNode(location);
+              closeLocationModal();
+              if(typeof renderMinimap === 'function') renderMinimap();
+              if(typeof startNodePlacing === 'function') startNodePlacing(nodeId);
             });
 
             locationList.appendChild(locationCard);
@@ -3996,7 +4011,7 @@
           }
           generateBtn.textContent = '收集参考图...';
 
-          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes);
+          const { referenceImageUrls: refUrls, promptSuffix: _refPromptSuffix, voiceCharacters: _voiceCharacters, characterRefUrls: _characterRefUrls } = await collectReferenceImagesForGrid(shotFrameNodes, { characterSource: 'video' });
           referenceImageUrls = refUrls;
           refPromptSuffix = _refPromptSuffix || [];
           gridVoiceCharacters = _voiceCharacters || [];

@@ -17,9 +17,10 @@ from .base import BaseFileStorage
 from .qiniu_storage import QiniuFileStorage
 
 
-# 按 (section, access_key, bucket_name, cdn_domain) 键的实例缓存。
+# 按 (section, access_key, bucket_name, cdn_domain, upload_host) 键的实例缓存。
 # 允许配置热更新后自动切换到新实例；相同参数复用同一实例（同一线程池）。
-_storage_instances: Dict[Tuple[str, str, str, str], BaseFileStorage] = {}
+# upload_host 必须进键：只改直传域名时不能继续复用旧区域的实例。
+_storage_instances: Dict[Tuple[str, str, str, str, str], BaseFileStorage] = {}
 _storage_lock = threading.Lock()
 
 
@@ -58,11 +59,13 @@ def get_file_storage(
     secret_key = qiniu_config.get("secret_key") or ""
     bucket_name = qiniu_config.get("bucket_name") or ""
     cdn_domain = qiniu_config.get("cdn_domain") or ""
+    # 浏览器直传域名覆盖（可选；空则 QiniuFileStorage 经 UC 按 AK+bucket 自动解析）
+    upload_host = qiniu_config.get("upload_host") or ""
 
     if not (access_key and secret_key and bucket_name and cdn_domain):
         raise ValueError(f"file_storage.{section} 配置不完整（缺 access_key/secret_key/bucket_name/cdn_domain）")
 
-    cache_key = (section, access_key, bucket_name, cdn_domain)
+    cache_key = (section, access_key, bucket_name, cdn_domain, upload_host)
     with _storage_lock:
         inst = _storage_instances.get(cache_key)
         if inst is not None:
@@ -72,6 +75,7 @@ def get_file_storage(
             secret_key=secret_key,
             bucket_name=bucket_name,
             cdn_domain=cdn_domain,
+            upload_host=upload_host,
         )
         _storage_instances[cache_key] = inst
         return inst
@@ -109,7 +113,7 @@ def _load_config() -> dict:
     merged = copy.deepcopy(file_storage)
 
     for section in ("qiniu", "qiniu_long_term"):
-        for field in ("access_key", "secret_key", "bucket_name", "cdn_domain"):
+        for field in ("access_key", "secret_key", "bucket_name", "cdn_domain", "upload_host"):
             db_val = get_dynamic_config_value("file_storage", section, field, default=None)
             if db_val:
                 if section not in merged:

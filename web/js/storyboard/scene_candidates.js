@@ -36,8 +36,19 @@ export function mapSceneAssetCandidates(response, assetType) {
         error: asset.message ?? asset.ai_tool?.message ?? asset.tool?.message ?? null,
         // 关联生成任务 ID：候选卡「查看生成状态时间轴」（window.AiToolTimeline）
         aiToolId: asset.ai_tool_id ?? null,
+        cancelRequested: Number(asset.cancel_requested) === 1,
         selected: selectedId !== null && selectedId !== undefined && String(asset.id) === String(selectedId),
     }));
+}
+
+function rememberCancellingTasks(items) {
+    if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+    (items || []).forEach((item) => {
+        if (!item.cancelRequested || item.aiToolId == null || item.aiToolId === '') return;
+        const key = String(item.aiToolId);
+        if (state.sceneTaskCancelByToolId[key] === 'cancelled') return;
+        state.sceneTaskCancelByToolId[key] = 'cancelling';
+    });
 }
 
 export async function loadSceneCandidates(sceneId) {
@@ -46,8 +57,12 @@ export async function loadSceneCandidates(sceneId) {
         api.listSceneAssets(sceneId, 'video').catch(() => null),
     ]);
     if (!state.sceneCandidates) state.sceneCandidates = {};
+    const images = mapSceneAssetCandidates(imageRes, 'first_frame');
+    const videos = mapSceneAssetCandidates(videoRes, 'video');
+    rememberCancellingTasks(images);
+    rememberCancellingTasks(videos);
     state.sceneCandidates[sceneId] = {
-        images: mapSceneAssetCandidates(imageRes, 'first_frame'),
-        videos: mapSceneAssetCandidates(videoRes, 'video'),
+        images,
+        videos,
     };
 }

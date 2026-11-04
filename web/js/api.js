@@ -1,9 +1,85 @@
 
+    // 前端直传七牛（CDN 开启时）：token → XHR 直传 → confirm 回源落盘入库。
+    // 返回 {url}；任何不可用/失败环节返回 {fallback, reason} 交由调用方降级
+    // 走服务器 multipart 上传，不打断上传主流程（CDN 未启用属常态，静默降级）。
+    async function uploadFileDirectToCdn(file){
+      // 1) 颁发直传凭证（token 绑定 key + fsizeLimit，30 分钟过期）
+      const tokenForm = new FormData();
+      tokenForm.append('filename', file.name || '');
+      tokenForm.append('size', String(file.size || 0));
+      const tokenResp = await fetch('/api/video-workflow/upload-token', {
+        method: 'POST',
+        headers: {
+          'Authorization': getAuthToken(),
+          'X-User-Id': getUserId()
+        },
+        body: tokenForm
+      });
+      if (!tokenResp.ok) return { fallback: true, reason: 'token_http_' + tokenResp.status };
+      const tokenData = await tokenResp.json().catch(() => null);
+      if (!tokenData || tokenData.code !== 0 || !tokenData.data) {
+        return { fallback: true, reason: 'token_bad_response' };
+      }
+      const d = tokenData.data;
+      if (!d.direct_upload) return { fallback: true, reason: d.reason || 'cdn_disabled' };
+
+      // 2) XHR 直传七牛（fetch 无上传进度回调；form 协议与 world-import 直传一致）
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', d.upload_url, true);
+        xhr.timeout = 600000; // 大视频直传保护（200MB 慢速链路留足余量）
+        const fd = new FormData();
+        fd.append('token', d.token);
+        fd.append('key', d.key);
+        fd.append('fname', file.name || 'file');
+        fd.append('file', file);
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error('HTTP ' + xhr.status + ': ' + String(xhr.responseText || '').slice(0, 200)));
+          }
+        };
+        xhr.onerror = () => reject(new Error('网络错误'));
+        xhr.ontimeout = () => reject(new Error('超时'));
+        xhr.send(fd);
+      });
+
+      // 3) 通知服务端回源下载到本地（大小+魔数校验）并入库，返回本站永久URL
+      const confirmForm = new FormData();
+      confirmForm.append('key', d.key);
+      const confirmResp = await fetch('/api/video-workflow/upload-confirm', {
+        method: 'POST',
+        headers: {
+          'Authorization': getAuthToken(),
+          'X-User-Id': getUserId()
+        },
+        body: confirmForm
+      });
+      if (!confirmResp.ok) return { fallback: true, reason: 'confirm_http_' + confirmResp.status };
+      const confirmData = await confirmResp.json().catch(() => null);
+      if (confirmData && confirmData.code === 0 && confirmData.data && confirmData.data.url) {
+        return { url: confirmData.data.url };
+      }
+      return { fallback: true, reason: 'confirm_bad_response' };
+    }
+
     // 上传文件到服务器，返回永久URL
+    // CDN 开启时优先前端直传七牛（上传流量不占服务器带宽；直传完成即 CDN 就绪，
+    // 消除"本地 206→302"播放换源竞态）；直传不可用或任一环节失败自动降级走
+    // 服务器 multipart 上传，行为与直传功能上线前完全一致。
     async function uploadFile(file){
+      try {
+        const direct = await uploadFileDirectToCdn(file);
+        if (direct && direct.url) return direct.url;
+        console.warn('CDN 直传不可用，降级服务器上传:', direct && direct.reason);
+      } catch (err) {
+        console.warn('CDN 直传失败，降级服务器上传:', err);
+      }
+
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
         const response = await fetch('/api/video-workflow/upload', {
           method: 'POST',
@@ -13,7 +89,7 @@
           },
           body: formData
         });
-        
+
         if (!response.ok) throw new Error('HTTP ' + response.status);
         const result = await response.json();
         if(result.code === 0 && result.data && result.data.url){
@@ -248,8 +324,9 @@
         const tasks = data.tasks;
         const allSuccess = tasks.every(t => t.status === 'SUCCESS');
         const anyFailed = tasks.some(t => t.status === 'FAILED');
-        const anyRunning = tasks.some(t => t.status === 'RUNNING');
-        
+        const anyCancelled = tasks.some(t => t.status === 'CANCELLED');
+        const anyRunning = tasks.some(t => t.status === 'RUNNING' || t.status === 'QUEUED' || t.status === 'CANCELLING');
+
         // 为每个任务提取结果和错误信息
         const taskDetails = tasks.map(task => {
           const results = extractResultsArray(task);
@@ -261,12 +338,14 @@
           };
         });
 
-        // 全局状态判断
+        // 全局状态判断（QUEUED / CANCELLING 与 RUNNING 同为未终态；CANCELLED 是终态）
         let globalStatus = 'RUNNING';
         if(allSuccess){
           globalStatus = 'SUCCESS';
         } else if(anyFailed && !anyRunning){
           globalStatus = 'FAILED';
+        } else if(anyCancelled && !anyRunning){
+          globalStatus = 'CANCELLED';
         }
         
         return { 
@@ -288,6 +367,27 @@
           error: singleError
         };
       }
+    }
+
+    // 取消排队中的任务（仅后端认定的排队阶段可取消；已提交上游会返回 409）
+    async function cancelQueuedAiTask(aiToolId){
+      const authToken = getAuthToken();
+      const headers = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+      const res = await fetch(`/api/ai-tool/${aiToolId}/cancel`, {
+        method: 'POST',
+        headers
+      });
+      let data = null;
+      try { data = await res.json(); } catch(e) { /* 非 JSON 响应 */ }
+      if(res.ok && data && data.code === 0){
+        var payload = data.data || {};
+        return { success: true, status: payload.status || 'CANCELLED', message: data.message || '' };
+      }
+      return {
+        success: false,
+        message: (data && data.message) || '取消任务失败',
+        status: res.status
+      };
     }
 
     // 获取版本信息

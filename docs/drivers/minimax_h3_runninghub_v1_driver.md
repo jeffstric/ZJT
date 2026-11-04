@@ -55,6 +55,7 @@ type=34 创建时会与 `ai_tool` 在**同一事务**内创建 `param_prepare` �
 - 驱动读 `extra_config.h3_prompt_optimize.optimized_prompt`，否则读 `ai_tool.prompt`
 - 关闭开关或 LLM 失败时回退原文，仍提交 RunningHub
 - **对话保真**：描述性文字输出英文，但 `<d>` 内台词/歌词及画面可见文字必须逐字保留原语言（标签按实际语言写，如 `[Chinese]`），严禁翻译；原文含"引号包裹的 CJK 片段"时 user message 追加条件式点名指令，语义判断交给 LLM（详见 `docs/backend/pipeline_steps.md` 的对话保真小节）
+- **速度保真**（2026-10-31，工作流 2059 全片慢动作事故）：镜头运动速度必须来自原文，原文未要求慢速（慢镜/慢动作/缓慢/缓缓等）时禁止自行添加 `at slow speed` / `slow motion` / `slowly`。旧模板 few-shot 两例镜头句均带 `at slow speed`，改写 LLM 模仿后给约 1/3 中性运镜（固定/跟随/手持）凭空加了慢速标注（实测 94 条任务中 31 条含 slow），已删示例慢速词并在规范处加忠实原文约束
 
 ### 大模型回退链
 

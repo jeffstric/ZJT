@@ -67,6 +67,8 @@
 
 锚点优先使用自然段；对没有自然段的文本，可以按现有换行、场景标记、镜头标记和完整句子建立更细粒度锚点。锚点化不得改变原文内容或顺序，也不得根据固定字符数直接决定最终分段。
 
+**超长 block 兜底切分**：单个自然段（或无空行整篇）超过 `SEGMENT_MAX_SOURCE_CHARS`（1500，见 `config/constant.py`）时，按自然边界（空行 > 换行 > 句读）切细为多个 block，内容与顺序不变，切细产生的多个 block 共享原 block 行号范围（仅辅助元数据，无下游消费）。这是硬性兜底而非可选优化：block 是规划模型不可再分的引用单元——分段校验要求每个 block 恰好归属一个 segment，而 quality 编译（`enterprise/services/script_split_quality/contract.py`）要求每个 segment 原文不超过该上限，超长 block 会让规划陷入无解死锁（重试必败；2026-11-02 task 286/287 事故：docx 粘贴剧本空行丢失，整篇 2526 字成单 block，任务暂停在规划阶段 5%）。速度/均衡模式 `plan_to_segments` 的 `_part_XX` 切分是计划通过后的第二层兜底，两层各自独立生效。
+
 示例：
 
 ```json

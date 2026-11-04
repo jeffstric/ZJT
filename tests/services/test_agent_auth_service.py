@@ -44,6 +44,36 @@ def test_exchange_agent_token_creates_short_lived_auth_token(monkeypatch):
     assert created[0][3] == "agent-device"
 
 
+def test_resolve_agent_user_does_not_create_session(monkeypatch):
+    from services.agent_auth_service import AgentAuthService
+    from config.constant import AgentAuthConstants
+
+    valid_token = SimpleNamespace(
+        id=9,
+        user_id=7,
+        token_type=AgentAuthConstants.TOKEN_TYPE_AGENT,
+        scopes=[AgentAuthConstants.SCOPE_AUTH_EXCHANGE],
+    )
+    created = []
+    monkeypatch.setattr(
+        "services.agent_auth_service.UserApiTokensModel.get_valid_by_raw_token",
+        lambda raw_token, required_scope=None, token_type=None: valid_token,
+    )
+    monkeypatch.setattr(
+        "services.agent_auth_service.UsersModel.get_by_id",
+        lambda user_id: SimpleNamespace(id=7, status=1),
+    )
+    monkeypatch.setattr(
+        "services.agent_auth_service.UserTokensModel.create",
+        lambda *args, **kwargs: created.append(args) or 1,
+    )
+
+    result = AgentAuthService.resolve_agent_user("agent-token")
+    assert result["user_id"] == 7
+    assert result["token_id"] == 9
+    assert created == []
+
+
 def test_exchange_agent_token_rejects_missing_scope(monkeypatch):
     from services.agent_auth_service import AgentAuthService, AgentAuthError
 

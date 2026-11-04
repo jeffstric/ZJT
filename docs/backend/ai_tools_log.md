@@ -45,6 +45,8 @@
 | `retry_scheduled` | 失败，安排重试 | `{try_count, delay_seconds, next_trigger}` |
 | `max_retry_exceeded` | 超过最大重试次数，终态失败 | — |
 | `task_completed` | 任务终态成功 | `{result_url}` |
+| `user_cancelled` | 用户取消排队任务（终态 CANCELLED，见 docs/video/queued_task_cancel_design.md） | — |
+| `cancel_guard_rejected` | 提交前 CAS 抢占失败（任务已被取消），放弃调用上游 | `{action}` |
 | `exception` | 流程中出现未预期异常 | `{error}` |
 
 > `status_check` 是核心：**每次轮询写一行**。`create_at` 之间出现大间隔即"轮询静默/调度积压"的直接证据。

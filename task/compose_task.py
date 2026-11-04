@@ -59,6 +59,7 @@ from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
 from utils.computing_power import (
     build_refund_transaction_id,
     is_already_refunded,
+    power_change_settled,
     resolve_refund_amount,
 )
 from utils.project_path import resolve_upload_url_to_local_path
@@ -224,7 +225,7 @@ def _refund_segment(ai_tool, reason: str) -> None:
                 "transaction_id": transaction_id
             }
         )
-        if success:
+        if power_change_settled(success, message):
             logger.info(f"[compose_job] 段 {ai_tool.id} 已退费 {computing_power}（{reason}）")
         else:
             logger.error(f"[compose_job] 段 {ai_tool.id} 退费失败（{reason}）: {message}")
@@ -289,7 +290,7 @@ def _bump_download_attempts(seg) -> int:
     attempts = int(extra.get('compose_download_attempts') or 0) + 1
     extra['compose_download_attempts'] = attempts
     try:
-        AIToolsModel.update(seg.id, extra_config=json.dumps(extra, ensure_ascii=False))
+        AIToolsModel.update_only_fields(seg.id, extra_config=json.dumps(extra, ensure_ascii=False))
     except Exception as e:
         logger.warning(f"[compose_job] 段 {seg.id} 记录下载次数失败: {e}")
     return attempts
@@ -371,7 +372,7 @@ def _self_download_segment(seg) -> Optional[str]:
         return None
 
     try:
-        AIToolsModel.update(seg.id, result_url=local_url)
+        AIToolsModel.update_only_fields(seg.id, result_url=local_url)
     except Exception as e:
         logger.warning(f"[compose_job] 段 {seg.id} 回写本地 result_url 失败: {e}")
         return None
@@ -493,9 +494,10 @@ def _refill_segment(job, task, seg_index: int) -> Optional[int]:
         # 段主记录已建但调度行未建成 → 先把段置 FAILED，避免留下永远 PENDING 的脏数据
         if seg_id:
             try:
-                AIToolsModel.update(
+                AIToolsModel.transition_status(
                     seg_id,
-                    status=AI_TOOL_STATUS_FAILED,
+                    [AI_TOOL_STATUS_PENDING, AI_TOOL_STATUS_WAITING_PARAM_PREPARE],
+                    AI_TOOL_STATUS_FAILED,
                     message="补段建调度行失败，已退费取消",
                     completed_time=datetime.now())
             except Exception as mark_err:
@@ -787,10 +789,14 @@ def _process_one_compose(task) -> None:
                     f"[compose_job] compose={compose_id} 段 {seg.id} 远端残留自愈失败"
                     f"（{attempts} 次），降级为缺口补段"
                 )
-                AIToolsModel.update(
-                    seg.id, status=AI_TOOL_STATUS_FAILED,
+                healed = AIToolsModel.transition_status(
+                    seg.id,
+                    [AI_TOOL_STATUS_COMPLETED],
+                    AI_TOOL_STATUS_FAILED,
                     message="结果文件无法本地化，已降级重生成",
                     completed_time=datetime.now())
+                if healed == 0:
+                    continue
                 _refund_segment(seg, "结果文件无法本地化")
                 _compose_event(
                     compose_id, AIToolsLogEvent.UPSTREAM_FAILED,

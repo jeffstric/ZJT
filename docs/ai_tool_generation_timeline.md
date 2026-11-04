@@ -5,7 +5,7 @@
 video_workflow.html 与 storyboard.html 中所有「生成中」的图片/视频任务，都可以点击「状态」按钮打开**任务事件时间轴弹窗**，查看任务从提交到完成的每个事件（提交上游、状态轮询、下载、CDN 上传、重试等），与 index.html 历史记录里的时间轴同源同体验。
 
 - video_workflow：结果节点（图片节点 / 视频节点）生成中显示占位/状态行 + 「状态」按钮；完成后按钮保留，可回看完整时间轴。
-- storyboard：候选区（分镜图候选 / 视频候选）的生成中、失败占位卡上有「状态」按钮；已完成候选卡 hover 显示左下角「状态」角标。
+- storyboard：候选区（分镜图候选 / 视频候选）的生成中、失败占位卡上有「状态」按钮；已完成候选卡 hover 显示左下角「状态」角标。图片/视频生成占位卡均有「取消」按钮，走既有 `POST /api/ai-tool/{id}/cancel`（仅排队阶段能取消，已开始生成返回 409）。
 - 弹窗内任务未到终态（状态 0/1/3/4/5/6）时每 5 秒自动刷新；终态（2 成功 / -1 失败）停止。
 
 ## 数据链路（全部复用既有链路，无新表）
@@ -66,6 +66,7 @@ video_workflow.html 与 storyboard.html 中所有「生成中」的图片/视频
   - `web/js/storyboard/scene_candidates.js`：`mapSceneAssetCandidates` 候选映射新增 `aiToolId`。
   - `web/js/storyboard/polling.js`：`upsertSceneCandidateFromTask` / `upsertGeneratingCandidate` 回填 `aiToolId`；`scene.taskStatus` 增加 `first_frame_ai_tool_id` / `video_ai_tool_id`（候选列表未加载时的回退占位卡也可查看）。
   - `web/js/storyboard/render.js`：`renderCandidateTimelineButton` 生成中/失败占位卡（左上常显）与已完成候选卡（左上，hover/触屏显现，无 `aiToolId` 的上传资产不渲染）的「状态」角标。角标为 20px 圆形图标按钮（timeline 图标），与删除（右上）、播放（居中）统一尺寸；背景是右栏 ~104px 窄条、候选卡仅约 84×47px，文字 pill 底部定位会遮挡居中播放徽标，故固定左上（样式见 `web/css/ai_tool_timeline.css` 与 `web/css/storyboard.css`）。
+  - 图片/视频生成占位（无结果 URL，或候选列表还没回来但 `taskStatus` 仍在跑）在文案下渲染 `.candidate-task-cancel`（文案「取消」）。类名不用 `ai-task-cancel-btn`，否则 `ai_tool_timeline.js` 的捕获阶段监听会吞掉点击。点击在 `events.js` 里早于候选选中处理，确认后调用 `api.cancelAiToolTask`。成功把该 `ai_tool_id` 记为已取消并显示「已取消」；预处理步骤还在跑时接口返回 `CANCELLING`，按钮变为「取消中」。409 用服务端文案提示，卡片保持生成中。`polling.js` 用本地取消标记（`applySceneTaskCancelGuard`，图片 `first_frame` 与视频 `video` 都过防护）挡住过期轮询把卡片写回「生成中」；若结果 URL 已经落地，则视为取消没赶上，照常显示结果。宫格拆分场景多个图片候选共享同一 `ai_tool_id`，取消会一并标记。
 
 ## 安全说明
 

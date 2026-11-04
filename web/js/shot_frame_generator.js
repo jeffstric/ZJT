@@ -24,9 +24,15 @@ function removeMissingCharacterMarkers(prompt, missingCharacters){
  * 收集分镜节点的角色/场景/道具参考图（公共函数）
  * 供 generateShotFrameImage 和 generateShotFrameVideo 共用
  * @param {Object} node - 分镜节点
+ * @param {Object} [options] - 收集选项
+ * @param {string} [options.characterSource] - 角色提取来源：默认「图片提示词 ∪ 生视频提示词」
+ *   （生成分镜图链路，画面构成需要图片提示词里的全部角色）；传 'video' 时只取生视频
+ *   提示词（生视频链路）——视频里没点名的角色不得带参考图与音色
+ *   （ai_tools 13137：视频提示词只点名王福成，李成建因图片提示词被带成图3+音频2，
+ *   优化提示词凭空多出一个角色并上传了他的音色）
  * @returns {{ referenceImageUrls: string[], promptSuffix: string[], missingCharacters: Set }}
  */
-async function collectShotFrameRefImages(node) {
+async function collectShotFrameRefImages(node, options) {
   const referenceImageUrls = [];
   const promptSuffix = [];
   const missingCharacters = new Set();
@@ -36,26 +42,32 @@ async function collectShotFrameRefImages(node) {
   const characterRefUrls = [];
   let imageIndex = 1;
 
-  // 1. 提取角色名：图片提示词 ∪ 生视频提示词中的 【【角色名】】（去重，图片提示词优先）
-  const characterNames = typeof mergeShotCharacterNames === 'function'
-    ? mergeShotCharacterNames(node)
-    : (function() {
-        const names = [];
-        const pattern = /【【([^】]+)】】/g;
-        const texts = [
-          (node.data && node.data.imagePrompt) || '',
-          (node.data && (node.data.videoPromptText || node.data.videoPrompt)) || ''
-        ];
-        texts.forEach(function(text) {
-          pattern.lastIndex = 0;
-          let match;
-          while ((match = pattern.exec(text)) !== null) {
-            const name = match[1].trim();
-            if (name && names.indexOf(name) === -1) names.push(name);
-          }
-        });
-        return names;
-      })();
+  // 1. 提取角色名：默认 图片提示词 ∪ 生视频提示词 中的 【【角色名】】（去重，图片提示词优先）；
+  //    characterSource === 'video' 时只取生视频提示词
+  const videoOnly = options && options.characterSource === 'video';
+  const extractNames = function(texts) {
+    const names = [];
+    const pattern = /【【([^】]+)】】/g;
+    texts.forEach(function(text) {
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const name = match[1].trim();
+        if (name && names.indexOf(name) === -1) names.push(name);
+      }
+    });
+    return names;
+  };
+  const characterNames = videoOnly
+    ? (typeof videoShotCharacterNames === 'function'
+        ? videoShotCharacterNames(node)
+        : extractNames([(node.data && (node.data.videoPromptText || node.data.videoPrompt)) || '']))
+    : (typeof mergeShotCharacterNames === 'function'
+        ? mergeShotCharacterNames(node)
+        : extractNames([
+            (node.data && node.data.imagePrompt) || '',
+            (node.data && (node.data.videoPromptText || node.data.videoPrompt)) || ''
+          ]));
 
   // 2. 匹配角色并获取参考图 URL
   if (characterNames.length > 0) {

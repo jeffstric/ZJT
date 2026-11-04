@@ -410,6 +410,32 @@ QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES = 1800
 # 前端直传 key 前缀，便于后台批量清理与统计。
 WORLD_IMPORT_KEY_PREFIX = "world_import"
 
+# ===== 工作流素材前端直传（视频/图片/音频；省服务器进出带宽，根治播放 206→302 切换竞态）=====
+# 流程：upload-token（经 BaseFileStorage.get_browser_upload_info 颁发直传凭证，
+# 各存储后端的直传协议细节封装在各自实现内）→ 浏览器 XHR 直传存储 →
+# upload-confirm 时服务端从存储回源下载到本地（大小 + 魔数校验）→ 本地落盘成功
+# 才插入 media_file_mapping（cloud_path 直接置位）。本地文件为主副本、CDN 为加速层，
+# mapping 建立时 CDN 上已有文件，首个播放请求即 302 命中，无"本地 206→302"中途换源窗口。
+# server.auto_upload_to_cdn=false 时 token 接口直接返回 direct_upload=false，
+# 前端降级走既有 multipart 上传，行为与直传功能上线前完全一致。
+# confirm 回源下载总超时（秒）：asyncio.wait_for 硬上限（超时红线第 9/10 条）。
+WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT = 300
+# 直传后未 confirm 的七牛对象清理宽限（秒）。必须大于上传 token 有效期，
+# 避免挪走仍在上传或尚未 confirm 的对象。只处理 upload/workflow/ 且无 mapping 的对象。
+QINIU_DIRECT_UPLOAD_ORPHAN_GRACE_SECONDS = 24 * 3600
+QINIU_DIRECT_UPLOAD_ORPHAN_SCAN_LIMIT = 2000
+# 单次运行里，挪入待删目录和真正删除各自的上限。
+QINIU_DIRECT_UPLOAD_ORPHAN_DELETE_LIMIT = 200
+QINIU_DIRECT_UPLOAD_ORPHAN_INTERVAL_HOURS = 6
+QINIU_WORKFLOW_UPLOAD_KEY_PREFIX = "upload/workflow/"
+# 待删对象先挪到该前缀下，路径为 wait_delete/YYYY-MM-DD/<原 key>。
+QINIU_DIRECT_UPLOAD_WAIT_DELETE_PREFIX = "wait_delete/"
+# 待删目录里的对象再保留这么多天，之后才真正删除。
+QINIU_DIRECT_UPLOAD_WAIT_DELETE_RETAIN_DAYS = 7
+# 回源下载 httpx 空闲超时（秒）：约束单次读阻塞上限，避免 wait_for 超时后
+# 工作线程仍在无进度地挂着（线程无法被取消，只能靠 httpx 自身超时收敛）。
+WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT = 60
+
 # ===== 大世界导入：后端限速下载与共享文件任务 =====
 # 限速下载速率上限（字节/秒）：避免拉取大 zip 打满服务器出口带宽影响其他接口/用户。
 WORLD_IMPORT_DOWNLOAD_RATE_BPS = 20 * 1024 * 1024   # 默认 20 MB/s
@@ -1121,6 +1147,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.VIDEO_WATERMARK_REMOVE: DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,  # RunningHub 视频去水印
     DriverKey.VIDEO_ENHANCE: DriverImplementation.VIDEO_ENHANCE_RUNNINGHUB_V1,  # RunningHub 视频高清修复（OpenAPI v2 AI App）
     DriverKey.QWEN_2_1_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_IMAGE_V1,  # qwenimage2.1（图片编辑 + 文生图）
+    DriverKey.MOSS_IMAGE: DriverImplementation.RUNNINGHUB_AI_APP_MOSS_V1,  # moss 文生图（仅文生图）
     
     # Vidu 相关驱动
     DriverKey.VIDU_IMAGE_TO_VIDEO: DriverImplementation.VIDU_DEFAULT,         # 使用 Vidu 官方 API
@@ -1328,6 +1355,13 @@ RUNNINGHUB_KEY_HALF_OPEN_PROBE_LIMIT = 1        # 半开状态下同时允许的
 # 可通过动态配置 runninghub.key_pool.congest_cooldown_seconds 热更新
 RUNNINGHUB_KEY_CONGEST_COOLDOWN_SECONDS = 90    # 拥堵密钥冷却时长（秒）
 
+# 密钥类型（config_key = runninghub.key.{N}.key_type）
+#   standard = 普通密钥：并发小、便宜，平时参与正常轮换分配
+#   wallet   = 钱包密钥：并发大、按量计费较贵，仅在所有普通密钥并发占满时兜底使用
+RUNNINGHUB_KEY_TYPE_STANDARD = 'standard'
+RUNNINGHUB_KEY_TYPE_WALLET = 'wallet'
+RUNNINGHUB_KEY_TYPES = (RUNNINGHUB_KEY_TYPE_STANDARD, RUNNINGHUB_KEY_TYPE_WALLET)
+
 # 任务类型名称映射（已废弃）
 TASK_TYPE_NAME_MAP = TaskTypeRegistry.get_name_map()
 
@@ -1358,6 +1392,7 @@ class AIToolStatus:
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
         'DOWNLOADING': '结果下载中',
+        'CANCELLED': '用户取消（排队阶段）',
     }
     PENDING = 0
     PROCESSING = 1
@@ -1367,6 +1402,7 @@ class AIToolStatus:
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
     DOWNLOADING = 6
+    CANCELLED = -2
 
 
 class ComposeJobStatus:
@@ -1395,6 +1431,7 @@ class TaskStatus:
         'FAILED': '处理失败',
         'WAITING_PARAM_PREPARE': '等待参数预处理',
         'WAITING_BEFORE_FINISH': '等待结束前处理',
+        'CANCELLED': '用户取消（排队阶段）',
     }
     QUEUED = 0
     PROCESSING = 1
@@ -1403,6 +1440,7 @@ class TaskStatus:
     FAILED = -1
     WAITING_PARAM_PREPARE = 4
     WAITING_BEFORE_FINISH = 5
+    CANCELLED = -2
 
 
 class GridImageTaskStatus:
@@ -1451,6 +1489,42 @@ AI_TOOL_STATUS_SYNC_QUEUED = AIToolStatus.SYNC_QUEUED
 AI_TOOL_STATUS_WAITING_PARAM_PREPARE = AIToolStatus.WAITING_PARAM_PREPARE
 AI_TOOL_STATUS_WAITING_BEFORE_FINISH = AIToolStatus.WAITING_BEFORE_FINISH
 AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
+AI_TOOL_STATUS_CANCELLED = AIToolStatus.CANCELLED
+
+# 排队阶段可取消的 ai_tools 状态集合（尚未调用主生成上游接口）：
+#   PENDING(0)             调度队列等待提交。取消接口立即 CAS 到 CANCELLED 并退款。
+#   SYNC_QUEUED(3)         已入同步进程池队列、worker 尚未执行。同上，立即取消。
+#   WAITING_PARAM_PREPARE(4) 预处理流水线中。步骤尚未 PROCESSING 时立即取消；
+#     已有步骤在途时只记 cancel_requested=1，该步骤结束后再落 CANCELLED 并退款。
+# 开工/推进闸门（0→1、3→1、4→0 等）附加 AND cancel_requested = 0。
+# 状态迁移走 AIToolsModel.transition_status，字段更新走 update_only_fields（不接受 status）。
+AI_TOOL_CANCELLABLE_STATUSES = (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+)
+
+# 非终态（活跃）ai_tools 状态集合：调度器把任务标记为 FAILED（过期/超最大重试等）
+# 时必须以此集合做条件更新（CAS），避免覆盖用户刚写入的 CANCELLED 终态。
+AI_TOOL_ACTIVE_STATUSES = (
+    AI_TOOL_STATUS_PENDING,
+    AI_TOOL_STATUS_PROCESSING,
+    AI_TOOL_STATUS_SYNC_QUEUED,
+    AI_TOOL_STATUS_WAITING_PARAM_PREPARE,
+    AI_TOOL_STATUS_WAITING_BEFORE_FINISH,
+    AI_TOOL_STATUS_DOWNLOADING,
+)
+
+# 取消落库后的用户可见文案。退款未完成时写入 message，轮询/重载据此展示，
+# 不再把「算力已退还」写死。补偿任务退款成功后，若消息仍是待退款文案，改回已取消文案。
+CANCELLED_BY_USER_MESSAGE = "任务已被用户取消"
+CANCEL_REFUND_PENDING_MESSAGE = "任务已取消（退款处理中，如未到账请联系客服）"
+
+# 失败/取消后退款补偿：只处理近期、有扣费流水、且没有 refund-{原流水} 的任务。
+# 无 transaction_id 的任务不进入补偿（静态价兜底可能给从未扣费的任务加钱）。
+REFUND_COMPENSATION_LOOKBACK_DAYS = 7
+REFUND_COMPENSATION_BATCH_LIMIT = 50
+REFUND_COMPENSATION_INTERVAL_HOURS = 1
 
 
 # ===== 视觉任务调度退避封顶 =====
@@ -1458,6 +1532,17 @@ AI_TOOL_STATUS_DOWNLOADING = AIToolStatus.DOWNLOADING
 # RUNNING 轮询与失败重试共用：上游任务完成到被调度器发现之间的空窗最坏 = 此封顶值
 # （360s 时代实测成片跑完后最久 195s+ 才被发现，分镜长时间停在「生成中」）。
 VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
+
+
+# ===== 智能体 CLI 直接生图接口（POST /api/agent-auth/generate-image）=====
+# 用户从首页「智能体连接」弹窗复制的 CLI 信息（含 agent_token）可直接调用本接口生图。
+# 服务端编排见 services/agent_image_service.py + api/agent_auth.py；文档见
+# docs/backend/agent_image_generation_api.md
+AGENT_CLI_IMAGE_POLL_INTERVAL_SECONDS = 3   # wait=true 时的 ai_tools 轮询间隔（秒）
+AGENT_CLI_IMAGE_WAIT_TIMEOUT_SECONDS = 180  # wait=true 的同步等待上限（秒），超时返回 submitted 供继续轮询
+AGENT_CLI_IMAGE_MAX_COUNT = 4               # 单次生成图片张数上限（与前端文生图一致）
+# 连接信息是弹窗复制的短文本（约数 KB）。超限直接 422，避免未鉴权路由上的配平扫描吃满线程。
+AGENT_CLI_CONNECTION_INFO_MAX_CHARS = 8192
 
 
 # ===== 下载队列（download_queue）解耦配置 =====
@@ -2023,6 +2108,11 @@ class StoryboardAutoGenerateConstants:
     BATCH_ITEM_STATUS_SKIPPED = 3
     BATCH_SCHEDULER_INTERVAL_SECONDS = 7
     BATCH_SCHEDULER_JOB_LIMIT = 10
+    # BATCH_SCHEDULER_JOB_LIMIT 支持管理后台热更新（system_config:
+    # storyboard.batch_scheduler_job_limit），此为其合法区间钳制边界。
+    # 上限防止误填超大值导致单轮 tick 对账查询过多拖慢调度器。
+    BATCH_SCHEDULER_JOB_LIMIT_MIN = 1
+    BATCH_SCHEDULER_JOB_LIMIT_MAX = 200
 
 
 class StoryboardAudioGenerateConstants:
@@ -2298,6 +2388,7 @@ TASK_STATUS_FAILED = TaskStatus.FAILED
 TASK_STATUS_SYNC_QUEUED = TaskStatus.SYNC_QUEUED
 TASK_STATUS_WAITING_PARAM_PREPARE = TaskStatus.WAITING_PARAM_PREPARE
 TASK_STATUS_WAITING_BEFORE_FINISH = TaskStatus.WAITING_BEFORE_FINISH
+TASK_STATUS_CANCELLED = TaskStatus.CANCELLED
 
 # 向后兼容别名 - AI Audio 状态
 AI_AUDIO_STATUS_PENDING = AIAudioStatus.PENDING

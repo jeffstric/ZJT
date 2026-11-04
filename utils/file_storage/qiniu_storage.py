@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import qiniu
 import qiniu.config as _qiniu_config
+import httpx
 
 from config.constant import (
     QINIU_HTTP_CONNECTION_TIMEOUT,
@@ -49,6 +50,36 @@ def _setup_qiniu_logger() -> logging.Logger:
 
 logger = _setup_qiniu_logger()
 
+# 浏览器直传域名解析缓存：(access_key, bucket_name) -> "https://host"，进程内复用。
+# 同 AK 不同 bucket（短期/长期桶）区域可能不同，必须按二元组缓存。
+_browser_upload_host_cache = {}
+# 源站 io 域名缓存，confirm 回源不走 CDN。同样按 (AK, bucket) 区分区域。
+_io_host_cache = {}
+
+
+def _upload_host_from_uc_v4(data) -> Optional[str]:
+    """从 UC /v4/query 响应取出浏览器上传域名。
+
+    v4 是 hosts[].up.domains（备选 up.old），不是旧版 up.acc.main。
+    """
+    if not isinstance(data, dict):
+        return None
+    hosts = data.get("hosts")
+    if not isinstance(hosts, list) or not hosts or not isinstance(hosts[0], dict):
+        return None
+    up = hosts[0].get("up")
+    if not isinstance(up, dict):
+        return None
+    for field in ("domains", "old"):
+        domains = up.get(field)
+        if not isinstance(domains, list):
+            continue
+        for item in domains:
+            if isinstance(item, str) and item.strip():
+                host = item.strip()
+                return host if host.startswith("http") else f"https://{host}"
+    return None
+
 
 class QiniuFileStorage(BaseFileStorage):
     """
@@ -57,12 +88,22 @@ class QiniuFileStorage(BaseFileStorage):
     使用七牛云SDK进行文件上传和下载链接生成
     """
 
+    # ===== 浏览器直传（七牛 form 直传协议；非七牛后端不走这段）=====
+    # 华东 z0 默认上传域名。不同 bucket 区域域名不同（复用会 400），
+    # 解析优先级：配置 upload_host 覆盖 → UC 按 AK+bucket 查询（进程内缓存）→ 本默认值。
+    DEFAULT_BROWSER_UPLOAD_HOST = "https://upload.qiniup.com"
+    UC_QUERY_URL = "https://uc.qbox.me/v4/query"
+    UC_QUERY_TIMEOUT = 5
+    # 七牛 form 直传成功响应体（returnBody 占位符为七牛语法）
+    _BROWSER_UPLOAD_RETURN_BODY = '{"key":"$(key)","hash":"$(etag)","fsize":"$(fsize)"}'
+
     def __init__(
         self,
         access_key: str,
         secret_key: str,
         bucket_name: str,
-        cdn_domain: str
+        cdn_domain: str,
+        upload_host: str = ""
     ):
         """
         初始化七牛云存储
@@ -72,11 +113,13 @@ class QiniuFileStorage(BaseFileStorage):
             secret_key: 七牛云 Secret Key
             bucket_name: 存储空间名称
             cdn_domain: CDN 加速域名
+            upload_host: 浏览器直传域名覆盖（空则按 bucket 区域经 UC 查询自动解析）
         """
         self.access_key = access_key
         self.secret_key = secret_key
         self.bucket_name = bucket_name
         self.cdn_domain = cdn_domain
+        self.upload_host_override = (upload_host or "").strip()
 
         # 初始化七牛云认证
         self._auth = qiniu.Auth(access_key, secret_key)
@@ -286,6 +329,36 @@ class QiniuFileStorage(BaseFileStorage):
             base_url = f"{base_url}?attname={encoded_attname}"
         return self._auth.private_download_url(base_url, expires=expires)
 
+    def get_origin_download_request(self, key: str) -> dict:
+        """构造 Kodo 源站下载请求，不经过 cdn_domain。
+
+        confirm 回源用这个，避免每次确认都产生 CDN 下行。
+        用户播放仍走 get_download_url / get_public_url。
+        """
+        from qiniu.utils import urlsafe_base64_encode
+
+        host = self._resolve_io_host()
+        encoded = urlsafe_base64_encode(f"{self.bucket_name}:{str(key).lstrip('/')}")
+        url = f"{host}/getfile/{encoded}"
+        token = self._auth.token_of_request(url)
+        return {
+            "url": url,
+            "headers": {"Authorization": f"QBox {token}"},
+        }
+
+    def _resolve_io_host(self) -> str:
+        cache_key = (self.access_key, self.bucket_name)
+        cached = _io_host_cache.get(cache_key)
+        if cached:
+            return cached
+        host = str(qiniu.Region().get_io_host(self.access_key, self.bucket_name) or "").strip().rstrip("/")
+        if not host:
+            raise RuntimeError("七牛未返回源站 io 域名")
+        if not host.startswith("http"):
+            host = "https://" + host
+        _io_host_cache[cache_key] = host
+        return host
+
     def get_public_url(self, key: str) -> str:
         """
         获取文件公开URL（不带签名）
@@ -305,31 +378,44 @@ class QiniuFileStorage(BaseFileStorage):
         scheme = "https" if get_config_value("server", "https", "enabled", default=False) else "http"
         return f"{scheme}://{domain}/{key}"
 
-    def _sync_list_by_prefix(self, prefix: str, limit: int = 1000) -> list:
-        """同步列出指定前缀下的所有文件 key"""
+    def _sync_list_items(self, prefix: str, limit: int = 1000) -> list:
+        """同步列出对象。返回 {key, putTime}，putTime 为七牛 100 纳秒计数。"""
         try:
             bucket_manager = qiniu.BucketManager(self._auth)
-            keys = []
+            found = []
             marker = None
             while True:
                 ret, eof, info = bucket_manager.list(
-                    self.bucket_name, prefix=prefix, marker=marker, limit=min(limit - len(keys), 1000)
+                    self.bucket_name, prefix=prefix, marker=marker, limit=min(limit - len(found), 1000)
                 )
                 if ret is None:
                     logger.error(f"[七牛云] 列出文件失败: prefix={prefix}, info={info}")
                     break
                 items = ret.get('items', [])
                 for item in items:
-                    keys.append(item['key'])
-                if len(keys) >= limit or eof:
+                    if not isinstance(item, dict) or not item.get('key'):
+                        continue
+                    found.append({
+                        "key": item.get("key"),
+                        "putTime": item.get("putTime"),
+                    })
+                if len(found) >= limit or eof:
                     break
                 marker = ret.get('marker')
                 if not marker:
                     break
-            return keys
+            return found
         except Exception as e:
             logger.error(f"[七牛云] 列出文件异常: prefix={prefix}, error={e}")
             return []
+
+    def _sync_list_by_prefix(self, prefix: str, limit: int = 1000) -> list:
+        """同步列出指定前缀下的所有文件 key"""
+        return [item["key"] for item in self._sync_list_items(prefix, limit) if item.get("key")]
+
+    def list_object_stats(self, prefix: str, limit: int = 1000) -> list:
+        """同步列出对象元信息。供调度进程清理孤儿对象，不走事件循环。"""
+        return self._sync_list_items(prefix, limit)
 
     async def list_by_prefix(self, prefix: str, limit: int = 1000) -> list:
         """
@@ -349,6 +435,141 @@ class QiniuFileStorage(BaseFileStorage):
             prefix,
             limit
         )
+
+    def _sync_stat(self, key: str) -> Optional[dict]:
+        """同步查询文件元信息；文件不存在（612）或异常返回 None"""
+        try:
+            bucket_manager = qiniu.BucketManager(self._auth)
+            ret, info = bucket_manager.stat(self.bucket_name, key)
+            if ret is not None:
+                return ret
+            if info is not None and info.status_code == 612:
+                return None
+            logger.error(
+                f"[七牛云] 查询文件元信息失败: key={key}, "
+                f"status_code={getattr(info, 'status_code', None)}, error={getattr(info, 'error', None)}"
+            )
+            return None
+        except Exception as e:
+            logger.error(f"[七牛云] 查询文件元信息异常: key={key}, error={e}")
+            return None
+
+    async def stat(self, key: str) -> Optional[dict]:
+        """
+        异步查询文件元信息（含 fsize/hash/mimeType）
+
+        供前端直传 upload-confirm 校验文件真实存在与大小一致，防伪造登记。
+
+        Args:
+            key: 文件在存储中的唯一标识
+
+        Returns:
+            dict；文件不存在返回 None
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            self._executor,
+            self._sync_stat,
+            key
+        )
+
+    async def get_browser_upload_info(
+        self,
+        key: str,
+        max_bytes: int,
+        expires: int = 1800
+    ) -> Optional[dict]:
+        """
+        颁发浏览器直传七牛的信息（七牛 form 直传协议）
+
+        token 绑定单一 key + fsizeLimit + insertOnly + 短时效，浏览器只能新增
+        服务端指定的对象，不能覆盖。confirm 之后播放会 302 到该 key，不再重做
+        魔数校验，因此凭证必须拒绝覆盖。协议细节（UC 区域查询域名、returnBody
+        占位符）全部封装在本实现内，端点层经 BaseFileStorage.get_browser_upload_info 调用。
+
+        Args:
+            key: 目标对象 key（如 "upload/workflow/12/xxx.mp4"）
+            max_bytes: 文件大小上限（写入 fsizeLimit，七牛侧强校验）
+            expires: 上传凭证有效期（秒）
+
+        Returns:
+            dict: {direct_upload, upload_url, token, key, expires}
+        """
+        return {
+            "direct_upload": True,
+            "upload_url": await self._resolve_browser_upload_host(),
+            "token": self.get_upload_token(
+                key=key,
+                expires=expires,
+                policy={
+                    'fileType': 0,  # 标准存储
+                    'fsizeLimit': max_bytes,
+                    # confirm 成功后 CDN 302 不再校验内容，同一 key 不能被覆盖
+                    'insertOnly': 1,
+                    'returnBody': self._BROWSER_UPLOAD_RETURN_BODY,
+                },
+            ),
+            "key": key,
+            "expires": expires,
+        }
+
+    async def _resolve_browser_upload_host(self) -> str:
+        """解析浏览器直传域名：构造传入的配置覆盖 → UC 按 AK+bucket 查询（缓存）→ 默认华东域名"""
+        override = self.upload_host_override
+        if override:
+            return override if override.startswith("http") else f"https://{override}"
+
+        cache_key = (self.access_key, self.bucket_name)
+        cached = _browser_upload_host_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            async with httpx.AsyncClient(timeout=self.UC_QUERY_TIMEOUT) as client:
+                resp = await client.get(
+                    self.UC_QUERY_URL,
+                    params={"ak": self.access_key, "bucket": self.bucket_name},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            host = _upload_host_from_uc_v4(data)
+            if host:
+                _browser_upload_host_cache[cache_key] = host
+                return host
+            logger.warning("七牛 UC 区域查询未返回上传域名，回退默认上传域名")
+        except Exception as e:
+            logger.warning(f"七牛 UC 区域查询失败，回退默认上传域名: {e}")
+        return self.DEFAULT_BROWSER_UPLOAD_HOST
+
+    def move_sync(self, src_key: str, dst_key: str) -> bool:
+        """同桶移动。不覆盖已存在的目标。调度清理任务调用，不占用事件循环。"""
+        return self._sync_move(src_key, dst_key)
+
+    def _sync_move(self, src_key: str, dst_key: str) -> bool:
+        """同步移动。只有 HTTP 200 算成功，源文件不存在或目标已存在都保持原样。"""
+        src_key = str(src_key or "").strip()
+        dst_key = str(dst_key or "").strip()
+        if not src_key or not dst_key or src_key == dst_key:
+            return False
+        try:
+            bucket_manager = qiniu.BucketManager(self._auth)
+            _ret, info = bucket_manager.move(
+                self.bucket_name, src_key, self.bucket_name, dst_key, force="false",
+            )
+            status_code = getattr(info, "status_code", None)
+            if status_code == 200:
+                return True
+            logger.warning(
+                f"[七牛云] 移动文件失败: {src_key} -> {dst_key}, status_code={status_code}"
+            )
+            return False
+        except Exception as e:
+            logger.warning(f"[七牛云] 移动文件异常: {src_key} -> {dst_key}, error={e}")
+            return False
+
+    def delete_sync(self, key: str) -> bool:
+        """同步删除。调度清理任务调用，不占用事件循环。"""
+        return self._sync_delete(key)
 
     def _sync_delete(self, key: str) -> bool:
         """同步删除文件"""
