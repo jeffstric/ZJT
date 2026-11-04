@@ -633,26 +633,32 @@ async function handleDeleteSceneCandidate(target) {
     }
 }
 
-function videoToolCancelKey(aiToolId) {
+function sceneTaskCancelKey(aiToolId) {
     return aiToolId == null || aiToolId === '' ? '' : String(aiToolId);
 }
 
-function markSceneVideoCancelled(scene, aiToolId) {
-    const key = videoToolCancelKey(aiToolId);
+/** 本地把图片/视频候选与 taskStatus 标成已取消（-2）。同一 ai_tool 多候选（宫格拆分）一并命中。 */
+function markSceneTaskCancelled(scene, aiToolId) {
+    const key = sceneTaskCancelKey(aiToolId);
     if (!scene || !key) return;
-    const videos = state.sceneCandidates?.[scene.id]?.videos || [];
-    videos.forEach((item) => {
-        if (videoToolCancelKey(item.aiToolId) !== key) return;
-        item.status = -2;
-        if (!String(item.url || '').trim()) item.url = '';
+    const bucket = state.sceneCandidates?.[scene.id] || {};
+    ['videos', 'images'].forEach((listKey) => {
+        (bucket[listKey] || []).forEach((item) => {
+            if (sceneTaskCancelKey(item.aiToolId) !== key) return;
+            item.status = -2;
+            if (!String(item.url || '').trim()) item.url = '';
+        });
     });
     if (!scene.taskStatus) scene.taskStatus = {};
-    if (videoToolCancelKey(scene.taskStatus.video_ai_tool_id) === key) {
+    if (sceneTaskCancelKey(scene.taskStatus.video_ai_tool_id) === key) {
         scene.taskStatus.video = -2;
+    }
+    if (sceneTaskCancelKey(scene.taskStatus.first_frame_ai_tool_id) === key) {
+        scene.taskStatus.first_frame = -2;
     }
 }
 
-async function refreshPowerAfterVideoCancel() {
+async function refreshPowerAfterTaskCancel() {
     try {
         const power = await api.fetchComputingPower();
         state.computingPower = power.computing_power ?? power.balance ?? state.computingPower;
@@ -660,13 +666,13 @@ async function refreshPowerAfterVideoCancel() {
     } catch (_) { /* 余额刷新失败不阻断取消结果 */ }
 }
 
-async function handleCancelSceneVideo(target) {
+async function handleCancelSceneTask(target) {
     const scene = getCurrentScene();
     if (!scene) return;
-    const key = videoToolCancelKey(target.dataset.aiToolId);
+    const key = sceneTaskCancelKey(target.dataset.aiToolId);
     if (!key) return;
-    if (!state.sceneVideoCancelByToolId) state.sceneVideoCancelByToolId = {};
-    if (state.sceneVideoCancelByToolId[key]) return;
+    if (!state.sceneTaskCancelByToolId) state.sceneTaskCancelByToolId = {};
+    if (state.sceneTaskCancelByToolId[key]) return;
 
     const confirmed = window.confirm(t(
         'ai_task_cancel_confirm',
@@ -674,27 +680,27 @@ async function handleCancelSceneVideo(target) {
     ));
     if (!confirmed) return;
 
-    state.sceneVideoCancelByToolId[key] = 'busy';
+    state.sceneTaskCancelByToolId[key] = 'busy';
     rerender([Region.CANDIDATES]);
     try {
         const result = await api.cancelAiToolTask(key);
         if (!result || !result.success) {
-            delete state.sceneVideoCancelByToolId[key];
+            delete state.sceneTaskCancelByToolId[key];
             notify((result && result.message) || t('ai_task_cancel_failed', '取消任务失败'));
             return;
         }
         if (result.status === 'CANCELLING') {
-            state.sceneVideoCancelByToolId[key] = 'cancelling';
+            state.sceneTaskCancelByToolId[key] = 'cancelling';
             showToast(t('ai_task_cancel_pending', '取消中，当前步骤结束后退还算力'), 'success');
         } else {
-            state.sceneVideoCancelByToolId[key] = 'cancelled';
-            markSceneVideoCancelled(scene, key);
+            state.sceneTaskCancelByToolId[key] = 'cancelled';
+            markSceneTaskCancelled(scene, key);
             showToast(t('ai_task_cancel_done', '任务已取消，算力将自动退还'), 'success');
-            refreshPowerAfterVideoCancel();
+            refreshPowerAfterTaskCancel();
         }
         pollSceneTaskStatus(scene.id);
     } catch (error) {
-        delete state.sceneVideoCancelByToolId[key];
+        delete state.sceneTaskCancelByToolId[key];
         notify(error.message || t('ai_task_cancel_failed', '取消任务失败'));
     } finally {
         if (String(state.currentSceneId) === String(scene.id)) {
@@ -3374,12 +3380,12 @@ export function bindEvents() {
 
         // 必须早于候选卡选中：取消按钮在 data-candidate-id 卡片内部。
         // 不用 .ai-task-cancel-btn：时间轴脚本的捕获监听会把非画布节点的点击吞掉。
-        const candidateCancelTarget = event.target.closest('[data-action="cancel-scene-video"]');
+        const candidateCancelTarget = event.target.closest('[data-action="cancel-scene-task"]');
         if (candidateCancelTarget) {
             event.preventDefault();
             event.stopPropagation();
             if (candidateCancelTarget.disabled) return;
-            await handleCancelSceneVideo(candidateCancelTarget);
+            await handleCancelSceneTask(candidateCancelTarget);
             return;
         }
 

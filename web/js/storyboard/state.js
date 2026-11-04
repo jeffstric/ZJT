@@ -83,10 +83,10 @@ const state = {
     /** 按分镜和 asset id 隔离候选删除状态。 */
     candidateDeletesBySceneId: {},
     /**
-     * 视频候选取消过程：ai_tool_id → 'busy' | 'cancelling' | 'cancelled'。
+     * 候选取消过程（图片/视频通用）：ai_tool_id → 'busy' | 'cancelling' | 'cancelled'。
      * 本地标记用来挡住进行中的旧轮询把已取消卡片写回「生成中」。
      */
-    sceneVideoCancelByToolId: {},
+    sceneTaskCancelByToolId: {},
     activeTab: 'scene',          // 'scene' | 'dialogue'（音乐 Tab 已移除）
     viewMode: 'timeline',
     batchSelection: {
@@ -611,7 +611,7 @@ export function loadStoryboardData(data) {
     state.sceneCandidates = {};
     state.candidateUploadsBySceneId = {};
     state.candidateDeletesBySceneId = {};
-    state.sceneVideoCancelByToolId = {};
+    state.sceneTaskCancelByToolId = {};
     state.batchSelection = {
         active: false,
         selectedSceneIds: {},

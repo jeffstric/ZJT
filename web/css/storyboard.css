@@ -3298,7 +3298,9 @@ button {
     min-height: 86px;
 }
 
-.candidate-video-cancel {
+/* 生成中的图片/视频占位卡共用「取消」按钮。图片卡是正方形（84×84）放得下；
+   视频卡是 16:9 扁盒，下方单独加高。 */
+.candidate-task-cancel {
     position: relative;
     z-index: 6;
     margin-top: 2px;
@@ -3314,14 +3316,14 @@ button {
     pointer-events: auto;
 }
 
-.candidate-video-cancel:hover:not(:disabled),
-.candidate-video-cancel:focus-visible {
+.candidate-task-cancel:hover:not(:disabled),
+.candidate-task-cancel:focus-visible {
     background: #dc2626;
     color: #fff;
 }
 
-.candidate-video-cancel:disabled,
-.candidate-video-cancel.is-busy {
+.candidate-task-cancel:disabled,
+.candidate-task-cancel.is-busy {
     cursor: wait;
     opacity: 0.72;
 }
