@@ -1,6 +1,6 @@
-# 🎬 ZhiJuTong - AI Short Drama Production Platform
+# 🎬 ZhiJuTong - AI Marketing Content Production Platform
 
-> Collaborate with AI agents to generate professional short dramas in minutes
+> Collaborate with AI agents to generate professional marketing content in minutes — brand videos, marketing shorts, and short dramas
 > All-in-one solution: Script Creation → Storyboard Generation → Video Synthesis
 
 ![ZhiJuTong](files/广告图.png)
