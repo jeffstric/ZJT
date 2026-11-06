@@ -13,6 +13,7 @@
 - 首期价展示资格 fail-closed（2026-10-09，#7）：前端 `firstBonusEligible` 只认后端显式下发 `first_bonus_eligible: true`；后端 `/plans` 对「有 token 但校验失败」（老用户登录态失效）返回 `false`（实收按签约记录 29.9，展示 18.8 会客诉），未登录（无 token）按潜在新用户返回 `true`（下单必经登录，届时按真实资格刷新）。
 - 首订加赠引导（2026-09-29）：有首订加赠资格的用户，支付面板二维码**上方**渲染「微信支付页开关」引导动画（`recharge_center.js::renderRenewGuideTip`，首页 `index.html` 内嵌面板同款，纯 CSS 循环动画 `.sub-rg-*`）：模拟手指把「开通智剧通XX版每月自动续费」开关从灰拨到绿，提示首期多送 `first_period_bonus` 算力；下方固定合规小字「不开通自动续费，首期仅到账 {computing_power} 算力」。置于上方是避免小屏用户点支付后看不到下方内容。背景：加赠需签约成功（微信支付页开关打开）才发放，仅宣称合并数字不披露条件有误导消费者风险。`prefers-reduced-motion` 下静态显示开的终态；无加赠资格/升级流程维持原文案。
 - 本地环境（`server-config.is_local`）不打开弹窗。
+- 支付二维码本地生成（2026-11-06）：原先所有支付入口（首页 Vue 面板 `index_app.js`、`recharge_center.js` 四处页面、故事板 `events.js`、`script_writer.js`、`marketing_agent.js`、`video_workflow.html` 内嵌直付弹窗）把微信 `code_url` 拼给海外公共服务 `api.qrserver.com` 渲染二维码，部分用户网络无法访问导致裂图、无法付款。现统一改为浏览器本地生成：封装 `web/js/qr_code.js` 暴露 `window.buildPaymentQrUrl(codeUrl, size)`，底层为 vendored `web/js/vendor/qrcode-generator.js`（Kazuhiko Arase, MIT，纯 JS 生成 GIF data URL，零外部请求）；仅本地生成异常时降级回 qrserver 保证可用。使用页面（`index.html`/`marketing_agent.html`/`script_writer.html`/`storyboard.html`/`video_workflow.html`）须先于使用脚本引入 vendor 与封装。守护测试 `web/tests/payment_qrcode_local.test.js`。
 - 订阅接口 `/plans`、`/status`、`/order-status` 的认证统一走 `Authorization` 头（`api/subscription.py::_resolve_auth_token`：头优先，query `auth_token` 仅存量兼容）；前端 `apiUrl()` 只拼非敏感 query（`user_id`/`order_id`），token 不进 URL（红线 14，`order-status` 3 秒轮询曾持续把 token 打进服务端日志）。直充套餐列表同样只走请求头。
 
 入口：
@@ -29,3 +30,4 @@
 ## 测试
 
 `web/js/recharge_center.test.js`：首期差额 201、无首期资格时 62、升级列表，以及弹窗页签 / 生效中管理 / 本地环境拦截。
+`web/tests/payment_qrcode_local.test.js`：支付二维码本地生成功能（data URL 输出、尺寸缩放、UTF-8、降级不抛异常）、8 处支付入口不再直接引用 qrserver 的静态断言、5 个页面脚本引入顺序。

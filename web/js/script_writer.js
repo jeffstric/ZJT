@@ -9259,7 +9259,7 @@
                 const data = await response.json();
                 if (data.code_url) {
                     // 使用 QR Server API 将 weixin:// 协议转换为二维码图片
-                    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+                    const qrCodeUrl = window.buildPaymentQrUrl(data.code_url, 200);
                     body.innerHTML = `
                         <div style="text-align: center;">
                             <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px;">请使用微信扫码完成支付</div>

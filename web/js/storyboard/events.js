@@ -373,7 +373,7 @@ async function selectRechargePackage(pkg) {
             payment_ip: paymentIp,
         });
         if (data.code_url) {
-            state.rechargeQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+            state.rechargeQrCodeUrl = window.buildPaymentQrUrl(data.code_url, 200);
             state.rechargeState = 'qrcode';
         } else {
             throw new Error(data.error || t('msg_create_pay_order_failed', '创建支付订单失败'));
