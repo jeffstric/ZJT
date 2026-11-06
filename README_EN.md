@@ -25,6 +25,70 @@ English | [中文](README.md) | [Live Demo](http://ailive.perseids.cn) | [Full T
 
 ---
 
+## 📣 Marketing Capabilities: Why Marketing Teams Love It
+
+ZhiJuTong ships a dedicated **Marketing mode** alongside its short-drama mode — a one-stop workbench for marketing content: **from brief to finished video in a single conversation**, with asset reuse across campaigns.
+
+### 1. Marketing Agent: brief in, video out
+
+- Feed it product selling points, product photos, or a reference video/script — the agent orchestrates image/video generation tools to produce **sales scripts, ad creatives, product copy, and talking-head videos**
+- The agent asks you targeted questions (`ask_user`) to align on audience, tone, ratio, and duration — no endless back-and-forth
+- Three creation modes: **Agent chat** (LLM-driven, default), direct image generation, direct video generation
+
+### 2. Article-to-Video: turn existing content into video (Enterprise)
+
+- Paste a **WeChat Official Account / Xiaohongshu (RED)** article link and get a talking-head video: body text and images are fetched automatically, an LLM distills the key messages, and visual understanding picks reference shots
+- **Pre-render confirmation card**: a second-level voiceover timeline + key-message coverage tags — you approve before anything renders. Controllable, reviewable marketing assets
+
+### 3. Digital human voiceover: no studio, no cast, at scale
+
+- One portrait image + a script → digital human talking-head video; provide no audio and the system synthesizes a reference voice
+- **Long-form support**: long scripts are auto-split into segments and seamlessly stitched (up to 600 s total, 2000-character scripts)
+- **Voice cloning**: extract your brand/spokesperson's voice from a short reference audio and reuse it across content
+- Character images rendered directly, subtle hand motion — output is publish-ready
+
+### 4. Creative mass production & A/B testing
+
+- **×1 ~ ×4 batch generation**: one prompt, multiple variants, straight into A/B ad testing
+- **Video cloning**: give a reference video and replicate its structure and shot language with new content
+- 10+ LLMs and multiple image/video models — balance quality vs. cost per campaign
+
+### 5. Every platform's format & quality
+
+- 9:16 (Douyin / TikTok vertical), 3:4 (Xiaohongshu), 1:1, 4:3, 16:9 (Bilibili / YouTube), 21:9, and more
+- 1K / 2K / 4K image resolution; clips under 15 s can be upscaled to 1920P via the **video enhancement** module
+
+### 6. Brand asset consistency (no "character drift")
+
+- **World system**: brand characters/locations/props are maintained once and inherited across works — your brand IP stays consistent across a whole campaign
+- **Character locking + multi-panel grids**: the same character looks the same across every asset
+- **Shared asset library**: platform-wide brand library with permission groups and `@` references — reuse, don't recreate
+- **Global art-style settings**, synced across worlds
+
+### 7. Voice: 107 preset voices + emotional TTS
+
+- 107 preset TTS voices plus custom voices via an acoustic "voice fingerprint" description
+- **Emotional vector TTS** (joy/anger/sadness/fear/disgust/low/surprise/calm — 8 dimensions) so sales copy sounds like selling, not reading
+- **Multi-speaker voice binding**: each speaker keeps their own voice in multi-voice voiceovers — no swaps in interviews or dialogues
+
+### 8. Template community: start from "make this"
+
+- **Inspiration feed**: curated, reviewed work in a waterfall layout; one click on **"Make this / Use as reference"** carries the template into the generation page
+- Great creatives become templates — your team starts from proven structures, not a blank canvas
+
+### 9. Team collaboration & cost control
+
+- **User-level compute accounts + per-task compute caps**: every member's and every campaign's spend is bounded and auditable
+- Browser-based team collaboration with two permission levels; assets and sessions are shared
+- **Automatic content compliance review** (banned words / policy), reducing publishing and ad-rejection risk
+- Timeline + CapCut (JianYing) export: AI-rendered clips still allow human finishing before release
+
+### 10. Multilingual (i18n)
+
+- The UI ships in Chinese and English and is extensible — naturally fits cross-border and overseas marketing teams
+
+---
+
 ## 🚀 Quick Start
 
 ### Try Online (No Installation) ✨
