@@ -90,14 +90,33 @@ The short-drama mode is not only for short dramas — its full pipeline (script 
 - **Serialized episodes**: automatic episode splitting (Novel Splitter) supports serialized IP operations and episodic ad campaigns (publish per episode, follow per episode)
 - Digital humans, emotional TTS, timeline, and CapCut (JianYing) export all work in short-drama mode too — human finishing before release is still on the table
 
-### 11. Team collaboration & cost control
+### 11. End-to-end quality control & re-editing (controllable, auditable, revisable)
+
+Many tools automate generation, but marketing assets must be **controllable, reviewable, and revisable** before they go live:
+
+- **Pre-render confirmation card**: a second-level voiceover timeline + key-message coverage tags before anything renders — content is controllable and reviewable
+- **Automatic compliance review** (banned words / policy) — fewer ad rejections and publishing violations
+- **Timeline + CapCut (JianYing) export**: hand AI-rendered clips to a human for finishing (cuts, subtitles, music) before release — "AI drafts, the human decides"
+- Fully traceable: sessions, assets, and compute spend are all logged for team audit
+
+### 12. Enterprise-grade deployment & data security
+
+- **Local / private deployment**: one-click launch on Windows / macOS, plus Docker and Linux — creative assets, user data, and billing ledgers stay in your own domain; no asset leakage
+- **Open-source + commercial editions**: the open-source edition is free to deploy and use commercially (modified Apache 2.0); the commercial (enterprise) edition unlocks enterprise capabilities such as article-to-video and video cloning
+- A live demo environment + a 60+ page official documentation center — start from zero
+
+### 13. Extensible by design: MCP + SOP
+
+- **50+ built-in MCP tools** (data management / AI generation / user interaction); the agent is loosely coupled from its tools
+- Marketing workflows are driven by **SOPs (standard operating procedures)**: new capabilities like video cloning and article-to-video are plugged in as SOPs without touching the core
+- Connect it to your existing agent ecosystem and workflows — use ZhiJuTong as a "marketing content generation middle platform" inside your current stack
+
+### 14. Team collaboration & cost control
 
 - **User-level compute accounts + per-task compute caps**: every member's and every campaign's spend is bounded and auditable
 - Browser-based team collaboration with two permission levels; assets and sessions are shared
-- **Automatic content compliance review** (banned words / policy), reducing publishing and ad-rejection risk
-- Timeline + CapCut (JianYing) export: AI-rendered clips still allow human finishing before release
 
-### 12. Multilingual (i18n)
+### 15. Multilingual (i18n)
 
 - The UI ships in Chinese and English and is extensible — naturally fits cross-border and overseas marketing teams
 
