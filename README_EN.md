@@ -47,43 +47,57 @@ ZhiJuTong ships a dedicated **Marketing mode** alongside its short-drama mode �
 - **Voice cloning**: extract your brand/spokesperson's voice from a short reference audio and reuse it across content
 - Character images rendered directly, subtle hand motion — output is publish-ready
 
-### 4. Creative mass production & A/B testing
+### 4. Video cloning: replicate a viral, swap the product
+
+- Give it one viral reference video and the system replicates its content and pacing; optionally upload **your own product photo to replace the product in the video** — the same proven structure, reused across many SKUs
+- "Ride the wave" of creative that already works: no new shoot, no new script — wrap your product in a structure with a track record
+- Requires a reference-based video model (see video model settings)
+
+### 5. Creative mass production & A/B testing
 
 - **×1 ~ ×4 batch generation**: one prompt, multiple variants, straight into A/B ad testing
-- **Video cloning**: give a reference video and replicate its structure and shot language with new content
 - 10+ LLMs and multiple image/video models — balance quality vs. cost per campaign
 
-### 5. Every platform's format & quality
+### 6. Every platform's format & quality
 
 - 9:16 (Douyin / TikTok vertical), 3:4 (Xiaohongshu), 1:1, 4:3, 16:9 (Bilibili / YouTube), 21:9, and more
 - 1K / 2K / 4K image resolution; clips under 15 s can be upscaled to 1920P via the **video enhancement** module
 
-### 6. Brand asset consistency (no "character drift")
+### 7. Brand asset consistency (no "character drift")
 
 - **World system**: brand characters/locations/props are maintained once and inherited across works — your brand IP stays consistent across a whole campaign
 - **Character locking + multi-panel grids**: the same character looks the same across every asset
 - **Shared asset library**: platform-wide brand library with permission groups and `@` references — reuse, don't recreate
 - **Global art-style settings**, synced across worlds
 
-### 7. Voice: 107 preset voices + emotional TTS
+### 8. Voice: 107 preset voices + emotional TTS
 
 - 107 preset TTS voices plus custom voices via an acoustic "voice fingerprint" description
 - **Emotional vector TTS** (joy/anger/sadness/fear/disgust/low/surprise/calm — 8 dimensions) so sales copy sounds like selling, not reading
 - **Multi-speaker voice binding**: each speaker keeps their own voice in multi-voice voiceovers — no swaps in interviews or dialogues
 
-### 8. Template community: start from "make this"
+### 9. Template community: start from "make this"
 
 - **Inspiration feed**: curated, reviewed work in a waterfall layout; one click on **"Make this / Use as reference"** carries the template into the generation page
 - Great creatives become templates — your team starts from proven structures, not a blank canvas
 
-### 9. Team collaboration & cost control
+### 10. Short-drama mode = story-driven marketing (brand IP promotion)
+
+The short-drama mode is not only for short dramas — its full pipeline (script → storyboard → episodes → video) is itself a high-completion content format for marketing:
+
+- **Brand IP promotion**: build your brand IP (mascot / virtual spokesperson / series lead) in the World system; character locking keeps the same IP consistent across episodes and works; serialized short dramas keep building IP mindshare far longer than a single ad
+- **Brand short dramas / story-driven campaigns**: weave product selling points into the plot (brand placement, product appearances, story-driven "seeding") — "story-account" content that typically beats plain talking-head ads on completion and engagement
+- **Serialized episodes**: automatic episode splitting (Novel Splitter) supports serialized IP operations and episodic ad campaigns (publish per episode, follow per episode)
+- Digital humans, emotional TTS, timeline, and CapCut (JianYing) export all work in short-drama mode too — human finishing before release is still on the table
+
+### 11. Team collaboration & cost control
 
 - **User-level compute accounts + per-task compute caps**: every member's and every campaign's spend is bounded and auditable
 - Browser-based team collaboration with two permission levels; assets and sessions are shared
 - **Automatic content compliance review** (banned words / policy), reducing publishing and ad-rejection risk
 - Timeline + CapCut (JianYing) export: AI-rendered clips still allow human finishing before release
 
-### 10. Multilingual (i18n)
+### 12. Multilingual (i18n)
 
 - The UI ships in Chinese and English and is extensible — naturally fits cross-border and overseas marketing teams
 
