@@ -612,7 +612,7 @@
                 } else if (!data.code_url) {
                     state.subPaymentError = '未获取到支付二维码，请重试';
                 } else {
-                    state.subQr = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(data.code_url);
+                    state.subQr = window.buildPaymentQrUrl(data.code_url, 280);
                     startSubPayPolling();
                 }
             } else {
@@ -706,7 +706,7 @@
                     }
                 });
             } else if (data.code_url) {
-                state.paymentQr = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=' + encodeURIComponent(data.code_url);
+                state.paymentQr = window.buildPaymentQrUrl(data.code_url, 280);
             } else {
                 state.paymentError = data.message || data.error || '创建支付订单失败';
             }

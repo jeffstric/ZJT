@@ -1309,7 +1309,7 @@
                     if (!checkAuthResponse(response)) return;
                     const data = await response.json();
                     if (data.code_url) {
-                        qrCodeUrl.value = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+                        qrCodeUrl.value = window.buildPaymentQrUrl(data.code_url, 200);
                     } else {
                         throw new Error(data.error || window.t('create_order_failed'));
                     }
