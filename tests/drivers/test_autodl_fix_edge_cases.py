@@ -2,6 +2,7 @@
 from unittest.mock import MagicMock, patch
 from types import SimpleNamespace
 
+import pytest
 import requests
 
 from task.visual_drivers.minimax_h3_autodl_v1_driver import (
@@ -50,7 +51,7 @@ def make_first_last_tool(**overrides):
 # ==================== 钩子异常输入（不得抛异常，按兼容处理） ====================
 
 class TestHookRobustInput:
-    """兼容性钩子对垃圾输入必须返回结果而非抛异常（抛了会被候选选择当不兼容跳过）"""
+    """畸形 extra_config 由 parse_image_mode 回退，钩子仍按素材判断；其它异常继续抛出。"""
 
     def setup_method(self):
         self.ref_driver = make_driver()
@@ -75,7 +76,34 @@ class TestHookRobustInput:
     def test_extra_config_non_dict_json(self):
         tool = make_first_last_tool(extra_config='["array"]', image_path="f.png,l.png")
         ok, _ = self.fl_driver.validate_input_compatibility(tool)
-        assert ok is True
+        assert ok is True  # 回退首尾帧模式后仍能读到双图
+
+    def test_extra_config_non_dict_json_single_frame_incompatible(self):
+        """数组 JSON 不能在看首尾帧之前被当成兼容，否则单首帧会被切到 AutoDL。"""
+        tool = make_first_last_tool(extra_config='["array"]', image_path="only_first.png")
+        ok, reason = self.fl_driver.validate_input_compatibility(tool)
+        assert ok is False
+        assert "尾帧" in reason
+
+    def test_extra_config_json_null_single_frame_incompatible(self):
+        tool = make_first_last_tool(extra_config="null", image_path="only_first.png")
+        ok, reason = self.fl_driver.validate_input_compatibility(tool)
+        assert ok is False
+        assert "尾帧" in reason
+
+    def test_extra_config_list_object_single_frame_incompatible(self):
+        tool = make_first_last_tool(extra_config=["array"], image_path="only_first.png")
+        ok, reason = self.fl_driver.validate_input_compatibility(tool)
+        assert ok is False
+        assert "尾帧" in reason
+
+    def test_hook_does_not_treat_unexpected_error_as_compatible(self):
+        with patch.object(self.fl_driver, "get_all_images_by_mode", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                self.fl_driver.validate_input_compatibility(make_first_last_tool())
+        with patch.object(self.ref_driver, "get_video_path", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                self.ref_driver.validate_input_compatibility(make_tool(video_path="a.mp4"))
 
     def test_reference_images_invalid_json_not_break_hook(self):
         """非法 reference_images JSON：get_reference_images 返回 []，首尾帧判定不受影响"""
@@ -196,3 +224,20 @@ def test_normal_submit_path_untouched_by_hook():
     result = driver.build_create_request(make_first_last_tool(image_path="first.png"))
     assert result["success"] is False
     assert "尾帧" in result["error"]
+
+
+def test_non_dict_extra_config_both_frames_submit_does_not_raise():
+    """数组 extra_config 回退后，双帧提交能读到首尾帧，不再 AttributeError。"""
+    driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
+
+    def _fake(path, *args, **kwargs):
+        name = str(path).rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        return True, f"https://cdn.example/{name}", None
+
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=_fake):
+        request = driver.build_create_request(
+            make_first_last_tool(extra_config='["array"]', image_path="f.png,l.png")
+        )
+    assert "success" not in request
+    assert request["json"]["first_frame"] == "https://cdn.example/f.png"
+    assert request["json"]["last_frame"] == "https://cdn.example/l.png"

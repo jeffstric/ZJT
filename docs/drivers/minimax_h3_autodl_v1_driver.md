@@ -53,6 +53,8 @@
 | 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、AutoDL 必失败） |
 | 参考生 zm_u24 | 任务带参考视频（RunningHub 可传视频、AutoDL 无视频槽会静默丢） |
 
+`extra_config` 为非法 JSON、数组或 `null` 时，`parse_image_mode` 回退默认首尾帧模式，钩子仍按 `image_path` 判断尾帧，提交不再因 `list.get` 抛 `AttributeError`。钩子自身的其它异常不当成兼容：候选选择会跳过该实现。空白 `video_path` 视为无参考视频。
+
 ⚠️ 管理员手动把任务默认实现切到 AutoDL 不经过此校验：切流前须确认存量提交带齐尾帧/无参考视频依赖。
 
 ### 共用字段

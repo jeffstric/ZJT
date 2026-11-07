@@ -703,15 +703,15 @@ class MinimaxH3ReferenceAutodlV1Driver(MinimaxH3AutodlV1Driver):
         )
 
     def validate_input_compatibility(self, ai_tool) -> Tuple[bool, Optional[str]]:
-        """zm_u24 无参考视频槽：带视频任务切到本实现会静默丢视频参考，判不兼容"""
-        try:
-            raw_video = self.get_video_path(ai_tool)
-            if raw_video and str(raw_video).strip():
-                return False, "AutoDL 参考生工作流无参考视频槽，带参考视频的任务不适用"
-            return True, None
-        except Exception:
-            # 解析异常（extra_config 畸形等）按兼容处理，提交阶段参数校验兜底报错
-            return True, None
+        """zm_u24 无参考视频槽：带视频任务切到本实现会静默丢视频参考，判不兼容。
+
+        解析异常不在这里吞掉。候选选择见到钩子抛错会跳过本实现，
+        避免把带视频的任务误判成兼容后静默丢掉参考视频。
+        """
+        raw_video = self.get_video_path(ai_tool)
+        if raw_video and str(raw_video).strip():
+            return False, "AutoDL 参考生工作流无参考视频槽，带参考视频的任务不适用"
+        return True, None
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """构建 zm_u24 提交请求（参考图/音频逐槽转公网 URL）"""
@@ -776,7 +776,8 @@ class MinimaxH3ReferenceAutodlV1Driver(MinimaxH3AutodlV1Driver):
         # 4. 参考视频：zm_u24 无视频槽，丢弃（正常提交路径走不到这里——带视频任务在
         # validate_input_compatibility 已判不兼容，不会被切到本实现；仅默认实现被管理员
         # 手动切到 AutoDL 时可能发生，warning 留痕便于排查"成片怎么没用上参考视频"）
-        if self.get_video_path(ai_tool):
+        raw_video = self.get_video_path(ai_tool)
+        if raw_video and str(raw_video).strip():
             self.logger.warning("AutoDL 参考生视频工作流不支持参考视频，已忽略视频输入（成片将不含视频参考）")
 
         return {
@@ -809,15 +810,13 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
         lightx2v 首尾帧双必填（官方 API 约束），任务 34 尾帧可选（supports_last_frame=True）：
         单首帧任务切到本实现必然 USER 失败（"请补充尾帧"），提前判不兼容换下一个候选。
         （无首帧属参数错误，RunningHub 实现同样失败，不在此拦，留给驱动报准确错误。）
+        extra_config 不是对象时由 parse_image_mode 回退默认首尾帧模式，本方法仍能看到首尾帧。
+        其它异常不吞：候选选择见到钩子抛错会跳过本实现，避免误判兼容后提交崩溃。
         """
-        try:
-            image_info = self.get_all_images_by_mode(ai_tool)
-            if image_info.get('first_frame') and not image_info.get('last_frame'):
-                return False, "AutoDL 首尾帧工作流要求尾帧必填，当前任务仅有首帧"
-            return True, None
-        except Exception:
-            # 解析异常（extra_config/image_path 畸形等）按兼容处理，提交阶段参数校验兜底报错
-            return True, None
+        image_info = self.get_all_images_by_mode(ai_tool)
+        if image_info.get('first_frame') and not image_info.get('last_frame'):
+            return False, "AutoDL 首尾帧工作流要求尾帧必填，当前任务仅有首帧"
+        return True, None
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """构建 lightx2v 提交请求（首尾帧转公网 URL）"""

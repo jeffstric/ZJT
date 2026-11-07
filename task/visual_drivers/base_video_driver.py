@@ -615,7 +615,9 @@ class BaseVideoDriver(ABC):
         从 extra_config 解析图片模式字符串
 
         解析 ai_tool.extra_config JSON 中的 'image_mode' 字段，
-        返回对应的 ImageMode 枚举值。解析失败时返回默认值 'first_last_frame'。
+        返回对应的 ImageMode 枚举值。JSON 非法、值不是对象（数组、null 等）
+        时返回默认值 'first_last_frame'，避免 list.get 抛 AttributeError
+        中断提交和实现方兼容性判断。
 
         Args:
             ai_tool: AITool 对象，需要有 extra_config 属性
@@ -631,8 +633,13 @@ class BaseVideoDriver(ABC):
         
         try:
             config = json.loads(ai_tool.extra_config) if isinstance(ai_tool.extra_config, str) else ai_tool.extra_config
+            if not isinstance(config, dict):
+                self.logger.warning(
+                    f"extra_config 不是对象，按默认首尾帧模式处理: {ai_tool.extra_config}"
+                )
+                return ImageMode.FIRST_LAST_FRAME
             return config.get('image_mode', ImageMode.FIRST_LAST_FRAME)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, AttributeError):
             self.logger.warning(f"无法解析 extra_config: {ai_tool.extra_config}")
             return ImageMode.FIRST_LAST_FRAME
     
