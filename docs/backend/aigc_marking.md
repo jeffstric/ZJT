@@ -75,7 +75,7 @@ python -I temp/test_aigc_marking.py
 
 ### 关键机制
 
-- **关闭申请留痕**（第 9 条硬要求）：表 `aigc_explicit_opt_out_log`（迁移 no_163，`model/aigc_explicit_opt_out.py`，append-only 禁删）；任务级（数字人 compose_id）+ 用户级（TTS，一次申请对其后续合成生效，`has_opt_out_user`）。API `POST /api/aigc/explicit-optout`（前端确认弹窗文案即"通过协议明确义务责任"的落地）。
+- **关闭申请留痕**（第 9 条硬要求）：表 `aigc_explicit_opt_out_log`（迁移 no_163，`model/aigc_explicit_opt_out.py`，append-only 禁删）；任务级（`ai_tool_id`）与用户级（`scope: "user"`，**全局生效**——一次申请对其后续所有 TTS 与数字人合成均跳过明水印烧录）。API `POST /api/aigc/explicit-optout`（前端确认弹窗文案即"通过协议明确义务责任"的落地）。
 - **幂等判定**：显式烧录后统一 `mark_file(extra_fields={'ExplicitLabel':'1'})` 重写隐式标识（烧录重编码丢原元数据，隐式是强制义务必须补回）；`has_explicit_label` 读该字段防角标叠加。
 - **L1 挂点**：`compose_task.py`（拼接后、CDN 前，查 `has_opt_out(compose_id)` 跳过）+ `volcengine_tts_service.py _write_file`（查 `has_opt_out_user` 跳过）；烧录失败降级交付无显式版本并告警（隐式已先行写入）。
 - **CDN 重传**：explicit-label API 烧录后触发 `trigger_cdn_upload` 覆盖旧对象。

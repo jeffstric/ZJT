@@ -946,11 +946,15 @@ def _process_one_compose(task) -> None:
         _marked_path = None
 
     # L1 显式标识（明水印）：数字人属"人脸生成"（深度合成规定第17条第1款），
-    # 默认烧录起始画面提示；用户已申请关闭（标识办法第9条留痕）则跳过。
+    # 默认烧录起始画面提示；用户已申请关闭（标识办法第9条留痕）则跳过——
+    # 任务级（本条任务）与用户级（scope=user，全局对其后续数字人合成生效）均视为已申请。
     # 烧录失败降级交付无显式标识版本并告警（隐式标识已先行写入，不重复）。
     try:
-        if _marked_path and not AigcExplicitOptOutModel.has_opt_out(compose_id):
-            burn_explicit_label(_marked_path, f"compose_{compose_id}", user_id=getattr(job, 'user_id', None))
+        _opt_out_user = getattr(job, 'user_id', None)
+        if _marked_path and not (
+                AigcExplicitOptOutModel.has_opt_out(compose_id)
+                or AigcExplicitOptOutModel.has_opt_out_user(_opt_out_user)):
+            burn_explicit_label(_marked_path, f"compose_{compose_id}", user_id=_opt_out_user)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[compose_job] compose={compose_id} AIGC 显式标识烧录异常(不阻断): {e}")
 
