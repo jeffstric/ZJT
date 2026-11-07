@@ -757,7 +757,7 @@ class UnifiedTaskConfig:
         # 实现方级代码默认（ImplementationConfig.power_modifiers）：
         # 同 attribute 的 key 覆盖任务级取值（如 autodl 480P=0.8 覆盖任务级 RunningHub 0.42）
         impl_config = UnifiedConfigRegistry.get_implementation(implementation)
-        for modifier in (impl_config.power_modifiers if impl_config else None) or []:
+        for modifier in getattr(impl_config, "power_modifiers", None) or []:
             existing = merged.get(modifier.attribute)
             if existing is None:
                 merged[modifier.attribute] = PowerModifier(

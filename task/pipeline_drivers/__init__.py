@@ -455,8 +455,12 @@ class PipelineDriverFactory:
                     skip_reason = create_error.get('message', '未知原因') if create_error else '未知原因'
                     logger.info(f"Skipping implementation {impl_name} for retry: cannot initialize ({skip_reason})")
                     continue
-                # 检查任务输入与实现方输入契约是否兼容（素材槽位能力，如首尾帧双必填/无视频槽）
-                if ai_tool_for_compat is not None and test_driver is not None:
+                # 检查任务输入与实现方输入契约是否兼容（素材槽位能力，如首尾帧双必填/无视频槽）。
+                # hasattr 防御：未继承 BaseVideoDriver 的鸭子驱动无此方法时按兼容处理，
+                # 不因能力校验缺失而误跳候选；钩子存在但抛异常时保守跳过该候选
+                # （结果不可信，宁可选下一个候选也不切到可能必败的实现）。
+                if ai_tool_for_compat is not None and test_driver is not None \
+                        and hasattr(test_driver, 'validate_input_compatibility'):
                     try:
                         compatible, incompat_reason = test_driver.validate_input_compatibility(ai_tool_for_compat)
                     except Exception as compat_error:
