@@ -71,19 +71,21 @@ def _get_ffprobe_path() -> str:
 
 # ==================== 标识内容构造 ====================
 
-def build_aigc_json(produce_id, media_kind: str) -> str:
-    """构造 AIGC 标识 JSON（GB 45438-2025 附录E 字段：Label/ContentProducer/ProduceID/ReservedCode1）。"""
-    return json.dumps(
-        {
-            'Label': AIGC_LABEL_VALUE,
-            'ContentProducer': AIGC_CONTENT_PRODUCER,
-            'ProduceID': str(produce_id),
-            'ReservedCode1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'ContentProp': _MEDIA_PROP.get(media_kind, media_kind or 'unknown'),
-        },
-        ensure_ascii=False,
-        separators=(',', ':'),
-    )
+def build_aigc_json(produce_id, media_kind: str, extra_fields: dict = None) -> str:
+    """构造 AIGC 标识 JSON（GB 45438-2025 附录E 字段：Label/ContentProducer/ProduceID/ReservedCode1）。
+
+    extra_fields：扩展字段（如显式烧录标记 ExplicitLabel），并入顶层 JSON。
+    """
+    payload = {
+        'Label': AIGC_LABEL_VALUE,
+        'ContentProducer': AIGC_CONTENT_PRODUCER,
+        'ProduceID': str(produce_id),
+        'ReservedCode1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'ContentProp': _MEDIA_PROP.get(media_kind, media_kind or 'unknown'),
+    }
+    if extra_fields:
+        payload.update(extra_fields)
+    return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
 
 
 def build_xmp_packet(aigc_json: str) -> str:
@@ -232,6 +234,59 @@ def has_aigc_label(file_path) -> Optional[bool]:
     return None
 
 
+def read_aigc_json(file_path) -> Optional[dict]:
+    """读取文件中的 AIGC 标识 JSON 并解析（无标识/解析失败返回 None）。
+
+    mp4/mp3/wav 分支从 ffprobe xml 文本中截取 JSON（标识 JSON 为扁平结构，
+    首个 '{"' 到首个 '}' 即完整对象）；png/jpeg 直接读 XMP 文本。
+    """
+    kind = _sniff_format(file_path)
+    raw = ''
+    try:
+        if kind == 'png':
+            from PIL import Image
+            with Image.open(file_path) as img:
+                raw = (img.info or {}).get(AIGC_PNG_XMP_KEYWORD) or ''
+        elif kind == 'jpeg':
+            payload = _jpeg_find_xmp_payload(Path(file_path).read_bytes())
+            raw = payload.decode('utf-8', 'replace') if payload else ''
+        elif kind in ('mp4', 'mov', 'mp3', 'wav'):
+            xml_text = _ffprobe_tags_text(file_path)
+            # ffprobe xml 输出对引号等做 XML 转义（"→&quot;），先还原再提取 JSON
+            # （标识 JSON 值为 ASCII 无 &，替换顺序安全）
+            xml_text = (xml_text.replace('&quot;', '"')
+                                 .replace('&lt;', '<')
+                                 .replace('&gt;', '>')
+                                 .replace('&amp;', '&'))
+            raw = xml_text
+        else:
+            return None
+        if not raw:
+            return None
+        # 从 XMP packet / tag 文本中提取 JSON 子串（标识 JSON 为扁平结构：
+        # 首个 '{"' 到首个 '}' 即完整对象）
+        start = raw.find('{"')
+        if start < 0:
+            return None
+        end = raw.find('}', start)
+        if end <= start:
+            return None
+        return json.loads(raw[start:end + 1])
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"AIGC JSON 读取失败: {file_path}: {e}")
+        return None
+
+
+def has_explicit_label(file_path) -> bool:
+    """文件是否已烧录显式标识（隐式 JSON 中含 ExplicitLabel 扩展字段）。
+
+    显式烧录会转码/重编码丢掉原元数据，烧录流程统一以 extra_fields={'ExplicitLabel':'1'}
+    重写隐式标识，本函数据此判定幂等，避免重复烧录叠加角标。
+    """
+    data = read_aigc_json(file_path)
+    return bool(data and data.get('ExplicitLabel'))
+
+
 # ==================== 写入实现 ====================
 
 def _atomic_replace(tmp_path, target_path):
@@ -347,13 +402,14 @@ def _write_wav(file_path: Path, aigc_json: str) -> bool:
 
 # ==================== 对外入口 ====================
 
-def mark_file(file_path, produce_id, media_kind: str = 'auto') -> bool:
+def mark_file(file_path, produce_id, media_kind: str = 'auto', extra_fields: dict = None) -> bool:
     """为单个媒体文件写入 AIGC 隐式标识（幂等：已带标识直接返回 True）。
 
     Args:
         file_path: 媒体文件路径（本地绝对/相对均可）
         produce_id: 内容编号（标识办法第5条；主链路传 ai_tools.id，拼接链传 compose_id）
         media_kind: 'auto' 按魔数识别，或显式指定 png/jpeg/mp4/mp3/wav
+        extra_fields: 扩展字段并入标识 JSON（如显式烧录标记 {'ExplicitLabel':'1'}）
 
     Returns:
         True=已标识（含幂等命中）；False=未标识（不支持格式/写入失败/功能关闭）
@@ -372,15 +428,21 @@ def mark_file(file_path, produce_id, media_kind: str = 'auto') -> bool:
         logger.warning(f"AIGC 标识写入跳过：无法识别媒体格式 {path}")
         return False
 
-    # 幂等：已带标识不重写（下载重试/重复落盘/出口兜底场景）
+    # 幂等：已带标识不重写（下载重试/重复落盘/出口兜底场景）。
+    # 若请求标记显式烧录而文件尚未标记显式（隐式存在但缺 ExplicitLabel）则不命中幂等，
+    # 继续重写以补上扩展字段。
     if has_aigc_label(path):
-        return True
+        if not extra_fields:
+            return True
+        existing = read_aigc_json(path)
+        if existing and all(k in existing for k in extra_fields):
+            return True
 
     if kind not in _MEDIA_PROP:
         logger.warning(f"AIGC 标识写入暂不支持该格式({kind})，跳过: {path}")
         return False
 
-    aigc_json = build_aigc_json(produce_id, kind)
+    aigc_json = build_aigc_json(produce_id, kind, extra_fields)
     if kind == 'png':
         ok = _write_png(path, build_xmp_packet(aigc_json))
     elif kind == 'jpeg':

@@ -57,6 +57,8 @@ from model.ai_tools_log import AIToolsLogEvent, AIToolsLogModel
 from perseids_server.client import make_perseids_request
 from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
 from utils.aigc_marking import mark_file_for_task
+from utils.aigc_explicit_marker import burn_explicit_label
+from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 from utils.computing_power import (
     build_refund_transaction_id,
     is_already_refunded,
@@ -937,10 +939,20 @@ def _process_one_compose(task) -> None:
     # docs/compliance/aigc_labeling_plan.md）。本函数为同步主循环上下文，
     # 直接同步调用安全；mark_file_for_task 内部全容错，失败不阻断交付。
     try:
-        mark_file_for_task(resolve_upload_url_to_local_path(result_url),
-                           f"compose_{compose_id}", 'video')
+        _marked_path = resolve_upload_url_to_local_path(result_url)
+        mark_file_for_task(_marked_path, f"compose_{compose_id}", 'video')
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[compose_job] compose={compose_id} AIGC 标识写入异常(不阻断): {e}")
+        _marked_path = None
+
+    # L1 显式标识（明水印）：数字人属"人脸生成"（深度合成规定第17条第1款），
+    # 默认烧录起始画面提示；用户已申请关闭（标识办法第9条留痕）则跳过。
+    # 烧录失败降级交付无显式标识版本并告警（隐式标识已先行写入，不重复）。
+    try:
+        if _marked_path and not AigcExplicitOptOutModel.has_opt_out(compose_id):
+            burn_explicit_label(_marked_path, f"compose_{compose_id}", user_id=getattr(job, 'user_id', None))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[compose_job] compose={compose_id} AIGC 显式标识烧录异常(不阻断): {e}")
 
     mapping_id = _attach_cdn_mapping(job, result_url)
     _finish_compose(

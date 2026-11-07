@@ -1594,6 +1594,20 @@ AIGC_PNG_XMP_KEYWORD = "XML:com.adobe.xmp"
 # JPEG XMP 承载：APP1 段 namespace（含结尾 \x00，Adobe 规范固定值）
 AIGC_JPEG_APP1_XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
 
+# ===== AIGC 显式标识（明水印）烧录 =====
+# 依据：《深度合成规定》第17条 +《标识办法》第4条（视频起始画面/图片适当位置/音频语音或节奏提示）。
+# 分级（docs/compliance/aigc_labeling_plan.md 3.3）：
+# - L1 强制默认烧录：数字人视频（人脸生成）、TTS 合成人声；用户可申请关闭（第9条留痕表 aigc_explicit_opt_out_log）
+# - L2 提供功能：普通图片/视频——结果卡按钮按需烧录（第17条第2款"提供显著标识功能"）
+# 实现 utils/aigc_explicit_marker.py；烧录会重编码丢原元数据，统一以 extra_fields={'ExplicitLabel':'1'}
+# 重写隐式标识（幂等判定依据）。⚠️显式关闭功能的前置条件是用户协议含 AIGC 标识条款（第8条）。
+AIGC_EXPLICIT_LABEL_TEXT = "AI生成"
+AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS = 3      # 视频起始画面提示展示时长（秒）
+AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS = 600     # 视频重编码超时（秒）：全片 libx264 转码
+AIGC_EXPLICIT_FONT_REL = "files/fonts/NotoSansSC-Regular.otf"   # 中文角标字体（相对项目根）
+AIGC_EXPLICIT_NOTICE_AUDIO_REL = "files/audio/aigc_notice.mp3"  # 音频节奏提示资产（相对项目根）
+AIGC_EXPLICIT_FONT_SIZE_RATIO = 0.045        # 角标字号占画面高度比例（实践指南：不超画面高度 1/10）
+
 # ===== 商业许可证周期续租（scheduler job 触发间隔） =====
 # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
 # 进程启动时获取的短期许可证租约（约 24h）到期后，进程内商业能力校验会全部

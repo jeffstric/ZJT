@@ -1,6 +1,6 @@
-# AIGC 隐式标识（深度合成合规）
+# AIGC 内容标识（深度合成合规）：隐式 + 显式
 
-> 状态：已实施（增量覆盖，2026-11-08，develop_f1163）
+> 状态：隐式标识已实施（2026-11-08，develop_f1163）；**显式标识（明水印）已实施**（同分支第二批）
 > 合规依据与整体方案：[docs/compliance/aigc_labeling_plan.md](../compliance/aigc_labeling_plan.md)
 
 ## 一、法规义务摘要
@@ -64,7 +64,36 @@ python -I temp/test_aigc_marking.py
 
 端到端冒烟（本地 HTTP 服务 + `download_and_cache` 全链路）已于实施时验证通过。
 
-## 七、已知边界与后续阶段
+## 八、显式标识（明水印）——已实施
+
+实现 `utils/aigc_explicit_marker.py`，分级策略（法规依据：《深度合成规定》第 17 条、《标识办法》第 4/9 条）：
+
+| 级别 | 内容类型 | 策略 | 实现 |
+|------|---------|------|------|
+| **L1 强制默认烧录** | 数字人视频（人脸生成）、TTS 合成人声 | 默认烧录；用户可申请关闭（第 9 条留痕） | 视频起始画面 ffmpeg drawtext"AI生成"（全片重编码 libx264 fast crf20，音频 copy）；音频开头拼接节奏提示资产 `files/audio/aigc_notice.mp3`（第 4 条允许"语音或节奏提示"，资产由 ffmpeg 合成生成一次复用） |
+| **L2 提供显著标识功能** | 普通图片/视频 | 结果卡按钮按需烧录 | 聊天流弹窗"添加AI标识"按钮 → POST /api/aigc/explicit-label；图片右下角 Pillow 角标（NotoSansSC，黑底半透明条），视频同 drawtext |
+
+### 关键机制
+
+- **关闭申请留痕**（第 9 条硬要求）：表 `aigc_explicit_opt_out_log`（迁移 no_163，`model/aigc_explicit_opt_out.py`，append-only 禁删）；任务级（数字人 compose_id）+ 用户级（TTS，一次申请对其后续合成生效，`has_opt_out_user`）。API `POST /api/aigc/explicit-optout`（前端确认弹窗文案即"通过协议明确义务责任"的落地）。
+- **幂等判定**：显式烧录后统一 `mark_file(extra_fields={'ExplicitLabel':'1'})` 重写隐式标识（烧录重编码丢原元数据，隐式是强制义务必须补回）；`has_explicit_label` 读该字段防角标叠加。
+- **L1 挂点**：`compose_task.py`（拼接后、CDN 前，查 `has_opt_out(compose_id)` 跳过）+ `volcengine_tts_service.py _write_file`（查 `has_opt_out_user` 跳过）；烧录失败降级交付无显式版本并告警（隐式已先行写入）。
+- **CDN 重传**：explicit-label API 烧录后触发 `trigger_cdn_upload` 覆盖旧对象。
+- **协议前置**（第 8 条）：正式上线前用户协议须补 AIGC 标识条款章节；前端确认弹窗文案已含义务声明作为过渡。
+
+### 已知边界
+
+1. L2 入口目前仅聊天流弹窗（marketing_agent）；视频工作流/画布节点菜单下轮接入（API 已就绪，传 ai_tool_id 即可）
+2. 数字人/TTS 关闭申请的前端独立入口下轮接入（API+留痕表已就绪，暂可经客服/后台渠道申请）
+3. GIF/WebP 不支持显式烧录；音频提示音为节奏提示（合成语音提示需 TTS 资产，后续可换语音版）
+4. `/api/download` 外链代理与 max_try 兜底 remote_url 不落盘场景同隐式标识边界
+
+## 九、自测脚本
+
+- `temp/test_aigc_marking.py`：隐式标识 30 项（不入库）
+- `temp/test_aigc_explicit.py`：显式烧录 20 项（图片角标/视频 drawtext/音频提示/幂等/隐式重写回补/时长校验）
+
+## 十、已知边界与后续阶段（隐式部分原述）
 
 1. **下载 max_try 兜底 remote_url**（`download_queue_task.py` 达上限用上游 URL 兜底 COMPLETED）与 `/api/download` 外链代理模式：文件不落盘，无法写标识——属已知边界，需后续评估改为"先落盘再交付"
 2. **存量补标**：本轮不做（用户决策）；方案见 labeling_plan 3.6 节

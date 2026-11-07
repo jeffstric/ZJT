@@ -625,6 +625,10 @@ from api.script_split import (
 )
 app.include_router(script_split_router)
 
+# AIGC 显式标识管理（深度合成合规，见 docs/backend/aigc_marking.md）
+from api.aigc import router as aigc_router
+app.include_router(aigc_router)
+
 # 导入并注册测试路由（临时测试，完成后移除）
 from api.agent_auth import router as agent_auth_router
 app.include_router(agent_auth_router)
