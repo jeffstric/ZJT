@@ -1572,6 +1572,28 @@ DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 # 错误是否为许可证类由续租门面（task/license_rebootstrap_task）判定。
 LICENSE_DENIED_RESCHEDULE_SECONDS = 600
 
+# ===== AIGC 生成合成内容隐式标识（深度合成合规） =====
+# 依据：《互联网信息服务深度合成管理规定》第16条（隐式标识）+《人工智能生成合成内容标识办法》
+# 第5条（文件元数据：内容属性/服务提供者名称或编码/内容编号）+ GB 45438-2025 附录E（XMP 包格式）。
+# 写入实现见 utils/aigc_marking.py；挂点：media_cache.download_and_cache（落盘）、
+# download_queue worker（宫格裁剪后兜底）、/api/download（下载出口兜底）、compose/TTS 直接落盘点。
+# 显式标识（视频起始画面/音频提示/图片角标）为后续阶段，见 docs/compliance/aigc_labeling_plan.md
+AIGC_MARK_ENABLED = True
+# 服务提供者名称或编码（标识办法第5条允许二选一）。⚠️占位值：标识服务平台（aigc.cac.gov.cn）
+# 申请到正式编码后必须替换。
+AIGC_CONTENT_PRODUCER = "zjt"
+# Label 枚举：1 = AI 生成合成内容（GB 45438-2025 附录E）
+AIGC_LABEL_VALUE = "1"
+# 单文件标识写入超时（秒）：ffmpeg remux（-c copy，秒级）+ Pillow 写入的兜底上限
+AIGC_MARK_TIMEOUT_SECONDS = 90
+# XMP AIGC 命名空间（TC260 实践指南），XMP 属性键 Xmp.TC260.AIGC，值为 JSON 字符串
+AIGC_XMP_NS_URI = "http://www.tc260.org.cn/ns/AIGC/1.0/"
+AIGC_XMP_NS_PREFIX = "TC260"
+# PNG XMP 承载：iTXt 块 keyword（Adobe 规范固定值）
+AIGC_PNG_XMP_KEYWORD = "XML:com.adobe.xmp"
+# JPEG XMP 承载：APP1 段 namespace（含结尾 \x00，Adobe 规范固定值）
+AIGC_JPEG_APP1_XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
+
 # ===== 商业许可证周期续租（scheduler job 触发间隔） =====
 # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
 # 进程启动时获取的短期许可证租约（约 24h）到期后，进程内商业能力校验会全部

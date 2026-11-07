@@ -56,6 +56,7 @@ from model.compose_jobs import ComposeJobModel
 from model.ai_tools_log import AIToolsLogEvent, AIToolsLogModel
 from perseids_server.client import make_perseids_request
 from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
+from utils.aigc_marking import mark_file_for_task
 from utils.computing_power import (
     build_refund_transaction_id,
     is_already_refunded,
@@ -931,6 +932,15 @@ def _process_one_compose(task) -> None:
         # 不写 try_count：该计数属补段预算，拼接失败有自己的 concat_attempts
         _schedule_next(task, _retry_delay_seconds(concat_attempts))
         return
+
+    # AIGC 隐式标识：拼接成片在 CDN 上传/终态回写前打标（深度合成合规，
+    # docs/compliance/aigc_labeling_plan.md）。本函数为同步主循环上下文，
+    # 直接同步调用安全；mark_file_for_task 内部全容错，失败不阻断交付。
+    try:
+        mark_file_for_task(resolve_upload_url_to_local_path(result_url),
+                           f"compose_{compose_id}", 'video')
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[compose_job] compose={compose_id} AIGC 标识写入异常(不阻断): {e}")
 
     mapping_id = _attach_cdn_mapping(job, result_url)
     _finish_compose(

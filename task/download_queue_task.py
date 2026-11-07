@@ -31,6 +31,7 @@ from config.constant import (
     DOWNLOAD_BACKOFF_SECONDS,
     DOWNLOAD_COMPLETION_MARGIN_SECONDS,
     LICENSE_DENIED_RESCHEDULE_SECONDS,
+    AIGC_MARK_TIMEOUT_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_DOWNLOADING,
     GeneratedVideoFaceGridTrimConstants,
@@ -40,7 +41,9 @@ from model.download_queue import DownloadQueueModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.aigc_marking import ensure_marked
 from utils.media_cache import get_cache_manager
+from utils.project_path import get_project_root
 from utils.sentry_util import SentryUtil
 
 logger = logging.getLogger(__name__)
@@ -131,6 +134,25 @@ async def _process_one(row: dict) -> None:
                 media_type=media_type,
             )
             final_url = postprocess.result_url
+            # 宫格裁剪若触发会重写文件（ffmpeg 转码丢失原有 XMP），重新兜底 AIGC 隐式标识；
+            # 幂等（未裁剪的文件已带标识毫秒级返回）。失败不阻断交付。
+            if final_url and final_url.startswith('/upload/'):
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            ensure_marked,
+                            str(get_project_root() / final_url.lstrip('/')),
+                            ai_tool_id,
+                        ),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"AIGC 标识兜底超时(>{AIGC_MARK_TIMEOUT_SECONDS}s，不阻断交付): "
+                        f"ai_tool={ai_tool_id} {final_url}")
+                except Exception as me:  # noqa: BLE001
+                    logger.warning(
+                        f"AIGC 标识兜底异常(不阻断交付): ai_tool={ai_tool_id} {final_url}: {me}")
             completed = AIToolsModel.transition_with_cdn_sync(
                 ai_tool_id,
                 [AI_TOOL_STATUS_DOWNLOADING],
