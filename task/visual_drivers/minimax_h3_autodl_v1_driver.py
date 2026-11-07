@@ -65,9 +65,12 @@ DEFAULT_DURATION_SECONDS = 5
 
 # 竖/横/(1:1) 判定：ratio → resolution 后缀。任务层支持的 4:3、3:4、2:3、3:2、21:9
 # autodl 无对应档位，按方向就近归并（4:3/3:2/21:9 → 横，3:4/2:3 → 竖）。
+# 仅 9:16/16:9/1:1 为原生匹配；其余比例成片实际比例与用户所选不一致（归并日志可溯源）。
 PORTRAIT_RATIOS = {'9:16', '3:4', '2:3'}
 LANDSCAPE_RATIOS = {'16:9', '4:3', '3:2', '21:9'}
 SQUARE_RATIOS = {'1:1'}
+# 原生匹配比例（不发生归并）
+NATIVE_RATIOS = {'9:16', '16:9', '1:1'}
 
 # 平台分辨率标准值 → autodl 画质段（720P 档对应 autodl 768p）
 RESOLUTION_TIER_MAP = {
@@ -334,12 +337,19 @@ class MinimaxH3AutodlV1Driver(BaseVideoDriver):
 
     def _build_base_payload(self, ai_tool, extra_config: Dict[str, Any], prompt: str) -> Dict[str, Any]:
         """构建两工作流共用的基础字段：prompt / duration / resolution"""
+        ratio = getattr(ai_tool, "ratio", None) or '9:16'
+        if ratio not in NATIVE_RATIOS:
+            # 工作流只有 竖/横/(1:1) 六档：4:3/3:2/21:9 归并为横、3:4/2:3 归并为竖，
+            # 成片实际比例与用户所选不一致（如 16:9 档实测 1344×768），留 warning 便于客诉溯源。
+            self.logger.warning(
+                f"AutoDL 工作流无 {ratio} 档位，已按方向归并（成片比例将与所选不一致）"
+            )
         return {
             "prompt": prompt,
             "duration": self._clamp_duration(ai_tool),
             "resolution": self._build_resolution_value(
                 self._get_resolution_tier(extra_config),
-                getattr(ai_tool, "ratio", None) or '9:16',
+                ratio,
             ),
         }
 
@@ -547,6 +557,16 @@ class MinimaxH3AutodlV1Driver(BaseVideoDriver):
                         "status": "RUNNING",
                         "message": "任务查询暂不可用，稍后将重试"
                     }
+                if isinstance(status_code, int) and 500 <= status_code < 600:
+                    # 上游 5xx 为临时故障（网关抖动/服务重启）：判死会误退款且上游任务可能
+                    # 仍在跑（AutoDL 持续计费），保持 RUNNING 继续轮询，任务过期检查兜底终态。
+                    self.logger.warning(
+                        f"AutoDL 状态查询上游 {status_code}（临时故障），保持轮询: project_id={project_id}"
+                    )
+                    return {
+                        "status": "RUNNING",
+                        "message": "上游服务暂时不可用，稍后将重试"
+                    }
                 self._send_alert(
                     alert_type="API_HTTP_ERROR",
                     message=f"AutoDL check_status HTTP 错误: {str(http_error)}",
@@ -682,6 +702,12 @@ class MinimaxH3ReferenceAutodlV1Driver(MinimaxH3AutodlV1Driver):
             impl_name=DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,
         )
 
+    def validate_input_compatibility(self, ai_tool) -> Tuple[bool, Optional[str]]:
+        """zm_u24 无参考视频槽：带视频任务切到本实现会静默丢视频参考，判不兼容"""
+        if self.get_video_path(ai_tool):
+            return False, "AutoDL 参考生工作流无参考视频槽，带参考视频的任务不适用"
+        return True, None
+
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """构建 zm_u24 提交请求（参考图/音频逐槽转公网 URL）"""
         extra_config = self._parse_extra_config(ai_tool)
@@ -742,9 +768,11 @@ class MinimaxH3ReferenceAutodlV1Driver(MinimaxH3AutodlV1Driver):
                 }
             payload[f"ref_audio_{idx}"] = url
 
-        # 4. 参考视频：zm_u24 无视频槽，丢弃（口径同 KFRef 驱动对参考视频的处理）
+        # 4. 参考视频：zm_u24 无视频槽，丢弃（正常提交路径走不到这里——带视频任务在
+        # validate_input_compatibility 已判不兼容，不会被切到本实现；仅默认实现被管理员
+        # 手动切到 AutoDL 时可能发生，warning 留痕便于排查"成片怎么没用上参考视频"）
         if self.get_video_path(ai_tool):
-            self.logger.info("AutoDL 参考生视频工作流不支持参考视频，已忽略视频输入")
+            self.logger.warning("AutoDL 参考生视频工作流不支持参考视频，已忽略视频输入（成片将不含视频参考）")
 
         return {
             "url": f"{self._base_url}/api/v1/comfyui/comfyui_workflow/{self._workflow_id}",
@@ -770,6 +798,17 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
             workflow_id=AUTODL_WORKFLOW_FIRST_LAST,
             impl_name=DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
         )
+
+    def validate_input_compatibility(self, ai_tool) -> Tuple[bool, Optional[str]]:
+        """
+        lightx2v 首尾帧双必填（官方 API 约束），任务 34 尾帧可选（supports_last_frame=True）：
+        单首帧任务切到本实现必然 USER 失败（"请补充尾帧"），提前判不兼容换下一个候选。
+        （无首帧属参数错误，RunningHub 实现同样失败，不在此拦，留给驱动报准确错误。）
+        """
+        image_info = self.get_all_images_by_mode(ai_tool)
+        if image_info.get('first_frame') and not image_info.get('last_frame'):
+            return False, "AutoDL 首尾帧工作流要求尾帧必填，当前任务仅有首帧"
+        return True, None
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
         """构建 lightx2v 提交请求（首尾帧转公网 URL）"""

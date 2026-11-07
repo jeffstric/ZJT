@@ -54,7 +54,7 @@ AutoDL.Art（autodl.art）将 ComfyUI 工作流包装为 HTTP API 对外提供�
 ### 关键约束
 
 1. **平台无公开文件上传 API**——参考图/音频只收公网 URL。智剧通素材在七牛 CDN 有公网 URL 可直接传；需保证 autodl 服务端拉取期间 URL 可访问。
-2. **无回调推送，只能轮询**——接入时必须用异步 httpx + 非阻塞轮询（项目规则 1），禁止官方示例的 requests 同步死循环。
+2. **无回调推送，只能轮询**——驱动内禁止官方示例式的 requests 同步死循环等待；本项目驱动跑在 sync_task_executor 子进程池/scheduler（非 FastAPI 事件循环），采用平台既有模式：同步 `BaseVideoDriver._request`（requests，带超时）+ 调度器周期回调 `check_status` 轮询（项目规则 1 约束的是 Web 接口不得阻塞事件循环，驱动不在事件循环内）。
 
 ## 智剧通侧配置
 
@@ -89,6 +89,7 @@ AutoDL.Art（autodl.art）将 ComfyUI 工作流包装为 HTTP API 对外提供�
 - [x] `DriverImplementation` ID 108/109 注册，挂载到 `minimax_h3_reference_to_video` / `minimax_h3_image_to_video` 任务（`required_config_keys=['autodl.api_key']`）
 - [x] 结果 URL 短效处理：SUCCESS 后由 download_queue 立即下载转存（既有机制）
 - [x] 算力计费档位：`MINIMAX_H3_AUTODL_768P_COMPUTING_POWER`（高峰价口径）
+- [x] 480P 倍率按 autodl 成本比 0.8 在实现级 `power_modifiers` 代码固化（不再依赖上线后手改 DB）
+- [x] 输入契约能力校验：`validate_input_compatibility` 钩子（首尾帧双必填/无参考视频槽），重试候选选择时自动跳过不兼容实现
 - [x] 真实 Token 联调：参考生（图片参考+音色音轨）与首尾帧（首尾约束+横竖分辨率）全链路通过，详见驱动文档实测记录
 - [x] 配置段已加入 `config_prod.base.yaml` / `config_dev.base.yml` / `config_unit.base.yml`（存量部署升级可由「初始化配置」导入）
-- [ ] 上线后：admin「实现方管理」对两个 autodl 实现覆盖 480P 分辨率倍率为 0.8（DB 热更新）

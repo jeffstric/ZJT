@@ -370,6 +370,69 @@ def test_check_status_http_404_keeps_running():
     assert result["status"] == "RUNNING"
 
 
+def test_check_status_http_5xx_keeps_running():
+    """上游 5xx 为临时故障：判死会误退款且上游任务可能仍在跑（计费），保持轮询"""
+    driver = make_driver()
+    for status in (500, 502, 503):
+        response = MagicMock(status_code=status)
+        http_error = requests.exceptions.HTTPError(response=response)
+        driver._request = MagicMock(side_effect=http_error)
+        result = driver.check_status("t1")
+        assert result["status"] == "RUNNING", status
+
+
+def test_check_status_http_4xx_still_fails():
+    """非 404/429 的 4xx（如 401/403 认证失败）仍判失败"""
+    driver = make_driver()
+    driver._send_alert = MagicMock()
+    response = MagicMock(status_code=403)
+    http_error = requests.exceptions.HTTPError(response=response)
+    driver._request = MagicMock(side_effect=http_error)
+    result = driver.check_status("t1")
+    assert result["status"] == "FAILED"
+
+
+# ==================== 输入契约能力校验（validate_input_compatibility） ====================
+
+def test_first_last_compat_single_first_frame_incompatible():
+    """首尾帧双必填：单首帧任务切到本实现必然 USER 失败，判不兼容（重试换下一候选）"""
+    driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
+    compatible, reason = driver.validate_input_compatibility(
+        make_first_last_tool(image_path="first.png"))
+    assert compatible is False
+    assert "尾帧" in reason
+
+
+def test_first_last_compat_both_frames_compatible():
+    driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
+    compatible, reason = driver.validate_input_compatibility(make_first_last_tool())
+    assert compatible is True
+    assert reason is None
+
+
+def test_first_last_compat_no_first_frame_not_blocked():
+    """无首帧属参数错误（RunningHub 实现同样失败），不属能力差异，不在此拦截"""
+    driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
+    compatible, _ = driver.validate_input_compatibility(make_first_last_tool(image_path=None))
+    assert compatible is True
+
+
+def test_reference_compat_with_video_incompatible():
+    """zm_u24 无参考视频槽：带视频任务切到本实现会静默丢视频参考，判不兼容"""
+    driver = make_driver()
+    compatible, reason = driver.validate_input_compatibility(
+        make_ai_tool(video_path="ref.mp4"))
+    assert compatible is False
+    assert "参考视频" in reason
+
+
+def test_reference_compat_without_video_compatible():
+    driver = make_driver()
+    compatible, reason = driver.validate_input_compatibility(make_ai_tool(video_path=None))
+    assert compatible is True
+    assert reason is None
+
+
 def test_check_status_network_error_keeps_running():
     driver = make_driver()
     driver._request = MagicMock(side_effect=TimeoutError("boom"))

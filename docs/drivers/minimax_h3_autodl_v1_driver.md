@@ -34,27 +34,39 @@
 | `ref_image_0`~`ref_image_8` | `ai_tool.reference_images`（≤9 张） | 本地/局域网图经 `compress_and_upload_image_sync` 转七牛公网 URL |
 | `ref_audio_0`~`ref_audio_2` | `ai_tool.audio_path`（逗号分隔，≤3 段） | 经 `upload_media_to_cdn_sync` 转公网 URL；**无对白镜头自动跳过**（口径同 RunningHub 参考生驱动） |
 | `prompt` | extra_config.h3_prompt_optimize 优先 | 无对白时剥除「参考音频说明」句 |
-| （参考视频） | `ai_tool.video_path` | **工作流无视频槽，丢弃**并记日志 |
+| （参考视频） | `ai_tool.video_path` | **工作流无视频槽**：`validate_input_compatibility` 判不兼容（重试不切到本实现）；若管理员把默认实现切到 AutoDL 仍会丢弃，warning 留痕 |
 
 ### 首尾帧（lightx2v）
 
 | 参数 | 来源 | 说明 |
 |------|------|------|
 | `first_frame` | `ai_tool.image_path` 首图 | 必填 |
-| `last_frame` | `ai_tool.image_path` 次图 | **官方 API 必填**；缺尾帧直接返回 USER 错误（不降级、不用首帧补位） |
+| `last_frame` | `ai_tool.image_path` 次图 | **官方 API 必填**；任务 34 尾帧可选（`supports_last_frame=True`），单首帧任务经 `validate_input_compatibility` 判不兼容（重试不切到本实现、直接提交则 USER 错误提示补充尾帧，不降级、不用首帧补位） |
 | （音频） | `ai_tool.audio_path` | 工作流无音频槽，忽略 |
+
+### 输入契约能力校验（validate_input_compatibility）
+
+同一任务的实现方素材槽位能力不同，`select_before_finish_retry_candidate` 选备用实现时会调用驱动钩子过滤不兼容候选（见 `BaseVideoDriver.validate_input_compatibility`）：
+
+| 实现 | 判不兼容的条件 |
+|------|----------------|
+| 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、AutoDL 必失败） |
+| 参考生 zm_u24 | 任务带参考视频（RunningHub 可传视频、AutoDL 无视频槽会静默丢） |
+
+⚠️ 管理员手动把任务默认实现切到 AutoDL 不经过此校验：切流前须确认存量提交带齐尾帧/无参考视频依赖。
 
 ### 共用字段
 
 - `duration`：钳制 1-15（任务层 supported_durations 仍为 4-10）
 - `resolution`：画质段（平台 `480P`→`480p`、`720P`→`768p`）+ 方向后缀（竖屏 9:16/3:4/2:3→`竖`，横屏 16:9/4:3/3:2/21:9→`横`，`1:1`→`(1:1)`），如 `768p竖`
+  - ⚠️ 仅 9:16/16:9/1:1 原生匹配；4:3/3:2/21:9/3:4/2:3 按方向归并，**成片实际比例与所选不一致**（如 16:9 档实测 1344×768，4:3 也进同一横档），归并时打 warning 日志可溯源
 
 ## 算力
 
 `MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14}`
 
 - 按**高峰价** 768p 0.05 元/秒计算：`ceil(时长×0.05/0.04×1.1)`，空闲时段（00:00-08:00，0.04/0.03 元/秒）为利润冗余
-- ⚠️ 任务级 480P 倍率沿用 RunningHub 的 0.42，但 autodl 480p/768p 实际成本比为 **0.8**：上线后建议在 admin「实现方管理」对两个 autodl 实现覆盖 480P 分辨率倍率为 0.8（DB 热更新）
+- 480P 倍率：autodl 480p/768p 实际成本比为 **0.8**（≠ 任务级 RunningHub 0.42），已在两个实现的 `ImplementationConfig.power_modifiers` 代码级固化（`MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8`，例：5s 480P = ceil(7×0.8) = 6 点），DB implementation_power 可再覆盖
 
 ## 错误处理
 
@@ -65,6 +77,7 @@
 | 网络/超时 | USER 错误 + `retry: True` |
 | 响应格式异常 | SYSTEM + Sentry 报警 |
 | 查询业务错误（code≠Success） | SYSTEM FAILED（任务不存在等非用户问题） |
+| 查询 429/404/**5xx** | 保持 RUNNING 继续轮询（5xx 为上游临时故障，判死会误退款且上游可能仍在跑计费；任务过期检查兜底终态） |
 | 首尾帧缺尾帧 / 参考生无图 | USER 错误（提示补充素材） |
 
 ## 测试

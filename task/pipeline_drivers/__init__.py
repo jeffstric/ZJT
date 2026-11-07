@@ -431,6 +431,13 @@ class PipelineDriverFactory:
             attempted_names.add(failed_impl_name)  # 确保当前失败的也被跳过
 
         selected_impl = None
+        # 输入契约兼容校验需要任务的素材输入（同一任务类型的实现方素材槽位能力可能不同，
+        # 如首尾帧双必填 vs 尾帧可选；不校验会把任务切到必然 USER 失败/静默丢素材的实现上）
+        ai_tool_for_compat = None
+        try:
+            ai_tool_for_compat = AIToolsModel.get_by_id(ai_tool_id)
+        except Exception as e:
+            logger.warning(f"Failed to load ai_tool {ai_tool_id} for compatibility check: {e}")
         for impl_name in impl_list:
             if impl_name in attempted_names:
                 continue
@@ -448,6 +455,22 @@ class PipelineDriverFactory:
                     skip_reason = create_error.get('message', '未知原因') if create_error else '未知原因'
                     logger.info(f"Skipping implementation {impl_name} for retry: cannot initialize ({skip_reason})")
                     continue
+                # 检查任务输入与实现方输入契约是否兼容（素材槽位能力，如首尾帧双必填/无视频槽）
+                if ai_tool_for_compat is not None and test_driver is not None:
+                    try:
+                        compatible, incompat_reason = test_driver.validate_input_compatibility(ai_tool_for_compat)
+                    except Exception as compat_error:
+                        logger.info(
+                            f"Skipping implementation {impl_name} for retry: "
+                            f"compatibility check error ({compat_error})"
+                        )
+                        continue
+                    if not compatible:
+                        logger.info(
+                            f"Skipping implementation {impl_name} for retry: "
+                            f"input incompatible ({incompat_reason})"
+                        )
+                        continue
             except Exception as e:
                 logger.info(f"Skipping implementation {impl_name} for retry: validation error ({e})")
                 continue
