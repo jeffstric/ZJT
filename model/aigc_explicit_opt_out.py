@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 # 申请来源
 OPT_OUT_SOURCE_CHAT_CARD = 'chat_result_card'    # 聊天流结果卡（数字人/TTS 卡申请关闭）
+OPT_OUT_SOURCE_USER_SETTINGS = 'user_settings'   # 用户设置面板（index.html 全局开关）
 OPT_OUT_SOURCE_API = 'api'                        # 开放 API 调用
+
+# 动作（append-only 状态机：最新一条记录的 action 即当前状态）
+OPT_OUT_ACTION_OPT_OUT = 'opt_out'   # 申请关闭明水印（第 9 条留痕）
+OPT_OUT_ACTION_RESUME = 'resume'     # 恢复添加明水印
 
 
 class AigcExplicitOptOutModel:
@@ -35,9 +40,10 @@ class AigcExplicitOptOutModel:
         ip: Optional[str] = None,
         user_agent: Optional[str] = None,
         detail: Optional[str] = None,
+        action: str = OPT_OUT_ACTION_OPT_OUT,
     ) -> int:
         """
-        记录一条显式标识关闭申请（法规留痕，只增）
+        记录一条显式标识状态变更（法规留痕，只增）
 
         Args:
             user_id: 申请用户 ID
@@ -48,22 +54,23 @@ class AigcExplicitOptOutModel:
             ip: 客户端 IP
             user_agent: User-Agent
             detail: 扩展信息 JSON 字符串
+            action: 动作 opt_out=申请关闭 / resume=恢复添加（append-only 状态机）
 
         Returns:
             插入记录 ID
         """
         sql = """
             INSERT INTO aigc_explicit_opt_out_log
-            (user_id, ai_tool_id, produce_id, content_type, request_source, ip, user_agent, detail, create_at, update_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
+            (user_id, ai_tool_id, produce_id, content_type, action, request_source, ip, user_agent, detail, create_at, update_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), NOW())
         """
-        params = (user_id, ai_tool_id, produce_id, content_type,
+        params = (user_id, ai_tool_id, produce_id, content_type, action,
                   request_source, ip, (user_agent or '')[:512], detail)
         try:
             record_id = execute_insert(sql, params)
             logger.info(
                 f"[aigc-optout] 留痕记录 id={record_id} user={user_id} "
-                f"ai_tool={ai_tool_id} produce={produce_id} source={request_source}")
+                f"ai_tool={ai_tool_id} produce={produce_id} action={action} source={request_source}")
             return record_id
         except Exception as e:
             logger.error(f"[aigc-optout] 留痕写入失败 user={user_id} ai_tool={ai_tool_id}: {e}")
@@ -84,29 +91,40 @@ class AigcExplicitOptOutModel:
             return []
 
     @staticmethod
-    def has_opt_out(ai_tool_id: int) -> bool:
-        """该任务是否已申请关闭显式标识（L1 烧录挂点跳过依据）"""
-        sql = "SELECT COUNT(*) AS cnt FROM aigc_explicit_opt_out_log WHERE ai_tool_id = %s"
+    def _latest_action(where: str, params: tuple) -> Optional[str]:
+        """取最新一条留痕记录的 action（append-only 状态机当前态）"""
+        sql = f"""
+            SELECT action FROM aigc_explicit_opt_out_log
+            WHERE {where}
+            ORDER BY create_at DESC, id DESC LIMIT 1
+        """
         try:
-            row = execute_query(sql, (ai_tool_id,), fetch_one=True)
-            return bool(row and row.get('cnt'))
+            row = execute_query(sql, params, fetch_one=True)
+            return (row or {}).get('action') or None
         except Exception as e:
-            # 查询失败时保守返回 False（烧录继续）——宁可多标识不可漏标识
-            logger.warning(f"[aigc-optout] has_opt_out 查询异常按未申请处理 ai_tool={ai_tool_id}: {e}")
-            return False
+            logger.warning(f"[aigc-optout] 最新状态查询异常按未申请处理 ({where}): {e}")
+            return None
+
+    @staticmethod
+    def has_opt_out(ai_tool_id: int) -> bool:
+        """该任务当前是否处于"明水印关闭"状态（L1 烧录挂点跳过依据）。
+
+        append-only 状态机：最新一条记录 action=opt_out 才算关闭中，
+        resume（用户恢复添加）后自动重新烧录。
+        """
+        return AigcExplicitOptOutModel._latest_action(
+            'ai_tool_id = %s', (ai_tool_id,)) == OPT_OUT_ACTION_OPT_OUT
 
     @staticmethod
     def has_opt_out_user(user_id: Optional[int]) -> bool:
-        """该用户是否已申请关闭显式标识（TTS 等用户级 L1 场景：一次申请对其后续合成生效）"""
+        """该用户当前是否处于"明水印全局关闭"状态（TTS/数字人等用户级 L1 场景）。
+
+        查询异常时按未申请处理（宁可多标识不可漏标识）。
+        """
         if not user_id:
             return False
-        sql = "SELECT COUNT(*) AS cnt FROM aigc_explicit_opt_out_log WHERE user_id = %s"
-        try:
-            row = execute_query(sql, (user_id,), fetch_one=True)
-            return bool(row and row.get('cnt'))
-        except Exception as e:
-            logger.warning(f"[aigc-optout] has_opt_out_user 查询异常按未申请处理 user={user_id}: {e}")
-            return False
+        return AigcExplicitOptOutModel._latest_action(
+            'user_id = %s', (user_id,)) == OPT_OUT_ACTION_OPT_OUT
 
     @staticmethod
     def list_recent(page: int = 1, page_size: int = 50, user_id: Optional[int] = None) -> Dict[str, Any]:
@@ -136,7 +154,8 @@ CREATE TABLE IF NOT EXISTS `aigc_explicit_opt_out_log` (
   `ai_tool_id` bigint DEFAULT NULL COMMENT '关联任务ID（ai_tools.id）',
   `produce_id` varchar(128) DEFAULT NULL COMMENT '内容编号（隐式标识 ProduceID）',
   `content_type` varchar(32) DEFAULT NULL COMMENT '内容类型 video/image/audio',
-  `request_source` varchar(64) DEFAULT NULL COMMENT '申请来源（chat_result_card/compose_default/api）',
+  `action` varchar(16) NOT NULL DEFAULT 'opt_out' COMMENT '动作：opt_out=申请关闭 / resume=恢复添加（append-only 状态机）',
+  `request_source` varchar(64) DEFAULT NULL COMMENT '申请来源（chat_result_card/compose_default/user_settings/api）',
   `ip` varchar(64) DEFAULT NULL COMMENT '申请时客户端IP',
   `user_agent` varchar(512) DEFAULT NULL COMMENT '申请时 User-Agent',
   `detail` text COMMENT '扩展信息 JSON',

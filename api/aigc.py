@@ -22,7 +22,13 @@ from perseids_server.utils.auth_identity import get_auth_user_id
 from perseids_server.utils.permission import require_permission
 from model.ai_tools import AIToolsModel
 from model.media_file_mapping import MediaFileMappingModel
-from model.aigc_explicit_opt_out import AigcExplicitOptOutModel, OPT_OUT_SOURCE_CHAT_CARD
+from model.aigc_explicit_opt_out import (
+    AigcExplicitOptOutModel,
+    OPT_OUT_SOURCE_CHAT_CARD,
+    OPT_OUT_SOURCE_USER_SETTINGS,
+    OPT_OUT_ACTION_OPT_OUT,
+    OPT_OUT_ACTION_RESUME,
+)
 from utils.aigc_explicit_marker import burn_explicit_label
 from utils.project_path import resolve_upload_url_to_local_path, get_project_root
 from utils.cdn_util import CDNUtil
@@ -39,7 +45,8 @@ class ExplicitLabelRequest(BaseModel):
 
 class ExplicitOptOutRequest(BaseModel):
     ai_tool_id: Optional[int] = Field(None, description="任务 ID（数字人等任务级申请）")
-    scope: Optional[str] = Field(None, description="留空=任务级；'user'=用户级（TTS 等后续合成都跳过）")
+    scope: Optional[str] = Field(None, description="留空=任务级；'user'=用户级（全局生效）")
+    action: Optional[str] = Field('opt_out', description="opt_out=申请关闭 / resume=恢复添加（用户设置开关用）")
     reason: Optional[str] = Field(None, max_length=500, description="申请原因（选填）")
 
 
@@ -137,13 +144,32 @@ async def request_explicit_opt_out(request: Request, body: ExplicitOptOutRequest
 
     ip = (request.client.host if request.client else None)
     user_agent = request.headers.get('user-agent')
+    action = body.action if body.action in (OPT_OUT_ACTION_OPT_OUT, OPT_OUT_ACTION_RESUME) \
+        else OPT_OUT_ACTION_OPT_OUT
+    source = OPT_OUT_SOURCE_USER_SETTINGS if (body.scope or '') == 'user' \
+        else OPT_OUT_SOURCE_CHAT_CARD
     detail = json.dumps({'reason': body.reason, 'scope': body.scope}, ensure_ascii=False)
 
     await asyncio.to_thread(
         AigcExplicitOptOutModel.create,
         user_id, ai_tool_id, produce_id, content_type,
-        OPT_OUT_SOURCE_CHAT_CARD, ip, user_agent, detail,
+        source, ip, user_agent, detail, action,
     )
+    if action == OPT_OUT_ACTION_RESUME:
+        logger.info(f"[aigc] 显式标识恢复添加 user={user_id} ai_tool={ai_tool_id} scope={body.scope}")
+        return {'success': True, 'opt_out': False,
+                'message': '已恢复：后续内容将重新添加 AI 生成标识'}
     logger.info(f"[aigc] 显式标识关闭申请留痕 user={user_id} ai_tool={ai_tool_id} scope={body.scope}")
-    return {'success': True,
+    return {'success': True, 'opt_out': True,
             'message': '已记录申请：该内容后续不再添加画面/语音提示，文件元数据标识将保留'}
+
+
+@router.get('/explicit-optout/status')
+@require_permission("aigc:explicit_label")
+async def get_explicit_optout_status(request: Request):
+    """查询当前用户的明水印全局关闭状态（用户设置开关回显用）。"""
+    user_id = get_auth_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="登录状态失效，请重新登录")
+    opt_out = await asyncio.to_thread(AigcExplicitOptOutModel.has_opt_out_user, int(user_id))
+    return {'success': True, 'opt_out': bool(opt_out)}
