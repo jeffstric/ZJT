@@ -149,6 +149,11 @@ topenrouter:
   base_url: "https://tp-api.chinadatapay.com:8000"
   asset_api_key: "unittest"
 
+# AutoDL.Art ComfyUI workflow API
+autodl:
+  api_key: "unittest"
+  base_url: "https://autodl.art"
+
 
 # API Aggregator configuration
 api_aggregator:

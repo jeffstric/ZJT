@@ -99,6 +99,12 @@ topenrouter:
   # {"doubao-seedance-2-0-fast-260128": "doubao-seedance-2.0-fast"}
   model_aliases: {}
 
+# AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频等）
+# Token 获取：登录 https://autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
+autodl:
+  api_key: ""
+  base_url: "https://autodl.art"
+
 # 适配云雾 comfly这类聚合站
 api_aggregator:
   site_0:

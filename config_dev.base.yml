@@ -86,3 +86,9 @@ topenrouter:
   base_url: "https://tp-api.chinadatapay.com:8000"
   asset_api_key: ""
 
+# AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频等）
+# Token 获取：登录 https://autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
+autodl:
+  api_key: ""
+  base_url: "https://autodl.art"
+
