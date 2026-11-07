@@ -830,6 +830,23 @@ def register_all_drivers():
         logger.warning(f"Failed to import DigitalHumanMinimaxH3RunninghubV1Driver: {e}")
 
     try:
+        from .minimax_h3_autodl_v1_driver import (
+            MinimaxH3FirstLastAutodlV1Driver,
+            MinimaxH3ReferenceAutodlV1Driver,
+        )
+        # 注册 MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
+        VideoDriverFactory.register_driver(
+            DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,
+            MinimaxH3ReferenceAutodlV1Driver,
+        )
+        VideoDriverFactory.register_driver(
+            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
+            MinimaxH3FirstLastAutodlV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3 Autodl drivers: {e}")
+
+    try:
         from .video_watermark_runninghub_v1_driver import VideoWatermarkRunninghubV1Driver
         VideoDriverFactory.register_driver(
             DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,

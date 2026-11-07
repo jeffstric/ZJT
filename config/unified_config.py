@@ -188,6 +188,12 @@ MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 # 仅 4-10 档：H3 webapp 默认实例上 11-15s 段处于显存边界（随机 OOM），
 # 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+# H3 AutoDL.Art 算力（768p 档基准，按高峰价 0.05 元/秒：ceil(时长×0.05/0.04×1.1)）。
+# 480p/768p 实际成本比 0.8（0.040/0.050 元/秒），与任务级 RunningHub 480P 倍率 0.42 不同，
+# 在两个 autodl 实现的 ImplementationConfig.power_modifiers 里按实现覆盖为 0.8
+# （DB implementation_power 可再覆盖）。空闲时段（00:00-08:00）0.04/0.03 元/秒为利润冗余。
+MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14}
+MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8
 # H3 数字人按时长算力：4-10 与上表同价；11-15 为显存充裕后恢复的档位
 # （2026-10-19 起分段段长 15s，11-15s 单段重新可用），按既有梯度外推。
 # 独立成表避免扩档连带放开去水印任务的时长范围。后台 implementation_power 可覆盖。
@@ -339,6 +345,7 @@ class TaskProvider:
         'VOLCENGINE': '火山引擎',
         'LOCAL': '本地处理',
         'ZJT': 'ZJT API',
+        'AUTODL': 'AutoDL.Art 供应商',
     }
     DUOMI = 'duomi'
     RUNNINGHUB = 'runninghub'
@@ -346,6 +353,7 @@ class TaskProvider:
     VOLCENGINE = 'volcengine'
     LOCAL = 'local'
     ZJT = 'zjt'
+    AUTODL = 'autodl'
 
 
 class SceneVideoType:
@@ -458,6 +466,9 @@ class ImplementationConfig:
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
+    # 实现方级算力修饰符（代码级默认，如 autodl 480P 成本比 0.8 不同于任务级 RunningHub 0.42）。
+    # 生效顺序：任务级 power_modifiers → 实现级（此处）→ DB 覆盖（同 attribute 的 key 逐级覆盖）。
+    power_modifiers: List["PowerModifier"] = field(default_factory=list)
 
     def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -733,7 +744,7 @@ class UnifiedTaskConfig:
         return int(base_power)
 
     def effective_power_modifiers(self, implementation: Optional[str] = None) -> List["PowerModifier"]:
-        """任务级 power_modifiers 与实现方 DB 覆盖合并，DB 同 attribute 的 key 覆盖代码默认。"""
+        """任务级 power_modifiers 与实现方（代码级 + DB 覆盖）合并，后一级同 attribute 的 key 覆盖前一级。"""
         merged: Dict[str, PowerModifier] = {}
         for modifier in self.power_modifiers or []:
             merged[modifier.attribute] = PowerModifier(
@@ -743,6 +754,19 @@ class UnifiedTaskConfig:
             )
         if not implementation or not self.driver_name:
             return list(merged.values())
+        # 实现方级代码默认（ImplementationConfig.power_modifiers）：
+        # 同 attribute 的 key 覆盖任务级取值（如 autodl 480P=0.8 覆盖任务级 RunningHub 0.42）
+        impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+        for modifier in getattr(impl_config, "power_modifiers", None) or []:
+            existing = merged.get(modifier.attribute)
+            if existing is None:
+                merged[modifier.attribute] = PowerModifier(
+                    attribute=modifier.attribute,
+                    values=dict(modifier.values or {}),
+                    default=float(modifier.default),
+                )
+            else:
+                existing.values.update(dict(modifier.values or {}))
         try:
             from model.implementation_power import ImplementationPowerModel
 
@@ -1199,6 +1223,7 @@ class UnifiedConfigRegistry:
             TaskProvider.RUNNINGHUB: 'RunningHub',
             TaskProvider.VIDU: 'Vidu',
             TaskProvider.VOLCENGINE: '火山引擎',
+            TaskProvider.AUTODL: 'AutoDL.Art',
             TaskProvider.LOCAL: '本地',
         }
 
@@ -1362,6 +1387,10 @@ class DriverImplementation:
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
     MINIMAX_H3_TEXT_RUNNINGHUB_V1 = 'minimax_h3_text_runninghub_v1'
     MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 'minimax_h3_keyframe_ref_runninghub_v1'
+
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
+    MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1628,6 +1657,10 @@ class DriverImplementationId:
     # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
     RUNNINGHUB_AI_APP_MOSS_V1 = 107
 
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
+    MINIMAX_H3_REFERENCE_AUTODL_V1 = 108
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1708,6 +1741,8 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'minimax_h3_text_runninghub_v1': DriverImplementationId.MINIMAX_H3_TEXT_RUNNINGHUB_V1,
     'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
+    'minimax_h3_reference_autodl_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_AUTODL_V1,
+    'minimax_h3_first_last_autodl_v1': DriverImplementationId.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
     'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
@@ -2640,6 +2675,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
             DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
+            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首尾帧双必填）
         ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
@@ -2672,6 +2708,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+        implementations=[
+            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub（默认）
+            DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,       # AutoDL.Art 参考生（zm_u24，9图+3音频）
+        ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
         supported_durations=[4, 5, 6, 7, 8, 9, 10],
@@ -4217,6 +4257,53 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720
+    ),
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 + 轮询，参考图/音频传公网 CDN URL）
+    ImplementationConfig(
+        name='minimax_h3_first_last_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3FirstLastAutodlV1Driver',
+        default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,
+        enabled=True,
+        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧+尾帧双必填，480p/768p）',
+        sort_order=5203.0,
+        required_config_keys=['autodl.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        # autodl 480p/768p 成本比 0.8（0.040/0.050 元/秒），覆盖任务级 RunningHub 0.42 倍率，
+        # 避免 480P 收价低于成本（DB implementation_power 可再覆盖）
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER},
+                default=1.0
+            )
+        ]
+    ),
+    ImplementationConfig(
+        name='minimax_h3_reference_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3ReferenceAutodlV1Driver',
+        default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,  # 与首尾帧同价（0.05 元/秒 768p 高峰）
+        enabled=True,
+        description='AutoDL.Art MiniMax H3 参考生视频（工作流 minimax_h3_zm_u24，最多 9 参考图 + 3 参考音频，480p/768p）',
+        sort_order=5208.0,
+        required_config_keys=['autodl.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER},
+                default=1.0
+            )
+        ]
     ),
     ImplementationConfig(
         name='digital_human_minimax_h3_runninghub_v1',

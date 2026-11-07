@@ -1133,10 +1133,16 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
-    # 使用 RunningHub 的 MiniMax H3（标准版 / 加速版可切换）
+    # 使用 RunningHub 的 MiniMax H3（标准版 / 加速版可切换）+ AutoDL.Art 首尾帧
     DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: [
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
+        DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v）
+    ],
+    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
+    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（默认）
+        DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,      # AutoDL.Art 参考生（9图+3音频）
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
     DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型

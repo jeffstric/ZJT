@@ -621,6 +621,25 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== AutoDL.Art ComfyUI 工作流配置 ====================
+    {
+        'key': 'autodl.api_key',
+        'value_type': 'string',
+        'description': 'AutoDL.Art ComfyUI API Token（H3 多图多音频生视频等；获取：autodl.art 令牌管理 https://autodl.art/large-model/tokens 创建令牌，分组必须选 ComfyUI）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'autodl.base_url',
+        'value_type': 'string',
+        'description': 'AutoDL.Art API 基础 URL（默认 https://autodl.art）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
     {
         'key': 'api_aggregator.site_0.api_key',

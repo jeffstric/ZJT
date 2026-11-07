@@ -503,6 +503,27 @@ const PROVIDER_DEFINITIONS = [
         },
         testEndpoint: null
     },
+    {
+        // AutoDL.Art ComfyUI 工作流 API：H3 多图多音频生视频等。
+        // Token 在 autodl.art 令牌管理页创建，分组必须选 ComfyUI
+        id: 'autodl_video',
+        nameKey: 'provider_autodl_name',
+        descKey: 'provider_autodl_video_desc',
+        category: 'multimedia',
+        icon: '🎨',
+        docUrl: 'https://autodl.art/large-model/tokens',
+        lazyRecommended: false,
+        displayOrder: 22,
+        baseName: 'autodl',
+        isOfficialAPI: false,
+        impactsKey: 'provider_autodl_video_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_autodl', required: true, helpTextKey: 'field_api_key_help_autodl' },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://autodl.art', required: false, helpTextKey: 'field_base_url_help_autodl' }
+        ],
+        configKeyMap: { api_key: 'autodl.api_key', base_url: 'autodl.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 其他推荐服务 =====
     {
