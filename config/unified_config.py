@@ -1478,7 +1478,7 @@ class DriverImplementation:
 
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
-    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首帧必填+尾帧可选）
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -2810,7 +2810,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
             DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
-            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首帧必填+尾帧可选）
+            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首尾帧双必填）
         ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
@@ -4400,7 +4400,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         driver_class='MinimaxH3FirstLastAutodlV1Driver',
         default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,
         enabled=True,
-        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧必填+尾帧可选，480p/768p）',
+        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧+尾帧双必填，480p/768p）',
         sort_order=5203.0,
         # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
         # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）

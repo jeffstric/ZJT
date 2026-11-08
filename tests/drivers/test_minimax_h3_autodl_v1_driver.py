@@ -173,15 +173,13 @@ def test_first_last_build_request_maps_frames():
     assert not any(k.startswith("ref_audio_") for k in payload)
 
 
-def test_first_last_single_frame_submits_without_last():
-    """尾帧可选（2026-11-08 实测 lightx2v 仅首帧即可出片）：单图提交成功且省略 last_frame 槽位"""
+def test_first_last_requires_last_frame():
+    """lightx2v 双必填（2026-11-08 三重实测证实）：单图只有首帧时本地报明确 USER 错误"""
     driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
-    fake = fake_upload_factory()
-    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake):
-        request = driver.build_create_request(make_first_last_tool(image_path="first.png"))
-    payload = request["json"]
-    assert payload["first_frame"] == "https://cdn.example/first.png"
-    assert "last_frame" not in payload
+    result = driver.build_create_request(make_first_last_tool(image_path="first.png"))
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+    assert "尾帧" in result["error"]
 
 
 def test_first_last_requires_first_frame():
@@ -396,13 +394,13 @@ def test_check_status_http_4xx_still_fails():
 
 # ==================== 输入契约能力校验（validate_input_compatibility） ====================
 
-def test_first_last_compat_single_first_frame_compatible():
-    """尾帧可选后输入契约与任务 34 一致：单首帧任务兼容本实现（事故 13437/13438 回归）"""
+def test_first_last_compat_single_first_frame_incompatible():
+    """首尾帧双必填：单首帧任务切到本实现必然 USER 失败，判不兼容（重试换下一候选）"""
     driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
     compatible, reason = driver.validate_input_compatibility(
         make_first_last_tool(image_path="first.png"))
-    assert compatible is True
-    assert reason is None
+    assert compatible is False
+    assert "尾帧" in reason
 
 
 def test_first_last_compat_both_frames_compatible():
