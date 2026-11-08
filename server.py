@@ -3093,6 +3093,15 @@ async def ai_app_run_image(
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
         resolution = validate_video_resolution(resolution, actual_impl)
 
+        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
+        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
+        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
+        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
+            task_config, duration_seconds, actual_impl,
+        )
+        if not duration_ok:
+            raise HTTPException(status_code=400, detail=duration_reject_reason)
+
         # 记录输入的图片信息
         logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
 

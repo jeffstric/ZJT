@@ -130,6 +130,32 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         """
         return RATIO_TO_ASPECT_RATIO_VALUE.get(ratio, '9:16 (Portrait Widescreen)')  # 默认 9:16
 
+    def _clamp_duration_to_webapp_bounds(self, duration) -> int:
+        """
+        钳制时长到 webapp 安全区间 4-10 秒
+
+        webapp 默认实例 11-15s 段有显存边界随机 OOM 风险，且 RunningHub 720P 算力表
+        无 11-15 档（取档会错价）。正常路径已被提交接口按实现级 supported_durations
+        挡住，此处兜底内部直调 / API 绕过场景。
+
+        Args:
+            duration: 任务时长（秒），可能是 None/非数字
+
+        Returns:
+            int: 钳制后的时长（4-10，非法输入回退 5）
+        """
+        try:
+            value = int(duration)
+        except (TypeError, ValueError):
+            value = 5
+        if not (4 <= value <= 10):
+            self.logger.warning(
+                f"MiniMax H3 RunningHub 收到越界时长 {duration}s（webapp 11-15s 有 OOM 风险），"
+                f"已钳制到边界值；11-15s 请使用 AutoDL.Art 实现"
+            )
+            value = max(4, min(10, value))
+        return value
+
     def _parse_extra_config(self, ai_tool) -> Dict[str, Any]:
         """解析 extra_config JSON"""
         if not ai_tool.extra_config:
@@ -244,8 +270,9 @@ class MinimaxH3RunninghubV1Driver(BaseVideoDriver):
         if last_image_path:
             last_frame_uploaded = await self._upload_image_to_runninghub(last_image_path, "尾帧图片")
 
-        # 获取时长
-        duration = ai_tool.duration or 5
+        # 获取时长（防御性钳制 4-10：webapp 11-15s 段有显存 OOM 风险，算力表也无该档；
+        # 正常路径已被提交接口按实现级 supported_durations 挡住，此处兜底内部直调/API 绕过）
+        duration = self._clamp_duration_to_webapp_bounds(ai_tool.duration)
 
         # 获取比例并映射为 aspect_ratio 完整文本（带括号）
         ratio = ai_tool.ratio or '9:16'

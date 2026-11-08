@@ -50,6 +50,8 @@ AutoDL.Art（autodl.art）将 ComfyUI 工作流包装为 HTTP API 对外提供�
 | 768p | ￥0.050/秒 | ￥0.040/秒 |
 
 > 平台公告：2026-10-16 起 H3 系列 API 涨价 1 分/秒；2026-11-12 起 GPU 价格将调整，价格口径可能变动，计费接入时做成可配置。
+>
+> **11-15s 档开放记录（2026-11-08）**：`duration=15` 实测出片 15.08s（1344×768，生成 ~570s），算力按 `ceil(时长×1.375)` 扩到 15s=21 点；仅 AutoDL 实现开放（RunningHub webapp 同段有 OOM 风险），提交接口 `ai_app_run_image` 按实现级 `supported_durations` 校验拦截。
 
 ### 关键约束
 
