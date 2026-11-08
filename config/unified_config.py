@@ -457,6 +457,7 @@ class ImplementationConfig:
         sort_order: 默认排序顺序（代码级后备值）
         site_number: 聚合站点编号（仅聚合站点有值，非聚合站点为 None）
         sync_mode: 是否为同步模式（同步API会阻塞，需要独立进程池处理）
+        provider: 实现方供应商（TaskProvider 常量；None=继承所属任务类型的 provider）
     """
     name: str
     display_name: str
@@ -468,6 +469,10 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
+    # 实现方供应商（TaskProvider 常量）。None = 继承所属任务类型的 provider（历史默认：
+    # 实现方与任务类型同供应商）。跨供应商挂载的实现方必须显式标注（如 H3 任务类型下的
+    # AutoDL 实现方标 autodl），供运行时供应商判定使用（见 is_runninghub_implementation）
+    provider: Optional[str] = None
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
@@ -615,6 +620,11 @@ class UnifiedTaskConfig:
     key: str
     name: str
     category: str
+    # ⚠️ 任务类型 provider 描述「原生/默认供应商」，仅用于展示分组与统计分类；
+    # 运行时供应商专属逻辑（RunningHub 密钥池注入/槽位占用/熔断上报）必须按实现方级
+    # provider 判定（见 is_runninghub_task），禁止用任务类型 provider 判定——同一任务
+    # 类型可挂多供应商实现方（事故 ai_tools 13439/13440：AutoDL 实现方挂在 RunningHub
+    # 任务类型下，提交前被误注入 RunningHub 池密钥导致上游 401）。
     provider: str
     model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
     variant_label: str = ''  # 仅区分同能力下的同名任务条目
@@ -1062,6 +1072,25 @@ class UnifiedConfigRegistry:
         return cls._implementations.copy()
 
     @classmethod
+    def get_implementation_provider(cls, impl_name: str) -> Optional[str]:
+        """实现方的有效供应商（TaskProvider 常量）。
+
+        实现方显式标注 provider 时优先（跨供应商挂载，如 H3 任务类型下的 AutoDL
+        实现方）；未标注时继承引用它的任务类型的 provider（历史默认：实现方与
+        任务类型同供应商）。未注册的实现方返回 None（含用户模块动态实现方，
+        其不在此注册表）。
+        """
+        impl = cls._implementations.get(impl_name)
+        if impl is None:
+            return None
+        if impl.provider:
+            return impl.provider
+        for cfg in cls._configs.values():
+            if impl_name == cfg.implementation or impl_name in (cfg.implementations or []):
+                return cfg.provider
+        return None
+
+    @classmethod
     def get_enabled_implementations(cls) -> List[ImplementationConfig]:
         """获取所有启用的实现方配置"""
         return [impl for impl in cls._implementations.values() if impl.enabled]
@@ -1449,7 +1478,7 @@ class DriverImplementation:
 
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
-    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首帧必填+尾帧可选）
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1872,6 +1901,53 @@ def get_implementation_name(id: int) -> str:
         return 'unknown'
     logger.warning("get_implementation_name: 未知实现方 ID %s（可能为动态绑定尚未在本进程重载）", id)
     return 'unknown'
+
+
+def is_runninghub_implementation(implementation) -> bool:
+    """实现方是否 RunningHub 供应商（实现方级判定，跨供应商挂载的正确口径）。
+
+    implementation 可传实现方名称字符串或实现方 ID。未知实现方 / 用户模块动态
+    实现方返回 False（后者不在此注册表，且必然不走 RunningHub 密钥池/槽位——
+    历史上曾因按任务类型判定被误注入池密钥，见 visual_task 401 事故）。
+    """
+    if isinstance(implementation, str):
+        impl_name = implementation
+    else:
+        impl_name = get_implementation_name(implementation) if implementation else ''
+    if not impl_name or impl_name == 'unknown':
+        return False
+    # 用户模块契约常量惰性导入：config.constant 模块级依赖本模块（TaskProvider），
+    # 反向顶层 import 会循环；且主仓核心不应模块级依赖用户模块契约常量
+    try:
+        from config.constant import USER_MODULE_IMPL_NAME_PREFIX
+        if impl_name.startswith(USER_MODULE_IMPL_NAME_PREFIX):
+            return False
+    except Exception:
+        pass
+    return UnifiedConfigRegistry.get_implementation_provider(impl_name) == TaskProvider.RUNNINGHUB
+
+
+def is_runninghub_task(ai_tool, impl_name: Optional[str] = None) -> bool:
+    """任务实际执行是否走 RunningHub 供应商（实现方级判定）。
+
+    Args:
+        ai_tool: AITool 对象（鸭子类型，需有 type；implementation 可缺省）
+        impl_name: 实际执行实现方名称。提交/轮询路径应传 driver.driver_name
+            （即真实发上游请求的实现方，优先于 ai_tool.implementation 记录值）。
+
+    实现方未确定（impl_name 未传且 ai_tool.implementation 未记录/未知）时回退
+    任务类型 provider——入队预占槽位场景实现方尚未选出，只能按任务类型默认供应
+    商预估；若后续实际切到非 RunningHub 实现方，槽位由释放路径无条件回收，不泄漏。
+    """
+    if impl_name is None:
+        recorded = getattr(ai_tool, 'implementation', None)
+        impl_name = recorded if isinstance(recorded, str) else (
+            get_implementation_name(recorded) if recorded else '')
+    if not impl_name or impl_name == 'unknown':
+        # 惰性导入避免循环依赖（config.constant 顶层 import 本模块）
+        from config.constant import RUNNINGHUB_TASK_TYPES
+        return getattr(ai_tool, 'type', 0) in RUNNINGHUB_TASK_TYPES
+    return is_runninghub_implementation(impl_name)
 
 
 # ============ 业务驱动名称常量 ============
@@ -2734,7 +2810,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
             DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
-            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首尾帧双必填）
+            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首帧必填+尾帧可选）
         ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
@@ -4324,8 +4400,11 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         driver_class='MinimaxH3FirstLastAutodlV1Driver',
         default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,
         enabled=True,
-        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧+尾帧双必填，480p/768p）',
+        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧必填+尾帧可选，480p/768p）',
         sort_order=5203.0,
+        # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）
+        provider=TaskProvider.AUTODL,
         required_config_keys=['autodl.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
@@ -4352,6 +4431,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='AutoDL.Art MiniMax H3 参考生视频（工作流 minimax_h3_zm_u24，最多 9 参考图 + 3 参考音频，480p/768p）',
         sort_order=5208.0,
+        # 跨供应商挂载：任务类型 37 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）
+        provider=TaskProvider.AUTODL,
         required_config_keys=['autodl.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},

@@ -10,8 +10,14 @@
 | H3首尾帧生视频 | `minimax_h3_lightx2v` | `minimax_h3_first_last_autodl_v1`（ID 109） | `minimax_h3_image_to_video`（首尾帧，type 34） |
 
 - **驱动文件**: `task/visual_drivers/minimax_h3_autodl_v1_driver.py`
-- **供应商**: `TaskProvider.AUTODL`（任务级 provider 仍为 RUNNINGHUB，autodl 作为可切换实现方，模式同 Seedance 多网关）
+- **供应商**: `TaskProvider.AUTODL`（实现方级 provider；任务级 provider 仍为 RUNNINGHUB，autodl 作为可切换实现方，模式同 Seedance 多网关）
 - **配置键**: `autodl.api_key`（必填）/ `autodl.base_url`（默认 `https://autodl.art`）
+
+> ⚠️ **实现方级 provider 必须显式标注**（`ImplementationConfig.provider=TaskProvider.AUTODL`）：
+> 两个实现方挂在 RunningHub 供应商的任务类型（34/37）下，运行时密钥注入/槽位/熔断
+> 上报按**实现方级** provider 判定（`is_runninghub_task`）。曾按任务类型判定导致
+> RunningHub 池密钥覆盖 `autodl.api_key`、上游 401（事故 ai_tools 13439/13440，
+> 2026-11-08 修复，详见 [runninghub_concurrency_control.md](../backend/runninghub_concurrency_control.md)）。
 
 ## API 协议
 
@@ -41,7 +47,7 @@
 | 参数 | 来源 | 说明 |
 |------|------|------|
 | `first_frame` | `ai_tool.image_path` 首图 | 必填 |
-| `last_frame` | `ai_tool.image_path` 次图 | **官方 API 必填**；任务 34 尾帧可选（`supports_last_frame=True`），单首帧任务经 `validate_input_compatibility` 判不兼容（重试不切到本实现、直接提交则 USER 错误提示补充尾帧，不降级、不用首帧补位） |
+| `last_frame` | `ai_tool.image_path` 次图 | **可选**（2026-11-08 实测仅首帧即可出片）：有则传槽位作为结束帧约束，无则省略、仅按首帧生成。与任务 34 `supports_last_frame=True` 契约一致；最初按"官方 API 双必填"实现属误判（事故 13437/13438 误报"请补充尾帧"），强校验与单首帧不兼容钩子均已去除 |
 | （音频） | `ai_tool.audio_path` | 工作流无音频槽，忽略 |
 
 ### 输入契约能力校验（validate_input_compatibility）
@@ -50,8 +56,10 @@
 
 | 实现 | 判不兼容的条件 |
 |------|----------------|
-| 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、AutoDL 必失败） |
 | 参考生 zm_u24 | 任务带参考视频（RunningHub 可传视频、AutoDL 无视频槽会静默丢） |
+
+> 首尾帧 lightx2v 曾有"单首帧判不兼容"钩子（尾帧双必填误判时期），2026-11-08
+> 实测尾帧可选后已移除——输入契约与任务 34 完全一致，无需覆写钩子。
 
 `extra_config` 为非法 JSON、数组或 `null` 时，`parse_image_mode` 回退默认首尾帧模式，钩子仍按 `image_path` 判断尾帧，提交不再因 `list.get` 抛 `AttributeError`。钩子自身的其它异常不当成兼容：候选选择会跳过该实现。空白 `video_path` 视为无参考视频。
 
@@ -80,7 +88,7 @@
 | 响应格式异常 | SYSTEM + Sentry 报警 |
 | 查询业务错误（code≠Success） | SYSTEM FAILED（任务不存在等非用户问题） |
 | 查询 429/404/**5xx** | 保持 RUNNING 继续轮询（5xx 为上游临时故障，判死会误退款且上游可能仍在跑计费；任务过期检查兜底终态） |
-| 首尾帧缺尾帧 / 参考生无图 | USER 错误（提示补充素材） |
+| 首尾帧无首帧 / 参考生无图 | USER 错误（提示补充素材；尾帧可缺省） |
 
 ## 测试
 
@@ -88,7 +96,7 @@
 pytest tests/drivers/test_minimax_h3_autodl_v1_driver.py -v
 ```
 
-覆盖：素材槽位映射（图/音频/截断/无对白跳过）、分辨率×比例矩阵、首尾帧必填校验、时长钳制、提交成功/业务错误/429/网络错误、轮询各状态（含小写 completed、404 不判死）、响应校验函数。
+覆盖：素材槽位映射（图/音频/截断/无对白跳过）、分辨率×比例矩阵、首帧必填校验（尾帧可缺省）、时长钳制、提交成功/业务错误/429/网络错误、轮询各状态（含小写 completed、404 不判死）、响应校验函数。
 
 ## 真实联调记录（2026-11-07 ✅ 全通过）
 
