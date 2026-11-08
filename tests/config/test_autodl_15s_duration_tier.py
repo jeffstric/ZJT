@@ -190,3 +190,23 @@ def test_duration_check_out_of_all_ranges_rejected():
     """20s 超出所有实现的档位：拒绝"""
     ok, _ = UnifiedConfigRegistry.is_duration_supported_for_implementation(_task_config(), 20, AUTODL_FL)
     assert not ok
+
+
+# ==================== 管理后台实现方档位合并（api/admin.py impl_durations 规则） ====================
+
+def test_admin_impl_durations_merge_rule():
+    """后台实现方档位 = 任务级基线 ∪ 实现级扩展档：autodl 显示 4-15、runninghub 仅 4-10"""
+    task = UnifiedConfigRegistry.get_by_id(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO)
+    for impl_name, expected in ((AUTODL_FL, list(range(4, 16))), (RUNNINGHUB, list(range(4, 11)))):
+        merged = set(task.supported_durations)
+        impl_cfg = UnifiedConfigRegistry.get_implementation(impl_name)
+        if impl_cfg and getattr(impl_cfg, 'supported_durations', None):
+            merged.update(impl_cfg.supported_durations)
+        assert sorted(merged) == expected, impl_name
+
+
+def test_admin_default_powers_cover_expanded_tiers():
+    """后台分档默认值可推导到 11-15：来自 autodl 实现的 default_computing_power"""
+    impl_cfg = UnifiedConfigRegistry.get_implementation(AUTODL_FL)
+    for duration, expected in ((11, 16), (12, 17), (13, 18), (14, 20), (15, 21)):
+        assert impl_cfg.default_computing_power[duration] == expected
