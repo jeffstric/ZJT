@@ -188,7 +188,7 @@ topenrouter:
 
 autodl:
   # AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频等）
-  # Token 获取：登录 https://autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
+  # Token 获取：登录 https://www.autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
   api_key: ""
   base_url: "https://autodl.art"  # AutoDL.Art API 基础 URL
 

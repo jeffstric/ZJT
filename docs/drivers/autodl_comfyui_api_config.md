@@ -20,7 +20,7 @@ AutoDL.Art（autodl.art）将 ComfyUI 工作流包装为 HTTP API 对外提供�
 ### 认证
 
 - Header: `Authorization: <Token>`（裸 token，非 Bearer 前缀格式）+ `Content-Type: application/json`
-- **Token 获取**: 登录 https://autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → **分组必须选 `ComfyUI`**
+- **Token 获取**: 登录 https://www.autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → **分组必须选 `ComfyUI`**
 - autodl.art 与 autodl.com 账号通用（同属视拓云）
 
 ### minimax_h3_zm_u24 工作流参数
