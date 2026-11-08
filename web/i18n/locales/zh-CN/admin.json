@@ -500,7 +500,7 @@
   "provider_autodl_video_desc": "AutoDL.Art ComfyUI 工作流（MiniMax H3 多图多音频生视频）",
   "provider_autodl_video_impacts": "MiniMax H3 多图多音频生视频（最多 9 图 + 3 音频，1-15 秒）",
   "field_api_key_placeholder_autodl": "输入 AutoDL.Art ComfyUI 分组 Token",
-  "field_api_key_help_autodl": "登录 autodl.art → 令牌管理 → 创建令牌，分组必须选 ComfyUI",
+  "field_api_key_help_autodl": "登录 www.autodl.art → 令牌管理 → 创建令牌，分组必须选 ComfyUI",
   "field_base_url_help_autodl": "留空使用官方默认地址（https://autodl.art）",
   "provider_ywapi_name": "智剧通API",
   "provider_ywapi_desc": "智剧通API 官方平台，支持多种模型和服务",

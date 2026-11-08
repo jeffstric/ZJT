@@ -625,7 +625,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'autodl.api_key',
         'value_type': 'string',
-        'description': 'AutoDL.Art ComfyUI API Token（H3 多图多音频生视频等；获取：autodl.art 令牌管理 https://autodl.art/large-model/tokens 创建令牌，分组必须选 ComfyUI）',
+        'description': 'AutoDL.Art ComfyUI API Token（H3 多图多音频生视频等；获取：autodl.art 令牌管理 https://www.autodl.art/large-model/tokens 创建令牌，分组必须选 ComfyUI）',
         'editable': True,
         'is_sensitive': True,
         'quick_config': True,

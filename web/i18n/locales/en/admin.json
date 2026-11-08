@@ -500,7 +500,7 @@
   "provider_autodl_video_desc": "AutoDL.Art ComfyUI workflows (MiniMax H3 multi-image multi-audio to video)",
   "provider_autodl_video_impacts": "MiniMax H3 multi-image multi-audio to video (up to 9 images + 3 audios, 1-15s)",
   "field_api_key_placeholder_autodl": "Enter your AutoDL.Art ComfyUI token",
-  "field_api_key_help_autodl": "Log in to autodl.art → Token Management → Create token; the group must be ComfyUI",
+  "field_api_key_help_autodl": "Log in to www.autodl.art → Token Management → Create token; the group must be ComfyUI",
   "field_base_url_help_autodl": "Leave empty to use the official default (https://autodl.art)",
   "provider_ywapi_name": "ZJT API",
   "provider_ywapi_desc": "ZJT API official platform, supports multiple models and services",

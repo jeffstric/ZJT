@@ -189,10 +189,15 @@ MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
 # 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
 # H3 AutoDL.Art 算力（768p 档基准，按高峰价 0.05 元/秒：ceil(时长×0.05/0.04×1.1)）。
-# 480p/768p 实际成本比 0.8（0.040/0.050 元/秒），与任务级 RunningHub 480P 倍率 0.42 不同，
-# 在两个 autodl 实现的 ImplementationConfig.power_modifiers 里按实现覆盖为 0.8
-# （DB implementation_power 可再覆盖）。空闲时段（00:00-08:00）0.04/0.03 元/秒为利润冗余。
-MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14}
+# 11-15s 为 2026-11-08 实测开放的档位（15s 成片实测 15.08s ✅，AutoDL 实例无 RunningHub
+# webapp 的显存 OOM 问题；单次成功，稳定性待观察）。480p/768p 实际成本比 0.8
+# （0.040/0.050 元/秒），与任务级 RunningHub 480P 倍率 0.42 不同，在两个 autodl 实现的
+# ImplementationConfig.power_modifiers 里按实现覆盖为 0.8（DB implementation_power 可再覆盖）。
+# 空闲时段（00:00-08:00）0.04/0.03 元/秒为利润冗余。
+MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {
+    4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14,
+    11: 16, 12: 17, 13: 18, 14: 20, 15: 21,
+}
 MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8
 # H3 数字人按时长算力：4-10 与上表同价；11-15 为显存充裕后恢复的档位
 # （2026-10-19 起分段段长 15s，11-15s 单段重新可用），按既有梯度外推。
@@ -466,6 +471,11 @@ class ImplementationConfig:
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
+    # 实现方级时长档位（空 = 跟随任务级 supported_durations）。
+    # 用于同一任务下不同实现方支持时长不同的场景：如 H3 AutoDL 支持 1-15s、
+    # RunningHub 因 webapp 11-15s 显存 OOM 风险仅 4-10s。get_frontend_config 会把
+    # 偏好实现的档位替换进任务级 supported_durations，前端时长选项自动适配。
+    supported_durations: List[int] = field(default_factory=list)
     # 实现方级算力修饰符（代码级默认，如 autodl 480P 成本比 0.8 不同于任务级 RunningHub 0.42）。
     # 生效顺序：任务级 power_modifiers → 实现级（此处）→ DB 覆盖（同 attribute 的 key 逐级覆盖）。
     power_modifiers: List["PowerModifier"] = field(default_factory=list)
@@ -960,6 +970,8 @@ class UnifiedTaskConfig:
                     'sort_order': sort_order,
                     'supported_video_resolutions': impl_config.supported_video_resolutions,
                     'default_video_resolution': impl_config.default_video_resolution,
+                    # 实现级时长档位（空 = 跟随任务级 supported_durations）
+                    'supported_durations': list(impl_config.supported_durations or self.supported_durations or []),
                     'operation': operation,
                     'power_modifiers': frontend_modifiers,
                 })
@@ -1312,6 +1324,17 @@ class UnifiedConfigRegistry:
                 if impl_power:
                     task['computing_power'] = impl_power
                     task['user_preferred_implementation'] = user_pref_impl
+                # 同步偏好实现的时长档位（与算力数据无关，独立替换）：
+                # 偏好实现可能比任务级基线支持更多时长档（如 H3 偏好 AutoDL 时 4-15s，
+                # 任务级 RunningHub 基线仅 4-10s）。前端节点按 task.supported_durations
+                # 渲染时长选项，替换后零改动适配。
+                pref_impl_info = next(
+                    (impl for impl in implementations if impl.get('name') == user_pref_impl),
+                    None,
+                )
+                pref_durations = (pref_impl_info or {}).get('supported_durations') or []
+                if pref_durations:
+                    task['supported_durations'] = list(pref_durations)
             elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):
                 # 没有用户偏好，且任务的 computing_power 为 0 或未设置时，使用 implementations 中排序第一位的算力
                 # implementations 已经按 sort_order 排序
@@ -1325,6 +1348,42 @@ class UnifiedConfigRegistry:
 
         return tasks
     
+    @classmethod
+    def is_duration_supported_for_implementation(
+        cls,
+        task_config: "UnifiedTaskConfig",
+        duration: int,
+        implementation: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """校验时长档位在目标实现方下是否可用（提交侧入口校验 + 测试共用）。
+
+        判定顺序：
+        1. 任务级基线（supported_durations）内 → 直接放行（所有实现通用档）
+        2. 超出基线 → 仅当目标实现声明了包含该档的实现级 supported_durations 时放行
+           （如 H3 的 11-15s 仅 AutoDL 声明；RunningHub 未声明 → 拒绝）
+
+        Args:
+            task_config: 任务配置
+            duration: 时长（秒）
+            implementation: 实际将使用的实现方名称（用户偏好解析结果），可为 None
+
+        Returns:
+            (是否支持, 拒绝原因)；支持时原因为空字符串
+        """
+        baseline = task_config.supported_durations or []
+        if not baseline:
+            return True, ""  # 任务未声明档位约束（自由时长任务），不拦
+        if duration in baseline:
+            return True, ""
+        impl_cfg = cls.get_implementation(implementation) if implementation else None
+        impl_durations = getattr(impl_cfg, "supported_durations", None) or []
+        if duration in impl_durations:
+            return True, ""
+        return False, (
+            f"视频时长 {duration} 秒超出当前实现方的支持范围 {list(baseline)} 秒；"
+            f"更长的时长请切换到支持该档位的实现方（如 AutoDL.Art 支持 4-15 秒）"
+        )
+
     @classmethod
     def clear(cls) -> None:
         """清除所有注册（仅用于测试）"""
@@ -4273,6 +4332,8 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720,
+        # AutoDL 工作流支持 1-15s（15s 已实测出片），11-15s 为相对 RunningHub 的扩展档
+        supported_durations=list(range(4, 16)),
         # autodl 480p/768p 成本比 0.8（0.040/0.050 元/秒），覆盖任务级 RunningHub 0.42 倍率，
         # 避免 480P 收价低于成本（DB implementation_power 可再覆盖）
         power_modifiers=[
@@ -4297,6 +4358,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720,
+        supported_durations=list(range(4, 16)),
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',

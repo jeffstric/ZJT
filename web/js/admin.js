@@ -511,7 +511,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_autodl_video_desc',
         category: 'multimedia',
         icon: '🎨',
-        docUrl: 'https://autodl.art/large-model/tokens',
+        docUrl: 'https://www.autodl.art/large-model/tokens',
         lazyRecommended: false,
         displayOrder: 22,
         baseName: 'autodl',
