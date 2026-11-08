@@ -1138,6 +1138,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
         DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v）
+        DriverImplementation.MINIMAX_H3_CHENYU_V1,             # 晨羽智云（仅首帧）
     ],
     # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
     DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO: [

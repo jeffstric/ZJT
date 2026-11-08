@@ -640,6 +640,25 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'quick_config': True
     },
 
+    # ==================== 晨羽智云工作流 API 配置 ====================
+    {
+        'key': 'chenyu.api_key',
+        'value_type': 'string',
+        'description': '晨羽智云 API Key（Minimax-H3 图生视频等；获取：chenyu.cn 控制台「API 服务」页创建）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'chenyu.base_url',
+        'value_type': 'string',
+        'description': '晨羽智云 API 基础 URL（默认 https://www.chenyu.cn）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
     # ==================== API 聚合站配置（部分兼容comfly 等中转站）====================
     {
         'key': 'api_aggregator.site_0.api_key',

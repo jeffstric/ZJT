@@ -154,6 +154,12 @@ autodl:
   api_key: "unittest"
   base_url: "https://autodl.art"
 
+# 晨羽智云（chenyu.cn）工作流 API
+chenyu:
+  api_key: "unittest"
+  base_url: "https://www.chenyu.cn"
+
+
 
 # API Aggregator configuration
 api_aggregator:

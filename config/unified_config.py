@@ -351,6 +351,7 @@ class TaskProvider:
         'LOCAL': '本地处理',
         'ZJT': 'ZJT API',
         'AUTODL': 'AutoDL.Art 供应商',
+        'CHENYU': '晨羽智云供应商',
     }
     DUOMI = 'duomi'
     RUNNINGHUB = 'runninghub'
@@ -359,6 +360,7 @@ class TaskProvider:
     LOCAL = 'local'
     ZJT = 'zjt'
     AUTODL = 'autodl'
+    CHENYU = 'chenyu'
 
 
 class SceneVideoType:
@@ -1265,6 +1267,7 @@ class UnifiedConfigRegistry:
             TaskProvider.VIDU: 'Vidu',
             TaskProvider.VOLCENGINE: '火山引擎',
             TaskProvider.AUTODL: 'AutoDL.Art',
+            TaskProvider.CHENYU: '晨羽智云',
             TaskProvider.LOCAL: '本地',
         }
 
@@ -1479,6 +1482,7 @@ class DriverImplementation:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
+    MINIMAX_H3_CHENYU_V1 = 'minimax_h3_chenyu_v1'                          # 图生视频仅首帧（晨羽智云工作流 API v2）
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1748,6 +1752,7 @@ class DriverImplementationId:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 108
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
+    MINIMAX_H3_CHENYU_V1 = 110
 
 
 # implementation 字符串到 ID 的映射
@@ -1831,6 +1836,7 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
     'minimax_h3_reference_autodl_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_AUTODL_V1,
     'minimax_h3_first_last_autodl_v1': DriverImplementationId.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
+    'minimax_h3_chenyu_v1': DriverImplementationId.MINIMAX_H3_CHENYU_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
     'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
@@ -2811,6 +2817,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
             DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
             DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首尾帧双必填）
+            DriverImplementation.MINIMAX_H3_CHENYU_V1,               # 晨羽智云（仅首帧，无尾帧/音频槽）
         ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
@@ -4448,6 +4455,37 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
                 default=1.0
             )
         ]
+    ),
+    # MiniMax H3 图生视频 晨羽智云工作流（两步异步：submit + run/info 轮询，媒体直接传公网 URL）
+    ImplementationConfig(
+        name='minimax_h3_chenyu_v1',
+        display_name='晨羽智云',
+        driver_class='MinimaxH3ChenyuV1Driver',
+        # 计费实测（2026-11-08 E2E 真实订单 wfrun_6d8c560538e1343a3b75）：
+        # 提交时预冻结 quote 0.98 元/单仅为上限，实际按 GPU 分钟结算——4s@0.5MP(480P)
+        # 实扣 0.156 元（GPU 实算 157s，≈0.039 元/秒），1.0MP(720P) 按像素预计约 2 倍。
+        # 基表为 720P(1MP) 档 = ceil(秒×0.078/0.04×1.25) 向上取偶；480P 档 ×0.5
+        # （乘后仍为整数，两档毛利≥25%；DB implementation_power 可再覆盖）
+        default_computing_power={4: 10, 5: 14, 6: 16, 7: 18, 8: 20, 9: 22, 10: 26},
+        enabled=True,
+        description='晨羽智云 Minimax-H3 图生视频（工作流 wf_fe451b10caa4bf0a7c99，仅首帧，比例跟随首帧，480P/720P→0.5/1.0MP）',
+        sort_order=5210.0,
+        # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走晨羽智云，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（同 AutoDL 401 事故教训）
+        provider=TaskProvider.CHENYU,
+        required_config_keys=['chenyu.api_key'],
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: 0.5},
+                default=1.0
+            )
+        ],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
     ),
     ImplementationConfig(
         name='digital_human_minimax_h3_runninghub_v1',
