@@ -10,8 +10,14 @@
 | H3首尾帧生视频 | `minimax_h3_lightx2v` | `minimax_h3_first_last_autodl_v1`（ID 109） | `minimax_h3_image_to_video`（首尾帧，type 34） |
 
 - **驱动文件**: `task/visual_drivers/minimax_h3_autodl_v1_driver.py`
-- **供应商**: `TaskProvider.AUTODL`（任务级 provider 仍为 RUNNINGHUB，autodl 作为可切换实现方，模式同 Seedance 多网关）
+- **供应商**: `TaskProvider.AUTODL`（实现方级 provider；任务级 provider 仍为 RUNNINGHUB，autodl 作为可切换实现方，模式同 Seedance 多网关）
 - **配置键**: `autodl.api_key`（必填）/ `autodl.base_url`（默认 `https://autodl.art`）
+
+> ⚠️ **实现方级 provider 必须显式标注**（`ImplementationConfig.provider=TaskProvider.AUTODL`）：
+> 两个实现方挂在 RunningHub 供应商的任务类型（34/37）下，运行时密钥注入/槽位/熔断
+> 上报按**实现方级** provider 判定（`is_runninghub_task`）。曾按任务类型判定导致
+> RunningHub 池密钥覆盖 `autodl.api_key`、上游 401（事故 ai_tools 13439/13440，
+> 2026-11-08 修复，详见 [runninghub_concurrency_control.md](../backend/runninghub_concurrency_control.md)）。
 
 ## API 协议
 
@@ -41,7 +47,7 @@
 | 参数 | 来源 | 说明 |
 |------|------|------|
 | `first_frame` | `ai_tool.image_path` 首图 | 必填 |
-| `last_frame` | `ai_tool.image_path` 次图 | **官方 API 必填**；任务 34 尾帧可选（`supports_last_frame=True`），单首帧任务经 `validate_input_compatibility` 判不兼容（重试不切到本实现、直接提交则 USER 错误提示补充尾帧，不降级、不用首帧补位） |
+| `last_frame` | `ai_tool.image_path` 次图 | **必填**（上游强校验）。2026-11-08 三重实测证实：仅首帧提交报"缺少必填参数：last_frame"（事故 13442）；直接探测 `first_frame` 单独同报错、`ref_image_0` 报"未定义的参数"——曾据 zm_u24（参考生，槽位 `ref_image_0`、无尾帧概念）单图测试误判"尾帧可选"并短暂放开，已回滚。上游放开后可再支持；单首帧任务经兼容钩子自动落回 RunningHub 实现 |
 | （音频） | `ai_tool.audio_path` | 工作流无音频槽，忽略 |
 
 ### 输入契约能力校验（validate_input_compatibility）
@@ -50,7 +56,7 @@
 
 | 实现 | 判不兼容的条件 |
 |------|----------------|
-| 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、AutoDL 必失败） |
+| 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、lightx2v 上游报缺参） |
 | 参考生 zm_u24 | 任务带参考视频（RunningHub 可传视频、AutoDL 无视频槽会静默丢） |
 
 `extra_config` 为非法 JSON、数组或 `null` 时，`parse_image_mode` 回退默认首尾帧模式，钩子仍按 `image_path` 判断尾帧，提交不再因 `list.get` 抛 `AttributeError`。钩子自身的其它异常不当成兼容：候选选择会跳过该实现。空白 `video_path` 视为无参考视频。
@@ -65,10 +71,10 @@
 
 ## 算力
 
-`MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14, 11: 16, 12: 17, 13: 18, 14: 20, 15: 21}`
+`MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 5, 5: 7, 6: 8, 7: 9, 8: 10, 9: 12, 10: 13, 11: 14, 12: 15, 13: 17, 14: 18, 15: 19}`
 
-- 按**高峰价** 768p 0.05 元/秒计算：`ceil(时长×0.05/0.04×1.1)`，空闲时段（00:00-08:00，0.04/0.03 元/秒）为利润冗余
-- 480P 倍率：autodl 480p/768p 实际成本比为 **0.8**（≠ 任务级 RunningHub 0.42），已在两个实现的 `ImplementationConfig.power_modifiers` 代码级固化（`MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8`，例：5s 480P = ceil(7×0.8) = 6 点），DB implementation_power 可再覆盖
+- 2026-11-09 三家贴本重定价：按**高峰价** 768p 0.05 元/秒计算 `ceil(时长×0.05/0.04)`（去掉原 1.1 毛利系数，毛利 0~4%），空闲时段（00:00-08:00，0.04/0.03 元/秒）为利润冗余
+- 480P 倍率：autodl 480p/768p 实际成本比为 **0.8**（=0.040/0.050 精确成本比，≠ 任务级 RunningHub 0.42），已在两个实现的 `ImplementationConfig.power_modifiers` 代码级固化（`MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8`，例：5s 480P = ceil(7×0.8) = 6 点），DB implementation_power 可再覆盖
 
 ## 错误处理
 
@@ -80,7 +86,7 @@
 | 响应格式异常 | SYSTEM + Sentry 报警 |
 | 查询业务错误（code≠Success） | SYSTEM FAILED（任务不存在等非用户问题） |
 | 查询 429/404/**5xx** | 保持 RUNNING 继续轮询（5xx 为上游临时故障，判死会误退款且上游可能仍在跑计费；任务过期检查兜底终态） |
-| 首尾帧缺尾帧 / 参考生无图 | USER 错误（提示补充素材） |
+| 首尾帧缺首帧/尾帧 / 参考生无图 | USER 错误（提示补充素材） |
 
 ## 测试
 
@@ -88,7 +94,7 @@
 pytest tests/drivers/test_minimax_h3_autodl_v1_driver.py -v
 ```
 
-覆盖：素材槽位映射（图/音频/截断/无对白跳过）、分辨率×比例矩阵、首尾帧必填校验、时长钳制、提交成功/业务错误/429/网络错误、轮询各状态（含小写 completed、404 不判死）、响应校验函数。
+覆盖：素材槽位映射（图/音频/截断/无对白跳过）、分辨率×比例矩阵、首尾帧双必填校验、时长钳制、提交成功/业务错误/429/网络错误、轮询各状态（含小写 completed、404 不判死）、响应校验函数。
 
 ## 真实联调记录（2026-11-07 ✅ 全通过）
 

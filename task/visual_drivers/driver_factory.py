@@ -847,6 +847,16 @@ def register_all_drivers():
         logger.warning(f"Failed to import MinimaxH3 Autodl drivers: {e}")
 
     try:
+        from .minimax_h3_chenyu_v1_driver import MinimaxH3ChenyuV1Driver
+        # 注册 MiniMax H3 晨羽智云工作流（图生视频仅首帧，wf_fe451b10caa4bf0a7c99）
+        VideoDriverFactory.register_driver(
+            DriverImplementation.MINIMAX_H3_CHENYU_V1,
+            MinimaxH3ChenyuV1Driver,
+        )
+    except ImportError as e:
+        logger.warning(f"Failed to import MinimaxH3ChenyuV1Driver: {e}")
+
+    try:
         from .video_watermark_runninghub_v1_driver import VideoWatermarkRunninghubV1Driver
         VideoDriverFactory.register_driver(
             DriverImplementation.VIDEO_WATERMARK_RUNNINGHUB_V1,

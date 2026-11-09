@@ -174,8 +174,8 @@ def test_first_last_build_request_maps_frames():
 
 
 def test_first_last_requires_last_frame():
+    """lightx2v 双必填（2026-11-08 三重实测证实）：单图只有首帧时本地报明确 USER 错误"""
     driver = make_driver(MinimaxH3FirstLastAutodlV1Driver, "minimax_h3_lightx2v", 34)
-    # 单图 → 只有首帧无尾帧，官方 API 要求尾帧必填
     result = driver.build_create_request(make_first_last_tool(image_path="first.png"))
     assert result["success"] is False
     assert result["error_type"] == "USER"

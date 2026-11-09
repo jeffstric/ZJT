@@ -114,6 +114,7 @@ def _install_module_stubs():
     unified.UnifiedConfigRegistry = MagicMock()
     unified.get_implementation_id = MagicMock(return_value=17)
     unified.get_implementation_name = MagicMock(return_value='ltx2.3_runninghub_v1')
+    unified.is_runninghub_task = MagicMock(return_value=False)
     sys.modules['config.unified_config'] = unified
 
     perseids_client = types.ModuleType('perseids_server.client')

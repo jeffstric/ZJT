@@ -52,7 +52,6 @@ from config.constant import (
     TASK_STATUS_WAITING_PARAM_PREPARE,
     TASK_STATUS_WAITING_BEFORE_FINISH,
     TASK_STATUS_CANCELLED,
-    RUNNINGHUB_TASK_TYPES,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
     VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
     get_sync_orphan_grace_seconds
@@ -314,7 +313,12 @@ async def _submit_new_task(ai_tool):
         （False 表示 transient 失败，调度循环按 try_count 退避后再调度）
     """
     from task.visual_drivers import VideoDriverFactory
-    from config.unified_config import UnifiedConfigRegistry, get_implementation_id, get_implementation_name
+    from config.unified_config import (
+        UnifiedConfigRegistry,
+        get_implementation_id,
+        get_implementation_name,
+        is_runninghub_task,
+    )
     from task.sync_task_executor import get_sync_task_executor
 
     ai_tool_type = ai_tool.type
@@ -472,10 +476,13 @@ async def _submit_new_task(ai_tool):
         # 多密钥轮换：从槽位表反查本任务领用的密钥 index，注入到 driver
         # （槽位在 generate_video_task 中获取时已写入 api_key_index；
         #  这里通过 slot 反查而非对象属性传递，因 ai_tool 是重新查询的新对象）
+        # ⚠️ 按实现方级供应商判定：任务类型挂载的非 RunningHub 实现方（如 H3 的
+        # AutoDL）绝不能注入 RunningHub 池密钥——会覆盖其自身 token 导致上游 401
+        # （事故 ai_tools 13439/13440）
         from task import runninghub_key_pool
         from model.runninghub_slots import RunningHubSlot
         rh_key_index = runninghub_key_pool.RUNNINGHUB_GLOBAL_KEY_INDEX
-        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+        if is_runninghub_task(ai_tool, getattr(driver, 'driver_name', None)):
             _task_row = TasksModel.get_by_task_id(task_id)
             if _task_row:
                 rh_key_index = await runninghub_key_pool.get_key_index_for_slot_async(
@@ -520,18 +527,19 @@ async def _submit_new_task(ai_tool):
                                detail={'error': error, 'error_type': error_type,
                                        'error_detail': error_detail})
 
-            # 多密钥熔断反馈：非上游拥堵的失败计入密钥失败计数
+            # 多密钥熔断反馈：非上游拥堵的失败计入密钥失败计数（按实现方级供应商判定，
+            # 非 RunningHub 实现方的失败不得污染 RunningHub 密钥熔断统计）
             is_upstream_congested = (
                 result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED"
             )
-            if not is_upstream_congested and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+            if not is_upstream_congested and is_runninghub_task(ai_tool, getattr(driver, 'driver_name', None)):
                 await runninghub_key_pool.report_failure_async(rh_key_index, error)
             
             # 上游并发超限/限流（api queue limit reached / TASK_QUEUE_MAXED 等）：
             # 释放本地槽位、状态回 QUEUED、延迟重试，不消耗 try_count、不退算力、不切换实现方。
             # 复用本地槽位满的延迟出队机制（list_by_type_and_status 带 next_trigger <= NOW 过滤）。
             if result.get("retry") and result.get("retry_reason") == "UPSTREAM_CONGESTED" \
-                    and ai_tool_type in RUNNINGHUB_TASK_TYPES:
+                    and is_runninghub_task(ai_tool, getattr(driver, 'driver_name', None)):
                 rh_task = TasksModel.get_by_task_id(task_id)
                 if rh_task:
                     RunningHubSlotsModel.release_slot(rh_task.id, source=RunningHubSlot.SOURCE_TASK)
@@ -674,8 +682,8 @@ async def _submit_new_task(ai_tool):
             return PROCESS_RESULT_IN_FLIGHT
         TasksModel.update_by_task_id(task_id, status=TASK_STATUS_PROCESSING)
         
-        # 如果是 RunningHub 任务，更新槽位的 project_id
-        is_runninghub = ai_tool_type in RUNNINGHUB_TASK_TYPES
+        # 如果是 RunningHub 任务（按实现方级判定），更新槽位的 project_id
+        is_runninghub = is_runninghub_task(ai_tool, getattr(driver, 'driver_name', None))
         if is_runninghub:
             task = TasksModel.get_by_task_id(task_id)
             if task:
@@ -819,7 +827,9 @@ async def _check_task_status(ai_tool):
 
         # 多密钥轮换：轮询前根据任务记录的密钥 index 切换 driver 密钥
         # （错误密钥无法获取结果）
-        if ai_tool_type in RUNNINGHUB_TASK_TYPES:
+        # ⚠️ 按实现方级供应商判定：非 RunningHub 实现方（如 AutoDL）不得注入池密钥
+        from config.unified_config import is_runninghub_task
+        if is_runninghub_task(ai_tool, getattr(driver, 'driver_name', None)):
             from task import runninghub_key_pool
             from model.runninghub_slots import RunningHubSlot
             task_row = TasksModel.get_by_task_id(task_id)
@@ -1303,16 +1313,16 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         if won_failure:
             TasksModel.update_by_task_id(task_id, status=TASK_STATUS_FAILED)
         
-        # 释放 RunningHub 槽位
-        is_runninghub = ai_tool_type in RUNNINGHUB_TASK_TYPES
-        if is_runninghub:
-            if project_id:
-                RunningHubSlotsModel.release_slot_by_project_id(project_id)
-            else:
-                # 如果没有 project_id（提交失败），通过 task_id 释放
-                task = TasksModel.get_by_task_id(task_id)
-                if task:
-                    RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
+        # 释放 RunningHub 槽位（无条件：release 为幂等 no-op，未占用槽位的任务无副作用；
+        # 不按实现方判定是为了覆盖「入队预占时实现方未记录、后切到非 RunningHub 实现方」
+        # 的场景，避免槽位泄漏——与成功路径 _handle_task_success 的无条件释放口径一致）
+        if project_id:
+            RunningHubSlotsModel.release_slot_by_project_id(project_id)
+        else:
+            # 如果没有 project_id（提交失败），通过 task_id 释放
+            task = TasksModel.get_by_task_id(task_id)
+            if task:
+                RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
         
     except Exception as db_error:
         logger.error(f"Failed to update records for failed task {project_id}: {db_error}")
@@ -1547,9 +1557,9 @@ def process_task_with_retry(task_type, process_func):
                     except Exception as e:
                         logger.warning(f"Failed to mark attempt as failed for expired task {task.task_id}: {e}")
 
-                    # 释放 RunningHub 槽位
+                    # 释放 RunningHub 槽位（无条件幂等 no-op，理由同 _handle_task_failure）
                     ai_tool = AIToolsModel.get_by_id(task.task_id)
-                    if ai_tool and ai_tool.type in RUNNINGHUB_TASK_TYPES:
+                    if ai_tool:
                         if ai_tool.project_id:
                             RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
                         else:
@@ -1659,12 +1669,11 @@ def process_task_with_retry(task_type, process_func):
                         except Exception as e:
                             logger.error(f"Failed to refund computing power for task {task.task_id}: {e}")
                         
-                        # 释放 RunningHub 槽位
-                        if ai_tool.type in RUNNINGHUB_TASK_TYPES:
-                            if ai_tool.project_id:
-                                RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
-                            else:
-                                RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
+                        # 释放 RunningHub 槽位（无条件幂等 no-op，理由同 _handle_task_failure）
+                        if ai_tool.project_id:
+                            RunningHubSlotsModel.release_slot_by_project_id(ai_tool.project_id)
+                        else:
+                            RunningHubSlotsModel.release_slot(task.id, source=RunningHubSlot.SOURCE_TASK)
                     
                     expired_count += 1
                     logger.info(f"Task {task.task_id} marked as failed due to max retry exceeded")
@@ -1680,19 +1689,12 @@ def process_task_with_retry(task_type, process_func):
                     logger.error(f"AI tool {task.task_id} not found")
                     continue
                 
-                is_runninghub = ai_tool.type in RUNNINGHUB_TASK_TYPES
-                if is_runninghub and ai_tool.implementation:
-                    # 槽位按任务类型判断，但同一任务条目可绑定非 RunningHub 的
-                    # 用户模块实现方；此类任务不占用也不受制于 RunningHub 槽位。
-                    from config.unified_config import get_implementation_name
-
-                    recorded_impl = get_implementation_name(ai_tool.implementation)
-                    # 用户模块实现方前缀常量惰性导入：主仓核心模块级 import 不依赖
-                    # 用户模块契约常量，避免测试 stub 的常量清单被迫同步维护
-                    from config.constant import USER_MODULE_IMPL_NAME_PREFIX
-
-                    if recorded_impl.startswith(USER_MODULE_IMPL_NAME_PREFIX):
-                        is_runninghub = False
+                # 槽位按实现方级供应商判定：任务类型挂载的非 RunningHub 实现方
+                # （如 H3 的 AutoDL、用户模块实现方）不占用也不受制于 RunningHub 槽位。
+                # 实现方未记录时 is_runninghub_task 回退任务类型默认供应商（预占场景），
+                # 用户模块实现方豁免由 helper 内部处理（原前缀特判收编于此）
+                from config.unified_config import is_runninghub_task
+                is_runninghub = is_runninghub_task(ai_tool)
 
                 # ⚠️ RunningHub 槽位控制：QUEUED 状态必须先获取槽位
                 # 获取失败 → 延迟30秒后重试，不计入 try_count

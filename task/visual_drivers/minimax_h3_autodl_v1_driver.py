@@ -19,7 +19,9 @@ compress_and_upload_image_sync / upload_media_to_cdn_sync 转为七牛 CDN 公�
 - MinimaxH3ReferenceAutodlV1Driver   参考生视频 minimax_h3_zm_u24
   （最多 9 张参考图 ref_image_0~8 + 3 段参考音频 ref_audio_0~2）
 - MinimaxH3FirstLastAutodlV1Driver   首尾帧 minimax_h3_lightx2v
-  （first_frame + last_frame 双必填，官方 API 明示两项均必填）
+  （first_frame + last_frame 双必填——2026-11-08 三重实测证实：仅首帧提交
+  报"缺少必填参数：last_frame"、ref_image_0 报"未定义的参数"；已反馈上游
+  待 AutoDL 改为可选后可再放开）
 
 时长 1-15 秒（任务层 supported_durations 仍为 4-10）；分辨率 480p/768p × 竖/横/(1:1)。
 """
@@ -794,7 +796,10 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
 
     请求体素材槽位：
     - first_frame（必填）：首帧图片公网 URL
-    - last_frame（必填）：尾帧图片公网 URL（官方 API 明示必填，缺失时直接报用户错误）
+    - last_frame（必填）：尾帧图片公网 URL（2026-11-08 三重实测证实上游强校验：
+      事故 ai_tools 13442 仅首帧提交报"缺少必填参数：last_frame"；直接探测
+      first_frame 单独同报错、ref_image_0 报"未定义的参数"。曾据 zm_u24 单图
+      测试误判"尾帧可选"并短暂放开，已回滚。上游改为可选后可再放开）
     - 无音频槽（lightx2v 工作流不收参考音频，audio_path 输入忽略）
     """
 
@@ -807,11 +812,10 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
 
     def validate_input_compatibility(self, ai_tool) -> Tuple[bool, Optional[str]]:
         """
-        lightx2v 首尾帧双必填（官方 API 约束），任务 34 尾帧可选（supports_last_frame=True）：
-        单首帧任务切到本实现必然 USER 失败（"请补充尾帧"），提前判不兼容换下一个候选。
+        lightx2v 首尾帧双必填（上游强校验，见类 docstring），任务 34 尾帧可选
+        （supports_last_frame=True）：单首帧任务切到本实现必然 USER 失败，
+        提前判不兼容换下一个候选（未锁定时自动落回 RunningHub 实现）。
         （无首帧属参数错误，RunningHub 实现同样失败，不在此拦，留给驱动报准确错误。）
-        extra_config 不是对象时由 parse_image_mode 回退默认首尾帧模式，本方法仍能看到首尾帧。
-        其它异常不吞：候选选择见到钩子抛错会跳过本实现，避免误判兼容后提交崩溃。
         """
         image_info = self.get_all_images_by_mode(ai_tool)
         if image_info.get('first_frame') and not image_info.get('last_frame'):
@@ -819,7 +823,7 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
         return True, None
 
     def build_create_request(self, ai_tool) -> Dict[str, Any]:
-        """构建 lightx2v 提交请求（首尾帧转公网 URL）"""
+        """构建 lightx2v 提交请求（首尾帧转公网 URL，双必填）"""
         extra_config = self._parse_extra_config(ai_tool)
 
         image_info = self.get_all_images_by_mode(ai_tool)
@@ -833,7 +837,8 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
                 "error_type": "USER",
                 "retry": False
             }
-        # 官方 API：first_frame / last_frame 均为必填
+        # 上游强校验：first_frame / last_frame 均为必填（缺尾帧提前给用户明确错误，
+        # 优于提交后才收到上游 400 参数错误）
         if not last_frame:
             return {
                 "success": False,

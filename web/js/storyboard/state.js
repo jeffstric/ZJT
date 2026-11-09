@@ -101,7 +101,10 @@ const state = {
     chatMode: 'dialogue',
     inputMessage: '',
     // 视频生成模式图片输入模式：first_last_frame | multi_reference（对齐 marketing_agent）
-    videoImageMode: 'first_last_frame',
+    // 初始默认参考生视频（2026-11-08 起，与 video_workflow 分镜节点新建默认一致）；
+    // 已保存的 config_json 偏好经 restoreUiConfig 恢复，不受此默认影响；
+    // 所选模型不支持参考生时由 ensureVideoImageModeSupported 拉回其支持的首个模式
+    videoImageMode: 'multi_reference',
     // 视频槽位媒体：[{id, role:'first_frame'|'last_frame'|'reference', source:'scene'|'upload', url, thumbnailUrl, name, uploading}]
     videoMediaItems: [],
     // 用户手动移除首帧/尾帧后，在当前分镜内不再自动注入（切换分镜清除）

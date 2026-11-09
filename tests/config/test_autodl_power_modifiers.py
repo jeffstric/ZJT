@@ -50,11 +50,12 @@ def test_autodl_720p_unchanged():
 
 
 def test_runninghub_480p_keeps_task_multiplier():
-    """RunningHub 实现不受实现级覆盖：5s 480P = ceil(6 × 0.42) = 3（任务级倍率原样）"""
+    """RunningHub 实现不受实现级覆盖：5s 480P = ceil(15 × 0.42) = 7（任务级倍率原样；
+    720P 基值为 2026-11-09 贴本重定价后的 RH 生视频表）"""
     power = _power(
         TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO, 5,
         "minimax_h3_runninghub_v1", "480P")
-    assert power == math.ceil(6 * 0.42) == 3
+    assert power == math.ceil(15 * 0.42) == 7
 
 
 def test_db_overlay_beats_impl_code_default():
