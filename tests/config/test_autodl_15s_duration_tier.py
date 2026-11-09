@@ -21,11 +21,12 @@ RUNNINGHUB = "minimax_h3_runninghub_v1"
 # ==================== 算力扩档 ====================
 
 def test_power_table_has_11_to_15_tiers():
-    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[11] == 16
-    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[12] == 17
-    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[13] == 18
-    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[14] == 20
-    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[15] == 21
+    # 2026-11-09 贴本重定价：ceil(秒×1.25)
+    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[11] == 14
+    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[12] == 15
+    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[13] == 17
+    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[14] == 18
+    assert MINIMAX_H3_AUTODL_768P_COMPUTING_POWER[15] == 19
 
 
 def test_autodl_15s_power_via_task():
@@ -35,7 +36,7 @@ def test_autodl_15s_power_via_task():
          patch("model.implementation_power.ImplementationPowerModel.get_all_powers_for_implementation",
                return_value={}):
         power = task.get_computing_power(15, implementation=AUTODL_FL, context={"resolution": "720P"})
-    assert power == 21
+    assert power == 19
 
 
 def test_autodl_15s_480p_multiplier_applies():
@@ -45,7 +46,7 @@ def test_autodl_15s_480p_multiplier_applies():
          patch("model.implementation_power.ImplementationPowerModel.get_all_powers_for_implementation",
                return_value={}):
         power = task.get_computing_power(15, implementation=AUTODL_FL, context={"resolution": "480P"})
-    assert power == math.ceil(21 * 0.8) == 17
+    assert power == math.ceil(19 * 0.8) == 16
 
 
 # ==================== 实现级档位字段 ====================

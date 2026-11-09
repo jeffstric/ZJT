@@ -184,10 +184,17 @@ SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
-# MiniMax H3 720P 按时长算力（秒 -> 算力）。视频去水印与此表共用同一对象。
+# MiniMax H3 720P 按时长算力（秒 -> 算力）。仅视频去水印继续使用此历史表
+# （去水印为不同功能，成本未重估，维持原价）。
 # 仅 4-10 档：H3 webapp 默认实例上 11-15s 段处于显存边界（随机 OOM），
 # 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+# MiniMax H3 RunningHub 生视频 720P 算力（首尾帧/加速版/参考生/文生/关键帧参考 5 个实现方共用）。
+# 2026-11-09 按实测成本贴本重定价：RH H3 720p 成本 ≈0.113 元/秒（用户实测口径），
+# 算力 = ceil(秒×0.113/0.04) = ceil(秒×2.825)，毛利 0~6%；
+# 480P 由任务级 0.42 倍率折算（恰为 RH 成本比 0.047/0.113≈0.416）。
+# 旧表 720P 4s=5 算力（0.20 元）vs 成本 0.452 元，每单亏 0.25 元——本次修正。
+MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER = {4: 12, 5: 15, 6: 17, 7: 20, 8: 23, 9: 26, 10: 29}
 # H3 AutoDL.Art 算力（768p 档基准，按高峰价 0.05 元/秒：ceil(时长×0.05/0.04×1.1)）。
 # 11-15s 为 2026-11-08 实测开放的档位（15s 成片实测 15.08s ✅，AutoDL 实例无 RunningHub
 # webapp 的显存 OOM 问题；单次成功，稳定性待观察）。480p/768p 实际成本比 0.8
@@ -195,8 +202,10 @@ MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
 # ImplementationConfig.power_modifiers 里按实现覆盖为 0.8（DB implementation_power 可再覆盖）。
 # 空闲时段（00:00-08:00）0.04/0.03 元/秒为利润冗余。
 MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {
-    4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14,
-    11: 16, 12: 17, 13: 18, 14: 20, 15: 21,
+    # 2026-11-09 贴本重定价：ceil(秒×0.05/0.04) = ceil(秒×1.25)，毛利 0~4%
+    # （原表含 1.1 毛利系数；480P 修饰符 0.8 = 精确成本比 0.040/0.050 不变）
+    4: 5, 5: 7, 6: 8, 7: 9, 8: 10, 9: 12, 10: 13,
+    11: 14, 12: 15, 13: 17, 14: 18, 15: 19,
 }
 MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8
 # H3 数字人按时长算力：4-10 与上表同价；11-15 为显存充裕后恢复的档位
@@ -4329,7 +4338,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3RunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
         sort_order=5200.0,
@@ -4344,7 +4353,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_turbo_runninghub_v1',
         display_name='RunningHub（加速版）',
         driver_class='MinimaxH3TurboRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 图生视频加速版接口（webapp 2092199541612306434，支持首尾帧）',
         sort_order=5202.0,
@@ -4359,7 +4368,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_reference_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3ReferenceRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
         sort_order=5205.0,
@@ -4374,7 +4383,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_text_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3TextRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 文生视频接口（复用参考生工作流，素材槽位全空）',
         sort_order=5206.0,
@@ -4389,7 +4398,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_keyframe_ref_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3KeyframeRefRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）',
         sort_order=5207.0,
@@ -4463,11 +4472,12 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         driver_class='MinimaxH3ChenyuV1Driver',
         # 计费实测（2026-11-08 E2E 真实订单 wfrun_6d8c560538e1343a3b75）：
         # 提交时预冻结 quote 0.98 元/单仅为上限，实际按 GPU 分钟结算——4s@0.5MP
-        # 实扣 0.156 元（GPU 实算 157s）；480P 实际档位 0.6MP（2026-11-09 修正，事故
-        # 13444），按像素折算 4s@0.6MP ≈ 0.187 元。
-        # 基表为 720P(1MP) 档 = ceil(秒×0.078/0.04×1.25) 向上取偶；480P 档 ×0.5
-        # （对齐实际像素比，ceil 取整后两档毛利≥28%；DB implementation_power 可再覆盖）
-        default_computing_power={4: 10, 5: 14, 6: 16, 7: 18, 8: 20, 9: 22, 10: 26},
+        # 实扣 0.156 元（GPU 实算 157s）；480P 实际档位 0.6MP（2026-11-09 修正，事故 13444）。
+        # 2026-11-09 三家贴本重定价：720P(1MP) 成本口径 0.09 元/秒 → ceil(秒×2.25)；
+        # 480P 成本口径取两实测较大者 0.039 元/秒（用户实测 0.0325 / 本方 E2E 0.039@0.5MP，
+        # GPU 分钟计费存在 ±20% 波动，取上界防亏）→ 修饰符 0.44（ceil 后 0~25% 毛利）。
+        # DB implementation_power 可再覆盖。
+        default_computing_power={4: 9, 5: 12, 6: 14, 7: 16, 8: 18, 9: 21, 10: 23},
         enabled=True,
         description='晨羽智云 Minimax-H3 图生视频（工作流 wf_fe451b10caa4bf0a7c99，仅首帧，比例跟随首帧，480P/720P→0.6/1.0MP）',
         sort_order=5210.0,
@@ -4478,7 +4488,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
-                values={VideoResolution.P480: 0.6},
+                values={VideoResolution.P480: 0.44},
                 default=1.0
             )
         ],

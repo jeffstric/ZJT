@@ -71,10 +71,10 @@
 
 ## 算力
 
-`MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 6, 5: 7, 6: 9, 7: 10, 8: 11, 9: 13, 10: 14, 11: 16, 12: 17, 13: 18, 14: 20, 15: 21}`
+`MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {4: 5, 5: 7, 6: 8, 7: 9, 8: 10, 9: 12, 10: 13, 11: 14, 12: 15, 13: 17, 14: 18, 15: 19}`
 
-- 按**高峰价** 768p 0.05 元/秒计算：`ceil(时长×0.05/0.04×1.1)`，空闲时段（00:00-08:00，0.04/0.03 元/秒）为利润冗余
-- 480P 倍率：autodl 480p/768p 实际成本比为 **0.8**（≠ 任务级 RunningHub 0.42），已在两个实现的 `ImplementationConfig.power_modifiers` 代码级固化（`MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8`，例：5s 480P = ceil(7×0.8) = 6 点），DB implementation_power 可再覆盖
+- 2026-11-09 三家贴本重定价：按**高峰价** 768p 0.05 元/秒计算 `ceil(时长×0.05/0.04)`（去掉原 1.1 毛利系数，毛利 0~4%），空闲时段（00:00-08:00，0.04/0.03 元/秒）为利润冗余
+- 480P 倍率：autodl 480p/768p 实际成本比为 **0.8**（=0.040/0.050 精确成本比，≠ 任务级 RunningHub 0.42），已在两个实现的 `ImplementationConfig.power_modifiers` 代码级固化（`MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8`，例：5s 480P = ceil(7×0.8) = 6 点），DB implementation_power 可再覆盖
 
 ## 错误处理
 
