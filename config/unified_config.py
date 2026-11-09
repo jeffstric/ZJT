@@ -4462,13 +4462,14 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='晨羽智云',
         driver_class='MinimaxH3ChenyuV1Driver',
         # 计费实测（2026-11-08 E2E 真实订单 wfrun_6d8c560538e1343a3b75）：
-        # 提交时预冻结 quote 0.98 元/单仅为上限，实际按 GPU 分钟结算——4s@0.5MP(480P)
-        # 实扣 0.156 元（GPU 实算 157s，≈0.039 元/秒），1.0MP(720P) 按像素预计约 2 倍。
+        # 提交时预冻结 quote 0.98 元/单仅为上限，实际按 GPU 分钟结算——4s@0.5MP
+        # 实扣 0.156 元（GPU 实算 157s）；480P 实际档位 0.6MP（2026-11-09 修正，事故
+        # 13444），按像素折算 4s@0.6MP ≈ 0.187 元。
         # 基表为 720P(1MP) 档 = ceil(秒×0.078/0.04×1.25) 向上取偶；480P 档 ×0.5
-        # （乘后仍为整数，两档毛利≥25%；DB implementation_power 可再覆盖）
+        # （对齐实际像素比，ceil 取整后两档毛利≥28%；DB implementation_power 可再覆盖）
         default_computing_power={4: 10, 5: 14, 6: 16, 7: 18, 8: 20, 9: 22, 10: 26},
         enabled=True,
-        description='晨羽智云 Minimax-H3 图生视频（工作流 wf_fe451b10caa4bf0a7c99，仅首帧，比例跟随首帧，480P/720P→0.5/1.0MP）',
+        description='晨羽智云 Minimax-H3 图生视频（工作流 wf_fe451b10caa4bf0a7c99，仅首帧，比例跟随首帧，480P/720P→0.6/1.0MP）',
         sort_order=5210.0,
         # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走晨羽智云，
         # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（同 AutoDL 401 事故教训）
@@ -4477,7 +4478,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
-                values={VideoResolution.P480: 0.5},
+                values={VideoResolution.P480: 0.6},
                 default=1.0
             )
         ],

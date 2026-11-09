@@ -17,7 +17,7 @@ MiniMax H3 图生视频 晨羽智云（chenyu.cn）工作流驱动
 - n105_104_prompt（String，必填）：提示词
 - n114_image（MediaURI，必填）：首帧图片公网 URL（工作流无尾帧槽）
 - n105_111_value（Number，必填）：秒数（任务层 4-10 档）
-- n119_megapixels（Number，必填）：百万像素（480P→0.5 / 720P→1.0）
+- n119_megapixels（Number，必填）：百万像素（480P→0.6 / 720P→1.0，上游档位 0.6=480p、1=768p；2026-11-09 修正——初版误设 0.5，事故 ai_tools 13444）
   工作流无比例参数，成片比例跟随首帧图
 
 幂等：idempotency_key = zjt_h3_chenyu_{ai_tool.id}，调度层重试提交同一任务
@@ -51,9 +51,10 @@ CHENYU_WORKFLOW_REVISION = "wfr_9088e3367308ac1939d0"
 CHENYU_API_BASE_DEFAULT = "https://www.chenyu.cn"
 
 # 分辨率标准值 → 工作流百万像素档（n119_megapixels）
-# 480P→0.5 / 720P→1.0（2026-11-08 接入口径，档位如调整改此处即可）
+# 480P→0.6 / 720P→1.0（上游档位 0.6=480p、1=768p；2026-11-09 修正——初版误设 0.5，
+# 事故 ai_tools 13444：480P 任务实发 0.5）
 RESOLUTION_TO_MEGAPIXELS = {
-    VideoResolution.P480: 0.5,
+    VideoResolution.P480: 0.6,
     VideoResolution.P720: 1.0,
 }
 DEFAULT_MEGAPIXELS = 1.0

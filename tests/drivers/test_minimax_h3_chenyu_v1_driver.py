@@ -71,8 +71,8 @@ def test_build_create_request_maps_inputs():
     assert inputs["n105_104_prompt"] == "一只猫跳起来"
     assert inputs["n114_image"] == "https://cdn.example/first.png"
     assert inputs["n105_111_value"] == 4
-    # 480P → 0.5MP
-    assert inputs["n119_megapixels"] == 0.5
+    # 480P → 0.6MP（上游档位 0.6=480p；2026-11-09 修正，初版误设 0.5——事故 13444）
+    assert inputs["n119_megapixels"] == 0.6
 
 
 def test_build_create_request_megapixels_by_resolution():
