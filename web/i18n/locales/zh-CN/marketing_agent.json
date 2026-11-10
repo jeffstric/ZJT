@@ -176,7 +176,7 @@
   "image_size_limit": "图片大小不能超过 {size}MB",
   "single_image_no_tail": "当前模型仅支持单图，不支持尾帧",
   "first_last_max_2": "首尾帧模式最多2张图片",
-  "reference_max_5": "参考图最多5张",
+  "video_image_mode_max_n": "当前视频模式最多允许 {max} 张图片",
   "upload_failed_retry": "图片上传失败，请重新上传",
   "upload_error_retry": "图片上传异常，请重新上传",
   "unsupported_image_format": "{{name}} 格式不支持，请上传 JPG、PNG、GIF 或 WebP 格式的图片",
