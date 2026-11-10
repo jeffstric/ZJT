@@ -163,6 +163,7 @@
   "upload_timeout_retry": "Image upload timeout. Please try again later.",
   "upload_timeout": "Image upload timeout, please retry",
   "upload_not_ready": "Image upload not complete. Please try again later.",
+  "media_not_persisted_hint": "(Media upload incomplete, not saved)",
   "insufficient_power": "Insufficient power. Please recharge to continue.",
   "keep_one_session": "Keep at least one chat session",
   "delete_failed": "Delete failed",

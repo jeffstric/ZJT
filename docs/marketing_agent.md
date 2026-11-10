@@ -446,6 +446,13 @@ Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文�
 切换视频模型时已上传图片的保留规则按模式区分：仅首尾帧模式下切到 `supports_last_frame=false` 的模型才裁剪到 1 张主图；全能参考模式切模型不删除参考图（该模式下模型天然不使用尾帧，`supports_last_frame` 与参考图数量无关，上限由各模型 `max_multi_ref_images` 在上传时限制）。
 Agent 视频模式下，主图和后续参考图都会等待上传完成并转换为 HTTP URL；发送给后端时按输入区显示顺序去重收集到 `image_urls`，避免 blob 预览地址或未上传完成的参考图遗漏。
 当前页面即时渲染的用户气泡统一通过 `collectCurrentMessageMedia()` 收集媒体，再由 `buildUserMessageContent()` 渲染；图片、视频、音频模式和 Agent 模式不再分别拼接预览 HTML。Agent 发送给后端的 `image_urls`、`video_urls`、`audio_urls` 也复用同一媒体集合，确保即时显示、请求 payload 和后端保存的增强版用户消息尽量一致。
+
+**媒体入库持久化守卫**（修复"上传中发送 → 刷新后图片丢失"）：消息内容会经 `/api/session/{id}/message` 原样落库，`blob:`/`data:` 本地预览地址刷新后失效，因此落库内容永不携带这类地址，三层防御：
+
+1. `renderMediaPreview()`（`buildUserMessageContent` 唯一的媒体渲染出口）以 `isReusableMediaUrl()` 守卫：url 不可持久化（blob:/data:）时输出占位文本 `media_not_persisted_hint`（"（媒体上传未完成，未能保存）"），不输出 `<img>/<video>/<audio>` 标签；
+2. `handleSend` 在 image/video 模式（agent 模式原有守卫不变）发送前限时等待图片上传完成（`waitForAgentImagesUploaded(10000)`），超时不阻断发送（生成请求走文件直传不依赖 serverUrl），未就绪图片由第 1 层落为占位文本；`submitVerificationAnswer`（验证回答不经 handleSend）同样先限时等待，减少 `collectAgentMediaPayload` 静默过滤未上传图导致模型少收图；
+3. `appendMessageToBackend()` 入口经 `stripNonPersistentMediaTags()` 兜底清洗：src 为 blob:/data: 的 img/video/audio 标签一律替换为占位文本，拦截任何绕过上游守卫的路径。
+
 纯视频参考文件上传到 `/api/upload-agent-video`，只进入 `video_urls` 流程，不会设置图片上传状态，也不会触发图片 HTTP URL 等待。
 
 会话历史从 `chat_messages` 恢复时依赖媒体标签重新渲染图片、视频和音频。`/api/session/{session_id}/task` 写入用户消息时必须把上传接口返回的 URL 拼入 `[图片N]（URL: ... thumb: ...）`、`[视频N]（URL: ...）`、`[音频N]（URL: ...）` 标签后再落库；上传接口已经根据 `server.is_local` 决定返回本地 URL 还是 CDN URL，历史持久化层只保存返回值，不重新判断或改写 CDN。
@@ -454,7 +461,7 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 #### 图片/视频模式
 
-图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。有本地文件，或重新编辑带回的参考图 URL 时走图片编辑（URL 放在 `ref_image_urls`）；否则走文生图。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。重新编辑带回的参考图没有 File 对象，图生视频按 URL 列表提交 `image_urls`。
+图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。有本地文件，或重新编辑带回的参考图 URL 时走图片编辑（URL 放在 `ref_image_urls`）；否则走文生图。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。重新编辑带回的参考图没有 File 对象，图生视频按 URL 列表提交 `image_urls`。图片/视频模式发送用户消息前同样限时等待图片上传完成；未就绪媒体在落库消息中以占位文本呈现（见上文"媒体入库持久化守卫"），不影响生成请求本身（参考图以文件本体随 FormData 直传）。
 
 #### 视频压缩
 

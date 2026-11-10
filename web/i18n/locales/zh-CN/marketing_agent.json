@@ -163,6 +163,7 @@
   "upload_timeout_retry": "图片上传超时，请稍后重试",
   "upload_timeout": "图片上传超时，请重试",
   "upload_not_ready": "图片上传未完成，请稍后重试",
+  "media_not_persisted_hint": "（媒体上传未完成，未能保存）",
   "insufficient_power": "算力不足，请充值后继续使用",
   "keep_one_session": "至少保留一个对话",
   "delete_failed": "删除失败",

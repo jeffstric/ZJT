@@ -1608,6 +1608,11 @@
             function renderMediaPreview(media, counters) {
                 counters[media.type] = (counters[media.type] || 0) + 1;
                 const label = getMediaPreviewLabel(media.type, counters[media.type]);
+                // 持久化守卫：消息内容会原样入库，blob:/data: 刷新后失效（丢图）。
+                // 未上传完成（仅有本地预览地址）的媒体以占位文本落库，不输出媒体标签。
+                if (!isReusableMediaUrl(media.url)) {
+                    return `${label} ${window.t('media_not_persisted_hint')}`;
+                }
                 if (media.type === 'image') {
                     const displayUrl = proxyImageUrl(media.thumbnailUrl || media.url);  // 显示用缩略图
                     const fullUrl = proxyImageUrl(media.url);  // 点击查看原图
@@ -3201,6 +3206,14 @@
                 const isImageMode = selectedType.value === 'image';
                 const isVideoMode = selectedType.value === 'video';
                 const isAgentMode = selectedType.value === 'agent';
+
+                // image/video 模式：发送前限时等待图片上传完成，尽量让入库消息带上
+                // 服务器 URL（agent 模式已在上方守卫中等待）。超时不阻断发送——生成
+                // 请求走文件直传不依赖 serverUrl，未就绪图片由 renderMediaPreview
+                // 以占位文本落库，避免 blob: 预览地址入库后刷新丢图。
+                if (!isAgentMode && mediaItems.value.some(m => m.type === 'image' && m.uploading)) {
+                    await waitForAgentImagesUploaded(10000);
+                }
 
                 if (isImageMode) {
                     // 构建用户消息内容（含缩略图）
@@ -4840,6 +4853,12 @@
             // 提交验证回答
             async function submitVerificationAnswer(verificationId, userInput) {
                 try {
+                    // 加固：验证回答不经 handleSend 的媒体守卫，这里限时等待图片上传，
+                    // 减少 collectAgentMediaPayload 静默过滤未上传图（模型少收图）的概率。
+                    // 超时继续提交，不阻断回答。
+                    if (selectedType.value === 'agent' && mediaItems.value.some(m => m.type === 'image' && m.uploading)) {
+                        await waitForAgentImagesUploaded(10000);
+                    }
                     const currentMessageMedia = selectedType.value === 'agent' ? collectCurrentMessageMedia() : [];
                     const mediaPayload = collectAgentMediaPayload(currentMessageMedia);
                     const userContent = buildUserMessageContent(userInput);
@@ -5124,8 +5143,30 @@
             }
 
             // 追加消息到后端
+            /**
+             * 入库内容兜底清洗：将 src 为 blob:/data: 的媒体标签替换为占位文本。
+             * blob:/data: 是浏览器内存地址，刷新后失效；任何绕过上游守卫的路径
+             * （如 verification 直发、历史遗留调用点）都会在此被拦截，确保落库
+             * 内容不携带不可持久化的媒体地址。
+             */
+            function stripNonPersistentMediaTags(content) {
+                if (typeof content !== 'string' || content.indexOf('blob:') < 0 && content.indexOf('data:') < 0) {
+                    return content;
+                }
+                const placeholder = window.t('media_not_persisted_hint');
+                const cleaned = content.replace(
+                    /<(img|video|audio)\b[^>]*\bsrc=["'](?:blob|data):[^"']*["'][^>]*>/gi,
+                    placeholder
+                );
+                if (cleaned !== content) {
+                    console.warn('[安全] 已清洗入库内容中的非持久化媒体地址（blob:/data:）');
+                }
+                return cleaned;
+            }
+
             async function appendMessageToBackend(role, content, sessionId = currentSessionId.value) {
                 if (!sessionId) return;
+                content = stripNonPersistentMediaTags(content);
 
                 try {
                     const response = await fetch(`/api/session/${sessionId}/message`, {
