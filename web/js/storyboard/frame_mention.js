@@ -22,6 +22,10 @@ const H3_REFERENCE_KEYS = new Set([
 ]);
 
 export const H3_KEYFRAME_REF_MAX_IMAGES = 3;
+// 与 config/constant.py 的 H3_KEYFRAME_REF_ROUTE_ENABLED、
+// web/js/shot_frame_video_generator.js 保持一致。true 时，参考模式点名首帧或尾帧
+// 按混合模型 3 张上限校验，并提示本次使用首帧参考混合模型。
+export const H3_KEYFRAME_REF_ROUTE_ENABLED = true;
 
 function mentionFlags(prompt) {
     const text = prompt == null ? '' : String(prompt);
@@ -72,6 +76,7 @@ export function isH3ReferenceVideoModel(model) {
 }
 
 export function shouldUseH3KeyframeRef(imageMode, model, prompt) {
+    if (!H3_KEYFRAME_REF_ROUTE_ENABLED) return false;
     return imageMode === 'multi_reference'
         && isH3ReferenceVideoModel(model)
         && promptHasFrameMention(prompt);

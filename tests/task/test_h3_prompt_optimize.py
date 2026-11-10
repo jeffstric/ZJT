@@ -21,9 +21,11 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     load_h3_prompt_template,
     merge_h3_prompt_extra_config,
     parse_h3_optimize_kfref_output,
+    strip_h3_silent_audio_refs,
     strip_leading_json_object,
     parse_storyboard_dialogue_model,
     resolve_h3_prompt_variant,
+    ref2va_marked_frame_clauses,
     validate_h3_optimized_prompt,
 )
 
@@ -437,7 +439,7 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     assert fallback is True and flag is None
     assert optimized == "原文" and calls["n"] == 2
 
-    # 判无台词却仍写 <Audio 1>：forbid_audio_refs 校验拒绝 → 重试耗尽回退
+    # 判无台词却仍写 <Audio 1>：删掉该句，槽位原句还在则采用，不回退原文
     async def says_false_but_writes_audio(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _kfref_ok_body(
             "<Audio 1> is a reference audio for voice timbre.\n\n"
@@ -447,8 +449,9 @@ def test_optimize_kfref_falls_back_when_header_or_forbid_fails():
     optimized, fallback, error, flag = asyncio.run(driver._optimize(
         "无对白原文", H3_PROMPT_OPTIMIZE_VARIANT_KF_REF, 5.0, {"keyframe_slots": slots},
     ))
-    # 文本回退原文，但 JSON 头已合法解析的语义判断保留（驱动据此清音频）
-    assert fallback is True and flag is False and optimized == "无对白原文"
+    assert fallback is False and error is None and flag is False
+    assert "<audio" not in optimized.lower()
+    assert optimized.startswith("<Picture 1> is the EXACT starting key frame")
 
 
 def test_step_configs_pass_image_prompt_note_for_kfref():
@@ -1035,9 +1038,117 @@ def test_validate_forbid_dialogue_blocks_speaking_intent():
         ), bad
 
 
-def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
-    """Ref2VA 无台词（JSON 头 has_dialogue=false）：结果含 <audio 引用或说话意图
-    短语均打回，耗尽回退原文；语义标记优先于原文正则（背景板文字不算台词）。"""
+def test_ref2va_marked_frame_clauses_follow_picture_index():
+    start = "<Picture 1> is the EXACT starting key frame at 0.00 seconds."
+    start_two = "<Picture 2> is the EXACT starting key frame at 0.00 seconds."
+    end = "<Picture 5> is the EXACT ending key frame at 6.00 seconds (ref_image5)."
+    assert ref2va_marked_frame_clauses("图1是首帧，图2是李卫国。", 5, 5) == [start]
+    assert ref2va_marked_frame_clauses("图2是首帧。", 5, 5) == [start_two]
+    assert ref2va_marked_frame_clauses("图1是首帧，图5是尾帧。", 6, 5) == [
+        start,
+        end,
+    ]
+    assert ref2va_marked_frame_clauses("没有帧标记", 5, 5) == []
+    assert ref2va_marked_frame_clauses("图9是首帧", 5, 5) == []
+    assert ref2va_marked_frame_clauses("图1是首帧", 5, 0) == []
+
+
+def test_ref2va_user_message_requires_exact_frame_clause():
+    message = build_h3_optimize_user_message(
+        "扫地。\n\n图1是首帧，图2是李卫国。",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 5},
+    )
+    assert "<Picture 1> is the EXACT starting key frame at 0.00 seconds." in message
+    assert "不得改写 EXACT" in message
+    plain = build_h3_optimize_user_message(
+        "扫地，没有帧标记。",
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        5,
+        template="GUIDE",
+        ref_counts={"images": 5},
+    )
+    assert "EXACT starting key frame" not in plain
+
+
+def test_ref2va_validator_requires_marked_frame_clause():
+    body = _ref2va_ok_body()
+    clause = "<Picture 1> is the EXACT starting key frame at 0.00 seconds."
+    assert not validate_h3_optimized_prompt(
+        body,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        frame_clauses=[clause],
+    )
+    assert validate_h3_optimized_prompt(
+        body + "\n" + clause,
+        H3_PROMPT_OPTIMIZE_VARIANT_REF2VA,
+        frame_clauses=[clause],
+    )
+    assert validate_h3_optimized_prompt(body, H3_PROMPT_OPTIMIZE_VARIANT_REF2VA)
+
+
+def test_optimize_ref2va_retries_until_frame_clause_present():
+    driver = H3PromptOptimizePipelineDriver()
+    driver.logger = MagicMock()
+    calls = {"n": 0}
+    clause = "<Picture 1> is the EXACT starting key frame at 0.00 seconds."
+    params = {"ref_counts": {"images": 5}}
+
+    async def missing_then_present(original, variant, duration, step_params, image_data_urls=None):
+        calls["n"] += 1
+        extra = "" if calls["n"] == 1 else "\n" + clause
+        return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(extra)
+
+    driver._call_llm = missing_then_present
+    optimized, fallback, error, flag = asyncio.run(driver._optimize(
+        "扫地。图1是首帧。", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, params,
+    ))
+    assert calls["n"] == 2
+    assert fallback is False and error is None and flag is False
+    assert clause in optimized
+
+    async def always_missing(original, variant, duration, step_params, image_data_urls=None):
+        return '{"has_dialogue": false}\n\n' + _ref2va_ok_body()
+
+    driver._call_llm = always_missing
+    optimized, fallback, _, flag = asyncio.run(driver._optimize(
+        "扫地。图1是首帧。", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, params,
+    ))
+    assert fallback is True and flag is False
+    assert optimized == "扫地。图1是首帧。"
+
+
+def test_strip_h3_silent_audio_refs_keeps_section_sentences():
+    raw = (
+        "subject_definitions: <picture_1> is the first frame of the lobby. "
+        "<audio_1> is the voice-timbre reference for <subject_1> (S1).\n\n"
+        "summary: [reference generation + audio reference] He sweeps the floor. "
+        "<Audio 1> is referenced only for timbre.\n\n"
+        "overall_soundscape: Broom and footsteps."
+    )
+    stripped = strip_h3_silent_audio_refs(raw)
+    assert "<audio" not in stripped.lower()
+    assert "audio reference" not in stripped.lower()
+    assert "subject_definitions:" in stripped
+    assert "<picture_1> is the first frame of the lobby." in stripped
+    assert "summary:" in stripped
+    assert "He sweeps the floor." in stripped
+    assert "overall_soundscape:" in stripped
+    clause = "<Picture 1> is the EXACT starting key frame at 0.00 seconds."
+    mixed = (
+        "detailed_description: A static medium shot. "
+        + clause
+        + " [Shot 1] He sweeps. <audio_1> is the voice-timbre reference for <subject_1> (S1)."
+    )
+    kept = strip_h3_silent_audio_refs(mixed)
+    assert clause in kept
+    assert "<audio" not in kept.lower()
+
+
+def test_optimize_ref2va_no_dialogue_strips_audio_and_forbids_speaking_intent():
+    """Ref2VA 无台词：<audio_N> 整句删掉后六段仍在则采用；说话意图仍回退原文。"""
     driver = H3PromptOptimizePipelineDriver()
     driver.logger = MagicMock()
     calls = {"n": 0}
@@ -1052,10 +1163,12 @@ def test_optimize_ref2va_no_dialogue_forbids_audio_and_speaking_intent():
     optimized, fallback, _, flag = asyncio.run(driver._optimize(
         "无对白镜头，只有环境音", H3_PROMPT_OPTIMIZE_VARIANT_REF2VA, 5.0, {},
     ))
-    # 文本回退原文但语义判断保留：驱动读 has_dialogue=False 清音频（1816 教训）
-    assert fallback is True and flag is False
-    assert optimized == "无对白镜头，只有环境音"
-    assert calls["n"] == 2
+    assert fallback is False and flag is False
+    assert calls["n"] == 1
+    assert "<audio" not in optimized.lower()
+    assert "subject_definitions:" in optimized
+    assert "non_diegetic_music:" in optimized
+    assert optimized != "无对白镜头，只有环境音"
 
     async def keeps_speaking_intent(original, variant, duration, step_params, image_data_urls=None):
         return '{"has_dialogue": false}\n\n' + _ref2va_ok_body(

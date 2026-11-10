@@ -3,14 +3,19 @@ const {
   shouldUseH3KeyframeRefModel,
   resolveShotFrameReferenceSubmitModel,
   shotFrameMentionImageLimit,
+  H3_KEYFRAME_REF_ROUTE_ENABLED,
 } = require('../js/shot_frame_video_generator.js');
 
 describe('H3 首帧参考混合模型路由', () => {
   test('参考模式的 H3 参考模型点名首帧或尾帧时改走混合模型，图片上限 3', () => {
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_r2v', '从 @首帧图 开始')).toBe(true);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_reference_to_video', '停在 @尾帧图')).toBe(true);
-    expect(resolveShotFrameReferenceSubmitModel('multi_reference', 'minimax_h3_r2v', '@首帧图 @尾帧图')).toBe('minimax_h3_kfr');
-    expect(shotFrameMentionImageLimit('multi_reference', 'minimax_h3_r2v', '@首帧图')).toBe(3);
+    // 开关关闭时留在参考生视频，图片上限回到参考模型默认（测试环境无 TaskConfig 时为 5）。
+    const routed = H3_KEYFRAME_REF_ROUTE_ENABLED === true;
+    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_r2v', '从 @首帧图 开始')).toBe(routed);
+    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_reference_to_video', '停在 @尾帧图')).toBe(routed);
+    expect(resolveShotFrameReferenceSubmitModel('multi_reference', 'minimax_h3_r2v', '@首帧图 @尾帧图')).toBe(
+      routed ? 'minimax_h3_kfr' : 'minimax_h3_r2v'
+    );
+    expect(shotFrameMentionImageLimit('multi_reference', 'minimax_h3_r2v', '@首帧图')).toBe(routed ? 3 : 5);
   });
 
   test('首帧模式、没有标记、以及其他模型都不换', () => {

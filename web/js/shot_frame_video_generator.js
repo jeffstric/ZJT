@@ -160,6 +160,10 @@ function shotFrameMultiRefLimit(videoModel) {
 // 混合模型固定 3 个图片槽。不能用下拉里 H3 参考模型的 9 张上限，否则提示词序号会对不上。
 const H3_KEYFRAME_REF_MAX_IMAGES = 3;
 const H3_KEYFRAME_REF_SHORT_KEY = 'minimax_h3_kfr';
+// 与 config/constant.py 的 H3_KEYFRAME_REF_ROUTE_ENABLED、
+// web/js/storyboard/frame_mention.js 保持一致。true 时，参考模式点名首帧或尾帧
+// 改交 RunningHub 混合模型 minimax_h3_kfr。AutoDL 参考生锁不住首帧。
+const H3_KEYFRAME_REF_ROUTE_ENABLED = true;
 
 function promptHasShotFrameMention(prompt) {
   const text = prompt == null ? '' : String(prompt);
@@ -240,6 +244,7 @@ function isH3ReferenceVideoModel(videoModel) {
 // 只有参考模式、当前是 H3 参考模型、并且提示词点名了首帧或尾帧，才改提交混合模型。
 // 首帧模式、其他参考模型、以及没有 @ 标记的 H3 参考提交都不改。
 function shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt) {
+  if (!H3_KEYFRAME_REF_ROUTE_ENABLED) return false;
   return videoMode === 'multi_reference'
     && isH3ReferenceVideoModel(videoModel)
     && promptHasShotFrameMention(prompt);
@@ -713,6 +718,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     placeShotFrameMentionImages,
     shouldUseH3KeyframeRefModel,
+    H3_KEYFRAME_REF_ROUTE_ENABLED,
     promptHasShotFrameMention,
     resolveShotFrameReferenceSubmitModel,
     shotFrameMentionImageLimit,

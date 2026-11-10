@@ -64,7 +64,7 @@ def test_runninghub_impl_follows_task_level():
 
 
 def test_implementations_info_carries_durations():
-    """任务 34 下发：autodl 带 4-15、runninghub 跟随任务级 4-10"""
+    """任务 34 下发：首尾帧 AutoDL 代码级关闭，不出现在列表；RunningHub 跟随任务级 4-10"""
     task = UnifiedConfigRegistry.get_by_id(TaskTypeId.MINIMAX_H3_IMAGE_TO_VIDEO)
     with patch("model.implementation_power.ImplementationPowerModel.get_modifiers", return_value={}), \
          patch("model.implementation_power.ImplementationPowerModel.get_all_powers_for_implementation",
@@ -74,7 +74,7 @@ def test_implementations_info_carries_durations():
          patch("utils.config_checker.check_implementation_config_exists", return_value=True), \
          patch("task.visual_drivers.VideoDriverFactory.is_driver_registered", return_value=True):
         info = {row['name']: row for row in task._get_implementations_info()}
-    assert info[AUTODL_FL]['supported_durations'] == list(range(4, 16))
+    assert AUTODL_FL not in info
     assert info[RUNNINGHUB]['supported_durations'] == list(range(4, 11))
 
 
@@ -93,13 +93,13 @@ def _task_dict():
 
 
 def test_frontend_pref_autodl_expands_durations():
-    """偏好 AutoDL 的用户：任务级 supported_durations 被替换为 4-15（节点时长选项自动多出 11-15）"""
+    """首尾帧 AutoDL 已关闭：偏好指向它时不扩时长，任务级仍是 4-10。"""
     tasks = [_task_dict()]
     with patch("model.implementation_power.ImplementationPowerModel.get_all_powers_for_implementation",
                return_value={}):
         UnifiedConfigRegistry._apply_user_preferences_to_tasks(tasks, {'minimax_h3_image_to_video': AUTODL_FL})
-    assert tasks[0]['supported_durations'] == list(range(4, 16))
-    assert tasks[0]['user_preferred_implementation'] == AUTODL_FL
+    assert tasks[0]['supported_durations'] == list(range(4, 11))
+    assert tasks[0].get('user_preferred_implementation') != AUTODL_FL
 
 
 def test_frontend_no_pref_keeps_baseline():
@@ -209,5 +209,5 @@ def test_admin_impl_durations_merge_rule():
 def test_admin_default_powers_cover_expanded_tiers():
     """后台分档默认值可推导到 11-15：来自 autodl 实现的 default_computing_power"""
     impl_cfg = UnifiedConfigRegistry.get_implementation(AUTODL_FL)
-    for duration, expected in ((11, 16), (12, 17), (13, 18), (14, 20), (15, 21)):
+    for duration, expected in ((11, 14), (12, 15), (13, 17), (14, 18), (15, 19)):
         assert impl_cfg.default_computing_power[duration] == expected
