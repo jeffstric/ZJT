@@ -116,12 +116,15 @@ def test_prepare_missing_last_raises_and_same_url_can_fill_both_ends():
 
 
 def test_h3_reference_keys_do_not_match_i2v_or_t2v():
+    from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
+
+    # 开关关闭时，H3 参考 + @首帧 也不改交混合模型。
     assert should_use_h3_keyframe_ref(
         "multi_reference", "从 @首帧图 出发", "minimax_h3_r2v"
-    ) is True
+    ) is H3_KEYFRAME_REF_ROUTE_ENABLED
     assert should_use_h3_keyframe_ref(
         "multi_reference", "从 @首帧图 出发", "minimax_h3_reference_to_video"
-    ) is True
+    ) is H3_KEYFRAME_REF_ROUTE_ENABLED
     assert should_use_h3_keyframe_ref(
         "multi_reference", "从 @首帧图 出发", "minimax_h3", "minimax_h3_image_to_video"
     ) is False

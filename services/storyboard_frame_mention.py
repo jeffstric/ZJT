@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
 from config.unified_config import DriverKey, TaskTypeId
 
 # 「@首帧图片」不能命中「@首帧图」。与前端正则一致。
@@ -53,7 +54,12 @@ def is_h3_reference_model(*keys: Any) -> bool:
 
 
 def should_use_h3_keyframe_ref(image_mode: Any, prompt: Any, *model_keys: Any) -> bool:
-    """只有全能参考、当前是 H3 参考模型、并且点名了首帧或尾帧，才改交混合模型。"""
+    """只有全能参考、当前是 H3 参考模型、并且点名了首帧或尾帧，才改交混合模型。
+
+    H3_KEYFRAME_REF_ROUTE_ENABLED 为 False 时一律不改交。排图仍由 prepare_frame_mentions 完成。
+    """
+    if not H3_KEYFRAME_REF_ROUTE_ENABLED:
+        return False
     return (
         str(image_mode or "") == "multi_reference"
         and is_h3_reference_model(*model_keys)

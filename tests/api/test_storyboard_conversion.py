@@ -135,6 +135,7 @@ def test_build_parsed_data_collects_assets():
     assert assets == {
         's001': {
             'first_frame': 'https://cdn.example.com/gen1.png',
+            'selected_first_frame': 'https://cdn.example.com/gen1.png',
             'last_frame': 'https://cdn.example.com/a_last.png',
             'videos': ['https://cdn.example.com/v1.mp4'],
             'image_candidates': ['https://cdn.example.com/gen1.png', 'https://cdn.example.com/gen2.png'],
@@ -285,6 +286,155 @@ def test_build_workflow_data_carries_assets():
     # 计数器覆盖全部节点与连线
     assert wf['nextNodeId'] == max(nodes) + 1
     assert wf['nextConnId'] == len(wf['connections']) + 1
+
+
+def _multi_asset_storyboard():
+    storyboard = SimpleNamespace(
+        id=6, title='多资产板', world_id=1, workflow_ratio='16:9', style='',
+        style_reference_image='', composition_preference='', script_id=None,
+    )
+
+    def scene(sid):
+        return {
+            'id': sid, 'title': f'分镜{sid}', 'duration': 5, 'act_name': '第一幕',
+            'prompt_json': {'perspective': '', 'scene_desc': '', 'character_desc': '',
+                            'location': {}, 'props': []},
+            'video_prompt': '', 'video_config_json': {}, 'source_shot_key': None,
+            'first_frame_url': '', 'last_frame_url': '', 'video_url': '',
+            'dialogues': [],
+            'selected_first_frame_id': 102,   # 选中第 2 张候选图
+            'selected_last_frame_id': None,
+            'selected_video_id': 201,         # 选中生成较早的那个视频
+        }
+
+    scenes = [scene(31), scene(32)]
+    scene_assets = {
+        31: {
+            # create_at 升序（生成顺序）
+            'first_frame': [
+                {'id': 101, 'result_url': 'https://cdn/f1a.png'},
+                {'id': 102, 'result_url': 'https://cdn/f1b.png'},
+            ],
+            'video': [
+                {'id': 201, 'result_url': 'https://cdn/v1b.mp4'},
+                {'id': 202, 'result_url': 'https://cdn/v1a.mp4'},
+            ],
+        },
+    }
+    return storyboard, scenes, scene_assets
+
+
+def test_build_workflow_data_syncs_all_assets_with_selection():
+    """S→W：全量首帧候选/视频各建节点（此前只转选中的那一个，其余丢弃）；
+    选中资产排连线首位 + 写分镜「视频首帧」槽，回转时选中还原。"""
+    from api.storyboard_conversion import _build_workflow_data_from_storyboard
+
+    storyboard, scenes, scene_assets = _multi_asset_storyboard()
+    wf = _build_workflow_data_from_storyboard(storyboard, scenes, {}, None, scene_assets)
+
+    frames = [n for n in wf['nodes'] if n['type'] == 'shot_frame']
+    frame1 = next(f for f in frames if f['data']['shotJson']['shot_number'] == 1)
+    # 选中首帧进「视频首帧」槽
+    assert frame1['data']['previewImageUrl'] == 'https://cdn/f1b.png'
+
+    images = [n for n in wf['nodes'] if n['type'] == 'image']
+    assert [i['data']['url'] for i in images] == ['https://cdn/f1b.png', 'https://cdn/f1a.png']
+    assert [i['data']['name'] for i in images] == ['分镜1图1', '分镜1图2']
+    # 首帧端口连线只连选中（首位）图
+    assert wf['firstFrameConnections'] == [{'id': 1, 'from': images[0]['id'], 'to': frame1['id']}]
+
+    videos = [n for n in wf['nodes'] if n['type'] == 'video']
+    assert [v['data']['url'] for v in videos] == ['https://cdn/v1b.mp4', 'https://cdn/v1a.mp4']
+    assert videos[0]['data']['name'] == '分镜1视频1'
+    assert videos[1]['data']['name'] == '分镜1视频2'
+
+    # 连线顺序：选中资产在前（普通连线 frame → image/video）
+    conn_pairs = [(c['from'], c['to']) for c in wf['connections']]
+    assert conn_pairs.index((frame1['id'], images[0]['id'])) < conn_pairs.index((frame1['id'], images[1]['id']))
+    assert conn_pairs.index((frame1['id'], videos[0]['id'])) < conn_pairs.index((frame1['id'], videos[1]['id']))
+
+    # 多产物帧动态拉开帧距：分镜2 不与分镜1 的产物列叠压
+    frame2 = next(f for f in frames if f['data']['shotJson']['shot_number'] == 2)
+    assert frame2['y'] >= frame1['y'] + 2 * 280
+    # 无资产的分镜：无产物节点与连线
+    assert not any(c['from'] == frame2['id'] for c in wf['connections'])
+
+
+def test_build_parsed_data_prefers_preview_image_selection():
+    """W→S：画布选中首帧（分镜「视频首帧」槽 previewImageUrl）排候选首位，
+    不再固定取连线第一张——用户在画布上重新选图后转回故事板选中不丢。"""
+    from api.storyboard_conversion import _build_parsed_data_from_frames
+
+    frame = _frame(11, 's001', shot_number=1)
+    frame['data']['previewImageUrl'] = 'https://cdn/img2.png'   # 画布选中连线第 2 张
+    groups = [{'group_id': 'g1', 'group_name': '第一幕', 'script_data': {}, 'frames': [frame]}]
+    frame_images = {11: ['https://cdn/img1.png', 'https://cdn/img2.png']}
+    _, assets = _build_parsed_data_from_frames(
+        groups, {'parsed_data': {}}, '', {}, frame_images)
+
+    a = assets['s001']
+    assert a['image_candidates'] == ['https://cdn/img2.png', 'https://cdn/img1.png']
+    assert a['selected_first_frame'] == 'https://cdn/img2.png'
+
+
+def test_roundtrip_preserves_all_assets_and_selection():
+    """往返闭环：S→W 产物按画布收集口径回读，全量资产与选中（首位）还原。"""
+    from api.storyboard_conversion import (
+        _build_workflow_data_from_storyboard, _collect_frames_from_workflow)
+
+    storyboard, scenes, scene_assets = _multi_asset_storyboard()
+    wf = _build_workflow_data_from_storyboard(storyboard, scenes, {}, None, scene_assets)
+
+    _, _, frame_videos, frame_images = _collect_frames_from_workflow(wf)
+    frame1_id = next(
+        n['id'] for n in wf['nodes']
+        if n['type'] == 'shot_frame' and n['data']['shotJson']['shot_number'] == 1)
+    assert frame_images[frame1_id] == ['https://cdn/f1b.png', 'https://cdn/f1a.png']
+    assert frame_videos[frame1_id] == ['https://cdn/v1b.mp4', 'https://cdn/v1a.mp4']
+
+
+def test_build_workflow_data_generates_timeline_pillars():
+    """转出画布自带时间轴柱子（每分镜一格）；scriptId 口径：有剧本用剧本节点
+    id，无剧本退回分镜组节点 id（与前端 getPillarForNode/autoMigratePillars 一致）。"""
+    from api.storyboard_conversion import _build_workflow_data_from_storyboard
+
+    storyboard = SimpleNamespace(
+        id=5, title='柱子板', world_id=1, workflow_ratio='16:9', style='',
+        style_reference_image='', composition_preference='', script_id=None,
+    )
+
+    def scene(sid, act, duration):
+        return {
+            'id': sid, 'title': f'分镜{sid}', 'duration': duration, 'act_name': act,
+            'prompt_json': {'perspective': '', 'scene_desc': '', 'character_desc': '',
+                            'location': {}, 'props': []},
+            'video_prompt': '', 'video_config_json': {}, 'source_shot_key': None,
+            'first_frame_url': '', 'last_frame_url': '', 'video_url': '',
+            'dialogues': [],
+        }
+
+    scenes = [scene(11, '第一幕', 5), scene(12, '第一幕', 4), scene(21, '第二幕', 0)]
+
+    # 无剧本：pillar id = 分镜组节点 id _ 分镜号
+    wf = _build_workflow_data_from_storyboard(storyboard, scenes, {}, None)
+    group_ids = [n['id'] for n in wf['nodes'] if n['type'] == 'shot_group']
+    pillars = wf['timeline']['pillars']
+    assert [p['shotNumber'] for p in pillars] == [1, 2, 3]   # 全故事板连续编号
+    assert pillars[0]['id'] == f'{group_ids[0]}_1'
+    assert pillars[2]['id'] == f'{group_ids[1]}_3'           # 第二幕归第二组维度
+    assert pillars[0]['defaultDuration'] == 5
+    assert pillars[1]['defaultDuration'] == 4
+    assert pillars[2]['defaultDuration'] == 5                # duration=0 经 _safe_duration 回退 5
+    for p in pillars:
+        assert p['videoClipIds'] == [] and p['audioClipIds'] == []
+
+    # 有剧本：pillar id = 剧本节点 id _ 分镜号
+    script = SimpleNamespace(id=77, title='剧名', content='第一幕……')
+    wf2 = _build_workflow_data_from_storyboard(storyboard, scenes, {}, script)
+    script_id = next(n['id'] for n in wf2['nodes'] if n['type'] == 'script')
+    pillars2 = wf2['timeline']['pillars']
+    assert all(p['scriptId'] == script_id for p in pillars2)
+    assert [p['id'] for p in pillars2] == [f'{script_id}_1', f'{script_id}_2', f'{script_id}_3']
 
 
 def test_scene_to_shot_carries_three_scene_code():

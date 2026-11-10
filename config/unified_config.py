@@ -4415,8 +4415,10 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         display_name='AutoDL.Art',
         driver_class='MinimaxH3FirstLastAutodlV1Driver',
         default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,
-        enabled=True,
-        description='AutoDL.Art MiniMax H3 首尾帧图生视频（工作流 minimax_h3_lightx2v，首帧+尾帧双必填，480p/768p）',
+        # 代码级硬禁用：上游 lightx2v 首帧和尾帧都必填，只有首帧会直接失败。
+        # enabled=False 不能被 implementation_power_config 重新打开。
+        enabled=False,
+        description='AutoDL.Art MiniMax H3 首尾帧图生视频（默认关闭：工作流 minimax_h3_lightx2v 要求首帧和尾帧都有，不支持只有首帧）',
         sort_order=5203.0,
         # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
         # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）

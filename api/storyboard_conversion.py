@@ -230,11 +230,13 @@ def _build_parsed_data_from_frames(
     """
     把画布分镜帧重建为 parse_script_to_shots 同构的 parsed_data，并收集每帧产物：
 
-        {source_shot_key: {'first_frame': url|'', 'last_frame': url|'',
-                           'videos': [url...], 'image_candidates': [url...]}}
+        {source_shot_key: {'first_frame': url|'', 'selected_first_frame': url|'',
+                           'last_frame': url|'', 'videos': [url...],
+                           'image_candidates': [url...]}}
 
-    首帧图来源优先级：分镜帧自带 imageUrl > 连线 image 节点（原生"生成分镜图"
-    产物只写图片节点）；连线全部图片作为候选（抽卡多张时首张选中）。
+    首帧图来源优先级：分镜「视频首帧」槽 previewImageUrl（画布选中态）>
+    分镜帧自带 imageUrl > 连线 image 节点（原生"生成分镜图"产物只写图片
+    节点）；连线全部图片作为候选（抽卡多张时首张选中）。
 
     角色名解析优先级：剧本节点 parsedData.characters（parsed id 保真）>
     shot.db_character_info（db id 兜底追加）。台词缺 character_id 时按名回填。
@@ -326,16 +328,23 @@ def _build_parsed_data_from_frames(
                     shot['characters_present'] = fallback_ids
             shots.append(shot)
             key = _scene_source_key(shot, scene_index)
-            # 候选首帧：分镜帧自带图优先，连线 image 节点按连线顺序追加（去重）
+            # 候选首帧：选中优先——分镜「视频首帧」槽 previewImageUrl（画布选中态）
+            # > 分镜帧自带图 imageUrl > 连线 image 节点（按连线顺序去重）。
+            # 候选首位即落库选中（见 _create_scenes_with_assets），保证画布上
+            # 用户重新选中的首帧转回故事板后选中不丢
             candidates: List[str] = []
+            preview_url = _relativize_asset_url(_usable_asset_url(data.get('previewImageUrl')))
+            if preview_url:
+                candidates.append(preview_url)
             own_image = _relativize_asset_url(_usable_asset_url(data.get('imageUrl')))
-            if own_image:
+            if own_image and own_image not in candidates:
                 candidates.append(own_image)
             for url in (frame_images or {}).get(fnode.get('id')) or []:
                 if url not in candidates:
                     candidates.append(url)
             frame_assets: Dict = {
                 'first_frame': candidates[0] if candidates else '',
+                'selected_first_frame': candidates[0] if candidates else '',
                 'last_frame': _relativize_asset_url(_usable_asset_url(data.get('lastFrameUrl'))),
                 'videos': [],
                 'image_candidates': candidates,
@@ -371,9 +380,11 @@ def _create_scenes_with_assets(
     """创建场景 + 台词 + 资产（一次性转换，无 upsert）。
 
     资产按 source_shot_key 关联：
-    - first_frame（分镜帧自带图 + 连线图片节点，抽卡多张全收）→ 逐个建资产，选中第一张；
+    - first_frame（分镜首帧槽选中图 + 自带图 + 连线图片节点，抽卡多张全收）
+      → 逐个建资产，选中 selected_first_frame（画布选中态，候选首位）；
     - last_frame（视频尾帧 lastFrameUrl）→ 建资产并选中；
-    - videos（连线下挂 video 节点产物）→ 逐个建资产，选中第一个。
+    - videos（连线下挂 video 节点产物）→ 逐个建资产，选中第一个（连线序；
+      故事板转来的画布已把选中视频排连线首位，往返选中还原）。
     """
     created = 0
     for i, payload in enumerate(payloads):
@@ -406,9 +417,16 @@ def _create_scenes_with_assets(
             )
 
         frame_assets = assets.get(key) or {}
-        for fi, image_url in enumerate(frame_assets.get('image_candidates') or []):
+        image_candidates = frame_assets.get('image_candidates') or []
+        # 选中首帧 = 画布选中态（候选首位）；不在候选中时回退首位
+        selected_first = frame_assets.get('selected_first_frame') or ''
+        try:
+            selected_first_index = image_candidates.index(selected_first)
+        except ValueError:
+            selected_first_index = 0
+        for fi, image_url in enumerate(image_candidates):
             asset_id = StoryboardSceneAssetModel.create(scene_id, 'first_frame', result_url=image_url)
-            if fi == 0:
+            if fi == selected_first_index:
                 StoryboardSceneAssetModel.set_selected(scene_id, 'first_frame', asset_id)
         last_frame = frame_assets.get('last_frame') or ''
         if last_frame:
@@ -643,8 +661,34 @@ def _build_workflow_data_from_storyboard(
     scenes: List[Dict],
     characters: Dict[int, str],
     script,
+    scene_assets: Optional[Dict[int, Dict[str, List[Dict]]]] = None,
 ) -> Dict:
-    """故事板 → serializeWorkflow 同构的 workflow_data（剧本/分镜组/分镜帧/视频节点）。"""
+    """故事板 → serializeWorkflow 同构的 workflow_data（剧本/分镜组/分镜帧/视频节点）。
+
+    scene_assets: {scene_id: {asset_type: [{id, result_url}...]}}（全量资产，
+    见 StoryboardSceneAssetModel.list_storyboard_assets）。携带时每分镜的
+    首帧候选图与视频**全部**转为独立 image/video 节点，且选中资产排连线
+    首位（画布 W→S 落库按连线序还原选中）；缺省回退旧的"仅选中单资产"行为。
+    """
+
+    def _scene_asset_items(scene_id, asset_type: str) -> List[Dict]:
+        items = ((scene_assets or {}).get(scene_id) or {}).get(asset_type) or []
+        out: List[Dict] = []
+        seen = set()
+        for it in items:
+            url = _relativize_asset_url(_usable_asset_url(it.get('result_url')))
+            if url and url not in seen:
+                seen.add(url)
+                out.append({'id': it.get('id'), 'url': url})
+        return out
+
+    def _selected_first(items: List[Dict], selected_id) -> List[Dict]:
+        if selected_id is None:
+            return items
+        hit = [it for it in items if it.get('id') == selected_id]
+        if not hit:
+            return items
+        return hit + [it for it in items if it.get('id') != selected_id]
     script_content = str(getattr(script, 'content', '') or '') if script else ''
     script_title = str(getattr(script, 'title', '') or '') if script else ''
 
@@ -687,6 +731,10 @@ def _build_workflow_data_from_storyboard(
     all_characters: List[Dict] = []
     seen_prop_ids = set()
     shot_number = 0
+    # 时间轴柱子（pillar）：每分镜一格，转出画布即有完备格子模式。
+    # scriptId 口径与前端 getPillarForNode/autoMigratePillars 一致：
+    # 有剧本节点用剧本节点 id，无剧本时退回分镜组节点 id。
+    pillars: List[Dict] = []
     # 分镜帧节点高度远超 900px（三列布局），间距必须大于节点实际高度，
     # 否则节点互相叠压——拖动图片节点整理布局时会误触到邻近分镜帧的
     # 首帧/尾帧端口（applyLastFrameFromImage），把图片误设为尾帧。
@@ -744,18 +792,39 @@ def _build_workflow_data_from_storyboard(
                 'gridPreview': {},
             },
         })
+        pillar_script_id = script_node_id if script_node_id is not None else group_node_id
+        for shot in group_shots:
+            if shot.get('shot_number'):
+                pillars.append({
+                    'id': f"{pillar_script_id}_{shot['shot_number']}",
+                    'scriptId': pillar_script_id,
+                    'shotNumber': shot['shot_number'],
+                    # shot.duration 经 _safe_duration 已恒为正数
+                    'defaultDuration': shot.get('duration') or 15,
+                    'videoClipIds': [],
+                    'audioClipIds': [],
+                })
         if script_node_id is not None:
             connections.append({'id': next_conn_id, 'from': script_node_id, 'to': group_node_id})
             next_conn_id += 1
 
-        for fj, (shot, scene) in enumerate(frame_entries):
+        for shot, scene in frame_entries:
             frame_node_id = next_node_id
             next_node_id += 1
-            frame_y = group_y + fj * frame_gap_y
-            # 首帧进 previewImageUrl（分镜「视频首帧」槽）。
+            frame_y = cursor_y
+            # 首帧候选：全量资产（选中排首位）；无资产明细时回退选中 URL 单节点
+            first_frames = _selected_first(
+                _scene_asset_items(scene.get('id'), 'first_frame'),
+                scene.get('selected_first_frame_id'),
+            )
+            if not first_frames:
+                fallback = _relativize_asset_url(str(scene.get('first_frame_url') or '').strip())
+                if fallback:
+                    first_frames = [{'id': None, 'url': fallback}]
+            # 首帧进 previewImageUrl（分镜「视频首帧」槽）= 选中（首位）候选。
             # 不要写入 imageUrl：该字段会在「视频尾帧」控件下方再画一张无标题图，
             # 打开画布时看起来就像把首帧当成了尾帧。
-            first_frame_url = _relativize_asset_url(str(scene.get('first_frame_url') or '').strip())
+            first_frame_url = first_frames[0]['url'] if first_frames else ''
             last_frame_url = _relativize_asset_url(str(scene.get('last_frame_url') or '').strip())
             nodes.append({
                 'id': frame_node_id,
@@ -773,53 +842,72 @@ def _build_workflow_data_from_storyboard(
             connections.append({'id': next_conn_id, 'from': group_node_id, 'to': frame_node_id})
             next_conn_id += 1
 
-            # 选中首帧 → 独立 image 节点并普通连线（与画布原生分镜图产物形态一致）
-            if first_frame_url:
+            # 全量首帧候选 → 独立 image 节点并普通连线（与画布原生抽卡产物形态
+            # 一致：纵向 280 排布；连线序 = 节点序，选中资产排首位 → 回转故事板
+            # 时落库选中按连线序还原）
+            for fi, item in enumerate(first_frames):
                 image_node_id = next_node_id
                 next_node_id += 1
-                image_name = f"分镜{shot['shot_number']}图"
+                multi = len(first_frames) > 1
+                image_name = f"分镜{shot['shot_number']}图" + (str(fi + 1) if multi else '')
                 nodes.append({
                     'id': image_node_id,
                     'type': 'image',
                     'title': image_name,
                     'x': 2320,
-                    'y': frame_y,
+                    'y': frame_y + fi * 280,
                     'data': {
-                        'url': first_frame_url,
-                        'preview': first_frame_url,
+                        'url': item['url'],
+                        'preview': item['url'],
                         'name': image_name,
                     },
                 })
                 connections.append({'id': next_conn_id, 'from': frame_node_id, 'to': image_node_id})
                 next_conn_id += 1
                 # 首帧连线画到分镜节点「视频首帧」端口（.first-frame-port）。
-                # 视频节点没有该端口，连到视频上线画不出来。
-                first_frame_connections.append(
-                    {'id': next_first_frame_conn_id, 'from': image_node_id, 'to': frame_node_id})
-                next_first_frame_conn_id += 1
+                # 视频节点没有该端口，连到视频上线画不出来。只连选中（首位）图。
+                if fi == 0:
+                    first_frame_connections.append(
+                        {'id': next_first_frame_conn_id, 'from': image_node_id, 'to': frame_node_id})
+                    next_first_frame_conn_id += 1
 
-            # 选中视频 → 独立 video 节点并普通连线（与画布上分镜生成视频的产物形态一致）
-            video_url = _relativize_asset_url(str(scene.get('video_url') or '').strip())
-            if video_url:
+            # 全量视频 → 独立 video 节点并普通连线（与画布上分镜生成视频的产物
+            # 形态一致；选中排首位）
+            frame_videos = _selected_first(
+                _scene_asset_items(scene.get('id'), 'video'),
+                scene.get('selected_video_id'),
+            )
+            if not frame_videos:
+                fallback_video = _relativize_asset_url(str(scene.get('video_url') or '').strip())
+                if fallback_video:
+                    frame_videos = [{'id': None, 'url': fallback_video}]
+            for vi, item in enumerate(frame_videos):
                 video_node_id = next_node_id
                 next_node_id += 1
+                multi_v = len(frame_videos) > 1
+                video_name = f"分镜{shot['shot_number']}视频" + (str(vi + 1) if multi_v else '')
                 nodes.append({
                     'id': video_node_id,
                     'type': 'video',
                     'title': '分镜视频',
                     'x': 2760,
-                    'y': frame_y,
+                    'y': frame_y + vi * 280,
                     'data': {
-                        'url': video_url,
-                        'name': f"分镜{shot['shot_number']}视频",
+                        'url': item['url'],
+                        'name': video_name,
                         'project_id': None,
                     },
                 })
                 connections.append({'id': next_conn_id, 'from': frame_node_id, 'to': video_node_id})
                 next_conn_id += 1
 
-        # 游标推进：下一组从本组最后一帧之下留出间隔开始
-        cursor_y = group_y + len(act_scenes) * frame_gap_y + group_gap_extra_y
+            # 游标推进：帧距取固定间距与产物列高（纵向 280/个）的较大者，
+            # 多候选图/视频时下一帧产物不与本帧叠压
+            column_height = max(len(first_frames), len(frame_videos)) * 280
+            cursor_y = frame_y + max(frame_gap_y, column_height + 200)
+
+        # 组间额外间隔（帧距已在循环内按产物动态累进）
+        cursor_y += group_gap_extra_y
 
     return {
         'version': '1.0',
@@ -848,7 +936,7 @@ def _build_workflow_data_from_storyboard(
         'timeline': {
             'clips': [],
             'audioClips': [],
-            'pillars': [],
+            'pillars': pillars,
             'nextClipId': 1,
             'nextAudioClipId': 1,
         },
@@ -913,7 +1001,13 @@ def _convert_storyboard_to_workflow(storyboard, user_id: int) -> Dict:
             script = ScriptModel.get_by_id(storyboard.script_id)
         characters = _load_world_characters(storyboard.world_id)
 
-        workflow_data = _build_workflow_data_from_storyboard(storyboard, scenes, characters, script)
+        # 全量资产（首帧候选/视频）分组：转换后画布可切换候选，不再是
+        # "只有选中的那一个"；选中标记由场景 selected_*_id 字段携带
+        scene_assets: Dict[int, Dict[str, List[Dict]]] = {}
+        for asset in StoryboardSceneAssetModel.list_storyboard_assets(storyboard.id):
+            scene_assets.setdefault(asset.get('scene_id'), {}).setdefault(asset.get('asset_type'), []).append(asset)
+
+        workflow_data = _build_workflow_data_from_storyboard(storyboard, scenes, characters, script, scene_assets)
         workflow_id = VideoWorkflowModel.create(
             name=f"{storyboard.title or '故事板'}画布",
             user_id=user_id,

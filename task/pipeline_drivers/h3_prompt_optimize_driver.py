@@ -30,6 +30,8 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     resolve_h3_prompt_variant,
     strip_leading_json_object,
     strip_prompt_fences,
+    ref2va_marked_frame_clauses,
+    strip_h3_silent_audio_refs,
     validate_h3_optimized_prompt,
 )
 
@@ -143,10 +145,9 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
 
         KFRef 与 Ref2VA 走首行 JSON 头协议：台词有无由 LLM 语义判断并随输出
         返回（引号正则会把背景板文字等可见文字误判成台词，语义判断才能区分，
-        dev3 案例 ai_tool 1815）。判无台词时开 forbid_audio_refs /
-        forbid_dialogue（结果不得出现任何 <audio 引用与 <d> 台词）：无对白
-        镜头的音频会被上游拒绝（「无法识别的说话内容」）或当成成片声音，
-        幻觉台词会让角色凭空开口说话。
+        dev3 案例 ai_tool 1815）。判无台词时开 forbid_dialogue（不得出现 <d>
+        或开口动作）。<audio_N> 不因此作废整段：先删掉所在句子再校验，六段或
+        槽位原句还在就采用删后正文。音频文件仍由驱动按 has_dialogue 决定不上传。
         其余变体（I2VA/FL2VA）维持纯文本输出，has_dialogue 恒为 None，
         无台词判定回退原文正则。
         """
@@ -181,15 +182,27 @@ class H3PromptOptimizePipelineDriver(BasePipelineDriver):
                     if isinstance(has_dialogue, bool)
                     else not has_quoted_dialogue(original)
                 )
+                candidate = cleaned
+                if no_dialogue and "<audio" in cleaned.lower():
+                    candidate = strip_h3_silent_audio_refs(cleaned)
+                frame_clauses = None
+                if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
+                    counts = step_params.get("ref_counts") or {}
+                    frame_clauses = ref2va_marked_frame_clauses(
+                        original,
+                        duration,
+                        int(counts.get("images") or 0),
+                    )
                 if validate_h3_optimized_prompt(
-                    cleaned,
+                    candidate,
                     variant,
                     keyframe_slots=step_params.get("keyframe_slots"),
                     duration=duration,
                     forbid_audio_refs=no_dialogue,
                     forbid_dialogue=no_dialogue,
+                    frame_clauses=frame_clauses,
                 ):
-                    return cleaned, False, None, has_dialogue
+                    return candidate, False, None, has_dialogue
                 last_error = "optimized prompt failed structure check"
             except Exception as exc:
                 last_error = str(exc)

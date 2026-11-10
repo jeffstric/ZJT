@@ -46,6 +46,13 @@ class TestGetImplementationProvider(unittest.TestCase):
                 f"{name} 应标注为 autodl 供应商",
             )
 
+    def test_first_last_autodl_is_code_disabled(self):
+        """lightx2v 首尾帧都必填，实现方代码级默认关闭，数据库不能重新打开。"""
+        impl = UnifiedConfigRegistry.get_implementation('minimax_h3_first_last_autodl_v1')
+        self.assertIsNotNone(impl)
+        self.assertFalse(impl.enabled)
+        self.assertFalse(impl.is_enabled('minimax_h3_image_to_video'))
+
     def test_runninghub_implementation_inherits_task_provider(self):
         """未标注 provider 的 RunningHub 实现方继承任务类型 provider"""
         self.assertEqual(

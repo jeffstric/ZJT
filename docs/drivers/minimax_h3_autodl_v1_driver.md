@@ -7,7 +7,9 @@
 | 工作流 | workflow_id | 实现方 | 挂载任务 |
 |--------|-------------|--------|----------|
 | H3多图多音频生视频(升级画质) | `minimax_h3_zm_u24` | `minimax_h3_reference_autodl_v1`（ID 108） | `minimax_h3_reference_to_video`（参考生，type 37） |
-| H3首尾帧生视频 | `minimax_h3_lightx2v` | `minimax_h3_first_last_autodl_v1`（ID 109） | `minimax_h3_image_to_video`（首尾帧，type 34） |
+| H3首尾帧生视频 | `minimax_h3_lightx2v` | `minimax_h3_first_last_autodl_v1`（ID 109，**代码级默认关闭**） | `minimax_h3_image_to_video`（首尾帧，type 34） |
+
+`minimax_h3_first_last_autodl_v1` 的 `ImplementationConfig.enabled=False`。上游要求 `first_frame` 和 `last_frame` 都必填，只有首帧会失败。这是代码级硬禁用，数据库 `implementation_power_config.enabled` 不能把它重新打开。首尾帧任务继续用 RunningHub 实现方。参考生 `minimax_h3_reference_autodl_v1` 不受影响。
 
 - **驱动文件**: `task/visual_drivers/minimax_h3_autodl_v1_driver.py`
 - **供应商**: `TaskProvider.AUTODL`（实现方级 provider；任务级 provider 仍为 RUNNINGHUB，autodl 作为可切换实现方，模式同 Seedance 多网关）

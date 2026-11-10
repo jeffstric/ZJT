@@ -1137,7 +1137,7 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: [
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
-        DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v）
+        DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v，代码级默认关闭）
         DriverImplementation.MINIMAX_H3_CHENYU_V1,             # 晨羽智云（仅首帧）
     ],
     # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
@@ -1277,6 +1277,14 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.Z_INDEX_IMAGE_EDIT: [],
 
 }
+
+# 参考模式 + H3 参考生 + 提示词点名首帧或尾帧时，改交 RunningHub 混合模型 minimax_h3_kfr。
+# AutoDL 参考生（zm_u24）没有首帧槽，文字锚点锁不住第 0 秒画面，所以这路保持打开。
+# 没有这些标记的参考生仍留在参考生任务，实现方按该任务的偏好（可以是 AutoDL）。
+# 若要再关掉，三处一起改成 false：
+#   web/js/shot_frame_video_generator.js
+#   web/js/storyboard/frame_mention.js
+H3_KEYFRAME_REF_ROUTE_ENABLED = True
 
 # 视频模型时长选项配置
 # 注意：时长选项从算力配置中自动获取

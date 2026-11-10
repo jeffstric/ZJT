@@ -2192,9 +2192,10 @@
           state.timeline.nextAudioClipId = data.timeline.nextAudioClipId || 1;
           state.timeline.visible = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
           
-          // 如果没有柱子数据但有片段，尝试自动迁移
-          if(state.timeline.pillars.length === 0 && (state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0)){
-            console.log('[恢复工作流] 检测到历史数据，尝试自动迁移柱子...');
+          // 如果没有柱子数据，尝试自动迁移（无片段也迁：剧本拆分/故事板转换
+          // 产物打开即应看到完备的分镜格子，而非等首个片段加入才补建）
+          if(state.timeline.pillars.length === 0){
+            console.log('[恢复工作流] 无柱子数据，尝试自动迁移柱子...');
             // 延迟执行迁移，确保所有节点都已恢复
             setTimeout(() => {
               if(typeof autoMigratePillars === 'function'){
