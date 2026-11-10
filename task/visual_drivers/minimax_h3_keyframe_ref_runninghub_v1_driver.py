@@ -23,6 +23,8 @@ import re
 from config.constant import MAX_VOICE_REFERENCE_AUDIOS
 from config.unified_config import TaskTypeId
 from task.pipeline_drivers.h3_prompt_optimize_util import (
+    _H3_FIRST_FRAME_MARK_RE,
+    _H3_LAST_FRAME_MARK_RE,
     assign_h3_keyframe_ref_pictures,
     has_quoted_dialogue,
     h3_slot_source_prompt,
@@ -49,6 +51,25 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
         self.driver_name = "minimax_h3_keyframe_ref_runninghub_v1"
         self.driver_type = TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
         self._webapp_id = _WEBAPP_ID
+
+    def validate_input_compatibility(self, ai_tool) -> tuple:
+        """有输入条件的实现方：只有提示词点名首帧/尾帧的参考生提交才兼容
+
+        本实现方挂在参考生任务（类型 37）下，混合 webapp 的价值是锁首尾帧像素；
+        没点名的提交走它只会白白被裁到 3 图、丢掉 9 图参考能力。点名指提交文本里
+        的「图N是首帧 / 图N是尾帧」（排图改写后的锚点句），不是节点上挂没挂首帧图。
+        正则与优化器锚点校验（ref2va_marked_frame_clauses）同源，保证兼容判定与
+        EXACT 锚点要求永远同口径。
+        """
+        mode = self.parse_image_mode(ai_tool)
+        if mode != "multi_reference":
+            return False, "首帧参考混合模型仅支持参考模式（multi_reference）"
+        if not self.get_reference_images(ai_tool):
+            return False, "首帧参考混合模型需要至少一张参考图"
+        prompt = str(getattr(ai_tool, "prompt", "") or "")
+        if not (_H3_FIRST_FRAME_MARK_RE.search(prompt) or _H3_LAST_FRAME_MARK_RE.search(prompt)):
+            return False, "提示词未点名「图N是首帧/图N是尾帧」，不适用首帧参考混合模型"
+        return True, None
 
     async def build_create_request(self, ai_tool) -> Dict[str, Any]:
         image_urls = [str(item).strip() for item in self.get_reference_images(ai_tool) if str(item or "").strip()]
