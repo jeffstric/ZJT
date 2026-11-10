@@ -5,8 +5,10 @@
  * 第 8 条（协议说明标识规范）、第 10 条（用户不得恶意删除标识，发布时应主动声明）。
  * 确认弹窗文案即"通过用户协议明确用户的标识义务和使用责任"（第 9 条前置条件）的可执行落地。
  *
- * 依赖：marketing_agent.js 的 window.setModalImageInfo / window.resetModalImageInfo
- * （本文件加载时包装二者以跟踪当前弹窗的 aiToolId）。
+ * 依赖：marketing_agent.js 的图片/视频放大弹窗（#imgModal）。跟踪当前弹窗的
+ * aiToolId 走两条路径：① 点击捕获（主路径，marketing_agent.js 打开弹窗的委托
+ * 直调闭包函数不经 window）；② 晚绑定拦截包装 window.setModalImageInfo /
+ * window.resetModalImageInfo（供经 window 调用的页面/未来复用方）。
  */
 (function () {
     'use strict';
@@ -19,12 +21,32 @@
     let currentAiToolId = null;
     let currentMediaType = 'image';
 
+    // 包装 window 函数并保证包装不被后到的赋值覆盖。
+    // 时序坑：marketing_agent.js 对二者的赋值位于 Vue setup() 内（组件挂载时执行），
+    // 晚于本脚本的同步加载——若只在加载时浅包装，setup() 的赋值会把包装整个覆盖，
+    // currentAiToolId 恒为 null，弹窗「添加AI标识」按钮恒报"缺少任务信息"（e2e 实测）。
+    // 因此目标函数已存在时直接包装；不存在时改用访问器属性拦截后到的赋值，
+    // 赋值发生时自动把原始函数包一层再对外暴露，后续再次赋值同样被拦截。
     function wrapWindowFn(name, fn) {
-        const orig = window[name];
-        window[name] = function () {
-            try { fn.apply(null, arguments); } catch (e) { /* 跟踪失败不影响原逻辑 */ }
-            if (orig) return orig.apply(this, arguments);
+        const makeWrapped = function (orig) {
+            return function () {
+                try { fn.apply(null, arguments); } catch (e) { /* 跟踪失败不影响原逻辑 */ }
+                return orig.apply(this, arguments);
+            };
         };
+        if (typeof window[name] === 'function') {
+            window[name] = makeWrapped(window[name]);
+            return;
+        }
+        let wrapped = null;
+        Object.defineProperty(window, name, {
+            configurable: true,
+            enumerable: true,
+            get: function () { return wrapped; },
+            set: function (assigned) {
+                wrapped = (typeof assigned === 'function') ? makeWrapped(assigned) : assigned;
+            }
+        });
     }
 
     wrapWindowFn('setModalImageInfo', function (aiToolId) {
@@ -42,6 +64,30 @@
         currentMediaType = 'image';
         refreshBtnText();
     });
+
+    // 主路径：点击捕获。marketing_agent.js 打开弹窗的委托在 document 冒泡阶段执行，且
+    // showImageModal 内部直调闭包函数（不经 window，上方包装收不到通知，e2e 实测）。
+    // 因此在捕获阶段先从被点击的媒体卡（data-modal-src / img[data-full-src]）外层卡片
+    // 记录 data-tool-id，待本次点击的冒泡委托执行完（setTimeout(0)）且弹窗确实打开后
+    // 再采纳。卡片无 data-tool-id 时记 null（与 resetModalImageInfo 语义一致）；
+    // 弹窗未打开（点击发布/重新生成等按钮、meta 区被拦截）则不动状态。
+    document.addEventListener('click', function (e) {
+        if (!e.target || typeof e.target.closest !== 'function') return;
+        const zoomCard = e.target.closest('img[data-full-src], [data-modal-src]');
+        if (!zoomCard) return;
+        const card = zoomCard.closest('[data-tool-id]');
+        const tid = (card && card.getAttribute('data-tool-id')) || null;
+        setTimeout(function () {
+            const modal = document.getElementById('imgModal');
+            if (!modal || modal.style.display === 'none' || modal.style.display === '') return;
+            currentAiToolId = tid;
+            const video = document.getElementById('imgModalVideo');
+            const img = document.getElementById('imgModalImg');
+            currentMediaType = (video && video.style.display !== 'none' && img && img.style.display === 'none')
+                ? 'video' : 'image';
+            refreshBtnText();
+        }, 0);
+    }, true);
 
     function getBtn() { return document.getElementById('imgModalAigcBtn'); }
 

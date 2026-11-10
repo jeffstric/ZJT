@@ -80,6 +80,7 @@ python -I temp/test_aigc_marking.py
 - **L1 挂点**：`compose_task.py`（拼接后、CDN 前，查 `has_opt_out(compose_id)` 跳过）+ `volcengine_tts_service.py _write_file`（查 `has_opt_out_user` 跳过）；烧录失败降级交付无显式版本并告警（隐式已先行写入）。
 - **CDN 重传**：explicit-label API 烧录后触发 `trigger_cdn_upload` 覆盖旧对象。
 - **协议前置**（第 8 条）：正式上线前用户协议须补 AIGC 标识条款章节；前端确认弹窗文案已含义务声明作为过渡。
+- **L2 按钮跟踪时序**（修复 2026-11-10）：`web/js/aigc_label.js` 跟踪弹窗当前 `aiToolId` 走两条路径：**主路径=点击捕获**——marketing_agent.js 打开弹窗的委托直调闭包函数（不经 window），包装 window 函数收不到通知（e2e 实测按钮恒报"缺少任务信息"）；捕获阶段从被点媒体卡（`[data-modal-src]`/`img[data-full-src]`）外层 `[data-tool-id]` 记录，弹窗打开后采纳。辅路径=晚绑定访问器包装 `window.setModalImageInfo/resetModalImageInfo`（其赋值在 Vue `setup()` 挂载时才执行，**不可回退为加载时浅包装**，会被后到赋值覆盖）。
 
 ### 已知边界
 
