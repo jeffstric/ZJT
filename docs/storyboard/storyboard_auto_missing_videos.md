@@ -130,7 +130,7 @@ GET /api/storyboard/image-batches/{batch_id}/status
 - 适用：多张参考图综合驱动，需要统一画风/角色/场景一致性的场景
 - 模型要求：`supported_image_modes` 含 `multi_reference`（如 Seedance 2.0 系列、VEO3、Grok）
 - 注意：批量 multi_reference **不要求首帧/尾帧**。有选中首帧时仍作为图1主参考；没有首帧则只用角色/场景/道具/画风参考图。一张参考图都没有的分镜记 `missing_references` 跳过（不在批次内回退文生，避免混用两种模型）
-- 若某个分镜的 `video_prompt` 含 `@首帧图` 或 `@尾帧图`，`generate_video` 会按与直连相同的规则把已选首尾帧排到参考图两端。H3 参考模型因此改交隐藏任务 `minimax_h3_kfr`，画面模式仍是 `multi_reference`。`H3_KEYFRAME_REF_ROUTE_ENABLED = True` 时改交 RunningHub 混合模型 `minimax_h3_kfr`。批次请求本身不发明这两个标记。缺了被点名的帧则该镜提交失败，不改回文生视频。
+- 若某个分镜的 `video_prompt` 含 `@首帧图` 或 `@尾帧图`，`generate_video` 会按与直连相同的规则把已选首尾帧排到参考图两端。任务保持类型 37（参考生）：点名首尾帧的提交由服务端按实现方兼容探测（`resolve_probed_reference_implementation`）选实现方，默认选中首帧参考混合实现方 `minimax_h3_keyframe_ref_runninghub_v1`（挂载在类型 37 下，不再创建类型 50）并把参考图裁到 3 张（两端保留裁中间），用户固定 AutoDL 等其他供应商时尊重偏好、不裁。批次请求本身不发明这两个标记。缺了被点名的帧则该镜提交失败，不改回文生视频。
 
 ### 模型能力约束
 
