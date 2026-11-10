@@ -197,7 +197,6 @@ autodl:
 chenyu:
   api_key: ""
   base_url: "https://www.chenyu.cn"  # 晨羽开放 API 基础 URL
-  # AutoDL.Art API 基础 URL
 
 pay:
   wxpay:

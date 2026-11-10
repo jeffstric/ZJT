@@ -5003,6 +5003,25 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to resolve video implementation for face mask: {e}")
 
+    # 解析失败快速终止（不扣费不建任务）：返回 None 意味着没有可用实现方或固定
+    # 实现方不可用。此前静默继续会按任务默认实现方（RunningHub 参考生）的表扣费、
+    # 建行 implementation=0，执行时重新解析可能与扣费实现方不一致（提交时瞬时
+    # 故障、执行时恢复且偏好指向异价实现方时多扣/漏扣）；固定偏好不可用时也须与
+    # /api/ai-app-run-image 端点同为固定语义（不静默换供应商），两入口行为一致。
+    if not actual_impl_name:
+        from task.visual_drivers.driver_factory import VideoDriverFactory as _VDF
+        resolve_error = _VDF.get_last_create_error() or {}
+        return JSONResponse(
+            status_code=400,
+            content={
+                'success': False,
+                'error': str(
+                    resolve_error.get('message')
+                    or '没有可用的视频实现方，请稍后重试或联系管理员'
+                ),
+            },
+        )
+
     # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整），
     # 按实际执行实现方查表（与下方 impl_id 同源，扣费=执行）
     power_context = {}
