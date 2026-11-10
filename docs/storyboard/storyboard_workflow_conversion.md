@@ -70,7 +70,7 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
    - 选中首帧 → `shot_frame.data.previewImageUrl`（分镜「视频首帧」槽）**并创建独立 `image` 节点**（普通连线 `shot_frame → image`，与画布原生"生成分镜图"产物形态一致），同时补 `firstFrameConnections`（`image → shot_frame`，画到分镜节点「视频首帧」端口）。`imageUrl` 留空：该字段会在「视频尾帧」控件下方再渲染一张无标题图，看起来像把首帧当成了尾帧；
    - 选中尾帧 → `data.lastFrameUrl`（只在故事板确实有尾帧时写入，不用首帧顶替）；
    - 选中视频 → 独立 `video` 节点（`data.url/name`）+ 普通连线 `shot_frame → video`。首帧连线指向分镜节点，不指向视频节点（视频节点没有 `.first-frame-port`，线画不出来）；
-   - `script → group → frame → image/video` 连线、计数器（含 `nextFirstFrameConnId`）、空 timeline、默认视口齐备，前端 `restoreNode` 原样可恢复；
+   - `script → group → frame → image/video` 连线、计数器（含 `nextFirstFrameConnId`）、timeline（含每分镜一格的时间轴柱子，见下节）、默认视口齐备，前端 `restoreNode` 原样可恢复；
    - **资产 URL 相对化**：本机绝对地址（`http://127.0.0.1:{port}` / `http://localhost:{port}`，生成链路会写死当时的 host:port）统一剥掉 origin 转为 `/upload/...` 相对路径——前端按当前页面 origin 补全，画布换端口打开不裂图（相对路径的视频上传产物本就是此形态）；**布局游标累进**：帧间距 960px、组间距按组内帧数动态撑开，节点不叠压（叠压会导致拖动图片节点整理布局时误触邻近分镜帧的首帧/尾帧端口，把图片误设为尾帧）。
 4. `VideoWorkflowModel.create`（名称 `{故事板标题}画布`，世界/比例/画风继承）+ `StoryboardModel.update(workflow_id)` 回写关联。
 
@@ -94,6 +94,17 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
 | `video_url`（选中视频） | 下挂 `video` 节点 `data.url`（普通连线 `shot_frame → video`） |
 | `source_shot_key` | `shot.shot_id`（转换沿用场景原 key；手工场景无 key 时为 `sb_{scene.id}`） |
 | `prompt_json.three_scene_code` | `shotJson.three_scene_code` + `shotJson.three_scene_seq_start`（3D 空间透传，见下节；反向经共享 builder 原样回写 `prompt_json.three_scene_code`，往返稳定） |
+
+## 时间轴柱子（S→W 转换与兜底链）
+
+时间轴以柱子（pillar）为分区单位，每分镜一格；分镜生成的视频/音频加入时间轴时按柱子归位。S→W 转换直接在 `timeline.pillars` 里逐分镜生成柱子，转出画布打开即见完备格子（分镜1/分镜2…），无需等首个片段加入。
+
+柱子 `id` 的 scriptId 维度口径（生成端与查找端一致，三处共用）：
+
+- 有剧本节点 → 剧本节点 id；
+- 无剧本（故事板未关联剧本）→ 分镜组节点 id 兜底（`getPillarForNode` 追溯不到剧本节点时同样回退分镜组 id，`autoMigratePillars` 的 `resolveShotGroupPillarScriptId` 同口径）。
+
+前端兜底链（`web/js/timeline.js`）：`autoMigratePillars` 在柱子为空时从两个来源推导——剧本节点 `parsedData`（画布内拆分链路）与画布 `shot_group.data.shots`（转换等无 `parsedData` 产物）；`loadWorkflow` 恢复时柱子为空即触发迁移（不再要求已有片段）。`applyParsedData`/`runGridFlow` 的幂等分支（分镜组已存在，如转换画布上再次拆分）也会补建柱子。
 
 ## 3D 空间 → 导演台（分镜帧「打开导演台」按钮）
 

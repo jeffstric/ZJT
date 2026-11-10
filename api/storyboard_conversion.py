@@ -687,6 +687,10 @@ def _build_workflow_data_from_storyboard(
     all_characters: List[Dict] = []
     seen_prop_ids = set()
     shot_number = 0
+    # 时间轴柱子（pillar）：每分镜一格，转出画布即有完备格子模式。
+    # scriptId 口径与前端 getPillarForNode/autoMigratePillars 一致：
+    # 有剧本节点用剧本节点 id，无剧本时退回分镜组节点 id。
+    pillars: List[Dict] = []
     # 分镜帧节点高度远超 900px（三列布局），间距必须大于节点实际高度，
     # 否则节点互相叠压——拖动图片节点整理布局时会误触到邻近分镜帧的
     # 首帧/尾帧端口（applyLastFrameFromImage），把图片误设为尾帧。
@@ -744,6 +748,18 @@ def _build_workflow_data_from_storyboard(
                 'gridPreview': {},
             },
         })
+        pillar_script_id = script_node_id if script_node_id is not None else group_node_id
+        for shot in group_shots:
+            if shot.get('shot_number'):
+                pillars.append({
+                    'id': f"{pillar_script_id}_{shot['shot_number']}",
+                    'scriptId': pillar_script_id,
+                    'shotNumber': shot['shot_number'],
+                    # shot.duration 经 _safe_duration 已恒为正数
+                    'defaultDuration': shot.get('duration') or 15,
+                    'videoClipIds': [],
+                    'audioClipIds': [],
+                })
         if script_node_id is not None:
             connections.append({'id': next_conn_id, 'from': script_node_id, 'to': group_node_id})
             next_conn_id += 1
@@ -848,7 +864,7 @@ def _build_workflow_data_from_storyboard(
         'timeline': {
             'clips': [],
             'audioClips': [],
-            'pillars': [],
+            'pillars': pillars,
             'nextClipId': 1,
             'nextAudioClipId': 1,
         },
