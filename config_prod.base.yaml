@@ -249,7 +249,7 @@ storyboard:
 upload:
   max_image_size_mb: 10
   max_video_size_mb: 50
-  max_video_duration_seconds: 15
+  max_video_duration_seconds: 30  # 平台级上限；前端实际生效值另与所选模型最大生成时长取小
 
 frontend:
   debug_password: "123"

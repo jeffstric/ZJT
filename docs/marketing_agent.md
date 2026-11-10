@@ -677,7 +677,7 @@ Agent 对话模式即使当前自定义面板停留在“图片”，前端也�
 |------|--------|------|
 | `max_image_size_mb` | 10 | 图片上传大小限制（MB） |
 | `max_video_size_mb` | 100 | 视频上传大小限制（MB） |
-| `max_video_duration_seconds` | 15 | 视频/音频最大时长（秒） |
+| `max_video_duration_seconds` | 30 | 视频/音频上传总时长的平台级上限（秒）；前端实际生效上限 = min(该配置, 所选视频模型 `supported_durations` 最大值)，未选模型或模型无时长档位时取该配置值（如 Seedance 2.5 支持 30s 生成，克隆参考视频可传至 30s；10s 模型则限制为 10s） |
 | `is_enterprise` | false | 是否为商业版 |
 
 ### 前端常量
