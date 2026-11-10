@@ -78,6 +78,12 @@
     sleep(FLUSH_WAIT_MS)
       .then(function () { return requestStoryboardConversion(workflowId); })
       .then(function (data) {
+        // 已关联（created=false）时后端已增量同步画布资产进故事板
+        //（见 storyboard_conversion.py _sync_assets_to_existing_storyboard）
+        if (data.created === false && Number(data.synced_assets) > 0) {
+          toast(t('msg_storyboard_assets_synced', '已同步 {n} 个分镜资产到故事板')
+            .replace('{n}', String(data.synced_assets)), 'success');
+        }
         window.location.href = '/storyboard?id=' + encodeURIComponent(data.storyboard_id);
       })
       .catch(function (err) {

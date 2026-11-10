@@ -2229,6 +2229,17 @@
             }
           });
         }, 100);
+
+        // 故事板跳转带入的增量资产包：节点恢复完成后在内存态合并
+        // （见 storyboard_asset_sync.js；后端只读返回，避免与前端整体
+        // 覆盖保存互踩）
+        if (window.StoryboardAssetSync) {
+          try {
+            window.StoryboardAssetSync.applyPending(workflowId);
+          } catch (syncError) {
+            console.warn('[故事板资产同步] 合并失败:', syncError);
+          }
+        }
       } catch(error) {
         console.error('[恢复工作流] 恢复失败:', error);
         // workflowReady 保持 false，所有保存路径都不会写入

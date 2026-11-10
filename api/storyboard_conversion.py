@@ -38,6 +38,7 @@ from model.storyboard import (
     StoryboardSceneAssetModel,
 )
 from model.database import (
+    execute_query,
     execute_query_in_transaction,
     execute_update_in_transaction,
     transaction,
@@ -452,6 +453,172 @@ def _parse_workflow_data(workflow) -> Dict:
     return data if isinstance(data, dict) else {}
 
 
+def _plan_scene_asset_sync(existing_rows: List[Dict], incoming: Dict) -> Dict:
+    """计算单个场景的画布→故事板同步计划（纯函数）。
+
+    existing_rows: [{'id','asset_type','result_url'}]（result_url 需带 ai_tools
+    兜底口径，见 list_storyboard_assets）；incoming: _build_parsed_data_from_frames
+    产出的 frame_assets。只增不删：画布产物 URL 场景缺失时 INSERT；选中跟随
+    画布（入口=从画布跳故事板，画布是最后操作端），仅画布有对应产物时覆盖。
+    """
+    seen: Dict[str, Dict[str, int]] = {}
+    for row in existing_rows or []:
+        url = _relativize_asset_url(_usable_asset_url(row.get('result_url')))
+        if url:
+            seen.setdefault(str(row.get('asset_type') or ''), {})[url] = row.get('id')
+
+    plan = {
+        'insert_first_frames': [],
+        'insert_videos': [],
+        'insert_last_frames': [],
+        'select_first_frame': '',
+        'select_video': '',
+        'select_last_frame': '',
+    }
+    for url in incoming.get('image_candidates') or []:
+        if url and url not in seen.get('first_frame', {}):
+            plan['insert_first_frames'].append(url)
+    for url in incoming.get('videos') or []:
+        if url and url not in seen.get('video', {}):
+            plan['insert_videos'].append(url)
+    last_frame = incoming.get('last_frame') or ''
+    if last_frame and last_frame not in seen.get('last_frame', {}):
+        plan['insert_last_frames'].append(last_frame)
+
+    # 选中跟随画布：画布有对应产物才覆盖故事板选中指针
+    plan['select_first_frame'] = incoming.get('selected_first_frame') or ''
+    plan['select_video'] = (incoming.get('videos') or [''])[0] or ''
+    plan['select_last_frame'] = last_frame
+    return plan
+
+
+def _sync_assets_to_existing_storyboard(storyboard_id: int, workflow) -> int:
+    """已关联画布 → 故事板的增量资产同步（入口动作，画布为最后操作端）。
+
+    与一次性转换不同：不重建场景/台词，只把画布分镜产物补进场景资产表
+    （URL 去重、无 ai_tool_id 纯 URL 引用）并把选中指针同步为画布状态。
+    画布上用户删除的节点会被再次补回（只增语义）；故事板侧删掉的场景/
+    资产不受影响。行级写 + 调用方 video_workflow 行锁串行化，幂等可重跑。
+    """
+    workflow_data = _parse_workflow_data(workflow)
+    if not (workflow_data.get('nodes')):
+        return 0
+    groups, script_meta, frame_videos, frame_images = _collect_frames_from_workflow(workflow_data)
+    _, assets = _build_parsed_data_from_frames(
+        groups, script_meta, workflow.style or '', frame_videos, frame_images)
+
+    scene_rows = execute_query(
+        "SELECT id, source_shot_key FROM storyboard_scene WHERE storyboard_id = %s",
+        (storyboard_id,), fetch_all=True) or []
+    key_to_scene = {
+        str(r.get('source_shot_key') or ''): r.get('id')
+        for r in scene_rows if r.get('source_shot_key')
+    }
+    if not key_to_scene:
+        return 0
+
+    # 该故事板全量资产一次取回，按场景分组（ai_tools result_url 兜底同口径）
+    existing_by_scene: Dict[int, List[Dict]] = {}
+    for row in StoryboardSceneAssetModel.list_storyboard_assets(storyboard_id):
+        existing_by_scene.setdefault(row.get('scene_id'), []).append(row)
+
+    total_inserted = 0
+    for key, incoming in (assets or {}).items():
+        scene_id = key_to_scene.get(str(key))
+        if not scene_id:
+            continue  # 画布新增分镜无对应场景：跳过（不自动建场景）
+        plan = _plan_scene_asset_sync(existing_by_scene.get(scene_id), incoming)
+        url_to_id: Dict[str, Dict[str, int]] = {'first_frame': {}, 'video': {}, 'last_frame': {}}
+        for row in existing_by_scene.get(scene_id) or []:
+            url = _relativize_asset_url(_usable_asset_url(row.get('result_url')))
+            if url and row.get('asset_type') in url_to_id:
+                url_to_id[row['asset_type']][url] = row.get('id')
+
+        for asset_type, urls in (
+            ('first_frame', plan['insert_first_frames']),
+            ('video', plan['insert_videos']),
+            ('last_frame', plan['insert_last_frames']),
+        ):
+            for url in urls:
+                new_id = StoryboardSceneAssetModel.create(scene_id, asset_type, result_url=url)
+                url_to_id[asset_type][url] = new_id
+                total_inserted += 1
+
+        for asset_type, sel_url in (
+            ('first_frame', plan['select_first_frame']),
+            ('video', plan['select_video']),
+            ('last_frame', plan['select_last_frame']),
+        ):
+            if not sel_url:
+                continue
+            asset_id = url_to_id.get(asset_type, {}).get(sel_url)
+            if asset_id:
+                StoryboardSceneAssetModel.set_selected(scene_id, asset_type, asset_id)
+
+    return total_inserted
+
+
+def _assemble_sync_payload(scenes: List[Dict], assets: List[Dict]) -> Dict:
+    """故事板 → 画布的增量同步资产包（纯函数，供前端合并）。
+
+    scenes: list_by_storyboard 行（含 selected_*_id、first_frame_url/last_frame_url/
+    video_url、source_shot_key）；assets: list_storyboard_assets 行。
+    URL 统一可用过滤 + 相对化 + 去重（与 S→W 一次性转换同口径）；无资产也
+    无选中的场景不进包。选中 URL 优先按资产 id 匹配，匹配不到回退场景的
+    选中 URL 列（list_by_storyboard 已带 ai_tools 兜底）。
+    """
+    assets_by_scene: Dict[int, Dict[str, List[Dict]]] = {}
+    seen_urls: set = set()
+    for row in assets or []:
+        url = _relativize_asset_url(_usable_asset_url(row.get('result_url')))
+        if not url:
+            continue
+        dedup_key = (row.get('scene_id'), str(row.get('asset_type') or ''), url)
+        if dedup_key in seen_urls:
+            continue
+        seen_urls.add(dedup_key)
+        assets_by_scene.setdefault(row.get('scene_id'), {}).setdefault(
+            str(row.get('asset_type') or ''), []).append({'id': row.get('id'), 'url': url})
+
+    out_scenes = []
+    for scene in scenes or []:
+        key = str(scene.get('source_shot_key') or '').strip()
+        if not key:
+            continue  # 画布按 shot_id 匹配分镜帧，无 key 无从匹配
+        scene_assets = assets_by_scene.get(scene.get('id')) or {}
+        first_frames = scene_assets.get('first_frame') or []
+        videos = scene_assets.get('video') or []
+
+        def _selected_url(asset_type: str, selected_id, fallback_url) -> str:
+            for item in scene_assets.get(asset_type) or []:
+                if item.get('id') == selected_id:
+                    return item['url']
+            return _relativize_asset_url(str(fallback_url or '').strip())
+
+        last_frame_url = _relativize_asset_url(str(scene.get('last_frame_url') or '').strip())
+        if not first_frames and not videos and not last_frame_url:
+            continue
+        out_scenes.append({
+            'source_shot_key': key,
+            'first_frames': first_frames,
+            'videos': videos,
+            'selected_first_frame_url': _selected_url(
+                'first_frame', scene.get('selected_first_frame_id'), scene.get('first_frame_url')),
+            'selected_video_url': _selected_url(
+                'video', scene.get('selected_video_id'), scene.get('video_url')),
+            'last_frame_url': last_frame_url,
+        })
+    return {'scenes': out_scenes}
+
+
+def _build_sync_asset_payload(storyboard) -> Dict:
+    """已关联画布时 to-workflow 返回的资产包（只读；画布前端在 loadWorkflow
+    后合并——画布保存是前端整体覆盖写，后端直写会被下一次 autoSave 回滚）。"""
+    scenes = StoryboardSceneModel.list_by_storyboard(storyboard.id)
+    assets = StoryboardSceneAssetModel.list_storyboard_assets(storyboard.id)
+    return _assemble_sync_payload(scenes, assets)
+
+
 def _resolve_int(value) -> Optional[int]:
     try:
         return int(value)
@@ -475,8 +642,10 @@ def _convert_workflow_to_storyboard(workflow, user_id: int) -> Dict:
         )
         storyboard = StoryboardModel.get_by_workflow_id(user_id, workflow.id)
         if storyboard:
-            # 一次性转换语义：目标已存在时不做任何同步，前端直接打开
-            return {'storyboard_id': storyboard.id, 'created': False}
+            # 已关联 → 增量资产同步（入口动作，画布为最后操作端）：只补缺失
+            # 资产 + 选中跟随画布，不重建场景/台词；行级写 + 画布行锁串行化
+            synced = _sync_assets_to_existing_storyboard(storyboard.id, workflow)
+            return {'storyboard_id': storyboard.id, 'created': False, 'synced_assets': synced}
 
         workflow_data = _parse_workflow_data(workflow)
         groups, script_meta, frame_videos, frame_images = _collect_frames_from_workflow(workflow_data)
@@ -523,7 +692,8 @@ async def storyboard_from_workflow(
     auth_token: Optional[str] = Header(None, alias="Authorization"),
     user_id: Optional[int] = Header(None, alias="X-User-Id"),
 ):
-    """工作流画布 → 故事板（一次性：已有关联故事板时直接返回，不重复转换）。"""
+    """工作流画布 → 故事板（首次一次性转换；已有关联故事板时增量同步资产，
+    返回 synced_assets 计数，不重复创建场景/台词）。"""
     user_id, auth_error = _resolve_login_user_id(request, user_id)
     if auth_error is not None:
         return auth_error
@@ -1043,15 +1213,19 @@ async def storyboard_to_workflow(
         return JSONResponse(status_code=404, content={'error': '故事板不存在'})
     ensure_resource_access(storyboard, user_id, Action.EDIT, "故事板")
 
-    # 一次性转换语义：已关联画布 → 直接返回该画布（画布上可能已有手工内容，不覆盖）
+    # 已关联画布 → 直接返回该画布（不覆盖画布内容），并附带增量同步资产包：
+    # 由画布前端在 loadWorkflow 后合并（画布保存是前端整体覆盖写，后端直写
+    # 会被下一次 autoSave 静默回滚——见 docs/storyboard/storyboard_workflow_conversion.md）
     linked_workflow_id = _resolve_int(storyboard.workflow_id)
     if linked_workflow_id:
         linked = await asyncio.to_thread(VideoWorkflowModel.get_by_id, linked_workflow_id)
         if linked and (not Edition.is_space_isolated() or linked.user_id == user_id):
+            sync_assets = await asyncio.to_thread(_build_sync_asset_payload, storyboard)
             return JSONResponse({
                 'success': True,
                 'workflow_id': linked.id,
                 'created': False,
+                'sync_assets': sync_assets,
             })
 
     try:
