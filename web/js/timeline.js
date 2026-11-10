@@ -225,26 +225,37 @@
       if (node.type === 'shot_frame') {
         // 兼容两种数据结构：shotData（新）和 shotJson（旧）
         const shotInfo = node.data.shotData || node.data.shotJson;
-        
+
         if (shotInfo) {
           shotNumber = shotInfo.shot_number;
-          
+
           // 查找父分镜组节点
           const parentConn = state.connections.find(c => c.to === nodeId);
-          
+
           if (parentConn) {
             const shotGroupNode = state.nodes.find(n => n.id === parentConn.from);
-            
+
             if (shotGroupNode && shotGroupNode.type === 'shot_group') {
-              // 查找祖父剧本节点
+              // 查找祖父剧本节点（沿连接优先，再认 scriptNodeId 字段）
               const grandParentConn = state.connections.find(c => c.to === shotGroupNode.id);
-              
+
               if (grandParentConn) {
                 const scriptNode = state.nodes.find(n => n.id === grandParentConn.from);
-                
+
                 if (scriptNode && scriptNode.type === 'script') {
                   scriptId = scriptNode.id;
                 }
+              }
+              if (scriptId === null && shotGroupNode.data && shotGroupNode.data.scriptNodeId) {
+                const linkedScript = state.nodes.find(
+                  n => n.id === shotGroupNode.data.scriptNodeId && n.type === 'script'
+                );
+                if (linkedScript) scriptId = linkedScript.id;
+              }
+              // 无剧本节点的工作流（如无剧本故事板转出的画布）：以分镜组节点 id
+              // 兜底，与 autoMigratePillars/服务端转换的柱子 id 口径一致
+              if (scriptId === null) {
+                scriptId = shotGroupNode.id;
               }
             }
           }
@@ -394,31 +405,48 @@
     }
     
     /**
-     * 自动迁移历史数据：扫描画布上的剧本节点，创建缺失的柱子
-     * 用于兼容旧版工作流
+     * 解析分镜组节点对应的柱子 scriptId 维度（与 getPillarForNode 追溯口径一致）：
+     * 沿连接找剧本节点 → 认 data.scriptNodeId 字段 → 无剧本时兜底分镜组节点自身 id
+     */
+    function resolveShotGroupPillarScriptId(shotGroupNode) {
+      const conn = state.connections.find(c => c.to === shotGroupNode.id);
+      if (conn) {
+        const scriptNode = state.nodes.find(n => n.id === conn.from && n.type === 'script');
+        if (scriptNode) return scriptNode.id;
+      }
+      const linkedId = shotGroupNode.data && shotGroupNode.data.scriptNodeId;
+      if (linkedId) {
+        const linked = state.nodes.find(n => n.id === linkedId && n.type === 'script');
+        if (linked) return linked.id;
+      }
+      return shotGroupNode.id;
+    }
+
+    /**
+     * 自动迁移历史数据：扫描画布节点，创建缺失的柱子
+     * 来源一：剧本节点的解析结果 parsedData（画布内拆分的正常链路）
+     * 来源二：分镜组节点的 shots 数组（「故事板→工作流」转换等无 parsedData 的产物）
      */
     function autoMigratePillars() {
-      // 如果已经有柱子，不需要迁移
-      if (state.timeline.pillars.length > 0) {
-        console.log('[柱子迁移] 已存在柱子数据，跳过迁移');
+      // 已存在分镜柱子时不需要迁移。不能只看 pillars.length：视频落入自由柱时
+      // getOrCreateFreePillar 会把 __free__ 塞进 pillars 并随 autoSave 持久化，
+      // pillars=['__free__'] 正是"缺分镜柱"的受损形态（转换产物视频误落 __free__），
+      // 必须照常迁移，否则该类画布重载后永远补不回分镜格子
+      if (state.timeline.pillars.some(p => p.id !== '__free__')) {
+        console.log('[柱子迁移] 已存在分镜柱子数据，跳过迁移');
         return false;
       }
-      
-      // 查找所有剧本节点
-      const scriptNodes = state.nodes.filter(n => n.type === 'script' && n.data.parsedData);
-      
-      if (scriptNodes.length === 0) {
-        console.log('[柱子迁移] 未找到已解析的剧本节点');
-        return false;
-      }
-      
+
       let totalPillarsCreated = 0;
-      
+
+      // 来源一：剧本节点解析结果
+      const scriptNodes = state.nodes.filter(n => n.type === 'script' && n.data.parsedData);
+
       scriptNodes.forEach(scriptNode => {
         const scriptId = scriptNode.id;
         const parsedData = scriptNode.data.parsedData;
         const maxGroupDuration = parsedData.max_group_duration || 15;
-        
+
         if (parsedData.shot_groups && Array.isArray(parsedData.shot_groups)) {
           parsedData.shot_groups.forEach((shotGroup) => {
             if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
@@ -432,14 +460,71 @@
           });
         }
       });
-      
+
+      // 来源二：画布上的分镜组节点（转换产物可能没有剧本节点/parsedData）
+      const shotGroupNodes = state.nodes.filter(
+        n => n.type === 'shot_group' && n.data && Array.isArray(n.data.shots)
+      );
+
+      shotGroupNodes.forEach((shotGroupNode) => {
+        const scriptId = resolveShotGroupPillarScriptId(shotGroupNode);
+        shotGroupNode.data.shots.forEach((shot) => {
+          if (shot.shot_number) {
+            const pillarId = `${scriptId}_${shot.shot_number}`;
+            // 来源一已建过的不重复计数（createOrUpdatePillar 本身幂等）
+            if (state.timeline.pillars.some(p => p.id === pillarId)) return;
+            createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || 15);
+            totalPillarsCreated++;
+          }
+        });
+      });
+
       if (totalPillarsCreated > 0) {
-        console.log(`[柱子迁移] 成功迁移：为 ${scriptNodes.length} 个剧本节点创建了 ${totalPillarsCreated} 个柱子`);
+        console.log(`[柱子迁移] 成功迁移：共创建 ${totalPillarsCreated} 个柱子`);
+        const movedClips = reassignFreePillarClips();
+        if (movedClips > 0) {
+          console.log(`[柱子迁移] 已将 ${movedClips} 个误落自由柱的片段归位到分镜柱`);
+        }
         state.timeline.visible = true;
         return true;
       }
-      
+
+      console.log('[柱子迁移] 未找到可推导柱子的剧本/分镜组节点');
       return false;
+    }
+
+    /**
+     * 把误落在 __free__ 柱的片段归位到分镜柱（迁移补建柱子后调用）。
+     * 受损画布（柱子缺失期加入时间轴的视频/音频）当时被 getOrCreateFreePillar
+     * 兜底进 __free__；柱子补建后按 nodeId → getPillarForNode 重新归属，
+     * 解析不到分镜柱的片段保持独立片段语义不动。
+     * @returns {number} 成功归位的片段数
+     */
+    function reassignFreePillarClips() {
+      const freePillar = state.timeline.pillars.find(p => p.id === '__free__');
+      if (!freePillar) return 0;
+
+      let moved = 0;
+      const trackDefs = [
+        { trackType: 'video', clipIds: freePillar.videoClipIds, clips: state.timeline.clips, orderBase: p => p.videoClipIds.length },
+        { trackType: 'audio', clipIds: freePillar.audioClipIds, clips: state.timeline.audioClips, orderBase: p => p.audioClipIds.length },
+      ];
+
+      trackDefs.forEach(({ trackType, clipIds, clips, orderBase }) => {
+        clipIds.slice().forEach(clipId => {
+          const clip = clips.find(c => c.id === clipId);
+          if (!clip) return;
+          const pillar = getPillarForNode(clip.nodeId);
+          if (!pillar || pillar.id === '__free__') return;
+          removeClipFromPillar(clipId, trackType);
+          clip.pillarId = pillar.id;
+          clip.order = orderBase(pillar);
+          addClipToPillar(pillar, clipId, trackType);
+          moved++;
+        });
+      });
+
+      return moved;
     }
     
     // ============ 柱子系统结束 ============

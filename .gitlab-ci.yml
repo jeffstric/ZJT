@@ -394,19 +394,44 @@ frontend_tests:
   # 不依赖 DinD，直接在 node 镜像里跑，比后端 unit_tests 轻量很多
   image: m.daocloud.io/docker.io/library/node:20-slim
 
-  # npm 缓存，加速后续构建
+  # npm 缓存，加速后续构建。
+  # key 不带分支前缀：由 package-lock.json 内容寻址，所有分支共享同一份缓存。
+  # 原分支前缀 key 导致新分支首跑必冷缓存、全量回源 npmmirror，一个 tarball
+  # 504 就打死 npm ci（develop_f1176 首跑 strip-ansi-6.0.1.tgz 实测踩中）。
+  # lock 文件变化时 hash 变化，缓存自动失效，无需手动清理。
+  # 注意：protected 与非 protected 分支的缓存天然隔离（GitLab 自动加后缀）。
   cache:
     key:
       files:
         - package-lock.json
-      prefix: npm-${CI_COMMIT_REF_SLUG}
+      prefix: npm
     paths:
       - .npm/
     policy: pull-push
 
   before_script:
     - npm config set cache .npm
-    - npm ci --no-audit --no-fund
+    # npmmirror 网关偶发 504/抖动：npm 默认仅重试 2 次且窗口上限 10s，
+    # 网关短时抖动即耗尽重试。拉长重试次数与窗口、整体超时兜底。
+    - npm config set fetch-retries 5
+    - npm config set fetch-retry-mintimeout 15000
+    - npm config set fetch-retry-maxtimeout 120000
+    - npm config set fetch-timeout 600000
+    # npm ci 幂等，整命令再包一层重试兜底（与 unit_tests/e2e_smoke 的
+    # docker pull/build 重试同理：job 级 retry 不覆盖 script_failure）。
+    # --prefer-offline：缓存命中时不回源 revalidate，快且少受网络抖动影响。
+    - |
+      for attempt in 1 2 3; do
+        if npm ci --no-audit --no-fund --prefer-offline; then
+          installed=1; break
+        fi
+        echo "npm ci 失败(${attempt}/3)，15s 后重试"
+        sleep 15
+      done
+      if [ -z "$installed" ]; then
+        echo "npm ci 连续 3 次失败"
+        exit 1
+      fi
 
   script:
     - npm run test:ci

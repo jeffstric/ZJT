@@ -77,6 +77,22 @@ save_upload_chunked(upload_file, file_path, ext)      # 魔数 + 分块限流
 `UploadValidationError` 是 `ValueError` 子类，端点层 `except` 后映射
 HTTP 400，message 可直接透出给用户。
 
+## 路径拼接与读取型端点（issue 2835/2869，2026-11-10 修复）
+
+上游安全分支（`security_2826_2851_merge`）曾定位过两处问题但未合入，
+2026-11-10 在 develop 上重新修复：
+
+- **Agent 上传接口 session_id 目录穿越**（`api/script_writer.py`
+  `/api/upload-agent-{image,video,audio}`）：`session_id` 表单字段直接
+  `os.path.join` 拼存储目录，`../../evil`（Windows 带盘符值更直接落绝对
+  路径）可穿越出 `upload/` 树任意建目录写文件。修复：`_validate_session_id`
+  仅接受标准 UUID（会话创建即 `str(uuid.uuid4())`），非法 400 不落盘。
+- **`/api/thumbnail` 匿名读取**（`server.py`）：按 `url` 参数解析 `/upload/`
+  下任意素材回缩略图，未鉴权时构成对素材的匿名读取面。修复：套
+  `@require_permission("file:thumbnail")`（登录即可）；浏览器 `<img>` 场景
+  由 `auth_cookie_translation_middleware` 自动携带凭据，前端无需在 URL
+  拼 token（符合"凭据不进 URL"红线）。
+
 ## 测试
 
 `tests/utils/test_media_upload.py`：覆盖白名单/黑名单/双扩展名、伪造魔数

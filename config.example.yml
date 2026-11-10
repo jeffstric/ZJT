@@ -186,6 +186,18 @@ topenrouter:
   asset_base_url: ""
   model_aliases: {}  # 模型名映射 JSON（火山原生名 → 平台名），404 时在此修正
 
+autodl:
+  # AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频等）
+  # Token 获取：登录 https://www.autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
+  api_key: ""
+  base_url: "https://autodl.art"
+
+# 晨羽智云（chenyu.cn）工作流 API（Minimax-H3 图生视频等）
+# API Key 获取：登录 https://www.chenyu.cn 控制台「API 服务」页创建
+chenyu:
+  api_key: ""
+  base_url: "https://www.chenyu.cn"  # 晨羽开放 API 基础 URL
+
 pay:
   wxpay:
       #公众账号ID
@@ -348,7 +360,7 @@ storyboard:
 upload:
   max_image_size_mb: 10  # 角色、场景、道具的参考图片最大大小限制（MB）
   max_video_size_mb: 50  # Agent 对话模式上传视频最大大小限制（MB）
-  max_video_duration_seconds: 15  # Agent 对话模式上传视频最大时长（秒）
+  max_video_duration_seconds: 30  # Agent 对话模式上传视频/音频总时长平台级上限（秒）；前端实际生效值另与所选模型最大生成时长取小
 
 # Frontend debug mode
 frontend:

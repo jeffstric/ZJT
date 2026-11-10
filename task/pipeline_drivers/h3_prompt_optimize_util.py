@@ -56,6 +56,12 @@ _SPEAKING_INTENT_RE = re.compile(
     r"|准备开口|要开口|欲言又止|张嘴|开口说",
     re.IGNORECASE,
 )
+# <audio_1> / <Audio 1> / <audio1>。无对白结果里按整句删掉，不因此作废整段提示词。
+_AUDIO_TAG_RE = re.compile(r"<\s*audio(?:[\s_]*\d+)?\s*>", re.IGNORECASE)
+_AUDIO_SUMMARY_PREFIX_RE = re.compile(
+    r"\s*\+\s*audio reference|audio reference\s*\+\s*",
+    re.IGNORECASE,
+)
 # 分镜参考模式提交后写进提示词的槽位说明。1-based，与参考图列表下标对应。
 _H3_FIRST_FRAME_MARK_RE = re.compile(r"图(\d+)是首帧")
 _H3_LAST_FRAME_MARK_RE = re.compile(r"图(\d+)是尾帧")
@@ -242,7 +248,11 @@ def load_h3_prompt_template(variant: Optional[str] = None) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: float) -> str:
+def _build_ref2va_instruction(
+    ref_counts: Optional[Dict[str, int]],
+    duration: float,
+    original_prompt: str = "",
+) -> str:
     counts = ref_counts or {}
     images = int(counts.get("images") or 0)
     videos = int(counts.get("videos") or 0)
@@ -255,6 +265,24 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
     if audios:
         assets.append(f"{audios} 个输入参考音频（按顺序对应 <audio_1>~<audio_{audios}>）")
     asset_text = "、".join(assets) if assets else "若干输入参考资产"
+    clauses = ref2va_marked_frame_clauses(original_prompt, duration, images)
+    lock = ""
+    if clauses:
+        has_start = any("starting key frame" in clause for clause in clauses)
+        has_end = any("ending key frame" in clause for clause in clauses)
+        lock = (
+            "原文指定了首帧或尾帧。下列英文原句必须逐字出现在六段正文中，"
+            "不得改写 EXACT、时间、大小写或 Picture 编号：\n"
+            + "\n".join(clauses)
+            + "\n"
+        )
+        if has_start:
+            lock += (
+                "起始关键帧表示 0.00 秒的构图必须与该图一致，开场不得改换构图或切镜，"
+                "该图里没有的人物不得写成开场就在画面里。\n"
+            )
+        if has_end:
+            lock += "结束关键帧表示视频必须停在该图上，不要把起始姿势写成结尾。\n"
     return (
         f"下面是原本视频的提示词，已知有{asset_text}，"
         f"目标视频时长为 {float(duration or 5):.2f} 秒，请你修改为符合以上规范的提示词；"
@@ -263,6 +291,7 @@ def _build_ref2va_instruction(ref_counts: Optional[Dict[str, int]], duration: fl
         "（按你对原文有无角色说出或唱出台词的语义判断填写——背景板/横幅/牌匾等"
         "画面可见文字不算台词），然后空一行，再输出最终提示词正文；"
         "正文原样多行输出，不要再包进 JSON。\n"
+        f"{lock}"
     )
 
 
@@ -301,6 +330,37 @@ def kfref_required_clauses(
         clause = kfref_keyframe_clause(index, str(roles.get(f"picture_{index}") or ""), duration or 5)
         if clause:
             clauses.append(clause)
+    return clauses
+
+
+def ref2va_marked_frame_clauses(
+    prompt: Optional[str],
+    duration: Optional[float],
+    image_count: int,
+) -> List[str]:
+    """参考生原文里的「图N是首帧 / 图N是尾帧」对应必须逐字出现的锚点原句。
+
+    N 是参考图列表的 1-based 下标，与 <Picture N>、ref_image 顺序一致。
+    越界或没有参考图时不要求原句，避免锁到不存在的槽位。
+    """
+    if image_count <= 0:
+        return []
+    text = prompt or ""
+    clauses: List[str] = []
+    first_match = _H3_FIRST_FRAME_MARK_RE.search(text)
+    if first_match:
+        index = int(first_match.group(1))
+        if 1 <= index <= image_count:
+            clause = kfref_keyframe_clause(index, _H3_KF_ROLE_START, duration or 5)
+            if clause:
+                clauses.append(clause)
+    last_match = _H3_LAST_FRAME_MARK_RE.search(text)
+    if last_match:
+        index = int(last_match.group(1))
+        if 1 <= index <= image_count:
+            clause = kfref_keyframe_clause(index, _H3_KF_ROLE_END, duration or 5)
+            if clause and clause not in clauses:
+                clauses.append(clause)
     return clauses
 
 
@@ -615,7 +675,7 @@ def _build_h3_optimize_text(
             image_prompt_note=image_prompt_note,
         )
     elif variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
-        instruction = _build_ref2va_instruction(ref_counts, duration)
+        instruction = _build_ref2va_instruction(ref_counts, duration, original_prompt)
     elif variant == H3_PROMPT_OPTIMIZE_VARIANT_FL2VA:
         instruction = _FL2VA_INSTRUCTION.format(duration=float(duration or 5))
     else:
@@ -820,6 +880,27 @@ def parse_h3_optimize_kfref_output(raw: str) -> tuple:
     return prompt, flag
 
 
+def strip_h3_silent_audio_refs(text: str) -> str:
+    """删掉无对白优化结果里的 <audio_N> 整句，以及 summary 前缀中的 audio reference。
+
+    同一句里没有句号隔开的段落会整句去掉。六段标题若和音频引用挤在同一句里，
+    会随该句一起消失，随后的结构校验失败，调用方再重试或回退原文。
+    """
+    if not text:
+        return text or ""
+    lines = []
+    for line in str(text).split("\n"):
+        if _AUDIO_TAG_RE.search(line):
+            # 小数点（0.00）不是句号，否则首帧原句会被切成 "0. 00"。
+            parts = re.split(r"(?<=[.!?。！？])(?!\d)\s*", line)
+            kept = [part.strip() for part in parts if part.strip() and not _AUDIO_TAG_RE.search(part)]
+            line = " ".join(kept)
+        line = _AUDIO_SUMMARY_PREFIX_RE.sub("", line)
+        lines.append(line)
+    result = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+    return result
+
+
 def validate_h3_optimized_prompt(
     text: str,
     variant: str,
@@ -828,6 +909,7 @@ def validate_h3_optimized_prompt(
     duration: Optional[float] = None,
     forbid_audio_refs: bool = False,
     forbid_dialogue: bool = False,
+    frame_clauses: Optional[List[str]] = None,
 ) -> bool:
     prompt = strip_prompt_fences(text)
     if not prompt:
@@ -855,7 +937,7 @@ def validate_h3_optimized_prompt(
         clauses = kfref_required_clauses(keyframe_slots, duration)
         return bool(clauses) and all(clause in prompt for clause in clauses)
     if variant == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA:
-        return all(
+        has_sections = all(
             field in lowered
             for field in (
                 "subject_definitions:",
@@ -866,6 +948,10 @@ def validate_h3_optimized_prompt(
                 "non_diegetic_music:",
             )
         )
+        if not has_sections:
+            return False
+        # 原文点名了首帧或尾帧时，锚点原句必须逐字在场。大小写按原句比对。
+        return all(clause in prompt for clause in (frame_clauses or []))
     has_fields = (
         "integrated_multimodal_description:" in lowered
         and "overall_soundscape:" in lowered

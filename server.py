@@ -1287,13 +1287,17 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
 
 
 @app.get("/api/thumbnail")
+@require_permission("file:thumbnail")
 async def get_thumbnail(
     request: Request,
     url: str = Query(..., description="原始图片URL"),
     size: int = Query(200, ge=10, le=1000, description="缩略图尺寸（最大宽/高，单位px）")
 ):
     """
-    获取图片缩略图
+    获取图片缩略图（需登录：按 url 参数读取 /upload 素材并回缩略图，
+    未鉴权时构成对 /upload 素材的匿名读取面，issue 2835。
+    浏览器 <img> 场景由 auth_cookie_translation_middleware 自动带凭据，
+    无需在前端 URL 里拼 token）
     - 本地图片：直接读取并缩放
     - 结果缓存到 upload/cache/thumbnail/
     - 使用原子写入避免多进程冲突
@@ -3093,6 +3097,15 @@ async def ai_app_run_image(
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
         resolution = validate_video_resolution(resolution, actual_impl)
 
+        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
+        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
+        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
+        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
+            task_config, duration_seconds, actual_impl,
+        )
+        if not duration_ok:
+            raise HTTPException(status_code=400, detail=duration_reject_reason)
+
         # 记录输入的图片信息
         logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
 
@@ -3126,24 +3139,22 @@ async def ai_app_run_image(
         reference_images_json = None  # 参考图 JSON
         
         # 获取主图片列表（上传或URL）
+        # 张数不在此硬编码拒绝（旧版写死 5 张，误杀 Seedance 2.5 等 max_multi_ref_images=30
+        # 的模型）；按 image_mode 用 task_config.max_multi_ref_images 统一校验在下方分支进行
         main_image_list = []
         if image_urls:
             main_image_list = [url.strip() for url in image_urls.split(',') if url.strip()]
         elif images and len(images) > 0:
-            if len(images) > 5:
-                raise HTTPException(status_code=400, detail="最多允许5张图片")
             for img in images:
                 saved_url = await asyncio.to_thread(_save_uploaded_image, img)
                 main_image_list.append(saved_url)
-        
+
         # 获取参考图列表
         ref_image_list = []
         if reference_image_urls:
             ref_image_list = [url.strip() for url in reference_image_urls.split(',') if url.strip()]
         elif reference_images and len(reference_images) > 0:
-            # 处理上传的参考图文件
-            if len(reference_images) > 3:
-                raise HTTPException(status_code=400, detail="参考图最多允许3张")
+            # 处理上传的参考图文件（张数校验同主图，见下方模式分支）
             for ref_img in reference_images:
                 saved_url = await asyncio.to_thread(_save_uploaded_image, ref_img)
                 ref_image_list.append(saved_url)
@@ -3168,10 +3179,14 @@ async def ai_app_run_image(
         elif image_mode == 'multi_reference':
             # 多参考图模式：所有图片存入 reference_images
             all_refs = main_image_list + ref_image_list
+            # 参考图总量按模型配置校验（Seedance 2.5 为 30 张，其余模型 3~10 张不等），
+            # 上传与 URL 两个来源在此统一兜底
+            if len(all_refs) > task_config.max_multi_ref_images:
+                raise HTTPException(status_code=400, detail=f"多参考图模式最多允许 {task_config.max_multi_ref_images} 张图片")
             if not all_refs and not task_config.supports_ref_audio_video:
                 raise HTTPException(status_code=400, detail="多参考图模式需要至少1张参考图")
             reference_images_json = json.dumps(all_refs) if all_refs else None
-            
+
         elif image_mode == 'first_last_with_ref':
             # 首尾帧+参考图模式
             if len(main_image_list) < 2:
@@ -3183,6 +3198,9 @@ async def ai_app_run_image(
             # 中间的图片 + 额外参考图作为参考图
             middle_refs = main_image_list[1:-1] if len(main_image_list) > 2 else []
             all_refs = middle_refs + ref_image_list
+            # 参考图总量同样按模型配置校验
+            if len(all_refs) > task_config.max_multi_ref_images:
+                raise HTTPException(status_code=400, detail=f"参考图最多允许 {task_config.max_multi_ref_images} 张图片")
             if all_refs:
                 reference_images_json = json.dumps(all_refs)
 

@@ -642,3 +642,35 @@ print(f"Cleaned {cleaned_count} stale slots")
 > 兜底路径（`visual_task.py`）用 `slot_max_slots = 999999` 绕过槽位上限，
 > 可能向已拥堵账号额外灌入任务。该兜底行为为既有设计，本期未改动。
 
+
+### 实现方级供应商判定（跨供应商实现方豁免）
+
+> 2026-11-08 修复（事故 ai_tools 13439/13440）：密钥注入/槽位/熔断上报曾按
+> **任务类型** provider 判定（`ai_tools.type in RUNNINGHUB_TASK_TYPES`），
+> 而 H3 任务类型 34/37 挂载了 AutoDL 实现方（108/109），导致调度器提交前把
+> RunningHub 池密钥经 `_apply_api_key` 注入 AutoDL 驱动、覆盖 `autodl.api_key`，
+> 上游返回 `401 Invalid authentication credentials`（与垃圾 token 响应逐字节一致，
+> 曾被误判为 AutoDL 平台问题）。
+
+**正确口径**：供应商归属属于**实现方**，不属于任务类型。判定统一走
+`config/unified_config.py` 的 `is_runninghub_task(ai_tool, impl_name=None)`：
+
+1. `impl_name` 优先（提交/轮询路径传 `driver.driver_name`，即真实发请求的实现方）
+2. 未传时读 `ai_tool.implementation` 反查实现方 provider
+   （`ImplementationConfig.provider`，未标注时继承所属任务类型 provider；
+   AutoDL 两实现方显式标注 `TaskProvider.AUTODL`）
+3. 用户模块动态实现方（`user_module:` 前缀）豁免——不占槽位、不注入池密钥
+   （原 `visual_task.py` 内联前缀特判已收编进 helper）
+4. 实现方未记录时回退任务类型 provider（入队预占槽位场景，实现方尚未选出）
+
+**`visual_task.py` 各接入点**：
+
+| 接入点 | 判定方式 |
+|---|---|
+| 提交前密钥注入 / 轮询前密钥切换 | 实现方级（`is_runninghub_task`，传 driver_name） |
+| 失败/成功熔断上报、拥堵冷却 | 实现方级（非 RunningHub 实现方失败不污染池统计） |
+| 入队槽位占用（`generate_video_task`） | 实现方级（实现方未记录回退任务类型） |
+| 槽位释放（成功/失败/过期/超限） | **无条件**幂等释放（`release` 为 no-op；按实现方判定会在「预占时实现方未记录、后切到非 RunningHub 实现方」场景泄漏槽位，与成功路径 `_handle_task_success` 既有口径一致） |
+
+新增跨供应商实现方时的检查清单：`ImplementationConfig` 显式标注 `provider`，
+否则会被密钥池/槽位逻辑误伤（用户模块前缀豁免除外）。

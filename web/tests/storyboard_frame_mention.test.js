@@ -9,6 +9,7 @@ import {
     promptHasFrameMention,
     resolveSubmitFrameUrls,
     shouldUseH3KeyframeRef,
+    H3_KEYFRAME_REF_ROUTE_ENABLED,
     stripMentionTrigger,
 } from '../js/storyboard/frame_mention.js';
 
@@ -32,7 +33,7 @@ describe('storyboard frame mention tokens', () => {
 
     it('routes only H3 reference mode with a token to the mixed model', () => {
         const h3 = { short_key: 'minimax_h3_r2v', key: 'minimax_h3_reference_to_video' };
-        expect(shouldUseH3KeyframeRef('multi_reference', h3, '@首帧图')).toBe(true);
+        expect(shouldUseH3KeyframeRef('multi_reference', h3, '@首帧图')).toBe(H3_KEYFRAME_REF_ROUTE_ENABLED === true);
         expect(shouldUseH3KeyframeRef('first_last_frame', h3, '@首帧图')).toBe(false);
         expect(shouldUseH3KeyframeRef('multi_reference', h3, '没有标记')).toBe(false);
         expect(isH3ReferenceVideoModel({ key: 'minimax_h3' })).toBe(false);

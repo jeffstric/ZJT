@@ -99,6 +99,30 @@ class StoryboardSceneAssetModel:
             raise
 
     @staticmethod
+    def list_storyboard_assets(storyboard_id: int) -> List[Dict]:
+        """按故事板一次取全部分镜资产（scene_id 维度分组用）。
+
+        result_url 空时用 ai_tools.result_url 兜底（与
+        StoryboardSceneModel.list_by_storyboard 选中 URL 口径一致：
+        视频生成完成时常只写 ai_tools）；create_at 升序 = 生成顺序。
+        """
+        sql = """
+            SELECT a.scene_id, a.id, a.asset_type, a.ai_tool_id,
+                   COALESCE(NULLIF(a.result_url, ''), t.result_url) AS result_url
+            FROM storyboard_scene_asset a
+            JOIN storyboard_scene sc ON sc.id = a.scene_id
+            LEFT JOIN ai_tools t ON t.id = a.ai_tool_id
+            WHERE sc.storyboard_id = %s
+            ORDER BY a.create_at ASC, a.id ASC
+        """
+        try:
+            results = execute_query(sql, (storyboard_id,), fetch_all=True)
+            return list(results or [])
+        except Exception as e:
+            logger.error(f"Failed to list assets for storyboard {storyboard_id}: {e}")
+            raise
+
+    @staticmethod
     def set_selected(scene_id: int, asset_type: str, asset_id: int) -> int:
         column = StoryboardSceneAssetModel._SELECT_COLUMN_MAP.get(asset_type)
         if not column:

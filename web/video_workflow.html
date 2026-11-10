@@ -1270,6 +1270,9 @@
   <script src="/js/hover_preview.js?v=__VERSION__"></script>
   <!-- 火山TTS音色库共享API（text_to_speech_node 引擎切换使用） -->
   <script src="/js/voice_library_api.js?v=__VERSION__"></script>
+  <!-- 支付二维码本地生成（qrcode-generator MIT） -->
+  <script src="/js/vendor/qrcode-generator.js"></script>
+  <script src="/js/qr_code.js?v=__VERSION__"></script>
   <script src="/js/recharge_center.js?v=__VERSION__"></script>
   <script src="/js/tiff_support.js"></script>
   <script src="/js/ai_tool_timeline.js?v=__VERSION__"></script>
@@ -1286,6 +1289,7 @@
   <script src="/js/world.js"></script>
   <script src="/js/create_workflow_modal.js"></script>
   <script src="/js/workflow_storyboard_switch.js?v=__VERSION__"></script>
+  <script src="/js/storyboard_asset_sync.js?v=__VERSION__"></script>
   <script src="/js/timeline.js"></script>
   <script src="/js/workflow.js?v=__VERSION__"></script>
   <script src="/js/canvas.js?v=__VERSION__"></script>
@@ -1525,8 +1529,8 @@
 
         const data = await response.json();
         if (data.code_url) {
-          // 使用 QR Server API 将 weixin:// 协议转换为二维码图片
-          const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+          // 本地生成 weixin:// 协议二维码图片，不再依赖第三方服务
+          const qrCodeUrl = window.buildPaymentQrUrl(data.code_url, 200);
           body.innerHTML = `
             <div style="text-align: center;">
               <div style="font-weight: 600; font-size: 14px; margin-bottom: 16px;">${window.t ? window.t('recharge_scan_wechat') : '请使用微信扫码完成支付'}</div>

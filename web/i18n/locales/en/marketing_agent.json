@@ -176,7 +176,7 @@
   "image_size_limit": "Image size cannot exceed {size}MB",
   "single_image_no_tail": "Current model only supports single image, no end frame",
   "first_last_max_2": "First & last frame mode supports up to 2 images",
-  "reference_max_5": "Maximum 5 reference images",
+  "video_image_mode_max_n": "Up to {max} images allowed in the current video mode",
   "upload_failed_retry": "Image upload failed, please re-upload",
   "upload_error_retry": "Image upload error, please re-upload",
   "unsupported_image_format": "{{name}} format is not supported. Please upload images in JPG, PNG, GIF, or WebP format",

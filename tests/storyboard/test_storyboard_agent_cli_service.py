@@ -2879,6 +2879,7 @@ def test_generate_video_multi_reference_appends_legend_and_style(patched_storybo
 
 
 def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_storyboard_cli):
+    from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
     from services.storyboard_agent_cli_service import StoryboardCliError
 
     service = patched_storyboard_cli.module.StoryboardAgentCliService(
@@ -2907,13 +2908,19 @@ def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_sto
     call_name, kwargs = patched_storyboard_cli.submitter.calls[-1]
     assert call_name == "image_to_video"
     assert kwargs["image_mode"] == "multi_reference"
-    assert kwargs["task_type"] == 50
+    # 路由开：改交隐藏任务 50，并按混合模型 3 槽裁图。
+    # 路由关：留在参考生 37，首尾帧仍在两端，中间参考不再裁成 1 张。
     urls = [part for part in kwargs["image_urls"].split(",") if part]
     assert urls[0] == "https://cdn.test/first.png"
     assert urls[-1] == "https://cdn.test/last.png"
-    assert len(urls) == 3
+    if H3_KEYFRAME_REF_ROUTE_ENABLED:
+        assert kwargs["task_type"] == 50
+        assert len(urls) == 3
+    else:
+        assert kwargs["task_type"] == 37
+        assert len(urls) > 3
     assert "图1是首帧" in kwargs["prompt"]
-    assert "图3是尾帧" in kwargs["prompt"]
+    assert f"图{len(urls)}是尾帧" in kwargs["prompt"]
     assert "@首帧图" not in kwargs["prompt"]
     assert "@尾帧图" not in kwargs["prompt"]
 

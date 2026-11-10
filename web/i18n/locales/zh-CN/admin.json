@@ -496,6 +496,18 @@
   "provider_topenrouter_desc": "TopenRouter 网关 Seedance 系列视频（火山方舟同构协议）",
   "provider_topenrouter_impacts": "Seedance 2.0 / 2.0 Fast / 2.0 Mini / 2.5",
   "field_base_url_help_topenrouter": "留空使用官方默认地址（https://tp-api.chinadatapay.com:8000）",
+  "provider_autodl_name": "AutoDL.Art",
+  "provider_autodl_video_desc": "AutoDL.Art ComfyUI 工作流（MiniMax H3 多图多音频生视频）",
+  "provider_autodl_video_impacts": "MiniMax H3 多图多音频生视频（最多 9 图 + 3 音频，1-15 秒）",
+  "field_api_key_placeholder_autodl": "输入 AutoDL.Art ComfyUI 分组 Token",
+  "field_api_key_help_autodl": "登录 www.autodl.art → 令牌管理 → 创建令牌，分组必须选 ComfyUI",
+  "field_base_url_help_autodl": "留空使用官方默认地址（https://autodl.art）",
+  "provider_chenyu_name": "晨羽智云",
+  "provider_chenyu_video_desc": "晨羽智云工作流 API（Minimax-H3 图生视频，仅首帧）",
+  "provider_chenyu_video_impacts": "MiniMax H3 图生视频（仅首帧，4-10 秒；成片比例跟随首帧图）",
+  "field_api_key_placeholder_chenyu": "请输入晨羽智云 API Key",
+  "field_api_key_help_chenyu": "登录 www.chenyu.cn → 控制台「API 服务」页创建 API Key",
+  "field_base_url_help_chenyu": "留空使用官方默认地址（https://www.chenyu.cn）",
   "provider_ywapi_name": "智剧通API",
   "provider_ywapi_desc": "智剧通API 官方平台，支持多种模型和服务",
   "provider_ywapi_impacts": "剧本创作, AI对话, Nano Banana图片编辑, 生视频模型",
@@ -1179,6 +1191,5 @@
   "asset_lib_user_perm_hint": "逐用户权限与单人容量：用户管理 → 操作列「资产库容量」",
   "asset_lib_user_enabled": "允许使用资产库",
   "asset_lib_user_enabled_hint": "「所有用户可用」关闭时，勾选后该用户才能入库/浏览",
-  "toast_asset_lib_saved": "资产库配置已保存",
-  "btn_save_config": "保存配置"
+  "toast_asset_lib_saved": "资产库配置已保存"
 }

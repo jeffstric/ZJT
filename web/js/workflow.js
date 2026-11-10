@@ -2192,9 +2192,12 @@
           state.timeline.nextAudioClipId = data.timeline.nextAudioClipId || 1;
           state.timeline.visible = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
           
-          // 如果没有柱子数据但有片段，尝试自动迁移
-          if(state.timeline.pillars.length === 0 && (state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0)){
-            console.log('[恢复工作流] 检测到历史数据，尝试自动迁移柱子...');
+          // 如果没有分镜柱子数据，尝试自动迁移（无片段也迁：剧本拆分/故事板转换
+          // 产物打开即应看到完备的分镜格子，而非等首个片段加入才补建）。
+          // 不能只看 length：仅剩 __free__ 的画布正是柱子缺失期受损的形态，
+          // 误落自由柱的片段也要靠迁移后的归位逻辑收回分镜柱
+          if(!state.timeline.pillars.some(p => p.id !== '__free__')){
+            console.log('[恢复工作流] 无分镜柱子数据，尝试自动迁移柱子...');
             // 延迟执行迁移，确保所有节点都已恢复
             setTimeout(() => {
               if(typeof autoMigratePillars === 'function'){
@@ -2228,6 +2231,17 @@
             }
           });
         }, 100);
+
+        // 故事板跳转带入的增量资产包：节点恢复完成后在内存态合并
+        // （见 storyboard_asset_sync.js；后端只读返回，避免与前端整体
+        // 覆盖保存互踩）
+        if (window.StoryboardAssetSync) {
+          try {
+            window.StoryboardAssetSync.applyPending(workflowId);
+          } catch (syncError) {
+            console.warn('[故事板资产同步] 合并失败:', syncError);
+          }
+        }
       } catch(error) {
         console.error('[恢复工作流] 恢复失败:', error);
         // workflowReady 保持 false，所有保存路径都不会写入
