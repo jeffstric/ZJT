@@ -288,6 +288,79 @@ def test_build_workflow_data_carries_assets():
     assert wf['nextConnId'] == len(wf['connections']) + 1
 
 
+def test_plan_scene_asset_sync_only_adds_missing():
+    """W→S 增量同步计划：已有 URL 跳过、缺失 INSERT、选中跟随画布。"""
+    from api.storyboard_conversion import _plan_scene_asset_sync
+
+    # URL 匹配是同源字符串口径：DB 资产与画布节点 URL 均来自生成链路同一写入口
+    # （仅本机绝对地址剥 origin 归一，CDN 地址两边字符串一致）
+    existing = [
+        {'id': 11, 'asset_type': 'first_frame', 'result_url': 'http://127.0.0.1:13009/a.png'},
+        {'id': 12, 'asset_type': 'video', 'result_url': 'https://cdn/v1.mp4'},
+        {'id': 13, 'asset_type': 'last_frame', 'result_url': ''},   # result_url 空 → 视为缺失
+    ]
+    incoming = {
+        'image_candidates': ['/a.png', '/b.png'],       # 已相对化（画布收集口径）
+        'selected_first_frame': '/b.png',
+        'videos': ['https://cdn/v1.mp4', '/v2.mp4'],
+        'last_frame': '/lf.png',
+    }
+    plan = _plan_scene_asset_sync(existing, incoming)
+    # /a.png（本机地址归一后命中）与 v1.mp4（CDN 同串）已有 → 只补缺失
+    assert plan['insert_first_frames'] == ['/b.png']
+    assert plan['insert_videos'] == ['/v2.mp4']
+    assert plan['insert_last_frames'] == ['/lf.png']
+    # 选中跟随画布：选中首帧=画布选中槽，视频=连线首位，尾帧=lastFrameUrl
+    assert plan['select_first_frame'] == '/b.png'
+    assert plan['select_video'] == 'https://cdn/v1.mp4'
+    assert plan['select_last_frame'] == '/lf.png'
+
+    # 画布无产物 → 不覆盖选中（空选中计划）
+    plan2 = _plan_scene_asset_sync(existing, {'image_candidates': [], 'videos': [], 'last_frame': ''})
+    assert plan2['select_first_frame'] == ''
+    assert plan2['select_video'] == ''
+    assert plan2['insert_first_frames'] == []
+
+
+def test_assemble_sync_payload_structure_and_selection():
+    """S→W 资产包：URL 过滤/去重/相对化，选中按 id 匹配（失配回退选中 URL 列），
+    无 key / 空资产场景不进包。"""
+    from api.storyboard_conversion import _assemble_sync_payload
+
+    scenes = [
+        {
+            'id': 31, 'source_shot_key': 's001',
+            'selected_first_frame_id': 102, 'selected_video_id': 201,
+            'first_frame_url': 'https://cdn/f1a.png', 'last_frame_url': 'https://cdn/lf.png',
+            'video_url': 'https://cdn/v1b.mp4',
+        },
+        {'id': 32, 'source_shot_key': '', 'first_frame_url': '', 'last_frame_url': '', 'video_url': ''},
+        {'id': 33, 'source_shot_key': 's003', 'first_frame_url': '', 'last_frame_url': '', 'video_url': ''},
+    ]
+    assets = [
+        {'scene_id': 31, 'id': 101, 'asset_type': 'first_frame', 'result_url': 'http://localhost:13009/f1a.png'},
+        {'scene_id': 31, 'id': 102, 'asset_type': 'first_frame', 'result_url': '/f1b.png'},
+        {'scene_id': 31, 'id': 102, 'asset_type': 'first_frame', 'result_url': '/f1b.png'},   # 去重
+        {'scene_id': 31, 'id': 103, 'asset_type': 'first_frame', 'result_url': ''},           # 空 URL 过滤
+        {'scene_id': 31, 'id': 201, 'asset_type': 'video', 'result_url': '/v1b.mp4'},
+        {'scene_id': 31, 'id': 202, 'asset_type': 'video', 'result_url': 'blob:http://x/y'},  # blob 过滤
+    ]
+    payload = _assemble_sync_payload(scenes, assets)
+    assert [s['source_shot_key'] for s in payload['scenes']] == ['s001']   # 无 key/空场景不进包
+
+    scene = payload['scenes'][0]
+    assert [i['url'] for i in scene['first_frames']] == ['/f1a.png', '/f1b.png']
+    assert [i['url'] for i in scene['videos']] == ['/v1b.mp4']
+    assert scene['selected_first_frame_url'] == '/f1b.png'    # id=102 命中
+    assert scene['selected_video_url'] == '/v1b.mp4'
+    assert scene['last_frame_url'] == 'https://cdn/lf.png'   # CDN 地址不剥 origin，原样保留
+
+    # 选中 id 悬空（资产已删）→ 回退场景选中 URL 列（CDN 地址原样）
+    scenes[0]['selected_first_frame_id'] = 999
+    payload2 = _assemble_sync_payload(scenes, assets)
+    assert payload2['scenes'][0]['selected_first_frame_url'] == 'https://cdn/f1a.png'
+
+
 def _multi_asset_storyboard():
     storyboard = SimpleNamespace(
         id=6, title='多资产板', world_id=1, workflow_ratio='16:9', style='',

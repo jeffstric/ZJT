@@ -4,14 +4,18 @@
 
 `video_workflow.html`（节点画布）与 `storyboard.html`（故事板编辑器）承载同一集内容的两种编辑形态。本文档描述两者的内容互转：用户在任一页面点击切换按钮，即可把当前内容转换到另一形态并跳转。
 
-## 转换语义（一次性）
+## 转换语义（首次一次性 + 已关联增量同步）
 
-**转换只支持「对方不存在」的情况**：
+**首次转换只支持「对方不存在」的情况**：
 
-- 画布 → 故事板：该画布尚无关联故事板时才创建转换；已有关联故事板时接口直接返回该故事板（`created=false`），前端照常打开，**不做场景同步/覆盖**。
-- 故事板 → 画布：该故事板尚无关联画布时才创建转换；已关联时接口直接返回该画布（`created=false`），前端照常打开，**不覆盖画布内容**。
+- 画布 → 故事板：该画布尚无关联故事板时才创建转换（场景/台词/资产全量落库）。
+- 故事板 → 画布：该故事板尚无关联画布时才创建转换（剧本/分镜组/分镜帧/资产节点全量生成）。
 
-理由：转换后两边会各自独立演进（画布有手工节点、故事板有资产绑定），增量同步需要处理双向冲突，语义复杂且易误伤；一次性转换语义简单可预期。
+**已关联时不再"停在转换时刻的快照"**，入口动作触发**增量资产同步**（只增不改不删、选中跟随最后操作端）：
+
+- 故事板 → 画布（已关联）：接口返回既有画布 + 只读资产包 `sync_assets`，由画布前端在 `loadWorkflow` 后合并（`web/js/storyboard_asset_sync.js`）。**必须在前端合并**：画布保存是前端内存态整体覆盖写（content_version 乐观锁 + last_write_id 会话互判 409），后端直写会被下一次 autoSave 静默回滚。
+- 画布 → 故事板（已关联）：接口内直接增量落库（`_sync_assets_to_existing_storyboard`）——故事板是分表字段级 CRUD，且跳转后目标页全量加载，后端行级写天然安全、无画布方向的 P0 竞态。
+- 已知边界（只增语义）：画布上删除过的节点会再次补回；故事板删除的场景/资产不受影响；匹配不到分镜帧（`source_shot_key` ≠ `shot_id`）跳过。
 
 ## 页面入口
 
@@ -104,11 +108,17 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
 | 故事板 | 场景 `selected_first_frame_id` / `selected_video_id` | `storyboard_scene_asset` 多行 |
 | 画布 | 分镜帧 `data.previewImageUrl`（「视频首帧」槽）；视频无显式选中（连线序首位即选中） | 分镜帧连线下挂的多个 `image`/`video` 节点 |
 
-转换契约（往返选中还原）：
+**首次转换契约（往返选中还原）**：
 
 - **S→W**：全量资产各建节点，**选中资产排连线首位**（首帧同时写 `previewImageUrl`、首帧端口只连选中图）。
 - **W→S**：首帧候选 = `previewImageUrl`（画布选中）> 自带图 > 连线 image 节点；**落库选中取候选首位**（`selected_first_frame`），不再固定取第一张。视频落库选中取连线第一（S→W 已把选中排首位，往返闭环）；画布原生新生成的视频按连线序自然生效。
 - 选中资产 URL 经 `_relativize_asset_url` 后与候选比对，口径一致。
+
+**已关联增量同步**（入口动作触发，选中跟随最后操作端）：
+
+- **S→W 已关联**：`to-workflow` 返回 `sync_assets`（`_assemble_sync_payload`：每场景全量候选 URL + 选中 URL，只读）→ 故事板页 `sessionStorage` 暂存（`StoryboardAssetSync.stash`）→ 画布页 `loadWorkflow` 后 `applyPending` 合并：缺失 URL 补 image/video 节点（纵向 280 追加、URL 去重幂等）、`previewImageUrl`/首帧端口连线指向选中图、选中视频连线重排首位、尾帧有值才覆盖；实际变更检测避免"已最新"时白保存（PUT 全量写放大）。多标签页并发交由既有 409 会话互判机制兜底。
+- **W→S 已关联**：`from-workflow` 内 `_sync_assets_to_existing_storyboard` 直接落库：画布产物 URL（同源字符串口径，本机地址剥 origin 归一）按 `source_shot_key` 匹配场景，缺失 INSERT（无 `ai_tool_id` 纯 URL 引用）、选中 `set_selected`（画布有对应产物才覆盖：首帧=选中槽、视频=连线首位、尾帧=lastFrameUrl）；画布行锁串行化 + 幂等可重跑。
+- 往返收敛：用户在 A 端改选中后跳 B 端 → 同步以 A 端为准；两边对齐后重复同步无副作用。
 
 ## 时间轴柱子（S→W 转换与兜底链）
 
