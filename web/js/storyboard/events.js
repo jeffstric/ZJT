@@ -373,7 +373,7 @@ async function selectRechargePackage(pkg) {
             payment_ip: paymentIp,
         });
         if (data.code_url) {
-            state.rechargeQrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+            state.rechargeQrCodeUrl = window.buildPaymentQrUrl(data.code_url, 200);
             state.rechargeState = 'qrcode';
         } else {
             throw new Error(data.error || t('msg_create_pay_order_failed', '创建支付订单失败'));
@@ -3234,6 +3234,14 @@ function handleRoute(route) {
             api.convertStoryboardToWorkflow(state.storyboardId)
                 .then((res) => {
                     state.workflowId = res.workflow_id;
+                    // 已关联画布：后端附带增量资产包，暂存给画布页在
+                    // loadWorkflow 后合并（storyboard_asset_sync.js）
+                    if (res.sync_assets && window.StoryboardAssetSync) {
+                        window.StoryboardAssetSync.stash({
+                            workflow_id: res.workflow_id,
+                            scenes: res.sync_assets.scenes || [],
+                        });
+                    }
                     openWorkflowCanvas(res.workflow_id);
                 })
                 .catch((err) => {

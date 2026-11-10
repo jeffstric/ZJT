@@ -1043,6 +1043,19 @@
                 return durations.length > 0 ? Math.max(...durations) : 15;
             }
 
+            // 上传素材（视频/音频）总时长上限：平台配置上限 与 所选模型最大生成时长 取小；
+            // 未选模型/模型无时长档位时回落到平台上限。
+            // 与 getMaxSupportedDuration 的 15s 兜底不同：那是「auto 时长提交」的计费行为，不能复用。
+            // 注意：切换模型后已上传素材超出新上限不做追溯清理，仅新增上传时按本上限校验。
+            function computeUploadDurationLimit(modelConfig, serverCap) {
+                const nums = (modelConfig?.durations || []).filter(d => typeof d === 'number');
+                if (nums.length === 0) return serverCap;
+                return Math.min(serverCap, Math.max(...nums));
+            }
+
+            const effectiveUploadDurationLimit = Vue.computed(() =>
+                computeUploadDurationLimit(getCurrentVideoModelConfig(), maxVideoDurationSeconds.value));
+
             function resolveSelectedDurationForSubmission() {
                 if (selectedDuration.value === 'auto') {
                     return getMaxSupportedDuration(getCurrentVideoModelConfig());
@@ -1309,7 +1322,7 @@
                     if (!checkAuthResponse(response)) return;
                     const data = await response.json();
                     if (data.code_url) {
-                        qrCodeUrl.value = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(data.code_url)}`;
+                        qrCodeUrl.value = window.buildPaymentQrUrl(data.code_url, 200);
                     } else {
                         throw new Error(data.error || window.t('create_order_failed'));
                     }
@@ -3332,12 +3345,14 @@
                     startImageStatusCheck(msgUid, submittedProjectIds, requestSessionId);
 
                 } catch (e) {
-                    showError(e.message || window.t('image_generation_request_failed'));
+                    // 优先透传后端 detail（如张数校验 400 的具体原因），避免只显示 axios 原文
+                    const detail = e && e.response && e.response.data && e.response.data.detail;
+                    showError(detail || e.message || window.t('image_generation_request_failed'));
                     // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'image');
+                    const violationContent = describeSubmitViolation(detail || (e && e.message), 'image');
                     messages.value.push({
                         role: 'ai',
-                        content: violationContent || window.t('image_generation_prefix_failed') + (e.message || window.t('send_failed')),
+                        content: violationContent || window.t('image_generation_prefix_failed') + (detail || e.message || window.t('send_failed')),
                         timestamp: new Date().toISOString()
                     });
                 } finally {
@@ -3832,9 +3847,32 @@
                                     allImageFiles.push(ref.file);
                                 }
                             });
+                            // 提交前守卫：图片数超过当前模式/模型上限（maxImageCount 按模型
+                            // max_multi_ref_images 计算，首尾帧模式为 2/1）时直接拦截并给出
+                            // 明确文案，避免打向后端才吃 400（后端 detail 亦已透传，双保险）
+                            if (allImageFiles.length > maxImageCount.value) {
+                                showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
+                                messages.value.push({
+                                    role: 'ai',
+                                    content: window.t('video_image_mode_max_n', { max: maxImageCount.value }),
+                                    timestamp: new Date().toISOString()
+                                });
+                                scrollToBottom();
+                                return;
+                            }
                             allImageFiles.forEach(file => form.append('images', file));
                         } else if (hasUrlImage) {
                             // URL 图片（重新编辑带回的参考图、或从已生成图片直接转视频，无 File 对象）
+                            if (urlOnlyImages.length > maxImageCount.value) {
+                                showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
+                                messages.value.push({
+                                    role: 'ai',
+                                    content: window.t('video_image_mode_max_n', { max: maxImageCount.value }),
+                                    timestamp: new Date().toISOString()
+                                });
+                                scrollToBottom();
+                                return;
+                            }
                             form.append('image_urls', urlOnlyImages.join(','));
                         }
 
@@ -3923,12 +3961,14 @@
                     startVideoStatusCheck(msgUid, submittedProjectIds, requestSessionId);
 
                 } catch (e) {
-                    showError(e.message || window.t('video_generation_request_failed'));
+                    // 优先透传后端 detail（如张数校验 400 的具体原因），避免只显示 axios 原文
+                    const detail = e && e.response && e.response.data && e.response.data.detail;
+                    showError(detail || e.message || window.t('video_generation_request_failed'));
                     // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'video');
+                    const violationContent = describeSubmitViolation(detail || (e && e.message), 'video');
                     messages.value.push({
                         role: 'ai',
-                        content: violationContent || window.t('video_generation_prefix_failed') + (e.message || window.t('send_failed')),
+                        content: violationContent || window.t('video_generation_prefix_failed') + (detail || e.message || window.t('send_failed')),
                         timestamp: new Date().toISOString()
                     });
                 } finally {
@@ -6215,10 +6255,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -6235,10 +6275,10 @@
 
                                 for (const file of sizeFiltered) {
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('video_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('video_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
-                                    let fileDuration = maxVideoDurationSeconds.value;
+                                    let fileDuration = effectiveUploadDurationLimit.value;
                                     try {
                                         const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                                         fileDuration = info.duration || 0;
@@ -6254,7 +6294,7 @@
                         }
                     }
 
-                    // 处理音频（最多 5 个，总时长不超过 15 秒）
+                    // 处理音频（最多 5 个，总时长不超过模型上限，随所选模型动态）
                     if (audioFiles.length > 0) {
                         const remainingAudioSlots = AGENT_AUDIO_MAX_COUNT - agentAudioFiles.value.length;
                         if (remainingAudioSlots <= 0) {
@@ -6262,10 +6302,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -6280,7 +6320,7 @@
                                         continue;
                                     }
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('audio_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('audio_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
                                     let fileDuration = 0;
@@ -6323,12 +6363,12 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
-                        let fileDuration = maxVideoDurationSeconds.value;
+                        let fileDuration = effectiveUploadDurationLimit.value;
                         try {
                             const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                             fileDuration = info.duration || 0;
@@ -6354,9 +6394,9 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
                         let fileDuration = 0;
@@ -6414,8 +6454,10 @@
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
                 if (isVideoModeVal && videoImageMode.value === 'multi_reference' && hasUploadedImage.value) {
-                    if (referenceImageFiles.value.length >= 5) {
-                        showError(window.t('reference_max_5'));
+                    // 参考图名额 = 当前模型上限 - 主图 1 张（与 handleReferenceFileChange 口径一致）
+                    const maxRefImages = maxImageCount.value - 1;
+                    if (referenceImageFiles.value.length >= maxRefImages) {
+                        showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
@@ -6705,7 +6747,7 @@
                     // 前端压缩（如果需要）
                     if (typeof VIDEO_COMPRESSOR !== 'undefined') {
                         vidItem.compressing = true;
-                        const effectiveMaxDuration = maxDurationForThis || maxVideoDurationSeconds.value;
+                        const effectiveMaxDuration = maxDurationForThis || effectiveUploadDurationLimit.value;
                         const compressVideo = VIDEO_COMPRESSOR.compressVideoForReference || VIDEO_COMPRESSOR.compressVideoTo480p;
                         if (typeof compressVideo !== 'function') {
                             throw new Error('VIDEO_COMPRESSOR missing reference video compression method');
@@ -6725,7 +6767,7 @@
                             console.log(`[Agent] 视频压缩: ${(file.size/1024/1024).toFixed(1)}MB → ${(result.blob.size/1024/1024).toFixed(1)}MB`);
                         }
                     } else {
-                        vidItem.duration = maxDurationForThis || maxVideoDurationSeconds.value;
+                        vidItem.duration = maxDurationForThis || effectiveUploadDurationLimit.value;
                     }
 
                     vidItem.uploading = true;
@@ -6931,7 +6973,7 @@
                 const maxRef = maxImageCount.value - (hasUploadedImage.value ? 1 : 0);
                 const remaining = maxRef - referenceImageFiles.value.length;
                 if (remaining <= 0) {
-                    showError(window.t('reference_max_5'));
+                    showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                     if (referenceInputRef.value) referenceInputRef.value.value = '';
                     return;
                 }
@@ -7305,10 +7347,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -7325,10 +7367,10 @@
 
                                 for (const file of sizeFiltered) {
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('video_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('video_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
-                                    let fileDuration = maxVideoDurationSeconds.value;
+                                    let fileDuration = effectiveUploadDurationLimit.value;
                                     try {
                                         const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                                         fileDuration = info.duration || 0;
@@ -7344,7 +7386,7 @@
                         }
                     }
 
-                    // 处理音频（最多 5 个，总时长不超过 15 秒）
+                    // 处理音频（最多 5 个，总时长不超过模型上限，随所选模型动态）
                     if (audioFiles.length > 0) {
                         const remainingAudioSlots = AGENT_AUDIO_MAX_COUNT - agentAudioFiles.value.length;
                         if (remainingAudioSlots <= 0) {
@@ -7352,10 +7394,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -7370,7 +7412,7 @@
                                         continue;
                                     }
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('audio_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('audio_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
                                     let fileDuration = 0;
@@ -7411,12 +7453,12 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
-                        let fileDuration = maxVideoDurationSeconds.value;
+                        let fileDuration = effectiveUploadDurationLimit.value;
                         try {
                             const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                             fileDuration = info.duration || 0;
@@ -7437,9 +7479,9 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
                         let fileDuration = 0;
@@ -7492,8 +7534,10 @@
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
                 if (isVideoMode && videoImageMode.value === 'multi_reference' && hasUploadedImage.value) {
-                    if (referenceImageFiles.value.length >= 5) {
-                        showError(window.t('reference_max_5'));
+                    // 参考图名额 = 当前模型上限 - 主图 1 张（与 handleReferenceFileChange 口径一致）
+                    const maxRefImages = maxImageCount.value - 1;
+                    if (referenceImageFiles.value.length >= maxRefImages) {
+                        showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
@@ -8330,6 +8374,7 @@
                 AGENT_VIDEO_MAX_COUNT,
                 maxVideoSizeMB,
                 maxVideoDurationSeconds,
+                effectiveUploadDurationLimit,
                 isDragging,
                 handleDragOver,
                 handleDragLeave,

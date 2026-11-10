@@ -3482,7 +3482,7 @@
                 this.subPaymentError = '未获取到支付二维码，请重试';
               } else {
                 this.subNativeCodeUrl = codeUrl;
-                this.subQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+                this.subQrCode = window.buildPaymentQrUrl(codeUrl, 280);
                 // Native 扫码：轮询订单状态，支付成功自动提示（JSAPI 走 WeixinJSBridge 回调，无需轮询）
                 this.startSubPayPolling();
               }
@@ -3616,7 +3616,7 @@
                 this.paymentError = '未获取到支付二维码，请重试';
               } else {
                 this.nativeCodeUrl = codeUrl;
-                this.paymentQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(codeUrl)}`;
+                this.paymentQrCode = window.buildPaymentQrUrl(codeUrl, 280);
               }
             } else {
               this.paymentError = '未知的支付方式，请重试';

@@ -192,6 +192,13 @@ POWER_MODIFIER_MAX = 100.0
 
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
 IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
+
+# Agent 对话模式上传视频/音频总时长的平台级上限（秒）兜底默认值。
+# 实际生效上限由前端按 min(该配置, 所选视频模型最大生成时长) 计算；
+# /api/system/server-config（前端取值）与 /api/upload-agent-video（服务端校验）
+# 必须共用本默认值，否则前后端时长上限分叉。
+UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT = 30
+
 SEEDANCE_REFERENCE_VIDEO_TRANSCODE_TIMEOUT = 300
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_CONNECT_TIMEOUT = 10
 SEEDANCE_REFERENCE_VIDEO_DOWNLOAD_READ_TIMEOUT = 120
@@ -1133,10 +1140,17 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     # RunningHub 相关驱动
     DriverKey.LTX2_IMAGE_TO_VIDEO: DriverImplementation.LTX2_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2 v1 版本
     DriverKey.LTX2_3_IMAGE_TO_VIDEO: DriverImplementation.LTX2_3_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 v1 版本
-    # 使用 RunningHub 的 MiniMax H3（标准版 / 加速版可切换）
+    # 使用 RunningHub 的 MiniMax H3（标准版 / 加速版可切换）+ AutoDL.Art 首尾帧
     DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: [
         DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,       # 标准版（默认）
         DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,  # 加速版
+        DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v，代码级默认关闭）
+        DriverImplementation.MINIMAX_H3_CHENYU_V1,             # 晨羽智云（仅首帧）
+    ],
+    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
+    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO: [
+        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（默认）
+        DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,      # AutoDL.Art 参考生（9图+3音频）
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
     DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型
@@ -1270,6 +1284,14 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.Z_INDEX_IMAGE_EDIT: [],
 
 }
+
+# 参考模式 + H3 参考生 + 提示词点名首帧或尾帧时，改交 RunningHub 混合模型 minimax_h3_kfr。
+# AutoDL 参考生（zm_u24）没有首帧槽，文字锚点锁不住第 0 秒画面，所以这路保持打开。
+# 没有这些标记的参考生仍留在参考生任务，实现方按该任务的偏好（可以是 AutoDL）。
+# 若要再关掉，三处一起改成 false：
+#   web/js/shot_frame_video_generator.js
+#   web/js/storyboard/frame_mention.js
+H3_KEYFRAME_REF_ROUTE_ENABLED = True
 
 # 视频模型时长选项配置
 # 注意：时长选项从算力配置中自动获取
@@ -2785,9 +2807,33 @@ class VideoScriptExtractConstants:
     MAX_SCRIPT_CHARS = 30000
     # 内存任务记录保留时长（秒），超期惰性清理；服务重启任务即失联（前端提示重新提取）。
     TASK_TTL_SECONDS = 1800
-    # 默认推荐模型：与图片描述一致的 VL 偏好（须已在模型表配置密钥且 supports_vl）。
+    # 默认推荐模型（须已在模型表配置密钥且 supports_vl）。
+    # 分镜级提取需要识别景别/机位/站位等镜头语言并推断说话人，pro 档明显优于
+    # lite 档；节点上仍可手动切换任意已配置密钥的 VL 模型，成本敏感场景可选回 lite。
     PREFERRED_VENDOR = "volcengine"
-    PREFERRED_MODEL = "doubao-seed-2-0-lite"
+    PREFERRED_MODEL = "doubao-seed-2-0-pro"
+    # ---- 运动信号分析（注入 user prompt 的「逐镜头运动信号表」，见
+    # services/video_motion_analysis_service.py）：让分镜的表演/运镜/光线描述
+    # 从"模型猜"变为"实测"（帧间差/亮度/位移均为确定性计算）。 ----
+    # 低分辨率灰度帧采样帧率（fps）；总帧数超 MOTION_MAX_FRAMES 时自动降 fps。
+    MOTION_SAMPLE_FPS = 8.0
+    # 采样总帧数上限（900s 长视频自动降到 ~1.7fps，节拍定位精度 ±0.3s 可接受）。
+    MOTION_MAX_FRAMES = 1500
+    # 灰度采样分辨率（宽×高）；rawvideo pipe 单帧字节数 = 宽×高。
+    MOTION_FRAME_WIDTH = 128
+    MOTION_FRAME_HEIGHT = 72
+    # 镜头切点保护带（秒）：切点 ± 此范围内的帧间差视为转场尖峰，剔除后不计镜内均值。
+    MOTION_CUT_GUARD_SECONDS = 0.2
+    # 平行镜头判定阈值：镜头首帧灰度平均绝对差（0-255）低于该值视为构图高度相似。
+    MOTION_PARALLEL_DIFF_THRESHOLD = 6.0
+    # 平行镜头只向前回看的镜头数（防远距离误报）。
+    MOTION_PARALLEL_LOOKBACK = 3
+    # 位移报告阈值（px，采样分辨率基准）：首尾净位移低于该值视为无位移（固定镜头）。
+    MOTION_SHIFT_REPORT_PX = 3
+    # 投影互相关的最大搜索位移（px），超过即视为无匹配。
+    MOTION_SHIFT_MAX_LAG_PX = 16
+    # 运动分析 ffmpeg 子进程与整体外层超时（秒）；失败降级为空表，不阻塞主链路。
+    MOTION_ANALYSIS_TIMEOUT = 60.0
 
 
 class BrandingConstants:

@@ -184,10 +184,30 @@ SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78
 
 # MiniMax H3 分辨率算力倍率（基价为 720P，480P 约为 720P 的 42%）
 MINIMAX_H3_480P_PRICE_MULTIPLIER = 0.42
-# MiniMax H3 720P 按时长算力（秒 -> 算力）。视频去水印与此表共用同一对象。
+# MiniMax H3 720P 按时长算力（秒 -> 算力）。仅视频去水印继续使用此历史表
+# （去水印为不同功能，成本未重估，维持原价）。
 # 仅 4-10 档：H3 webapp 默认实例上 11-15s 段处于显存边界（随机 OOM），
 # 营销路由已回退 10s 上限，不放开更高档位（曾试 11-15 外推档，已撤）。
 MINIMAX_H3_720P_COMPUTING_POWER = {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+# MiniMax H3 RunningHub 生视频 720P 算力（首尾帧/加速版/参考生/文生/关键帧参考 5 个实现方共用）。
+# 2026-11-09 按实测成本贴本重定价：RH H3 720p 成本 ≈0.113 元/秒（用户实测口径），
+# 算力 = ceil(秒×0.113/0.04) = ceil(秒×2.825)，毛利 0~6%；
+# 480P 由任务级 0.42 倍率折算（恰为 RH 成本比 0.047/0.113≈0.416）。
+# 旧表 720P 4s=5 算力（0.20 元）vs 成本 0.452 元，每单亏 0.25 元——本次修正。
+MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER = {4: 12, 5: 15, 6: 17, 7: 20, 8: 23, 9: 26, 10: 29}
+# H3 AutoDL.Art 算力（768p 档基准，按高峰价 0.05 元/秒：ceil(时长×0.05/0.04×1.1)）。
+# 11-15s 为 2026-11-08 实测开放的档位（15s 成片实测 15.08s ✅，AutoDL 实例无 RunningHub
+# webapp 的显存 OOM 问题；单次成功，稳定性待观察）。480p/768p 实际成本比 0.8
+# （0.040/0.050 元/秒），与任务级 RunningHub 480P 倍率 0.42 不同，在两个 autodl 实现的
+# ImplementationConfig.power_modifiers 里按实现覆盖为 0.8（DB implementation_power 可再覆盖）。
+# 空闲时段（00:00-08:00）0.04/0.03 元/秒为利润冗余。
+MINIMAX_H3_AUTODL_768P_COMPUTING_POWER = {
+    # 2026-11-09 贴本重定价：ceil(秒×0.05/0.04) = ceil(秒×1.25)，毛利 0~4%
+    # （原表含 1.1 毛利系数；480P 修饰符 0.8 = 精确成本比 0.040/0.050 不变）
+    4: 5, 5: 7, 6: 8, 7: 9, 8: 10, 9: 12, 10: 13,
+    11: 14, 12: 15, 13: 17, 14: 18, 15: 19,
+}
+MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER = 0.8
 # H3 数字人按时长算力：4-10 与上表同价；11-15 为显存充裕后恢复的档位
 # （2026-10-19 起分段段长 15s，11-15s 单段重新可用），按既有梯度外推。
 # 独立成表避免扩档连带放开去水印任务的时长范围。后台 implementation_power 可覆盖。
@@ -339,6 +359,8 @@ class TaskProvider:
         'VOLCENGINE': '火山引擎',
         'LOCAL': '本地处理',
         'ZJT': 'ZJT API',
+        'AUTODL': 'AutoDL.Art 供应商',
+        'CHENYU': '晨羽智云供应商',
     }
     DUOMI = 'duomi'
     RUNNINGHUB = 'runninghub'
@@ -346,6 +368,8 @@ class TaskProvider:
     VOLCENGINE = 'volcengine'
     LOCAL = 'local'
     ZJT = 'zjt'
+    AUTODL = 'autodl'
+    CHENYU = 'chenyu'
 
 
 class SceneVideoType:
@@ -444,6 +468,7 @@ class ImplementationConfig:
         sort_order: 默认排序顺序（代码级后备值）
         site_number: 聚合站点编号（仅聚合站点有值，非聚合站点为 None）
         sync_mode: 是否为同步模式（同步API会阻塞，需要独立进程池处理）
+        provider: 实现方供应商（TaskProvider 常量；None=继承所属任务类型的 provider）
     """
     name: str
     display_name: str
@@ -455,9 +480,21 @@ class ImplementationConfig:
     sort_order: float = 999999.0  # 默认排序到最后
     site_number: Optional[int] = None  # 仅聚合站点有值
     sync_mode: bool = False  # 是否为同步模式
+    # 实现方供应商（TaskProvider 常量）。None = 继承所属任务类型的 provider（历史默认：
+    # 实现方与任务类型同供应商）。跨供应商挂载的实现方必须显式标注（如 H3 任务类型下的
+    # AutoDL 实现方标 autodl），供运行时供应商判定使用（见 is_runninghub_implementation）
+    provider: Optional[str] = None
     required_config_keys: List[str] = field(default_factory=list)  # 依赖的动态配置键，全部存在且有值时才算配置完整
     supported_video_resolutions: List[Dict[str, Any]] = field(default_factory=list)  # 视频分辨率选项
     default_video_resolution: str = ''  # 默认视频分辨率 value
+    # 实现方级时长档位（空 = 跟随任务级 supported_durations）。
+    # 用于同一任务下不同实现方支持时长不同的场景：如 H3 AutoDL 支持 1-15s、
+    # RunningHub 因 webapp 11-15s 显存 OOM 风险仅 4-10s。get_frontend_config 会把
+    # 偏好实现的档位替换进任务级 supported_durations，前端时长选项自动适配。
+    supported_durations: List[int] = field(default_factory=list)
+    # 实现方级算力修饰符（代码级默认，如 autodl 480P 成本比 0.8 不同于任务级 RunningHub 0.42）。
+    # 生效顺序：任务级 power_modifiers → 实现级（此处）→ DB 覆盖（同 attribute 的 key 逐级覆盖）。
+    power_modifiers: List["PowerModifier"] = field(default_factory=list)
 
     def get_computing_power(self, duration: Optional[int] = None, driver_key: Optional[str] = None, context: Optional[Dict[str, Any]] = None) -> int:
         """
@@ -594,6 +631,11 @@ class UnifiedTaskConfig:
     key: str
     name: str
     category: str
+    # ⚠️ 任务类型 provider 描述「原生/默认供应商」，仅用于展示分组与统计分类；
+    # 运行时供应商专属逻辑（RunningHub 密钥池注入/槽位占用/熔断上报）必须按实现方级
+    # provider 判定（见 is_runninghub_task），禁止用任务类型 provider 判定——同一任务
+    # 类型可挂多供应商实现方（事故 ai_tools 13439/13440：AutoDL 实现方挂在 RunningHub
+    # 任务类型下，提交前被误注入 RunningHub 池密钥导致上游 401）。
     provider: str
     model_name: str = ''  # 纯模型名；绑定页和新接口优先使用
     variant_label: str = ''  # 仅区分同能力下的同名任务条目
@@ -733,7 +775,7 @@ class UnifiedTaskConfig:
         return int(base_power)
 
     def effective_power_modifiers(self, implementation: Optional[str] = None) -> List["PowerModifier"]:
-        """任务级 power_modifiers 与实现方 DB 覆盖合并，DB 同 attribute 的 key 覆盖代码默认。"""
+        """任务级 power_modifiers 与实现方（代码级 + DB 覆盖）合并，后一级同 attribute 的 key 覆盖前一级。"""
         merged: Dict[str, PowerModifier] = {}
         for modifier in self.power_modifiers or []:
             merged[modifier.attribute] = PowerModifier(
@@ -743,6 +785,19 @@ class UnifiedTaskConfig:
             )
         if not implementation or not self.driver_name:
             return list(merged.values())
+        # 实现方级代码默认（ImplementationConfig.power_modifiers）：
+        # 同 attribute 的 key 覆盖任务级取值（如 autodl 480P=0.8 覆盖任务级 RunningHub 0.42）
+        impl_config = UnifiedConfigRegistry.get_implementation(implementation)
+        for modifier in getattr(impl_config, "power_modifiers", None) or []:
+            existing = merged.get(modifier.attribute)
+            if existing is None:
+                merged[modifier.attribute] = PowerModifier(
+                    attribute=modifier.attribute,
+                    values=dict(modifier.values or {}),
+                    default=float(modifier.default),
+                )
+            else:
+                existing.values.update(dict(modifier.values or {}))
         try:
             from model.implementation_power import ImplementationPowerModel
 
@@ -936,6 +991,8 @@ class UnifiedTaskConfig:
                     'sort_order': sort_order,
                     'supported_video_resolutions': impl_config.supported_video_resolutions,
                     'default_video_resolution': impl_config.default_video_resolution,
+                    # 实现级时长档位（空 = 跟随任务级 supported_durations）
+                    'supported_durations': list(impl_config.supported_durations or self.supported_durations or []),
                     'operation': operation,
                     'power_modifiers': frontend_modifiers,
                 })
@@ -1024,6 +1081,25 @@ class UnifiedConfigRegistry:
     def get_all_implementations(cls) -> Dict[str, ImplementationConfig]:
         """获取所有实现方配置"""
         return cls._implementations.copy()
+
+    @classmethod
+    def get_implementation_provider(cls, impl_name: str) -> Optional[str]:
+        """实现方的有效供应商（TaskProvider 常量）。
+
+        实现方显式标注 provider 时优先（跨供应商挂载，如 H3 任务类型下的 AutoDL
+        实现方）；未标注时继承引用它的任务类型的 provider（历史默认：实现方与
+        任务类型同供应商）。未注册的实现方返回 None（含用户模块动态实现方，
+        其不在此注册表）。
+        """
+        impl = cls._implementations.get(impl_name)
+        if impl is None:
+            return None
+        if impl.provider:
+            return impl.provider
+        for cfg in cls._configs.values():
+            if impl_name == cfg.implementation or impl_name in (cfg.implementations or []):
+                return cfg.provider
+        return None
 
     @classmethod
     def get_enabled_implementations(cls) -> List[ImplementationConfig]:
@@ -1199,6 +1275,8 @@ class UnifiedConfigRegistry:
             TaskProvider.RUNNINGHUB: 'RunningHub',
             TaskProvider.VIDU: 'Vidu',
             TaskProvider.VOLCENGINE: '火山引擎',
+            TaskProvider.AUTODL: 'AutoDL.Art',
+            TaskProvider.CHENYU: '晨羽智云',
             TaskProvider.LOCAL: '本地',
         }
 
@@ -1287,6 +1365,17 @@ class UnifiedConfigRegistry:
                 if impl_power:
                     task['computing_power'] = impl_power
                     task['user_preferred_implementation'] = user_pref_impl
+                # 同步偏好实现的时长档位（与算力数据无关，独立替换）：
+                # 偏好实现可能比任务级基线支持更多时长档（如 H3 偏好 AutoDL 时 4-15s，
+                # 任务级 RunningHub 基线仅 4-10s）。前端节点按 task.supported_durations
+                # 渲染时长选项，替换后零改动适配。
+                pref_impl_info = next(
+                    (impl for impl in implementations if impl.get('name') == user_pref_impl),
+                    None,
+                )
+                pref_durations = (pref_impl_info or {}).get('supported_durations') or []
+                if pref_durations:
+                    task['supported_durations'] = list(pref_durations)
             elif implementations and (task.get('computing_power') == 0 or not task.get('computing_power')):
                 # 没有用户偏好，且任务的 computing_power 为 0 或未设置时，使用 implementations 中排序第一位的算力
                 # implementations 已经按 sort_order 排序
@@ -1300,6 +1389,42 @@ class UnifiedConfigRegistry:
 
         return tasks
     
+    @classmethod
+    def is_duration_supported_for_implementation(
+        cls,
+        task_config: "UnifiedTaskConfig",
+        duration: int,
+        implementation: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """校验时长档位在目标实现方下是否可用（提交侧入口校验 + 测试共用）。
+
+        判定顺序：
+        1. 任务级基线（supported_durations）内 → 直接放行（所有实现通用档）
+        2. 超出基线 → 仅当目标实现声明了包含该档的实现级 supported_durations 时放行
+           （如 H3 的 11-15s 仅 AutoDL 声明；RunningHub 未声明 → 拒绝）
+
+        Args:
+            task_config: 任务配置
+            duration: 时长（秒）
+            implementation: 实际将使用的实现方名称（用户偏好解析结果），可为 None
+
+        Returns:
+            (是否支持, 拒绝原因)；支持时原因为空字符串
+        """
+        baseline = task_config.supported_durations or []
+        if not baseline:
+            return True, ""  # 任务未声明档位约束（自由时长任务），不拦
+        if duration in baseline:
+            return True, ""
+        impl_cfg = cls.get_implementation(implementation) if implementation else None
+        impl_durations = getattr(impl_cfg, "supported_durations", None) or []
+        if duration in impl_durations:
+            return True, ""
+        return False, (
+            f"视频时长 {duration} 秒超出当前实现方的支持范围 {list(baseline)} 秒；"
+            f"更长的时长请切换到支持该档位的实现方（如 AutoDL.Art 支持 4-15 秒）"
+        )
+
     @classmethod
     def clear(cls) -> None:
         """清除所有注册（仅用于测试）"""
@@ -1362,6 +1487,11 @@ class DriverImplementation:
     MINIMAX_H3_REFERENCE_RUNNINGHUB_V1 = 'minimax_h3_reference_runninghub_v1'
     MINIMAX_H3_TEXT_RUNNINGHUB_V1 = 'minimax_h3_text_runninghub_v1'
     MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 = 'minimax_h3_keyframe_ref_runninghub_v1'
+
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
+    MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
+    MINIMAX_H3_CHENYU_V1 = 'minimax_h3_chenyu_v1'                          # 图生视频仅首帧（晨羽智云工作流 API v2）
 
     # MiniMax H3 数字人
     DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1 = 'digital_human_minimax_h3_runninghub_v1'
@@ -1628,6 +1758,11 @@ class DriverImplementationId:
     # 历史反查 get_implementation_name 会显示 unknown，提交也会判实现方不可用。
     RUNNINGHUB_AI_APP_MOSS_V1 = 107
 
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
+    MINIMAX_H3_REFERENCE_AUTODL_V1 = 108
+    MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
+    MINIMAX_H3_CHENYU_V1 = 110
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1708,6 +1843,9 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
     'minimax_h3_text_runninghub_v1': DriverImplementationId.MINIMAX_H3_TEXT_RUNNINGHUB_V1,
     'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
+    'minimax_h3_reference_autodl_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_AUTODL_V1,
+    'minimax_h3_first_last_autodl_v1': DriverImplementationId.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
+    'minimax_h3_chenyu_v1': DriverImplementationId.MINIMAX_H3_CHENYU_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
     'wan3_video_dashscope_r2v_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_R2V_V1,
@@ -1778,6 +1916,53 @@ def get_implementation_name(id: int) -> str:
         return 'unknown'
     logger.warning("get_implementation_name: 未知实现方 ID %s（可能为动态绑定尚未在本进程重载）", id)
     return 'unknown'
+
+
+def is_runninghub_implementation(implementation) -> bool:
+    """实现方是否 RunningHub 供应商（实现方级判定，跨供应商挂载的正确口径）。
+
+    implementation 可传实现方名称字符串或实现方 ID。未知实现方 / 用户模块动态
+    实现方返回 False（后者不在此注册表，且必然不走 RunningHub 密钥池/槽位——
+    历史上曾因按任务类型判定被误注入池密钥，见 visual_task 401 事故）。
+    """
+    if isinstance(implementation, str):
+        impl_name = implementation
+    else:
+        impl_name = get_implementation_name(implementation) if implementation else ''
+    if not impl_name or impl_name == 'unknown':
+        return False
+    # 用户模块契约常量惰性导入：config.constant 模块级依赖本模块（TaskProvider），
+    # 反向顶层 import 会循环；且主仓核心不应模块级依赖用户模块契约常量
+    try:
+        from config.constant import USER_MODULE_IMPL_NAME_PREFIX
+        if impl_name.startswith(USER_MODULE_IMPL_NAME_PREFIX):
+            return False
+    except Exception:
+        pass
+    return UnifiedConfigRegistry.get_implementation_provider(impl_name) == TaskProvider.RUNNINGHUB
+
+
+def is_runninghub_task(ai_tool, impl_name: Optional[str] = None) -> bool:
+    """任务实际执行是否走 RunningHub 供应商（实现方级判定）。
+
+    Args:
+        ai_tool: AITool 对象（鸭子类型，需有 type；implementation 可缺省）
+        impl_name: 实际执行实现方名称。提交/轮询路径应传 driver.driver_name
+            （即真实发上游请求的实现方，优先于 ai_tool.implementation 记录值）。
+
+    实现方未确定（impl_name 未传且 ai_tool.implementation 未记录/未知）时回退
+    任务类型 provider——入队预占槽位场景实现方尚未选出，只能按任务类型默认供应
+    商预估；若后续实际切到非 RunningHub 实现方，槽位由释放路径无条件回收，不泄漏。
+    """
+    if impl_name is None:
+        recorded = getattr(ai_tool, 'implementation', None)
+        impl_name = recorded if isinstance(recorded, str) else (
+            get_implementation_name(recorded) if recorded else '')
+    if not impl_name or impl_name == 'unknown':
+        # 惰性导入避免循环依赖（config.constant 顶层 import 本模块）
+        from config.constant import RUNNINGHUB_TASK_TYPES
+        return getattr(ai_tool, 'type', 0) in RUNNINGHUB_TASK_TYPES
+    return is_runninghub_implementation(impl_name)
 
 
 # ============ 业务驱动名称常量 ============
@@ -2640,6 +2825,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         implementations=[
             DriverImplementation.MINIMAX_H3_RUNNINGHUB_V1,          # 标准版（默认）
             DriverImplementation.MINIMAX_H3_TURBO_RUNNINGHUB_V1,    # 加速版
+            DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,   # AutoDL.Art 首尾帧（lightx2v，首尾帧双必填）
+            DriverImplementation.MINIMAX_H3_CHENYU_V1,               # 晨羽智云（仅首帧，无尾帧/音频槽）
         ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4'],
@@ -2672,6 +2859,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         provider=TaskProvider.RUNNINGHUB,
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
+        implementations=[
+            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub（默认）
+            DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,       # AutoDL.Art 参考生（zm_u24，9图+3音频）
+        ],
         computing_power=0,
         supported_ratios=['9:16', '16:9', '1:1', '4:3', '3:4', '2:3', '3:2', '21:9'],
         supported_durations=[4, 5, 6, 7, 8, 9, 10],
@@ -4147,7 +4338,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3RunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 首尾帧图生视频接口（FL2VA 音频修复版）',
         sort_order=5200.0,
@@ -4162,7 +4353,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_turbo_runninghub_v1',
         display_name='RunningHub（加速版）',
         driver_class='MinimaxH3TurboRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 图生视频加速版接口（webapp 2092199541612306434，支持首尾帧）',
         sort_order=5202.0,
@@ -4177,7 +4368,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_reference_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3ReferenceRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 参考生视频接口（多参考图，最多9张）',
         sort_order=5205.0,
@@ -4192,7 +4383,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_text_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3TextRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,  # 复用 H3 首尾帧版算力表
         enabled=True,
         description='RunningHub MiniMax H3 文生视频接口（复用参考生工作流，素材槽位全空）',
         sort_order=5206.0,
@@ -4207,7 +4398,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='minimax_h3_keyframe_ref_runninghub_v1',
         display_name='RunningHub',
         driver_class='MinimaxH3KeyframeRefRunninghubV1Driver',
-        default_computing_power=MINIMAX_H3_720P_COMPUTING_POWER,
+        default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
         description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）',
         sort_order=5207.0,
@@ -4217,6 +4408,97 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
             {'value': VideoResolution.P720, 'label': VideoResolution.P720},
         ],
         default_video_resolution=VideoResolution.P720
+    ),
+    # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 + 轮询，参考图/音频传公网 CDN URL）
+    ImplementationConfig(
+        name='minimax_h3_first_last_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3FirstLastAutodlV1Driver',
+        default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,
+        # 代码级硬禁用：上游 lightx2v 首帧和尾帧都必填，只有首帧会直接失败。
+        # enabled=False 不能被 implementation_power_config 重新打开。
+        enabled=False,
+        description='AutoDL.Art MiniMax H3 首尾帧图生视频（默认关闭：工作流 minimax_h3_lightx2v 要求首帧和尾帧都有，不支持只有首帧）',
+        sort_order=5203.0,
+        # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）
+        provider=TaskProvider.AUTODL,
+        required_config_keys=['autodl.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        # AutoDL 工作流支持 1-15s（15s 已实测出片），11-15s 为相对 RunningHub 的扩展档
+        supported_durations=list(range(4, 16)),
+        # autodl 480p/768p 成本比 0.8（0.040/0.050 元/秒），覆盖任务级 RunningHub 0.42 倍率，
+        # 避免 480P 收价低于成本（DB implementation_power 可再覆盖）
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER},
+                default=1.0
+            )
+        ]
+    ),
+    ImplementationConfig(
+        name='minimax_h3_reference_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3ReferenceAutodlV1Driver',
+        default_computing_power=MINIMAX_H3_AUTODL_768P_COMPUTING_POWER,  # 与首尾帧同价（0.05 元/秒 768p 高峰）
+        enabled=True,
+        description='AutoDL.Art MiniMax H3 参考生视频（工作流 minimax_h3_zm_u24，最多 9 参考图 + 3 参考音频，480p/768p）',
+        sort_order=5208.0,
+        # 跨供应商挂载：任务类型 37 原生供应商是 RunningHub，本实现方走 AutoDL.Art，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（401 事故根因）
+        provider=TaskProvider.AUTODL,
+        required_config_keys=['autodl.api_key'],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        supported_durations=list(range(4, 16)),
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: MINIMAX_H3_AUTODL_480P_PRICE_MULTIPLIER},
+                default=1.0
+            )
+        ]
+    ),
+    # MiniMax H3 图生视频 晨羽智云工作流（两步异步：submit + run/info 轮询，媒体直接传公网 URL）
+    ImplementationConfig(
+        name='minimax_h3_chenyu_v1',
+        display_name='晨羽智云',
+        driver_class='MinimaxH3ChenyuV1Driver',
+        # 计费实测（2026-11-08 E2E 真实订单 wfrun_6d8c560538e1343a3b75）：
+        # 提交时预冻结 quote 0.98 元/单仅为上限，实际按 GPU 分钟结算——4s@0.5MP
+        # 实扣 0.156 元（GPU 实算 157s）；480P 实际档位 0.6MP（2026-11-09 修正，事故 13444）。
+        # 2026-11-09 三家贴本重定价：720P(1MP) 成本口径 0.09 元/秒 → ceil(秒×2.25)；
+        # 480P 成本口径取两实测较大者 0.039 元/秒（用户实测 0.0325 / 本方 E2E 0.039@0.5MP，
+        # GPU 分钟计费存在 ±20% 波动，取上界防亏）→ 修饰符 0.44（ceil 后 0~25% 毛利）。
+        # DB implementation_power 可再覆盖。
+        default_computing_power={4: 9, 5: 12, 6: 14, 7: 16, 8: 18, 9: 21, 10: 23},
+        enabled=True,
+        description='晨羽智云 Minimax-H3 图生视频（工作流 wf_fe451b10caa4bf0a7c99，仅首帧，比例跟随首帧，480P/720P→0.6/1.0MP）',
+        sort_order=5210.0,
+        # 跨供应商挂载：任务类型 34 原生供应商是 RunningHub，本实现方走晨羽智云，
+        # 必须显式标注，否则会被 RunningHub 密钥池/槽位逻辑误伤（同 AutoDL 401 事故教训）
+        provider=TaskProvider.CHENYU,
+        required_config_keys=['chenyu.api_key'],
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={VideoResolution.P480: 0.44},
+                default=1.0
+            )
+        ],
+        supported_video_resolutions=[
+            {'value': VideoResolution.P480, 'label': VideoResolution.P480},
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
     ),
     ImplementationConfig(
         name='digital_human_minimax_h3_runninghub_v1',

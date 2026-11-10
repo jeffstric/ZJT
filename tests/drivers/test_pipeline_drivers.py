@@ -617,7 +617,8 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         # impl_b 的驱动可用
         MockRegistry.get_implementation.return_value = MagicMock(is_enabled=MagicMock(return_value=True))
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+            validate_input_compatibility=MagicMock(return_value=(True, None)))
 
         MockStepModel.create.return_value = 42
 
@@ -657,7 +658,8 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 42
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+            validate_input_compatibility=MagicMock(return_value=(True, None)))
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c', 4: 'impl_d'}
 
@@ -720,7 +722,8 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 43
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+            validate_input_compatibility=MagicMock(return_value=(True, None)))
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c'}
 
@@ -761,7 +764,8 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 44
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock()
+        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+            validate_input_compatibility=MagicMock(return_value=(True, None)))
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a'}
 

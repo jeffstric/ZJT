@@ -503,6 +503,48 @@ const PROVIDER_DEFINITIONS = [
         },
         testEndpoint: null
     },
+    {
+        // AutoDL.Art ComfyUI 工作流 API：H3 多图多音频生视频等。
+        // Token 在 autodl.art 令牌管理页创建，分组必须选 ComfyUI
+        id: 'autodl_video',
+        nameKey: 'provider_autodl_name',
+        descKey: 'provider_autodl_video_desc',
+        category: 'multimedia',
+        icon: '🎨',
+        docUrl: 'https://www.autodl.art/large-model/tokens',
+        lazyRecommended: false,
+        displayOrder: 22,
+        baseName: 'autodl',
+        isOfficialAPI: false,
+        impactsKey: 'provider_autodl_video_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_autodl', required: true, helpTextKey: 'field_api_key_help_autodl' },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://autodl.art', required: false, helpTextKey: 'field_base_url_help_autodl' }
+        ],
+        configKeyMap: { api_key: 'autodl.api_key', base_url: 'autodl.base_url' },
+        testEndpoint: null
+    },
+    {
+        // 晨羽智云工作流 API：Minimax-H3 图生视频（仅首帧）。
+        // API Key 在 chenyu.cn 控制台「API 服务」页创建
+        id: 'chenyu_video',
+        nameKey: 'provider_chenyu_name',
+        descKey: 'provider_chenyu_video_desc',
+        category: 'multimedia',
+        icon: '🪶',
+        docUrl: 'https://www.chenyu.cn/console/apiServer',
+        lazyRecommended: false,
+        displayOrder: 23,
+        baseName: 'chenyu',
+        isOfficialAPI: false,
+        impactsKey: 'provider_chenyu_video_impacts',
+        fields: [
+            { id: 'api_key', labelKey: 'field_api_key_label', type: 'text', placeholderKey: 'field_api_key_placeholder_chenyu', required: true, helpTextKey: 'field_api_key_help_chenyu' },
+            { id: 'base_url', labelKey: 'field_base_url_label_optional', type: 'url', placeholder: 'https://www.chenyu.cn', required: false, helpTextKey: 'field_base_url_help_chenyu' }
+        ],
+        configKeyMap: { api_key: 'chenyu.api_key', base_url: 'chenyu.base_url' },
+        testEndpoint: null
+    },
 
     // ===== 其他推荐服务 =====
     {

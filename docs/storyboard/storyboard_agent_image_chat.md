@@ -89,6 +89,10 @@ snapshot.ratio 优先于世界级 image_preferences 与默认 16:9**。仅改 sk
 
 模式写入 `config_json.videoImageMode`，刷新后恢复。
 
+> **初始默认**：`multi_reference`（全能参考，2026-11-08 起，与 video_workflow 分镜节点新建默认一致；
+> 此前默认 `first_last_frame`）。已保存的 `config_json` 偏好恢复优先，不受默认值影响；
+> 所选模型不支持参考生时由 `ensureVideoImageModeSupported` 拉回其支持的首个模式。
+
 ### 首帧自动带入
 
 - 当前分镜存在合法 `firstFrameUrl` 时，自动注入 **「首帧」** 槽（`source=scene`），缩略图可见。

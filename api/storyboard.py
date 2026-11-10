@@ -4947,7 +4947,24 @@ async def generate_scene_video(
     except Exception as e:
         logger.warning(f"Failed to persist video_config_json on generate-video scene {scene_id}: {e}")
 
-    # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整）
+    # 解析实现方（真人素材模式由驱动侧按 human_asset_mode 分派，此处只取 impl_id，
+    # 不再注入 human_review 标记——重试切换实现方后按新实现方模式现场重算）。
+    # ⚠️ 必须在扣费之前解析：扣费按实际执行实现方的算力表查值——此前漏传
+    # implementation 会回退任务默认实现方（RunningHub）的表，用户切到 AutoDL/晨羽
+    # 时被按 RunningHub 价扣费（多扣，事故 ai_tools 13452：AutoDL 4s 应扣 5 实扣 12）
+    impl_id = 0
+    actual_impl_name = None
+    try:
+        from task.visual_drivers import VideoDriverFactory
+        from config.unified_config import get_implementation_id
+        actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        if actual_impl_name:
+            impl_id = get_implementation_id(actual_impl_name) or 0
+    except Exception as e:
+        logger.warning(f"Failed to resolve video implementation for face mask: {e}")
+
+    # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整），
+    # 按实际执行实现方查表（与下方 impl_id 同源，扣费=执行）
     power_context = {}
     if snapshot_image_mode:
         power_context['image_mode'] = snapshot_image_mode
@@ -4955,24 +4972,13 @@ async def generate_scene_video(
         power_context['resolution'] = video_resolution
     computing_power = config.get_computing_power(
         duration=video_duration,
+        implementation=actual_impl_name or None,
         context=power_context,
     ) if config else 0
     transaction_id = str(uuid.uuid4())
     ok, msg = await _deduct_computing_power(request, computing_power, transaction_id)
     if not ok:
         return JSONResponse(status_code=400, content={'error': msg or '算力不足或扣费失败'})
-
-    # 解析实现方（真人素材模式由驱动侧按 human_asset_mode 分派，此处只取 impl_id，
-    # 不再注入 human_review 标记——重试切换实现方后按新实现方模式现场重算）
-    impl_id = 0
-    try:
-        from task.visual_drivers import VideoDriverFactory
-        from config.unified_config import get_implementation_id
-        actual_impl = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
-        if actual_impl:
-            impl_id = get_implementation_id(actual_impl) or 0
-    except Exception as e:
-        logger.warning(f"Failed to resolve video implementation for face mask: {e}")
 
     needs_h3_optimize = False
     try:

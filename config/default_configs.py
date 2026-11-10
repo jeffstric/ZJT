@@ -132,7 +132,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'upload.max_video_duration_seconds',
         'value_type': 'int',
-        'description': 'Agent 对话模式上传视频最大时长限制（秒），超时长的视频将被截断',
+        'description': 'Agent 对话模式上传视频/音频总时长平台级上限（秒），超时长的视频将被截断；前端实际生效值另与所选模型最大生成时长取小',
         'editable': True,
         'is_sensitive': False
     },
@@ -616,6 +616,44 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
         'key': 'topenrouter.asset_base_url',
         'value_type': 'string',
         'description': 'TopenRouter 真人库素材 Action 接口地址（asset_library 模式使用；缺省回落 topenrouter.base_url，两者同址时无需配置）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== AutoDL.Art ComfyUI 工作流配置 ====================
+    {
+        'key': 'autodl.api_key',
+        'value_type': 'string',
+        'description': 'AutoDL.Art ComfyUI API Token（H3 多图多音频生视频等；获取：autodl.art 令牌管理 https://www.autodl.art/large-model/tokens 创建令牌，分组必须选 ComfyUI）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'autodl.base_url',
+        'value_type': 'string',
+        'description': 'AutoDL.Art API 基础 URL（默认 https://autodl.art）',
+        'editable': True,
+        'is_sensitive': False,
+        'quick_config': True
+    },
+
+    # ==================== 晨羽智云工作流 API 配置 ====================
+    {
+        'key': 'chenyu.api_key',
+        'value_type': 'string',
+        'description': '晨羽智云 API Key（Minimax-H3 图生视频等；获取：chenyu.cn 控制台「API 服务」页创建）',
+        'editable': True,
+        'is_sensitive': True,
+        'quick_config': True,
+        'user_module_grantable': True
+    },
+    {
+        'key': 'chenyu.base_url',
+        'value_type': 'string',
+        'description': '晨羽智云 API 基础 URL（默认 https://www.chenyu.cn）',
         'editable': True,
         'is_sensitive': False,
         'quick_config': True

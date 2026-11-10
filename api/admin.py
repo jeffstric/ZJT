@@ -2354,6 +2354,12 @@ async def admin_get_implementation_configs(
                     impl_durations[impl_name] = set()
                 if hasattr(task_config, 'supported_durations'):
                     impl_durations[impl_name].update(task_config.supported_durations)
+                # 合并实现级扩展档（如 H3 AutoDL 11-15s）：任务级基线只有 RunningHub
+                # 的通用档，实现方管理页需展示该实现完整可配的档位，否则新档位算力
+                # 在后台不可见、无法核对/覆盖
+                impl_cfg = UnifiedConfigRegistry.get_implementation(impl_name)
+                if impl_cfg and getattr(impl_cfg, 'supported_durations', None):
+                    impl_durations[impl_name].update(impl_cfg.supported_durations)
 
                 # 追踪 task_config.computing_power，按 (impl_name, driver_key) 存储
                 # 只存储有意义的算力值（非0、非空）

@@ -10,6 +10,7 @@ from config.unified_config import (
     TaskTypeId,
     UnifiedConfigRegistry,
     get_implementation_id,
+    MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
 )
 from task.visual_drivers.driver_factory import VideoDriverFactory, register_all_drivers
 from task.visual_drivers.video_watermark_runninghub_v1_driver import (
@@ -71,8 +72,9 @@ def test_power_table_matches_h3_720p_and_task_is_hidden():
     task = UnifiedConfigRegistry.get_by_id(TaskTypeId.VIDEO_WATERMARK_REMOVE)
 
     assert MINIMAX_H3_720P_COMPUTING_POWER == {4: 5, 5: 6, 6: 8, 7: 9, 8: 10, 9: 11, 10: 13}
+    # 去水印继续用历史表；H3 生视频 2026-11-09 贴本重定价后切到独立新表（不再共用对象）
     assert impl.default_computing_power is MINIMAX_H3_720P_COMPUTING_POWER
-    assert h3.default_computing_power is MINIMAX_H3_720P_COMPUTING_POWER
+    assert h3.default_computing_power is MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER
     assert task.hidden is True
     assert task.computing_power == 0
     assert task.supported_durations == [4, 5, 6, 7, 8, 9, 10]

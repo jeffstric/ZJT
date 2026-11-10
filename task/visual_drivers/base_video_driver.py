@@ -572,10 +572,30 @@ class BaseVideoDriver(ABC):
         
         return True, None
     
+    def validate_input_compatibility(self, ai_tool) -> tuple[bool, Optional[str]]:
+        """
+        校验任务输入素材与该驱动的输入契约是否兼容（素材槽位能力差异，非参数合法性）
+
+        用途：同一任务类型的多个实现方输入契约可能不同（如首尾帧双必填 vs 尾帧可选、
+        有无参考视频槽）。实现方重试候选选择（select_before_finish_retry_candidate）
+        与默认实现切换前调用此钩子，避免把任务切到一个必然失败/静默丢素材的实现上。
+
+        与 validate_parameters 的区别：后者校验参数合法性（提交即失败），
+        前者是驱动间能力协商（不兼容换下一个候选，不消耗失败次数）。
+
+        Args:
+            ai_tool: AITool 对象
+
+        Returns:
+            tuple[bool, Optional[str]]: (是否兼容, 不兼容原因)
+            默认全部兼容；有素材槽位约束的驱动覆写。
+        """
+        return True, None
+
     def get_model_info(self) -> Dict[str, Any]:
         """
         获取模型信息
-        
+
         Returns:
             Dict[str, Any]: 模型信息字典
         """
@@ -595,7 +615,9 @@ class BaseVideoDriver(ABC):
         从 extra_config 解析图片模式字符串
 
         解析 ai_tool.extra_config JSON 中的 'image_mode' 字段，
-        返回对应的 ImageMode 枚举值。解析失败时返回默认值 'first_last_frame'。
+        返回对应的 ImageMode 枚举值。JSON 非法、值不是对象（数组、null 等）
+        时返回默认值 'first_last_frame'，避免 list.get 抛 AttributeError
+        中断提交和实现方兼容性判断。
 
         Args:
             ai_tool: AITool 对象，需要有 extra_config 属性
@@ -611,8 +633,13 @@ class BaseVideoDriver(ABC):
         
         try:
             config = json.loads(ai_tool.extra_config) if isinstance(ai_tool.extra_config, str) else ai_tool.extra_config
+            if not isinstance(config, dict):
+                self.logger.warning(
+                    f"extra_config 不是对象，按默认首尾帧模式处理: {ai_tool.extra_config}"
+                )
+                return ImageMode.FIRST_LAST_FRAME
             return config.get('image_mode', ImageMode.FIRST_LAST_FRAME)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, AttributeError):
             self.logger.warning(f"无法解析 extra_config: {ai_tool.extra_config}")
             return ImageMode.FIRST_LAST_FRAME
     

@@ -80,7 +80,8 @@ MiniMax 的音色参考必须绑定说话内容：镜头没有台词时连上的
 - **无对白且带音频** → 清空音频列表、不上传，音频槽 ImpactSwitch 自然旁路（`select=2`、`fieldValue=""`），参考视频不受影响；
 - **无对白且提示词残留音色说明句时剥除**（优化回退原文/旧任务兜底）：「参考音频说明：…角色说话时请保持相同音色」本身带说话语义，会诱导视频模型让角色发声（dev3 案例 ai_tool 1816：成片出现一堆含糊语音）；
 - 注入侧（`api/storyboard.py` 单发 / `services/storyboard_agent_cli_service.py` 批量）同口径：H3 家族（KFRef + 参考生）无对白镜头不注入角色 `default_voice` 音色、不追加「参考音频说明」，避免音色说明污染优化原文；
-- 优化侧（`h3_prompt_optimize`）校验：原文判无台词时 `forbid_audio_refs` 开启，优化结果不得出现任何 `<audio` 引用。
+- 优化侧（`h3_prompt_optimize`）校验：原文判无台词时，正文里的 `<audio_N>` 整句先删掉（summary 前缀里的 `audio reference` 一并去掉），六段还在就采用删后正文，不因此回退原文。`<d>` 和「准备开口」类动作仍会打回。音频文件仍按 `has_dialogue=false` 不上传。
+- 原文含「图N是首帧」或「图N是尾帧」时，优化指令要求正文逐字写入与 KFRef 相同的锚点原句（`<Picture N> is the EXACT starting key frame at 0.00 seconds.`，尾帧带时长和 `ref_imageN`）。N 是参考图 1-based 下标，越界不要求。缺句则重试一次，仍没有则回退原文。不改任务类型。
 
 ## 分辨率映射
 

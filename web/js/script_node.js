@@ -1552,18 +1552,10 @@
           await window.TaskConfig.load();
         }
 
-        // 幂等：已有分镜组节点则跳过创建
-        const hasExistingShotGroup = state.nodes.some(
-          n => n.type === 'shot_group' && n.data && n.data.scriptNodeId === id
-        );
-        if (hasExistingShotGroup) {
-          setStatusEl(statusEl, `已完成：已有 ${groupCount} 个幕`, '#16a34a');
-          return;
-        }
-
         const scriptId = id;
         const maxGroupDuration = parsedData.max_group_duration || 15;
-        // 预创建柱子
+        // 预创建柱子（幂等）：放在已有分镜组跳过分支之前——故事板转出的画布
+        // 上再次拆分时分镜组已存在但柱子可能缺失，同样需要补建
         parsedData.shot_groups.forEach((shotGroup) => {
           if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
             shotGroup.shots.forEach((shot) => {
@@ -1573,6 +1565,16 @@
             });
           }
         });
+
+        // 幂等：已有分镜组节点则跳过创建
+        const hasExistingShotGroup = state.nodes.some(
+          n => n.type === 'shot_group' && n.data && n.data.scriptNodeId === id
+        );
+        if (hasExistingShotGroup) {
+          setStatusEl(statusEl, `已完成：已有 ${groupCount} 个幕`, '#16a34a');
+          renderTimeline();
+          return;
+        }
 
         const createdShotGroupNodes = [];
         const SPLIT_NODE_GAP_Y = 120;
@@ -2065,18 +2067,21 @@
             const scriptId = id;
             const maxGroupDuration = parsedData.max_group_duration || 15;
 
+            // 预创建柱子（幂等，与 applyParsedData 同口径）：分镜组已存在的
+            // 恢复场景柱子可能缺失，同样需要补建
+            parsedData.shot_groups.forEach((shotGroup) => {
+              if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
+                shotGroup.shots.forEach((shot) => {
+                  if (shot.shot_number) {
+                    createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
+                  }
+                });
+              }
+            });
+            renderTimeline();
+
             let createdShotGroupNodes = [];
             if (!hasExistingShotGroup) {
-              parsedData.shot_groups.forEach((shotGroup) => {
-                if (shotGroup.shots && Array.isArray(shotGroup.shots)) {
-                  shotGroup.shots.forEach((shot) => {
-                    if (shot.shot_number) {
-                      createOrUpdatePillar(scriptId, shot.shot_number, shot.duration || maxGroupDuration);
-                    }
-                  });
-                }
-              });
-
               let cumulativeY = 0;
               parsedData.shot_groups.forEach((shotGroup) => {
                 const offsetX = 800;

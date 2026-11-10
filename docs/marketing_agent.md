@@ -401,7 +401,7 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 | 模式 | key | 说明 |
 |------|-----|------|
 | 首尾帧 | `first_last_frame` | 第一张为首帧，第二张为尾帧（可选） |
-| 全能参考 | `multi_reference` | 所有图片作为风格参考，最多 5 张 |
+| 全能参考 | `multi_reference` | 所有图片作为风格参考，上限按所选模型的 `max_multi_ref_images`（如 Seedance 2.5 最多 30 张，其余模型 3~10 张不等）；前后端均在提交前校验 |
 
 ### 素材输出语言（output_language）
 
@@ -677,7 +677,7 @@ Agent 对话模式即使当前自定义面板停留在“图片”，前端也�
 |------|--------|------|
 | `max_image_size_mb` | 10 | 图片上传大小限制（MB） |
 | `max_video_size_mb` | 100 | 视频上传大小限制（MB） |
-| `max_video_duration_seconds` | 15 | 视频/音频最大时长（秒） |
+| `max_video_duration_seconds` | 30 | 视频/音频上传总时长的平台级上限（秒）；前端实际生效上限 = min(该配置, 所选视频模型 `supported_durations` 最大值)，未选模型或模型无时长档位时取该配置值（如 Seedance 2.5 支持 30s 生成，克隆参考视频可传至 30s；10s 模型则限制为 10s） |
 | `is_enterprise` | false | 是否为商业版 |
 
 ### 前端常量
