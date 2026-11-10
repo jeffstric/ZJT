@@ -428,9 +428,12 @@
      * 来源二：分镜组节点的 shots 数组（「故事板→工作流」转换等无 parsedData 的产物）
      */
     function autoMigratePillars() {
-      // 如果已经有柱子，不需要迁移
-      if (state.timeline.pillars.length > 0) {
-        console.log('[柱子迁移] 已存在柱子数据，跳过迁移');
+      // 已存在分镜柱子时不需要迁移。不能只看 pillars.length：视频落入自由柱时
+      // getOrCreateFreePillar 会把 __free__ 塞进 pillars 并随 autoSave 持久化，
+      // pillars=['__free__'] 正是"缺分镜柱"的受损形态（转换产物视频误落 __free__），
+      // 必须照常迁移，否则该类画布重载后永远补不回分镜格子
+      if (state.timeline.pillars.some(p => p.id !== '__free__')) {
+        console.log('[柱子迁移] 已存在分镜柱子数据，跳过迁移');
         return false;
       }
 
@@ -478,12 +481,50 @@
 
       if (totalPillarsCreated > 0) {
         console.log(`[柱子迁移] 成功迁移：共创建 ${totalPillarsCreated} 个柱子`);
+        const movedClips = reassignFreePillarClips();
+        if (movedClips > 0) {
+          console.log(`[柱子迁移] 已将 ${movedClips} 个误落自由柱的片段归位到分镜柱`);
+        }
         state.timeline.visible = true;
         return true;
       }
 
       console.log('[柱子迁移] 未找到可推导柱子的剧本/分镜组节点');
       return false;
+    }
+
+    /**
+     * 把误落在 __free__ 柱的片段归位到分镜柱（迁移补建柱子后调用）。
+     * 受损画布（柱子缺失期加入时间轴的视频/音频）当时被 getOrCreateFreePillar
+     * 兜底进 __free__；柱子补建后按 nodeId → getPillarForNode 重新归属，
+     * 解析不到分镜柱的片段保持独立片段语义不动。
+     * @returns {number} 成功归位的片段数
+     */
+    function reassignFreePillarClips() {
+      const freePillar = state.timeline.pillars.find(p => p.id === '__free__');
+      if (!freePillar) return 0;
+
+      let moved = 0;
+      const trackDefs = [
+        { trackType: 'video', clipIds: freePillar.videoClipIds, clips: state.timeline.clips, orderBase: p => p.videoClipIds.length },
+        { trackType: 'audio', clipIds: freePillar.audioClipIds, clips: state.timeline.audioClips, orderBase: p => p.audioClipIds.length },
+      ];
+
+      trackDefs.forEach(({ trackType, clipIds, clips, orderBase }) => {
+        clipIds.slice().forEach(clipId => {
+          const clip = clips.find(c => c.id === clipId);
+          if (!clip) return;
+          const pillar = getPillarForNode(clip.nodeId);
+          if (!pillar || pillar.id === '__free__') return;
+          removeClipFromPillar(clipId, trackType);
+          clip.pillarId = pillar.id;
+          clip.order = orderBase(pillar);
+          addClipToPillar(pillar, clipId, trackType);
+          moved++;
+        });
+      });
+
+      return moved;
     }
     
     // ============ 柱子系统结束 ============

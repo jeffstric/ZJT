@@ -1287,13 +1287,17 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
 
 
 @app.get("/api/thumbnail")
+@require_permission("file:thumbnail")
 async def get_thumbnail(
     request: Request,
     url: str = Query(..., description="原始图片URL"),
     size: int = Query(200, ge=10, le=1000, description="缩略图尺寸（最大宽/高，单位px）")
 ):
     """
-    获取图片缩略图
+    获取图片缩略图（需登录：按 url 参数读取 /upload 素材并回缩略图，
+    未鉴权时构成对 /upload 素材的匿名读取面，issue 2835。
+    浏览器 <img> 场景由 auth_cookie_translation_middleware 自动带凭据，
+    无需在前端 URL 里拼 token）
     - 本地图片：直接读取并缩放
     - 结果缓存到 upload/cache/thumbnail/
     - 使用原子写入避免多进程冲突

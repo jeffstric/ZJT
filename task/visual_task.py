@@ -875,7 +875,9 @@ async def _check_task_status(ai_tool):
 
         elif status == "FAILED":
             # 任务失败
-            error = result.get("error", "任务失败")
+            # error 键为主契约；部分驱动（如晨羽 H3）FAILED 分支只回 message——
+            # 兜底读取，避免真实失败原因（内容审核拒绝/GPU 异常等）丢失成"任务失败"
+            error = result.get("error") or result.get("message") or "任务失败"
             error_type = result.get("error_type", "SYSTEM")
 
             logger.error(f"Task {task_id} failed: {error} (type: {error_type})")

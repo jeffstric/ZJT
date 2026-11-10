@@ -5889,6 +5889,25 @@ async def upload_reference_image(
         }, status_code=500)
 
 
+def _validate_session_id(session_id: str) -> bool:
+    """校验 Agent 会话 ID 格式（仅接受标准 UUID）。
+
+    session_id 由服务端创建会话时生成（str(uuid.uuid4())），并被直接拼入
+    存储路径 upload/marketing/{pic,video,audio}/{session_id}/。若不校验格式，
+    `../../evil` 之类的值可穿越出 upload 树（Windows 上带盘符的值经
+    os.path.join 会直接落绝对路径），构成任意目录写盘（issue 2869）。
+    """
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    if len(session_id) != 36:
+        return False
+    try:
+        uuid.UUID(session_id)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 @router.post('/upload-agent-image')
 @require_permission("script_writer:upload_image")
 async def upload_agent_image(
@@ -5910,6 +5929,13 @@ async def upload_agent_image(
         图片访问 URL
     """
     try:
+        # session_id 直接拼入存储路径，仅接受服务端生成的 UUID（防目录穿越）
+        if not _validate_session_id(session_id):
+            return JSONResponse({
+                'success': False,
+                'error': '无效的会话ID'
+            }, status_code=400)
+
         # 验证文件类型
         allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
         file_extension = os.path.splitext(file.filename or '')[1].lower()
@@ -6008,6 +6034,13 @@ async def upload_agent_video(
         视频访问 URL
     """
     try:
+        # session_id 直接拼入存储路径，仅接受服务端生成的 UUID（防目录穿越）
+        if not _validate_session_id(session_id):
+            return JSONResponse({
+                'success': False,
+                'error': '无效的会话ID'
+            }, status_code=400)
+
         allowed_extensions = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
         file_extension = os.path.splitext(file.filename or '')[1].lower()
 
@@ -6144,6 +6177,13 @@ async def upload_agent_audio(
         音频访问 URL
     """
     try:
+        # session_id 直接拼入存储路径，仅接受服务端生成的 UUID（防目录穿越）
+        if not _validate_session_id(session_id):
+            return JSONResponse({
+                'success': False,
+                'error': '无效的会话ID'
+            }, status_code=400)
+
         allowed_extensions = {'.mp3', '.wav', '.aac', '.ogg', '.m4a', '.flac'}
         file_extension = os.path.splitext(file.filename or '')[1].lower()
 
