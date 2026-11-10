@@ -287,6 +287,50 @@ def test_build_workflow_data_carries_assets():
     assert wf['nextConnId'] == len(wf['connections']) + 1
 
 
+def test_build_workflow_data_generates_timeline_pillars():
+    """转出画布自带时间轴柱子（每分镜一格）；scriptId 口径：有剧本用剧本节点
+    id，无剧本退回分镜组节点 id（与前端 getPillarForNode/autoMigratePillars 一致）。"""
+    from api.storyboard_conversion import _build_workflow_data_from_storyboard
+
+    storyboard = SimpleNamespace(
+        id=5, title='柱子板', world_id=1, workflow_ratio='16:9', style='',
+        style_reference_image='', composition_preference='', script_id=None,
+    )
+
+    def scene(sid, act, duration):
+        return {
+            'id': sid, 'title': f'分镜{sid}', 'duration': duration, 'act_name': act,
+            'prompt_json': {'perspective': '', 'scene_desc': '', 'character_desc': '',
+                            'location': {}, 'props': []},
+            'video_prompt': '', 'video_config_json': {}, 'source_shot_key': None,
+            'first_frame_url': '', 'last_frame_url': '', 'video_url': '',
+            'dialogues': [],
+        }
+
+    scenes = [scene(11, '第一幕', 5), scene(12, '第一幕', 4), scene(21, '第二幕', 0)]
+
+    # 无剧本：pillar id = 分镜组节点 id _ 分镜号
+    wf = _build_workflow_data_from_storyboard(storyboard, scenes, {}, None)
+    group_ids = [n['id'] for n in wf['nodes'] if n['type'] == 'shot_group']
+    pillars = wf['timeline']['pillars']
+    assert [p['shotNumber'] for p in pillars] == [1, 2, 3]   # 全故事板连续编号
+    assert pillars[0]['id'] == f'{group_ids[0]}_1'
+    assert pillars[2]['id'] == f'{group_ids[1]}_3'           # 第二幕归第二组维度
+    assert pillars[0]['defaultDuration'] == 5
+    assert pillars[1]['defaultDuration'] == 4
+    assert pillars[2]['defaultDuration'] == 5                # duration=0 经 _safe_duration 回退 5
+    for p in pillars:
+        assert p['videoClipIds'] == [] and p['audioClipIds'] == []
+
+    # 有剧本：pillar id = 剧本节点 id _ 分镜号
+    script = SimpleNamespace(id=77, title='剧名', content='第一幕……')
+    wf2 = _build_workflow_data_from_storyboard(storyboard, scenes, {}, script)
+    script_id = next(n['id'] for n in wf2['nodes'] if n['type'] == 'script')
+    pillars2 = wf2['timeline']['pillars']
+    assert all(p['scriptId'] == script_id for p in pillars2)
+    assert [p['id'] for p in pillars2] == [f'{script_id}_1', f'{script_id}_2', f'{script_id}_3']
+
+
 def test_scene_to_shot_carries_three_scene_code():
     """效果模式分镜的 3D 空间代码随 shotJson 透传（工作流「打开导演台」重放用）。"""
     from api.storyboard_conversion import _scene_to_shot
