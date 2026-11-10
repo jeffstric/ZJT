@@ -2,10 +2,10 @@
 
 ## 概述
 
-剧本提取节点用于把一段输入视频转成文字剧本：后端把**视频关键帧**（图像理解）与
-**语音转写稿**（ASR）打包交给多模态 VL 智能体，由智能体一次性生成结构化的中文
-Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布的"剧本节点"接入下游
-拆分链路（拆幕 / 分镜）。
+剧本提取节点用于把一段输入视频转成文字剧本：后端把**视频关键帧**（图像理解）、
+**镜头切换时间点列表**（ffmpeg 场景检测，float 秒精度）与**语音转写稿**（ASR）打包
+交给多模态 VL 智能体，由智能体一次性生成分镜级结构化的中文 Markdown 剧本。
+结果在节点内展示、可编辑，可一键写入画布的"剧本节点"接入下游拆分链路（拆幕 / 分镜）。
 
 ## 功能特点
 
@@ -16,13 +16,16 @@ Markdown 剧本。结果在节点内展示、可编辑，可一键写入画布�
    `[data-type="script_extract"]` 覆盖全局 `.node` 的 300px（不随工作流持久化）；
    本地上传为整卡可点击的虚线上传卡片（原生 file input 隐藏于卡内），视频就绪后
    卡片自动隐藏、显示预览与"移除"按钮
-2. **多模态智能体**：关键帧截图（按时间序、带时间标签）+ 带时间戳的语音转写稿
-   同时送入 VL 模型，画面与声音互相印证
-3. **异步任务 + 轮询**：链路分钟级耗时，创建任务立即返回 task_id，前端 3s 轮询
+3. **多模态智能体**：关键帧截图（按时间序、带 0.1s 精度时间标签）+ **镜头切换时间点列表** +
+   带时间戳的语音转写稿同时送入 VL 模型，画面、镜头边界与声音三方互相印证
+4. **分镜级结构化输出**：场景分组 + 场景内逐分镜输出 `[景别][机位][运镜][站位][画面][对白][音效]`，
+   分镜边界对齐镜头切换点、时长精确到 0.1s，对白逐句归属到具体说话角色
+   （依据口型/朝向/上下文推断，仅完全无法推断才用 voice 占位）
+5. **异步任务 + 轮询**：链路分钟级耗时，创建任务立即返回 task_id，前端 3s 轮询
    阶段进度（关键帧 → 音轨 → 转写 → 撰写剧本）
-4. **结果可编辑 + 一键写入剧本节点**：textarea 直接编辑并随工作流保存；
+6. **结果可编辑 + 一键写入剧本节点**：textarea 直接编辑并随工作流保存；
    "写入剧本节点"按钮新建画布 `script` 节点并填入内容
-5. **工作流重载复原**：源视频、剧本文本、任务进度随工作流保存；刷新后未完成的
+7. **工作流重载复原**：源视频、剧本文本、任务进度随工作流保存；刷新后未完成的
    任务自动接续轮询
 
 ## 使用方法
@@ -50,10 +53,10 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 
 | 阶段 | 实现 |
 | --- | --- |
-| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链 |
+| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链；**切换点列表（float 秒）随 frames 一并返回**供 LLM 阶段注入 |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
-| asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS] 文本` 转写稿；单段失败跳过 |
-| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-lite）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 剧本提取智能体提示词 + user 文本（任务说明+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
+| asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS.d] 文本` 转写稿（0.1s 精度）；单段失败跳过 |
+| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-pro）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 分镜级提取提示词 + user 文本（任务说明+镜头切换点列表+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
 
 任务状态落 **`script_extract_task` 表**（跨 gunicorn worker 共享，迁移脚本
 `no_154_20261021_add_script_extract_task`）：POST 创建记录后由创建请求的 worker
@@ -72,10 +75,10 @@ TTL 行）。单飞槽和状态查询按登录用户。`X-User-Id` 可省略；
 
 ```json
 {"role": "user", "content": [
-  {"type": "text", "text": "任务说明 + 视频时长 + [MM:SS] 转写稿"},
-  {"type": "text", "text": "关键帧1（时间点 00:00）"},
+  {"type": "text", "text": "任务说明 + 视频时长(0.1s 精度) + 镜头切换时间点列表 + [MM:SS.d] 转写稿"},
+  {"type": "text", "text": "关键帧1（时间点 00:00.0）"},
   {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
-  {"type": "text", "text": "关键帧2（时间点 00:35）"},
+  {"type": "text", "text": "关键帧2（时间点 00:35.4）"},
   {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
 ]}
 ```
@@ -83,14 +86,41 @@ TTL 行）。单飞槽和状态查询按登录用户。`X-User-Id` 可省略；
 LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLMClient._log_token_usage`
 自动上报计费，欠费熔断自动生效。
 
-### 输出剧本格式（system prompt 约定）
+### 输出剧本格式（system prompt 约定：场景分组 + 分镜级结构化）
 
 ```
 # 剧本标题
-## 场景1（时间 00:00-00:35｜地点/环境）
-【画面】…【对白】角色：台词…【旁白】…【音效/配乐】…
+## 场景1（时间 00:00.0-00:10.0｜卧室/昏暗暧昧）
+### 分镜1（时长 1.0s｜00:00.0-00:01.0）
+- [景别] 近景｜浅景深
+- [机位] 位于侧面平视
+- [运镜] 固定镜头
+- [背景] 散焦的灰蓝色落地窗帘与微弱冷光环绕，幽暗暧昧的私密卧室基调
+- [站位] 女主在左搂男方脖颈，男方在右搂女主腰
+- [画面] 女主双手指腹轻贴男方胸口，双眼微闭仰头凑近，随后两人微微分开互相对视…
+- [对白] 无
+- [音效/配乐] 轻柔暧昧背景音乐
+### 分镜2（时长 2.5s｜00:01.0-00:03.5）
+- [景别] 近景｜极浅景深
+- [机位] 越过男方右肩平视拍摄
+- [运镜] 固定镜头
+- [背景] 模糊的卧室场景背景，男方右肩失焦形成前景
+- [站位] 女主居画面正中，男方仅右肩局部出镜遮挡前景
+- [画面] 女主左手指腹缓缓滑抚男方肩膀，眼帘略垂，神情柔和带着一抹思索之意，随后抬眸凝望男方…
+- [对白] 女主：（低声），"第一次"
+- [音效/配乐] 背景音乐延续
 ## 角色表
+- 女主：…，红丝睡袍…
 ```
+
+硬规则：
+- 分镜边界优先对齐镜头切换时间点、全部分镜时长总和≈视频总时长
+- [背景] 每分镜必写（光线/色调/虚化程度，场景首分镜含整体视觉基调）
+- [画面] 为导演视角细致扩写：动作到身体部位级、用「随后/紧接着」串 2~4 个连续
+  动作或表情节拍、情绪具象到具体神态词；只允许推补镜头内变化，不得虚构新人物/道具/场景
+- 台词权威来源：画面硬字幕 > 语音转写稿（BGM 下 ASR 常见听错），台词逐字取自其中之一，
+  严禁写出来源中不存在的词句；画面字幕台词默认归属画内角色、禁止写成旁白；
+  相邻不同说话人的台词禁止合并；仅完全无法推断说话人才用「 voice 」占位
 
 ## 配置常量（config/constant.py :: VideoScriptExtractConstants）
 
@@ -106,7 +136,7 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 | `LLM_TIMEOUT` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 180 / 8000 / 0.4 | 剧本生成调用参数 |
 | `MAX_SCRIPT_CHARS` | 30000 | 剧本文本截断上限（与前端 textarea maxlength 一致） |
 | `TASK_TTL_SECONDS` | 1800 | 任务记录保留时长；running 记录超期未更新判执行进程失联（过期 404 / 释放并发占用），历史记录惰性清理 |
-| `PREFERRED_VENDOR` / `PREFERRED_MODEL` | volcengine / doubao-seed-2-0-lite | VL 模型偏好（须已在模型表配置密钥且 supports_vl） |
+| `PREFERRED_VENDOR` / `PREFERRED_MODEL` | volcengine / doubao-seed-2-0-pro | VL 模型偏好（须已在模型表配置密钥且 supports_vl）。分镜级提取需识别景别/机位/站位等镜头语言并推断说话人，pro 档显著优于 lite 档；节点上仍可手动切换，成本敏感场景可选回 lite |
 
 ## 设计取舍：为什么不走 PM/ExpertAgent 重栈
 
@@ -123,7 +153,10 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
    长视频画面覆盖依赖转写稿补充叙事。上下文不是瓶颈：2026-09-27 官方 API 实测
    deepseek-flash 每图约 1000 token（文档上限 1024/图，随分辨率按面积线性下降），
    24 帧 720p ≈ 2.4 万 token；帧多时建议搭配 480P/360P 档位控制 payload 与 token。
-2. SenseVoice ASR 不区分说话人，对白中的"角色名"由智能体从画面与语境推断
+2. SenseVoice ASR 不区分说话人且在 BGM 下可能听错词：台词文本以**画面硬字幕为权威**
+   （> 转写稿），说话人由智能体按口型开合、人物朝向、表情与上下文综合推断
+   （system prompt 硬规则：逐字引用、禁止合并相邻不同说话人的台词、画面字幕台词
+   禁止写成旁白）；仅完全无法推断时用「 voice 」占位
 3. 任务执行绑定创建时所在 worker 的进程内 asyncio 任务：该进程重启后进行中任务
    失联（updated_at 超 TTL 判过期，需重新提取）；已成功/失败的结果已落库，不受重启影响
 4. 外部视频 URL 不支持（与 extract-frame 一致），必须先上传到本站

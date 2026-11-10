@@ -2792,9 +2792,11 @@ class VideoScriptExtractConstants:
     MAX_SCRIPT_CHARS = 30000
     # 内存任务记录保留时长（秒），超期惰性清理；服务重启任务即失联（前端提示重新提取）。
     TASK_TTL_SECONDS = 1800
-    # 默认推荐模型：与图片描述一致的 VL 偏好（须已在模型表配置密钥且 supports_vl）。
+    # 默认推荐模型（须已在模型表配置密钥且 supports_vl）。
+    # 分镜级提取需要识别景别/机位/站位等镜头语言并推断说话人，pro 档明显优于
+    # lite 档；节点上仍可手动切换任意已配置密钥的 VL 模型，成本敏感场景可选回 lite。
     PREFERRED_VENDOR = "volcengine"
-    PREFERRED_MODEL = "doubao-seed-2-0-lite"
+    PREFERRED_MODEL = "doubao-seed-2-0-pro"
 
 
 class BrandingConstants:
