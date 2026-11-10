@@ -3,8 +3,9 @@
 ## 概述
 
 剧本提取节点用于把一段输入视频转成文字剧本：后端把**视频关键帧**（图像理解）、
-**镜头切换时间点列表**（ffmpeg 场景检测，float 秒精度）与**语音转写稿**（ASR）打包
-交给多模态 VL 智能体，由智能体一次性生成分镜级结构化的中文 Markdown 剧本。
+**镜头切换时间点列表**（ffmpeg 场景检测，float 秒精度）、**逐镜头运动信号表**
+（帧间差/亮度/位移程序化实测）与**语音转写稿**（ASR）打包交给多模态 VL 智能体，
+由智能体一次性生成分镜级结构化的中文 Markdown 剧本。
 结果在节点内展示、可编辑，可一键写入画布的"剧本节点"接入下游拆分链路（拆幕 / 分镜）。
 
 ## 功能特点
@@ -17,10 +18,13 @@
    本地上传为整卡可点击的虚线上传卡片（原生 file input 隐藏于卡内），视频就绪后
    卡片自动隐藏、显示预览与"移除"按钮
 3. **多模态智能体**：关键帧截图（按时间序、带 0.1s 精度时间标签）+ **镜头切换时间点列表** +
-   带时间戳的语音转写稿同时送入 VL 模型，画面、镜头边界与声音三方互相印证
-4. **分镜级结构化输出**：场景分组 + 场景内逐分镜输出 `[景别][机位][运镜][站位][画面][对白][音效]`，
+   **逐镜头运动信号表**（`services/video_motion_analysis_service.py`：帧间差/亮度/位移实测）+
+   带时间戳的语音转写稿同时送入 VL 模型，画面、镜头边界、运动事实与声音互相印证
+4. **分镜级结构化输出**：场景分组 + 场景内逐分镜输出 `[景别][机位][运镜][站位][背景][画面][对白][音效]`，
    分镜边界对齐镜头切换点、时长精确到 0.1s，对白逐句归属到具体说话角色
-   （依据口型/朝向/上下文推断，仅完全无法推断才用 voice 占位）
+   （依据口型/朝向/上下文推断，仅完全无法推断才用 voice 占位）；
+   **表演/运镜/光线描述强制与运动信号一致**（全片最静的镜头禁止编大动作、
+   有位移必须写对应摇镜、峰值"镜尾动作"必须如实记录被切点打断的效果）
 5. **异步任务 + 轮询**：链路分钟级耗时，创建任务立即返回 task_id，前端 3s 轮询
    阶段进度（关键帧 → 音轨 → 转写 → 撰写剧本）
 6. **结果可编辑 + 一键写入剧本节点**：textarea 直接编辑并随工作流保存；
@@ -53,10 +57,10 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 
 | 阶段 | 实现 |
 | --- | --- |
-| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链；**切换点列表（float 秒）随 frames 一并返回**供 LLM 阶段注入 |
+| frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链；**切换点列表（float 秒）随 frames 一并返回**供 LLM 阶段注入。同阶段内跑**运动信号分析**（`analyze_motion_signals`：ffmpeg rawvideo pipe 抽 128×72 灰度帧（8fps，总帧数 ≤1500 自动降 fps）→ numpy 逐镜头帧间差均值/全片排名/峰值时刻 + 亮度均值/排名/斜率 + 首尾帧投影互相关位移 + 平行镜头标注；切点 ±0.2s 保护带剔除转场尖峰；失败降级为空表） |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS.d] 文本` 转写稿（0.1s 精度）；单段失败跳过 |
-| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-pro）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 分镜级提取提示词 + user 文本（任务说明+镜头切换点列表+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
+| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-pro）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 分镜级提取提示词 + user 文本（任务说明+镜头切换点列表+运动信号表+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
 
 任务状态落 **`script_extract_task` 表**（跨 gunicorn worker 共享，迁移脚本
 `no_154_20261021_add_script_extract_task`）：POST 创建记录后由创建请求的 worker
@@ -75,12 +79,20 @@ TTL 行）。单飞槽和状态查询按登录用户。`X-User-Id` 可省略；
 
 ```json
 {"role": "user", "content": [
-  {"type": "text", "text": "任务说明 + 视频时长(0.1s 精度) + 镜头切换时间点列表 + [MM:SS.d] 转写稿"},
+  {"type": "text", "text": "任务说明 + 视频时长(0.1s 精度) + 镜头切换时间点列表 + 逐镜头运动信号表 + [MM:SS.d] 转写稿"},
   {"type": "text", "text": "关键帧1（时间点 00:00.0）"},
   {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
   {"type": "text", "text": "关键帧2（时间点 00:35.4）"},
   {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}
 ]}
+```
+
+运动信号表每镜一行（实测值，非模型推断）：
+
+```
+镜1（00:00.0-00:01.5）｜帧间差 0.61，全片最静｜亮度 142.3，全片最暗｜位移 无（固定机位）｜峰值 无（无显著动作突增）
+镜2（00:01.5-00:03.6）｜帧间差 2.09，运动中等｜亮度 150.6，全片最亮｜位移 无（固定机位）｜峰值 00:03.4（镜尾动作，随后切镜）｜与镜1构图高度相似（疑似平行镜头）
+镜5（00:06.1-00:07.8）｜帧间差 4.77，运动中等｜亮度 138.2，亮度中等，渐亮 1.2/秒｜位移：内容下移8px（相机上摇）｜峰值 00:06.3（镜首动作）
 ```
 
 LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLMClient._log_token_usage`
@@ -137,6 +149,12 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 | `MAX_SCRIPT_CHARS` | 30000 | 剧本文本截断上限（与前端 textarea maxlength 一致） |
 | `TASK_TTL_SECONDS` | 1800 | 任务记录保留时长；running 记录超期未更新判执行进程失联（过期 404 / 释放并发占用），历史记录惰性清理 |
 | `PREFERRED_VENDOR` / `PREFERRED_MODEL` | volcengine / doubao-seed-2-0-pro | VL 模型偏好（须已在模型表配置密钥且 supports_vl）。分镜级提取需识别景别/机位/站位等镜头语言并推断说话人，pro 档显著优于 lite 档；节点上仍可手动切换，成本敏感场景可选回 lite |
+| `MOTION_SAMPLE_FPS` / `MOTION_MAX_FRAMES` | 8.0 / 1500 | 运动信号灰度采样帧率与总帧数上限（长视频自动降 fps，900s 降到 ~1.7） |
+| `MOTION_FRAME_WIDTH` / `MOTION_FRAME_HEIGHT` | 128 / 72 | 运动采样分辨率（rawvideo pipe 单帧字节数 = 宽×高） |
+| `MOTION_CUT_GUARD_SECONDS` | 0.2 | 切点保护带：切点 ± 此范围的帧间差视为转场尖峰，剔出镜内统计 |
+| `MOTION_PARALLEL_DIFF_THRESHOLD` / `MOTION_PARALLEL_LOOKBACK` | 6.0 / 3 | 平行镜头判定：首帧灰度平均绝对差阈值与向前回看镜数 |
+| `MOTION_SHIFT_REPORT_PX` / `MOTION_SHIFT_MAX_LAG_PX` | 3 / 16 | 位移报告阈值与投影互相关最大搜索位移（px，采样分辨率基准） |
+| `MOTION_ANALYSIS_TIMEOUT` | 60 | 运动分析 ffmpeg 子进程与整体外层超时；失败降级为空表不阻塞主链路 |
 
 ## 设计取舍：为什么不走 PM/ExpertAgent 重栈
 
@@ -157,14 +175,22 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
    （> 转写稿），说话人由智能体按口型开合、人物朝向、表情与上下文综合推断
    （system prompt 硬规则：逐字引用、禁止合并相邻不同说话人的台词、画面字幕台词
    禁止写成旁白）；仅完全无法推断时用「 voice 」占位
-3. 任务执行绑定创建时所在 worker 的进程内 asyncio 任务：该进程重启后进行中任务
+3. 运动信号为程序化实测（帧间差/亮度/位移/平行镜头），system prompt 强制表演/
+   运镜/光线描述与其一致；ffmpeg 抽帧失败或视频无法解码时降级为空表
+   （user prompt 提示模型自行判断），不阻塞主链路；长视频 fps 自动下降后
+   峰值时刻定位精度约 ±0.3s
+4. 眼部/嘴部 ROI 像素级表演节拍（眨眼/口型实测）为二期规划，当前未实现
+5. 任务执行绑定创建时所在 worker 的进程内 asyncio 任务：该进程重启后进行中任务
    失联（updated_at 超 TTL 判过期，需重新提取）；已成功/失败的结果已落库，不受重启影响
-4. 外部视频 URL 不支持（与 extract-frame 一致），必须先上传到本站
-5. 帧图与 wav 为临时文件（`upload/temp/`），任务结束即清理；源视频不动
+6. 外部视频 URL 不支持（与 extract-frame 一致），必须先上传到本站
+7. 帧图与 wav 为临时文件（`upload/temp/`），任务结束即清理；源视频不动
 
 ## 测试
 
 - 单元测试：`tests/services/test_video_script_extract_service.py`（切片计划、ASR 分段
-  合并、转写稿格式化、帧抽稀、多模态消息构造、剧本清洗、DB 任务状态表并发限制/
-  TTL 失联判定；DB 层用同接口内存假模型替代，不依赖真实数据库）
+  合并、转写稿格式化、帧抽稀、多模态消息构造（切换点/运动信号注入）、剧本清洗、
+  DB 任务状态表并发限制/TTL 失联判定；DB 层用同接口内存假模型替代，不依赖真实数据库）
+- 单元测试：`tests/services/test_video_motion_analysis_service.py`（合成灰度帧覆盖
+  纯函数：采样 fps 降档、静止帧间差排名、峰值时刻定位、相机上摇位移、平行镜头
+  标注、切点保护带剔除转场尖峰、信号行格式化；ffmpeg 抽帧链路不在此覆盖）
 - 集成验证：浏览器实测（上传视频 → 提取 → 写入剧本节点 → 刷新复原）

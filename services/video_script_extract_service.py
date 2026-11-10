@@ -2,8 +2,10 @@
 """视频提取剧本（video_workflow 剧本提取节点）后端服务。
 
 链路：视频 → 关键帧多批收集（复用 extract-frame 的场景检测/翻页语义）
+       + 运动信号分析（video_motion_analysis_service：帧间差/亮度/位移逐镜头实测）
        + 音轨提取 → SenseVoice 分段 ASR（段偏移还原全片时间戳）
-       → 关键帧图片（压缩 base64）+ 带时间戳转写稿 → 多模态 VL 模型一次性生成文字剧本。
+       → 关键帧图片（压缩 base64）+ 镜头切换点 + 运动信号表 + 带时间戳转写稿
+       → 多模态 VL 模型一次性生成分镜级文字剧本。
 
 设计取舍：一次性多模态生成任务，不走 PM/ExpertAgent 重栈（无 ask_user / 工具循环 / SSE），
 与 llm/script_parser.py、services/image_describe.py 同为"纯 LLM 提取模块"模式；
@@ -41,11 +43,16 @@ from services.video_frame_extract_service import (
     extract_last_frame,
     probe_stream_duration,
 )
+from services.video_motion_analysis_service import (
+    analyze_motion_signals,
+    format_motion_signal_lines,
+)
 from services.voice_replace.ffmpeg_util import FfmpegError, extract_audio, slice_audio
 from services.voice_replace.asr_driver import get_asr_driver
 from services.vl_gateway import pick_vl_model
 from utils.image_compressor import compress_local_image_to_base64
 from utils.project_path import get_upload_temp_dir
+from utils.time_label import format_time_label, format_time_label_precise
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +105,18 @@ SCRIPT_EXTRACT_SYSTEM_PROMPT = (
     "- 分镜边界优先对齐用户提供的镜头切换时间点：相邻两个切换点之间原则上为一个镜头；"
     "同一镜头内如出现明显的动作节拍或对白轮次切换，可依据关键帧时间点与转写稿时间戳再细分。\n"
     "- 全部分镜时长总和必须与视频总时长基本一致，不得凭空增减剧情时间。\n"
+    "\n"
+    "表演/运镜/光线必须与运动信号一致（硬规则）：\n"
+    "- [运镜] 必须与位移信号一致：位移显示画面平移的必须写对应方向的摇镜"
+    "（如「相机上摇」），禁止写「固定镜头」；位移为「无」时不得凭空编推拉摇移。\n"
+    "- [画面] 表演幅度必须与帧间差一致：全片最静的镜头只写呼吸级微动或静止，"
+    "禁止编造大幅动作；有运动峰值的镜头，动作必须写在峰值时刻的位置。\n"
+    "- 峰值标注「镜尾动作，随后切镜」时，该动作是被切点打断的未完成表演，"
+    "必须如实记录，不得写成完整动作。\n"
+    "- [背景] 光线描述必须与亮度信号一致：只有全片最亮的镜头才可写明亮/暖光，"
+    "全片最暗的镜头写昏暗/冷调；禁止把最暗镜头写成「光线明亮偏暖」。\n"
+    "- 信号标注「与镜N构图高度相似」时，必须写明该镜与镜N是同构图的平行/呼应镜头"
+    "（轴线保持），不得当成新机位重新描写。\n"
     "\n"
     "对白归属硬规则：\n"
     "- 台词文本的权威来源优先级：画面硬字幕 > 语音转写稿。台词必须逐字取自其中之一（含语气词），"
@@ -198,40 +217,18 @@ def format_asr_transcript(segments: List[Tuple[float, float, str]]) -> str:
     return "\n".join(lines)
 
 
-def format_time_label(seconds: float) -> str:
-    total = max(0, int(round(float(seconds))))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours:
-        return f"{hours:d}:{minutes:02d}:{secs:02d}"
-    return f"{minutes:02d}:{secs:02d}"
-
-
-def format_time_label_precise(seconds: float) -> str:
-    """0.1 秒精度时间标签（MM:SS.d），供分镜边界对齐镜头切换点。
-
-    整秒精度的 format_time_label 会让模型只能估出「00:00-00:03」级粗区间，
-    无法产出秒内分镜时长；此版本保留一位小数（ASR/切换点本身是浮点秒），
-    且按 0.1s 取整后再进位，避免 59.96s 显示成 00:60.0。"""
-    tenths_total = max(0, int(round(float(seconds) * 10)))
-    hours, remainder = divmod(tenths_total, 36000)
-    minutes, remainder = divmod(remainder, 600)
-    secs, tenths = divmod(remainder, 10)
-    if hours:
-        return f"{hours:d}:{minutes:02d}:{secs:02d}.{tenths:d}"
-    return f"{minutes:02d}:{secs:02d}.{tenths:d}"
-
-
 def build_script_llm_messages(
     transcript: str,
     frames: List[dict],
     duration: float,
     scene_points: Optional[List[float]] = None,
+    motion_lines: Optional[List[str]] = None,
 ) -> List[dict]:
-    """构造多模态消息：user text（任务说明+镜头切换点+转写稿）+ 逐帧（时间标签文本 + 图片）。
+    """构造多模态消息：user text（任务说明+镜头切换点+运动信号+转写稿）+ 逐帧。
 
     frames: [{"index": 1, "time_label": "00:00.0", "data_url": "data:image/jpeg;base64,..."}]
     scene_points: 镜头切换时间点（float 秒，0.1s 精度标签注入，供分镜边界对齐）。
+    motion_lines: 逐镜头运动信号文本（帧间差/亮度/位移实测），供表演/运镜/光线对齐。
     """
     if transcript:
         transcript_block = (
@@ -245,9 +242,19 @@ def build_script_llm_messages(
         cut_block = f"检测到的镜头切换时间点：{cut_labels}\n"
     else:
         cut_block = "（未检测到明显的镜头切换点，请依据关键帧时间点与转写稿时间戳划分分镜。）\n"
+    if motion_lines:
+        motion_block = (
+            "以下是对该视频逐镜头的程序化运动分析实测信号（帧间差=相邻帧画面差异均值，"
+            "越大运动越强；亮度为 0-255 灰度均值；位移为镜头首尾帧画面平移量，"
+            "镜头编号按切换点顺序）：\n"
+            + "\n".join(motion_lines) + "\n"
+        )
+    else:
+        motion_block = "（运动信号分析不可用，请依据关键帧自行判断运动、运镜与光线。）\n"
     user_text = (
         f"视频总时长 {format_time_label_precise(duration)}，下面按时间顺序提供 {len(frames)} 个关键帧截图。\n"
         f"{cut_block}"
+        f"{motion_block}"
         f"{transcript_block}\n"
         "请根据以上信息输出文字剧本。"
     )
@@ -482,12 +489,14 @@ async def _generate_script(
     vendor_id: Optional[int] = None,
     model_id: Optional[int] = None,
     scene_points: Optional[List[float]] = None,
+    motion_lines: Optional[List[str]] = None,
 ) -> Tuple[str, str, Optional[int]]:
     """多模态生成剧本。返回 (script, model, vendor_id)。
 
     model/vendor_id 为用户在节点上指定的提取模型；空则按 VL 偏好挑选
     （pick_vl_model：指定 model 精确匹配 > 偏好 vendor+model > 列表序）。
-    scene_points 为镜头切换时间点（float 秒），注入 user prompt 供分镜边界对齐。
+    scene_points 为镜头切换时间点（float 秒），motion_lines 为逐镜头运动
+    信号文本；两者注入 user prompt，供分镜边界对齐与表演/运镜/光线实测对齐。
     """
     picked = await pick_vl_model(
         C.PREFERRED_VENDOR, C.PREFERRED_MODEL, model=model, vendor_id=vendor_id,
@@ -513,7 +522,9 @@ async def _generate_script(
     if not frame_notes:
         raise ScriptExtractError("关键帧图片处理失败")
 
-    messages = build_script_llm_messages(transcript, frame_notes, duration, scene_points)
+    messages = build_script_llm_messages(
+        transcript, frame_notes, duration, scene_points, motion_lines,
+    )
 
     try:
         client = await asyncio.wait_for(
@@ -602,6 +613,19 @@ async def _run_extract_task(
         )
         frame_paths = [f["path"] for f in frames]
 
+        # 阶段 1b：运动信号分析（确定性计算，失败降级为空表，不阻塞主链路）
+        motion_signals: List[dict] = []
+        try:
+            motion_signals = await asyncio.wait_for(
+                analyze_motion_signals(video_path, scene_points, duration),
+                timeout=C.MOTION_ANALYSIS_TIMEOUT + 15,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[script-extract] 运动信号分析失败，降级为无信号模式", exc_info=True)
+        motion_lines = format_motion_signal_lines(motion_signals)
+
         # 阶段 2：音轨提取
         await _update_task(task_id, stage=C.STAGE_AUDIO)
         wav_path = await _extract_audio_track(video_path, temp_dir, stamp)
@@ -620,7 +644,7 @@ async def _run_extract_task(
         script, used_model, used_vendor_id = await _generate_script(
             transcript, frames, duration, auth_token, frame_height,
             model=model, vendor_id=vendor_id, model_id=model_id,
-            scene_points=scene_points,
+            scene_points=scene_points, motion_lines=motion_lines,
         )
 
         await _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
@@ -630,6 +654,7 @@ async def _run_extract_task(
                 "duration_label": format_time_label(duration),
                 "frame_count": len(frames),
                 "scene_point_count": len(scene_points),
+                "motion_signal_shots": len(motion_signals),
                 "transcript_available": bool(transcript),
                 "transcript_chars": len(transcript),
                 "model": used_model,

@@ -262,6 +262,21 @@ class TestBuildScriptLlmMessages(unittest.TestCase):
         self.assertIn("视频总时长 00:10.0", user_text)
         self.assertIn("镜头切换时间点：00:01.2、00:03.7、00:07.0", user_text)
 
+    def test_motion_lines_injected_or_fallback(self):
+        frames = [
+            {"index": 1, "time_label": "00:00.0", "data_url": "data:image/jpeg;base64,AAA"},
+        ]
+        messages = build_script_llm_messages(
+            "", frames, 10.0,
+            motion_lines=["镜1（00:00.0-00:01.0）｜帧间差 0.00，全片最静"],
+        )
+        user_text = messages[1]["content"][0]["text"]
+        self.assertIn("程序化运动分析实测信号", user_text)
+        self.assertIn("帧间差 0.00，全片最静", user_text)
+        self.assertNotIn("运动信号分析不可用", user_text)
+        fallback = build_script_llm_messages("", frames, 10.0)
+        self.assertIn("运动信号分析不可用", fallback[1]["content"][0]["text"])
+
     def test_system_prompt_requires_shot_level_output(self):
         # 输出契约回归：分镜级结构化条目 + 对白归属硬规则必须留在 system prompt
         system_prompt = build_script_llm_messages(
@@ -274,6 +289,8 @@ class TestBuildScriptLlmMessages(unittest.TestCase):
             "身体部位级", "连续的动作或表情节拍", "具体神态词",
             # 台词权威来源（硬字幕 > ASR）与旁白限制
             "以字幕为准", "禁止写成旁白",
+            # 运动信号一致性硬规则（帧间差/亮度/位移/平行镜头）
+            "运动信号", "帧间差", "相机上摇", "平行",
         ):
             self.assertIn(needle, system_prompt)
 

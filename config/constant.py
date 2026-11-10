@@ -2812,6 +2812,28 @@ class VideoScriptExtractConstants:
     # lite 档；节点上仍可手动切换任意已配置密钥的 VL 模型，成本敏感场景可选回 lite。
     PREFERRED_VENDOR = "volcengine"
     PREFERRED_MODEL = "doubao-seed-2-0-pro"
+    # ---- 运动信号分析（注入 user prompt 的「逐镜头运动信号表」，见
+    # services/video_motion_analysis_service.py）：让分镜的表演/运镜/光线描述
+    # 从"模型猜"变为"实测"（帧间差/亮度/位移均为确定性计算）。 ----
+    # 低分辨率灰度帧采样帧率（fps）；总帧数超 MOTION_MAX_FRAMES 时自动降 fps。
+    MOTION_SAMPLE_FPS = 8.0
+    # 采样总帧数上限（900s 长视频自动降到 ~1.7fps，节拍定位精度 ±0.3s 可接受）。
+    MOTION_MAX_FRAMES = 1500
+    # 灰度采样分辨率（宽×高）；rawvideo pipe 单帧字节数 = 宽×高。
+    MOTION_FRAME_WIDTH = 128
+    MOTION_FRAME_HEIGHT = 72
+    # 镜头切点保护带（秒）：切点 ± 此范围内的帧间差视为转场尖峰，剔除后不计镜内均值。
+    MOTION_CUT_GUARD_SECONDS = 0.2
+    # 平行镜头判定阈值：镜头首帧灰度平均绝对差（0-255）低于该值视为构图高度相似。
+    MOTION_PARALLEL_DIFF_THRESHOLD = 6.0
+    # 平行镜头只向前回看的镜头数（防远距离误报）。
+    MOTION_PARALLEL_LOOKBACK = 3
+    # 位移报告阈值（px，采样分辨率基准）：首尾净位移低于该值视为无位移（固定镜头）。
+    MOTION_SHIFT_REPORT_PX = 3
+    # 投影互相关的最大搜索位移（px），超过即视为无匹配。
+    MOTION_SHIFT_MAX_LAG_PX = 16
+    # 运动分析 ffmpeg 子进程与整体外层超时（秒）；失败降级为空表，不阻塞主链路。
+    MOTION_ANALYSIS_TIMEOUT = 60.0
 
 
 class BrandingConstants:
