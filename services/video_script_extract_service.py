@@ -54,26 +54,64 @@ def _make_stamp() -> str:
     """临时文件命名戳：时间戳 + 短 uuid（与 extract-frame 接口的命名规则一致）。"""
     return f"{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
-# 剧本提取智能体（多模态 VL 一次性生成）的系统提示词
+# 剧本提取智能体（多模态 VL 一次性生成）的系统提示词。
+# 输出为「场景分组 + 分镜级结构化」剧本（对标小云雀的分镜脚本形态）：
+# 每分镜必须给出时长/起止/景别/机位/运镜/站位/画面/对白/音效，
+# 对白必须归属到具体角色（依据口型/朝向/上下文推断），分镜边界对齐镜头切换点。
 SCRIPT_EXTRACT_SYSTEM_PROMPT = (
     "你是资深影视编剧「剧本提取智能体」。用户会提供一段视频的若干关键帧截图"
-    "（按时间顺序标注时间点）和可选的语音转写稿（带时间戳）。"
-    "请综合画面与声音信息，还原撰写这部视频的文字剧本。\n"
+    "（按时间顺序标注时间点）、检测到的镜头切换时间点列表，以及可选的语音转写稿（带时间戳）。"
+    "请综合三类信息，还原撰写这部视频的**分镜级**文字剧本。\n"
     "\n"
     "输出要求（中文，Markdown 格式）：\n"
     "1. 第一行用「# 」输出剧本标题。\n"
-    "2. 按「场景」组织：每个场景以「## 场景1（时间 00:00-00:35｜地点/环境）」的格式开头"
-    "（序号依次为 场景1、场景2、场景3……），时间区间依据关键帧时间点与转写稿时间戳估算。\n"
-    "3. 每个场景内依次写：\n"
-    "   - 【画面】镜头与画面描述（依据关键帧：环境、人物、动作、氛围）。"
-    "若多张关键帧画面高度重复（解说类视频常循环使用同一段背景素材），"
+    "2. 先按「场景」分组，场景内再逐分镜拆解：每个场景以"
+    "「## 场景N（时间 00:00.0-00:35.0｜地点/环境）」的格式开头（序号依次为 场景1、场景2……）；"
+    "场景内每个镜头以「### 分镜N（时长 3.5s｜00:01.2-00:04.7）」的格式输出"
+    "（分镜在全片内连续编号，时长与起止时间精确到 0.1 秒，起止时间=上一分镜结束时间）。\n"
+    "3. 每个分镜内依次输出以下结构化条目（该镜头确无内容时写「无」）：\n"
+    "   - [景别] 远景/全景/中景/近景/特写/大特写，并附画面深度（如「近景｜浅景深」「特写｜极浅景深」）\n"
+    "   - [机位] 相机相对人物的位置与角度（如「越过男方右肩平视拍摄」「低机位仰拍」「位于侧面平视」）\n"
+    "   - [运镜] 固定镜头/缓慢推进/拉远/摇移/跟随等；画面无明显运动时写「固定镜头」\n"
+    "   - [背景] 该镜头的背景环境：环境元素、光线与色调、虚化/散焦程度"
+    "（如「散焦的灰蓝色落地窗帘与微弱冷光环绕」「黑暗深邃且带有微弱散焦光芒」）。"
+    "每个分镜都必须写，即使与上一分镜相同也要换措辞简写；"
+    "场景首个分镜的 [背景] 还应交代整体视觉基调（时段/光线/氛围）\n"
+    "   - [站位] 逐个写清在场人物在画面中的位置与朝向（画面左/右/正中、前景遮挡、局部出镜、背景虚化等）\n"
+    "   - [画面] 人物表演描述，以关键帧为依据做**导演视角的细致扩写**，必须满足：\n"
+    "     · 动作写到身体部位级：写明哪只手/哪个部位、朝什么方向、接触或指向什么"
+    "（如「左手指腹缓缓滑抚着对方的肩膀」，而不是只写「手搭在对方身上」）\n"
+    "     · 用「随后/紧接着」把 2~4 个连续的动作或表情节拍串成时间链"
+    "（如「微微垂下视线冷笑一声，紧接着抬眼盯紧对方」）\n"
+    "     · 情绪必须具象到具体神态词（如冷笑、轻嘲、思索、不屑、倔强、委屈），"
+    "禁止只用「神情投入」「气氛暧昧」这类笼统表述\n"
+    "     · 关键帧是静止截图：允许依据相邻关键帧与叙事逻辑合理推补镜头内的动作与表情变化，"
+    "但不得虚构新人物/新道具/新场景元素，不得与关键帧画面冲突\n"
+    "     · 若多张关键帧画面高度重复（解说类视频常循环使用同一段背景素材），"
     "如实写明「重复使用同一/相似镜头」并概括其特征，不要虚构画面变化；"
-    "画面中出现的醒目文字（片头标题、片尾大字、水印）应照实记录\n"
-    "   - 【对白】「角色：台词」逐句列出（依据转写稿，注明说话人无法区分时用「 voice 」占位提示）\n"
-    "   - 【旁白】画外音（如有）\n"
-    "   - 【音效/配乐】（如有明确线索）\n"
-    "4. 转写稿缺失或无声音的段落，依据画面推断叙事；画面与转写稿冲突时以转写稿为准。\n"
-    "5. 结尾附「## 角色表」，列出出场角色与一句话简介。\n"
+    "画面中出现的醒目文字（片头标题、片尾大字、字幕、水印）应照实记录\n"
+    "   - [对白] 「角色名：（语气），\"台词原文\"」逐句列出；确认为画外音才写「旁白：…」（见下方硬规则）\n"
+    "   - [音效/配乐] （如有明确线索）\n"
+    "4. 结尾附「## 角色表」，列出出场角色、一句话简介与标志性外观（服装/发型等）。\n"
+    "\n"
+    "分镜边界与时长规则：\n"
+    "- 分镜边界优先对齐用户提供的镜头切换时间点：相邻两个切换点之间原则上为一个镜头；"
+    "同一镜头内如出现明显的动作节拍或对白轮次切换，可依据关键帧时间点与转写稿时间戳再细分。\n"
+    "- 全部分镜时长总和必须与视频总时长基本一致，不得凭空增减剧情时间。\n"
+    "\n"
+    "对白归属硬规则：\n"
+    "- 台词文本的权威来源优先级：画面硬字幕 > 语音转写稿。台词必须逐字取自其中之一（含语气词），"
+    "严禁写出来源中不存在的词句；有硬字幕时台词一律以字幕为准，"
+    "即使转写稿把某个词听成了别的（背景音乐下 ASR 常见听错）。\n"
+    "- 每句台词必须归属到具体说话角色：依据说话时刻的口型开合、人物朝向、表情、"
+    "上下文逻辑综合推断是谁在说。\n"
+    "- 画面字幕中的台词默认是画内角色的对白，禁止写成旁白；只有确认声源在画外"
+    "（解说声与画面人物口型明显不符、画面中无人对应）才写「旁白：…」。\n"
+    "- 相邻两句不同说话人的台词禁止合并成一句；禁止把前一镜头的台词复写到后一镜头。\n"
+    "- 仅当台词在画面与转写稿中都找不到对应文本、且无法推断说话人时，才用「 voice 」占位提示。\n"
+    "\n"
+    "信息取舍：转写稿缺失或无声音的段落，依据画面推断叙事；"
+    "叙事性信息画面与转写稿冲突时以转写稿为准，台词文本则以画面字幕为权威（见对白归属硬规则）。\n"
     "只输出剧本本身，不要解释说明，不要用代码块包裹。"
 )
 
@@ -153,10 +191,10 @@ def merge_asr_slice_results(
 
 
 def format_asr_transcript(segments: List[Tuple[float, float, str]]) -> str:
-    """全片时间戳三元组 → 带时间标签的转写稿文本（[MM:SS] 文本 每行一段）。"""
+    """全片时间戳三元组 → 带时间标签的转写稿文本（[MM:SS.d] 文本 每行一段）。"""
     lines: List[str] = []
     for start, _end, text in segments:
-        lines.append(f"[{format_time_label(start)}] {text}")
+        lines.append(f"[{format_time_label_precise(start)}] {text}")
     return "\n".join(lines)
 
 
@@ -169,14 +207,31 @@ def format_time_label(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def format_time_label_precise(seconds: float) -> str:
+    """0.1 秒精度时间标签（MM:SS.d），供分镜边界对齐镜头切换点。
+
+    整秒精度的 format_time_label 会让模型只能估出「00:00-00:03」级粗区间，
+    无法产出秒内分镜时长；此版本保留一位小数（ASR/切换点本身是浮点秒），
+    且按 0.1s 取整后再进位，避免 59.96s 显示成 00:60.0。"""
+    tenths_total = max(0, int(round(float(seconds) * 10)))
+    hours, remainder = divmod(tenths_total, 36000)
+    minutes, remainder = divmod(remainder, 600)
+    secs, tenths = divmod(remainder, 10)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{secs:02d}.{tenths:d}"
+    return f"{minutes:02d}:{secs:02d}.{tenths:d}"
+
+
 def build_script_llm_messages(
     transcript: str,
     frames: List[dict],
     duration: float,
+    scene_points: Optional[List[float]] = None,
 ) -> List[dict]:
-    """构造多模态消息：user text（任务说明+转写稿）+ 逐帧（时间标签文本 + 图片）。
+    """构造多模态消息：user text（任务说明+镜头切换点+转写稿）+ 逐帧（时间标签文本 + 图片）。
 
-    frames: [{"index": 1, "time_label": "00:00", "data_url": "data:image/jpeg;base64,..."}]
+    frames: [{"index": 1, "time_label": "00:00.0", "data_url": "data:image/jpeg;base64,..."}]
+    scene_points: 镜头切换时间点（float 秒，0.1s 精度标签注入，供分镜边界对齐）。
     """
     if transcript:
         transcript_block = (
@@ -185,8 +240,14 @@ def build_script_llm_messages(
         )
     else:
         transcript_block = "（这段视频没有可用的语音转写稿，请依据画面推断叙事与对白。）"
+    if scene_points:
+        cut_labels = "、".join(format_time_label_precise(p) for p in scene_points)
+        cut_block = f"检测到的镜头切换时间点：{cut_labels}\n"
+    else:
+        cut_block = "（未检测到明显的镜头切换点，请依据关键帧时间点与转写稿时间戳划分分镜。）\n"
     user_text = (
-        f"视频总时长 {format_time_label(duration)}，下面按时间顺序提供 {len(frames)} 个关键帧截图。\n"
+        f"视频总时长 {format_time_label_precise(duration)}，下面按时间顺序提供 {len(frames)} 个关键帧截图。\n"
+        f"{cut_block}"
         f"{transcript_block}\n"
         "请根据以上信息输出文字剧本。"
     )
@@ -303,8 +364,11 @@ async def _collect_keyframes(
     stamp: str,
     duration: float,
     max_frames: int,
-) -> List[dict]:
-    """按采样计划逐点提取关键帧：全片场景检测（分段）+ 均匀补点，共 max_frames 上限。"""
+) -> Tuple[List[dict], List[float]]:
+    """按采样计划逐点提取关键帧：全片场景检测（分段）+ 均匀补点，共 max_frames 上限。
+
+    返回 (frames, scene_points)：切换点原样返回（float 秒），供 user prompt
+    注入「镜头切换时间点列表」，让 LLM 的分镜边界与真实镜头切换对齐。"""
     prefix = f"scriptframe_{stamp}"
     scene_points = await _detect_scene_points_all(video_path, duration)
     points = build_extract_sample_points(
@@ -321,7 +385,7 @@ async def _collect_keyframes(
         else:
             await extract_frame_at(video_path, image_path, t)
         frames.append({"path": image_path, "time_sec": t})
-    return frames
+    return frames, scene_points
 
 
 async def _extract_audio_track(video_path: str, temp_dir: str, stamp: str) -> Optional[str]:
@@ -417,11 +481,13 @@ async def _generate_script(
     model: Optional[str] = None,
     vendor_id: Optional[int] = None,
     model_id: Optional[int] = None,
+    scene_points: Optional[List[float]] = None,
 ) -> Tuple[str, str, Optional[int]]:
     """多模态生成剧本。返回 (script, model, vendor_id)。
 
     model/vendor_id 为用户在节点上指定的提取模型；空则按 VL 偏好挑选
     （pick_vl_model：指定 model 精确匹配 > 偏好 vendor+model > 列表序）。
+    scene_points 为镜头切换时间点（float 秒），注入 user prompt 供分镜边界对齐。
     """
     picked = await pick_vl_model(
         C.PREFERRED_VENDOR, C.PREFERRED_MODEL, model=model, vendor_id=vendor_id,
@@ -441,13 +507,13 @@ async def _generate_script(
             continue
         frame_notes.append({
             "index": i,
-            "time_label": format_time_label(frame["time_sec"]),
+            "time_label": format_time_label_precise(frame["time_sec"]),
             "data_url": data_url,
         })
     if not frame_notes:
         raise ScriptExtractError("关键帧图片处理失败")
 
-    messages = build_script_llm_messages(transcript, frame_notes, duration)
+    messages = build_script_llm_messages(transcript, frame_notes, duration, scene_points)
 
     try:
         client = await asyncio.wait_for(
@@ -531,7 +597,9 @@ async def _run_extract_task(
                 f"视频时长 {format_time_label(duration)} 超过上限 "
                 f"{format_time_label(C.MAX_VIDEO_DURATION_SECONDS)}，请先剪辑"
             )
-        frames = await _collect_keyframes(video_path, temp_dir, stamp, duration, max_frames)
+        frames, scene_points = await _collect_keyframes(
+            video_path, temp_dir, stamp, duration, max_frames,
+        )
         frame_paths = [f["path"] for f in frames]
 
         # 阶段 2：音轨提取
@@ -552,6 +620,7 @@ async def _run_extract_task(
         script, used_model, used_vendor_id = await _generate_script(
             transcript, frames, duration, auth_token, frame_height,
             model=model, vendor_id=vendor_id, model_id=model_id,
+            scene_points=scene_points,
         )
 
         await _update_task(task_id, status="success", stage=C.STAGE_DONE, error=None, result={
@@ -560,6 +629,7 @@ async def _run_extract_task(
                 "duration_sec": round(duration, 2),
                 "duration_label": format_time_label(duration),
                 "frame_count": len(frames),
+                "scene_point_count": len(scene_points),
                 "transcript_available": bool(transcript),
                 "transcript_chars": len(transcript),
                 "model": used_model,

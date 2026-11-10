@@ -30,6 +30,7 @@ from services.video_script_extract_service import (  # noqa: E402
     create_extract_task,
     format_asr_transcript,
     format_time_label,
+    format_time_label_precise,
     frame_budget,
     get_extract_task,
     merge_asr_slice_results,
@@ -152,9 +153,18 @@ class TestFormatTranscript(unittest.TestCase):
         self.assertEqual(format_time_label(65.4), "01:05")
         self.assertEqual(format_time_label(3700), "1:01:40")
 
+    def test_format_time_label_precise(self):
+        self.assertEqual(format_time_label_precise(0), "00:00.0")
+        self.assertEqual(format_time_label_precise(1.24), "00:01.2")
+        self.assertEqual(format_time_label_precise(3.008), "00:03.0")
+        self.assertEqual(format_time_label_precise(65.46), "01:05.5")
+        self.assertEqual(format_time_label_precise(3700.55), "1:01:40.6")
+        # 59.96s 按 0.1s 取整后必须进位到分钟，不得显示 00:60.0
+        self.assertEqual(format_time_label_precise(59.96), "01:00.0")
+
     def test_format_asr_transcript_lines(self):
         text = format_asr_transcript([(0.0, 1.0, "你好"), (61.0, 62.0, "世界")])
-        self.assertEqual(text, "[00:00] 你好\n[01:01] 世界")
+        self.assertEqual(text, "[00:00.0] 你好\n[01:01.0] 世界")
 
 
 class TestThinPointsByTime(unittest.TestCase):
@@ -237,6 +247,35 @@ class TestBuildScriptLlmMessages(unittest.TestCase):
     def test_missing_transcript_hint(self):
         messages = build_script_llm_messages("", [], 30.0)
         self.assertIn("没有可用的语音转写稿", messages[1]["content"][0]["text"])
+        # 无切换点时给出兜底说明，不出现空「镜头切换时间点」段
+        self.assertIn("未检测到明显的镜头切换点", messages[1]["content"][0]["text"])
+
+    def test_scene_points_injected_as_precise_labels(self):
+        frames = [
+            {"index": 1, "time_label": "00:00.0", "data_url": "data:image/jpeg;base64,AAA"},
+            {"index": 2, "time_label": "00:01.2", "data_url": "data:image/jpeg;base64,BBB"},
+        ]
+        messages = build_script_llm_messages(
+            "[00:01.2] 第一次", frames, 10.0, scene_points=[1.24, 3.704, 7.0],
+        )
+        user_text = messages[1]["content"][0]["text"]
+        self.assertIn("视频总时长 00:10.0", user_text)
+        self.assertIn("镜头切换时间点：00:01.2、00:03.7、00:07.0", user_text)
+
+    def test_system_prompt_requires_shot_level_output(self):
+        # 输出契约回归：分镜级结构化条目 + 对白归属硬规则必须留在 system prompt
+        system_prompt = build_script_llm_messages(
+            "", [], 10.0, scene_points=[1.0],
+        )[0]["content"]
+        for needle in (
+            "### 分镜", "[景别]", "[机位]", "[运镜]", "[站位]", "[背景]", "[画面]", "[对白]",
+            "镜头切换时间点", "逐字", "禁止合并", "voice",
+            # 画面描写丰富度要求（身体部位级动作 + 连续节拍链 + 具象情绪）
+            "身体部位级", "连续的动作或表情节拍", "具体神态词",
+            # 台词权威来源（硬字幕 > ASR）与旁白限制
+            "以字幕为准", "禁止写成旁白",
+        ):
+            self.assertIn(needle, system_prompt)
 
 
 class TestCleanScriptText(unittest.TestCase):
