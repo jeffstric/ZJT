@@ -533,6 +533,70 @@ def test_keyframe_ref_two_images_is_kfref_not_fl2va():
     ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
 
 
+def test_reference_task_with_keyframe_ref_impl_is_kfref():
+    """新链路主路径：type=37 + implementation=100（首帧参考混合实现方）→ KFRef
+
+    实现方判定优先于任务键：混合实现方挂进类型 37 后，ai_tools 行 type=37、
+    implementation=100，变体必须用 KFRef 模板和槽位原句校验。
+    """
+    tool = SimpleNamespace(
+        type=37,
+        implementation=100,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+
+def test_reference_task_without_impl_id_falls_back_to_task_key():
+    """旧行（implementation=0）按任务键兜底：37 → Ref2VA，50 → KFRef"""
+    tool = SimpleNamespace(
+        type=37,
+        implementation=0,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+    legacy = SimpleNamespace(
+        type=50,
+        implementation=0,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        legacy, task_key=DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+
+def test_unknown_impl_id_falls_back_to_task_key():
+    """implementation id 反查失败（实现方已下线）：忽略 id，走任务键"""
+    tool = SimpleNamespace(
+        type=37,
+        implementation=99999,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+
+
 def test_assign_keyframe_ref_pictures():
     both = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref.png", "last.png"],

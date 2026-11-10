@@ -1140,13 +1140,15 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v，代码级默认关闭）
         DriverImplementation.MINIMAX_H3_CHENYU_V1,             # 晨羽智云（仅首帧）
     ],
-    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
+    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24 + 首帧参考混合实现方）
     DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO: [
-        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（默认）
+        DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # RunningHub 首帧参考混合（点名首尾帧时兼容，sort 5204）
+        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（未点名时默认）
         DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,      # AutoDL.Art 参考生（9图+3音频）
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
-    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型
+    # 历史在途 type=50 行找驱动用（新提交不再产生类型 50，混合实现方挂在类型 37 下）
+    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
@@ -1277,14 +1279,6 @@ DRIVER_IMPLEMENTATION_MAPPING = {
     DriverKey.Z_INDEX_IMAGE_EDIT: [],
 
 }
-
-# 参考模式 + H3 参考生 + 提示词点名首帧或尾帧时，改交 RunningHub 混合模型 minimax_h3_kfr。
-# AutoDL 参考生（zm_u24）没有首帧槽，文字锚点锁不住第 0 秒画面，所以这路保持打开。
-# 没有这些标记的参考生仍留在参考生任务，实现方按该任务的偏好（可以是 AutoDL）。
-# 若要再关掉，三处一起改成 false：
-#   web/js/shot_frame_video_generator.js
-#   web/js/storyboard/frame_mention.js
-H3_KEYFRAME_REF_ROUTE_ENABLED = True
 
 # 视频模型时长选项配置
 # 注意：时长选项从算力配置中自动获取

@@ -49,6 +49,7 @@ from config.constant import (
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import (
+    DriverImplementation,
     SceneVideoType,
     UnifiedConfigRegistry,
     TaskTypeId,
@@ -99,9 +100,11 @@ from utils.resource_access import (
 from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
-    h3_keyframe_ref_task_id,
+    FrameMentionError,
+    H3_KEYFRAME_REF_MAX_IMAGES,
     prompt_has_frame_mention,
     read_explicit_frame_url,
+    trim_reference_images_for_implementation,
 )
 from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
@@ -4641,9 +4644,15 @@ async def generate_scene_video(
 
     # 图生视频 / 参考生视频
     requested_task_type = data.get('task_type')
-    # 混合模型是隐藏任务，不能写进故事板偏好或分镜齿轮。客户端即使传了 50 也按未指定处理。
-    if str(requested_task_type or '') == str(h3_keyframe_ref_task_id()):
-        requested_task_type = None
+    # 类型 50（首帧参考混合）已硬禁用且不再创建：混合实现方挂在类型 37 参考生下，
+    # 由兼容探测自动选择。旧客户端即使传了 50 也按未指定处理（走下拉/偏好解析）。
+    try:
+        if requested_task_type is not None and int(requested_task_type) == int(
+            TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
+        ):
+            requested_task_type = None
+    except (TypeError, ValueError):
+        pass
     audio_path = None
     image_mode = str(data.get('image_mode') or ImageMode.FIRST_LAST_FRAME).strip().lower()
     if image_mode not in (
@@ -4740,7 +4749,6 @@ async def generate_scene_video(
             return JSONResponse(status_code=400, content={'success': False, 'error': error})
         mention_task_id = generation_snapshot.get('task_id')
 
-    use_kfr = False
     if will_apply_mentions:
         def _apply_frame_mentions():
             frame_kwargs = {}
@@ -4759,12 +4767,49 @@ async def generate_scene_video(
             )
 
         try:
-            prompt, collected_urls, legend_items, use_kfr = await asyncio.to_thread(_apply_frame_mentions)
+            prompt, collected_urls, legend_items = await asyncio.to_thread(_apply_frame_mentions)
         except StoryboardCliError as exc:
             return JSONResponse(status_code=400, content=exc.to_dict())
         reference_images_json = (
             json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
         )
+
+    # 兼容探测选实现方 + 按实现方裁图（必须在图例 suffix 拼接之前，保证「图K是…」
+    # 序号与保留图对齐）：点名首尾帧的 H3 参考生默认选首帧参考混合实现方，用户固定
+    # 其他供应商时尊重偏好；选混合实现方时参考图裁到 3 张（两端保留裁中间）。
+    # 任务保持类型 37（下拉参考生），实现方写库与扣费都用这里解析的结果。
+    selected_ref_impl = None
+    if (
+        will_apply_mentions
+        and collected_urls
+        and image_mode == ImageMode.MULTI_REFERENCE
+    ):
+        mention_task_config = None
+        try:
+            from services.storyboard_agent_cli_service import (
+                is_h3_reference_task,
+                resolve_probed_reference_implementation,
+            )
+            if is_h3_reference_task(mention_task_id):
+                selected_ref_impl = await asyncio.to_thread(
+                    resolve_probed_reference_implementation,
+                    user_id, mention_task_id, prompt, collected_urls, image_mode,
+                )
+        except StoryboardCliError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
+        except Exception as e:
+            logger.warning(f"generate-video scene {scene_id}: probed impl resolve failed: {e}")
+        if selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
+            try:
+                prompt, collected_urls, legend_items = trim_reference_images_for_implementation(
+                    prompt, collected_urls, legend_items,
+                    max_images=H3_KEYFRAME_REF_MAX_IMAGES,
+                )
+            except FrameMentionError as exc:
+                return JSONResponse(status_code=400, content={'error': exc.message})
+            reference_images_json = (
+                json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
+            )
 
     if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
         if collected_urls and legend_items:
@@ -4819,16 +4864,6 @@ async def generate_scene_video(
     dropdown_config = UnifiedConfigRegistry.get_by_id(dropdown_task_id)
     task_type = dropdown_task_id
     config = dropdown_config
-    # 只改本次提交。分镜齿轮和用户偏好仍记下拉里的参考模型。image_mode 保持 multi_reference。
-    if use_kfr and collected_urls and image_mode == ImageMode.MULTI_REFERENCE:
-        task_type = h3_keyframe_ref_task_id()
-        kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
-        if kfr_config is not None:
-            config = kfr_config
-        generation_snapshot = dict(generation_snapshot)
-        generation_snapshot['task_id'] = int(task_type)
-        generation_snapshot['model_key'] = getattr(config, 'key', None)
-        generation_snapshot['model_name'] = getattr(config, 'name', None)
     supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
 
     # 角色音色注入（参考生 + 模型 supports_voice_input）：把角色 default_voice 克隆源
@@ -4840,14 +4875,14 @@ async def generate_scene_video(
     # 必须绑台词，没有台词时连上的语音会被上游拒绝（「无法识别的说话内容」）或被
     # 当成成片声音，「保持相同音色」说明也不进优化原文；两类驱动侧另有同一口径兜底。
     h3_no_dialogue_skip_voice = (
-        task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+        task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
         and not has_quoted_dialogue(prompt)
     )
     # H3（参考生/首帧参考混合）有台词镜头按说话人过滤：只注入开口说话角色的音色。
     # 不说话角色的音色上传后在提示词里没有声明目标，H3 会把它错误配对给画面
     # 可见人物或混入成片人声（单人近景镜头串音色，线上分镜 2 事故）。
     speaking_voice_ids = None
-    if task_type in (int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO), int(h3_keyframe_ref_task_id())):
+    if task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO):
         _speaking = extract_speaking_character_ids((scene_characters_ctx or {}).get('dialogues'))
         if _speaking:
             speaking_voice_ids = _speaking
@@ -4957,7 +4992,12 @@ async def generate_scene_video(
     try:
         from task.visual_drivers import VideoDriverFactory
         from config.unified_config import get_implementation_id
-        actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        # H3 参考生点名首尾帧的提交：复用排图后带兼容探测解析出的实现方（与裁图、
+        # 扣费、写库同源）；其余提交维持原解析（偏好 → 排序 → 默认）
+        if selected_ref_impl:
+            actual_impl_name = selected_ref_impl
+        else:
+            actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
         if actual_impl_name:
             impl_id = get_implementation_id(actual_impl_name) or 0
     except Exception as e:
@@ -5029,8 +5069,11 @@ async def generate_scene_video(
         extra_payload['resolution'] = video_resolution
     # KFRef 优化步骤的说话人绑定原料：分镜画面构成（生成分镜图所用提示词，
     # 含人物站位/外观）。multi_reference 分支才会加载 scene_characters_ctx，
-    # 与 KFRef 的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
-    if task_type == h3_keyframe_ref_task_id() and scene_characters_ctx is not None:
+    # 与首帧参考混合实现方的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
+    if (
+        actual_impl_name == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
+        and scene_characters_ctx is not None
+    ):
         _image_prompt_note = str(scene_characters_ctx.get('image_prompt') or '').strip()
         if _image_prompt_note:
             extra_payload['image_prompt_note'] = _image_prompt_note[
@@ -5169,6 +5212,10 @@ async def estimate_scene_video_power(
     context = {'image_mode': image_mode}
     if resolution:
         context['resolution'] = resolution
+    # 口径说明：H3 参考生点名首尾帧时实际执行首帧参考混合实现方（提交链路按
+    # validate_input_compatibility 探测选择），当前该实现方与默认参考生同价
+    # （MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER），估价与扣费无分叉；若混合
+    # 实现方独立调价，需把 prompt（点名标记）纳入本接口请求体按同一探测口径估价。
     # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
     computing_power = await asyncio.to_thread(
         get_computing_power_for_task,
@@ -5326,8 +5373,9 @@ async def scene_ai_chat(
         except (TypeError, ValueError):
             logger.warning(f"Invalid storyboard video_task_id: {raw_video_task_id!r}")
             video_task_id = None
-    if video_task_id == h3_keyframe_ref_task_id():
-        # 隐藏混合模型不能写入分镜齿轮或用户偏好。
+    if video_task_id == int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO):
+        # 类型 50（首帧参考混合）已硬禁用：混合实现方挂在类型 37 参考生下由兼容
+        # 探测自动选择，旧客户端传了也按未指定处理（走下拉/偏好解析）。
         video_task_id = None
     try:
         from services.storyboard_agent_cli_service import StoryboardAgentCliService
@@ -5390,7 +5438,6 @@ async def scene_ai_chat(
     active_generation_slot = None
     frame_mention_legend = ""
     video_slot_items = None
-    use_h3_keyframe_ref = False
     if generation_target == 'video':
         # 时长兜底刷新：与 generate_scene_video 一致，避免拿到 LLM 估算整数时长
         # 导致视频短于真实配音。全部完成则覆盖，否则保持原值（best-effort）。
@@ -5457,7 +5504,7 @@ async def scene_ai_chat(
                 )
 
             try:
-                _rewritten, video_input_urls, collected_slot_items, use_h3_keyframe_ref = await asyncio.to_thread(
+                _rewritten, video_input_urls, collected_slot_items = await asyncio.to_thread(
                     _apply_chat_mentions,
                 )
             except StoryboardCliError as exc:
@@ -5575,17 +5622,6 @@ async def scene_ai_chat(
             generation_snapshots[slot_key] = video_snapshot
             active_generation_slot = slot_key
             video_preferences.update(video_snapshot)
-            if use_h3_keyframe_ref:
-                # 偏好和分镜齿轮已经按下拉模型保存。这里只改本次智能体快照。
-                kfr_id = h3_keyframe_ref_task_id()
-                kfr_cfg = UnifiedConfigRegistry.get_by_id(kfr_id)
-                video_snapshot = dict(video_snapshot)
-                video_snapshot['task_id'] = int(kfr_id)
-                if kfr_cfg is not None:
-                    video_snapshot['model_key'] = kfr_cfg.key
-                    video_snapshot['model_name'] = kfr_cfg.name
-                generation_snapshots[slot_key] = video_snapshot
-                video_preferences.update(video_snapshot)
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
         reference_images_for_msg, reference_image_items_for_msg = (

@@ -452,7 +452,6 @@
     "msg_generating_new_voiceover": "Generating new voiceover… (the old one still plays below)",
     "msg_generating_now": "Generating...",
     "msg_generating_qrcode": "Generating payment QR code...",
-    "msg_h3_keyframe_ref_route": "This submit uses the MiniMax H3 first-frame reference model",
     "msg_image_format_unsupported": "Images support JPG, PNG, GIF and WebP only",
     "msg_image_gen_failed": "Image generation failed: {msg}",
     "msg_image_submitted_generating": "Image task submitted, generating in the candidates panel",

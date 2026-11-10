@@ -20,14 +20,19 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
 )
-from config.unified_config import SceneVideoType, TaskTypeId, UnifiedConfigRegistry
+from config.unified_config import (
+    DriverImplementation,
+    SceneVideoType,
+    TaskTypeId,
+    UnifiedConfigRegistry,
+)
 from services.storyboard_frame_mention import (
     FrameMentionError,
     H3_KEYFRAME_REF_MAX_IMAGES,
-    h3_keyframe_ref_task_id,
+    is_h3_reference_model,
     prepare_frame_mentions,
     prompt_has_frame_mention,
-    should_use_h3_keyframe_ref,
+    trim_reference_images_for_implementation,
     url_key,
 )
 from model.ai_tools import AIToolsModel
@@ -286,7 +291,7 @@ def _align_legend_items(
 
 
 def _peek_snapshot_task_id(generation_snapshots: Dict[str, Dict[str, Any]]) -> Optional[int]:
-    """批次已经锁了模型时，点名首尾帧要按那个模型决定是否改交混合任务。"""
+    """批次已经锁了模型时，点名首尾帧按那个模型的实现方兼容探测裁图。"""
     for key in ("video.reference_to_video", "video.image_to_video"):
         slot = generation_snapshots.get(key) or {}
         task_id = slot.get("task_id") if isinstance(slot, dict) else None
@@ -296,6 +301,48 @@ def _peek_snapshot_task_id(generation_snapshots: Dict[str, Dict[str, Any]]) -> O
             except (TypeError, ValueError):
                 continue
     return None
+
+
+def is_h3_reference_task(task_type: Any) -> bool:
+    """task_id 是否 MiniMax H3 参考生（类型 37，首帧参考混合实现方挂载的任务）"""
+    try:
+        config = UnifiedConfigRegistry.get_by_id(int(task_type))
+    except (TypeError, ValueError):
+        return False
+    if config is None:
+        return False
+    return is_h3_reference_model(getattr(config, "key", ""), getattr(config, "short_key", ""))
+
+
+def resolve_probed_reference_implementation(
+    user_id: Any,
+    task_type: Any,
+    prompt: Any,
+    urls: Sequence[str],
+    image_mode: Any,
+) -> Optional[str]:
+    """H3 参考生提交的兼容探测实现方解析（排图后、建行前）。
+
+    与最终建行入口（/api/ai-app-run-image）按同一 probe 口径解析（幂等）。
+    固定实现方与本次输入不兼容时按固定语义快速失败（不静默换供应商、不建任务）。
+    """
+    from task.visual_drivers.base_video_driver import DriverInputProbe
+    from task.visual_drivers.driver_factory import VideoDriverFactory
+
+    probe = DriverInputProbe(
+        prompt="" if prompt is None else str(prompt),
+        extra_config=DriverInputProbe.build_extra_config("" if image_mode is None else str(image_mode)),
+        reference_images=json.dumps([str(u) for u in (urls or [])], ensure_ascii=False) if urls else None,
+    )
+    impl = VideoDriverFactory.get_implementation_for_user(int(task_type), int(user_id), input_probe=probe)
+    if not impl:
+        error = VideoDriverFactory.get_last_create_error() or {}
+        if str(error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
+            raise StoryboardCliError(
+                "fixed_implementation_unavailable",
+                str(error.get("message") or "固定的实现方当前不可用"),
+            )
+    return impl
 
 
 def _public_upload_url(url: Any) -> str:
@@ -1099,13 +1146,13 @@ class StoryboardAgentCliService:
                 context, image_mode, extra_urls=extra_urls,
             )
 
-        use_kfr = False
+        mention_applied = False
         if image_mode == "multi_reference" and prompt_has_frame_mention(prompt_text):
             known_task_id = task_type
             if known_task_id in (None, "") and generation_snapshots:
                 known_task_id = _peek_snapshot_task_id(generation_snapshots)
             try:
-                prompt_text, resolved_urls, legend_items, use_kfr = self.apply_collected_frame_mentions(
+                prompt_text, resolved_urls, legend_items = self.apply_collected_frame_mentions(
                     prompt=prompt_text,
                     urls=resolved_urls,
                     items=legend_items,
@@ -1115,6 +1162,7 @@ class StoryboardAgentCliService:
                     frame_first_url=frame_first_url,
                     frame_last_url=frame_last_url,
                 )
+                mention_applied = True
             except StoryboardCliError:
                 raise
 
@@ -1178,36 +1226,40 @@ class StoryboardAgentCliService:
                 )
             task_type = int(generation_snapshot['task_id'])
 
-        # 混合模型是隐藏任务，不能写进用户偏好。快照先按下拉里的参考模型解析，
-        # 这里只改本次提交的 task_id。image_mode 仍是 multi_reference。
-        if use_kfr and mode == "image_to_video":
-            task_type = h3_keyframe_ref_task_id()
-            if isinstance(generation_snapshot, dict):
-                generation_snapshot = dict(generation_snapshot)
-                generation_snapshot["task_id"] = task_type
-                kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
-                if kfr_config is not None:
-                    generation_snapshot["model_key"] = kfr_config.key
-                    generation_snapshot["model_name"] = kfr_config.name
+        # 首帧参考混合实现方裁图：点名首尾帧的 H3 参考生按兼容探测选实现方（默认
+        # 选首帧参考混合模型，用户固定其他供应商时尊重偏好），选混合实现方时参考图
+        # 裁到 3 张（两端保留裁中间）。裁图必须在图例 suffix 拼接之前，保证「图K是…」
+        # 序号与保留图对齐；任务保持类型 37，实现方由最终建行入口（/api/ai-app-run-image）
+        # 按同一探测口径解析写库（幂等，两次解析输入一致）。
+        selected_ref_impl = None
+        if mention_applied and mode == "image_to_video" and is_h3_reference_task(task_type):
+            selected_ref_impl = resolve_probed_reference_implementation(
+                user_id, task_type, prompt_text, resolved_urls, image_mode,
+            )
+            if selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 and resolved_urls:
+                try:
+                    prompt_text, resolved_urls, legend_items = trim_reference_images_for_implementation(
+                        prompt_text, resolved_urls, legend_items,
+                        max_images=H3_KEYFRAME_REF_MAX_IMAGES,
+                    )
+                except FrameMentionError as exc:
+                    raise StoryboardCliError(exc.code, exc.message) from exc
 
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
         # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
-        # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入，
+        # H3 参考生（含首帧参考混合实现方）无对白镜头（原文无引号台词）不注入，
         # 同单发生成路径口径：音色参考必须绑台词，无台词上传会被上游拒绝
         # （「无法识别的说话内容」）或被当成成片声音。
         # 有台词镜头按说话人过滤：只注入开口说话角色的音色，不说话角色的音色
         # 上传后无声明目标，会被 H3 错配给画面人物或混入成片人声（同单发口径）。
         if mode == "image_to_video" and not (
-            task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+            task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
             and not has_quoted_dialogue(prompt_text)
         ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
             _speaking_voice_ids = None
-            if int(task_type) in (
-                int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO),
-                int(h3_keyframe_ref_task_id()),
-            ):
+            if int(task_type) == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO):
                 _speaking = extract_speaking_character_ids(context.get('dialogues'))
                 if _speaking:
                     _speaking_voice_ids = _speaking
@@ -1227,9 +1279,10 @@ class StoryboardAgentCliService:
         # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
         # （character.voice_desc），批量补视频与单发链路同口径：H3 参考音频只是
         # 弱微调，音色一致性靠文字指纹渲染进提示词。纯文本不占音频槽，
-        # 非 H3 模型零变化；KFRef 无对白镜头与音色注入同口径跳过（防诱导配音）。
+        # 非 H3 模型零变化；选中的实现方是首帧参考混合模型且无对白镜头时与音色
+        # 注入同口径跳过（防诱导配音；未解析到实现方时保守注入，由优化步骤兜底）。
         if PipelineDriverFactory.is_h3_prompt_optimize_type(int(task_type)) and not (
-            task_type == h3_keyframe_ref_task_id()
+            selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
             and not has_quoted_dialogue(prompt_text)
         ):
             prompt_text = append_voice_casting_note(
@@ -4696,11 +4749,13 @@ class StoryboardAgentCliService:
         task_id: Optional[int] = None,
         frame_first_url: Any = _FRAME_URL_UNSET,
         frame_last_url: Any = _FRAME_URL_UNSET,
-    ) -> Tuple[str, List[str], List[Dict[str, Any]], bool]:
-        """全能参考下按 @首帧图 / @尾帧图 重排参考图。
+    ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
+        """全能参考下按 @首帧图 / @尾帧图 重排参考图（排图，不裁图）。
 
-        返回 (prompt, urls, items, use_kfr)。缺图时抛 StoryboardCliError，调用方不得建任务。
-        frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；传入空字符串表示界面上没有这张图。
+        返回 (prompt, urls, items)。裁图延后到选出实现方之后（见
+        trim_reference_images_for_implementation）。缺图时抛 StoryboardCliError，
+        调用方不得建任务。frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；
+        传入空字符串表示界面上没有这张图。
         """
         context = context or {}
         if frame_first_url is _FRAME_URL_UNSET:
@@ -4712,25 +4767,6 @@ class StoryboardAgentCliService:
         else:
             last_url = _public_upload_url(frame_last_url)
 
-        config = None
-        if task_id not in (None, ""):
-            try:
-                config = UnifiedConfigRegistry.get_by_id(int(task_id))
-            except (TypeError, ValueError):
-                config = None
-        model_keys = []
-        if config is not None:
-            model_keys = [getattr(config, "key", ""), getattr(config, "short_key", "")]
-        use_kfr = should_use_h3_keyframe_ref(image_mode, prompt, *model_keys)
-        max_images = None
-        if use_kfr:
-            max_images = H3_KEYFRAME_REF_MAX_IMAGES
-        elif config is not None:
-            try:
-                parsed = int(getattr(config, "max_multi_ref_images", 0) or 0)
-            except (TypeError, ValueError):
-                parsed = 0
-            max_images = parsed or None
         try:
             rewritten, next_urls, next_items = prepare_frame_mentions(
                 prompt,
@@ -4739,11 +4775,10 @@ class StoryboardAgentCliService:
                 image_mode=image_mode,
                 first_url=first_url,
                 last_url=last_url,
-                max_images=max_images,
             )
         except FrameMentionError as exc:
             raise StoryboardCliError(exc.code, exc.message) from exc
-        return rewritten, next_urls, next_items, use_kfr
+        return rewritten, next_urls, next_items
 
     def _collect_video_reference_bundle(
         self,

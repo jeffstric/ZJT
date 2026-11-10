@@ -20,7 +20,7 @@ from config.constant import (
     H3_VOICE_CASTING_NOTE_MARKER,
     MAX_VOICE_REFERENCE_AUDIOS,
 )
-from config.unified_config import DriverKey
+from config.unified_config import DriverImplementation, DriverKey
 
 _TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "minimax_h3_i2va_fl2va_base_en.txt"
 _REF2VA_TEMPLATE_PATH = Path(__file__).resolve().parent / "prompts" / "minimax_h3_ref2va_ref_en.txt"
@@ -65,6 +65,30 @@ _AUDIO_SUMMARY_PREFIX_RE = re.compile(
 # 分镜参考模式提交后写进提示词的槽位说明。1-based，与参考图列表下标对应。
 _H3_FIRST_FRAME_MARK_RE = re.compile(r"图(\d+)是首帧")
 _H3_LAST_FRAME_MARK_RE = re.compile(r"图(\d+)是尾帧")
+# @首帧图 / @尾帧图 提及 token（排图改写前的形式；id 后缀仅前端胶囊用）。
+# 与 services/storyboard_frame_mention 的历史定义同源（正则统一维护在本模块，
+# 供驱动兼容钩子 / 排图 / 裁图三处同口径消费）。
+_H3_FIRST_FRAME_MENTION_RE = re.compile(r"@首帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])")
+_H3_LAST_FRAME_MENTION_RE = re.compile(r"@尾帧图(?::[0-9a-f]{8})?(?![0-9a-f:\u4e00-\u9fff])")
+
+
+def prompt_marks_first_or_last_frame(prompt) -> bool:
+    """提示词是否点名了首帧/尾帧（兼容探测与裁图的统一判定）
+
+    两种形式语义相同，任一命中即点名：
+    - 排图改写前：@首帧图 / @尾帧图 提及 token（前端胶囊、agent 原文）
+    - 排图改写后：「图N是首帧 / 图N是尾帧」锚点句（prepare_frame_mentions /
+      placeShotFrameMentionImages 的产物）
+    """
+    text = "" if prompt is None else str(prompt)
+    return bool(
+        _H3_FIRST_FRAME_MARK_RE.search(text)
+        or _H3_LAST_FRAME_MARK_RE.search(text)
+        or _H3_FIRST_FRAME_MENTION_RE.search(text)
+        or _H3_LAST_FRAME_MENTION_RE.search(text)
+    )
+
+
 _H3_KF_ROLE_START = "start"
 _H3_KF_ROLE_END = "end"
 _H3_KF_ROLE_REFERENCE = "reference"
@@ -203,11 +227,36 @@ def h3_slot_source_prompt(extra_config: Any, fallback_prompt: Optional[str] = No
     return fallback_prompt or ""
 
 
+def _resolve_ai_tool_implementation_name(ai_tool: Any) -> Optional[str]:
+    """读 ai_tools.implementation（int id）反查实现方名。
+
+    id=0（未锁定，旧行）或反查失败（实现方已下线）返回 None，由调用方走任务键兜底。
+    """
+    impl_id = getattr(ai_tool, "implementation", None)
+    if not impl_id:
+        return None
+    try:
+        from config.unified_config import get_implementation_name
+        return get_implementation_name(int(impl_id))
+    except (TypeError, ValueError):
+        return None
+
+
 def resolve_h3_prompt_variant(ai_tool: Any, task_key: Optional[str] = None) -> Optional[str]:
     """首帧参考混合 → KFRef；参考生视频 → Ref2VA；仅首帧 → I2VA；有尾帧 → FL2VA；无可用输入 → None。
 
-    KFRef 必须先返回。否则两张参考图会被后面的首尾帧兜底读成 FL2VA，Picture 2 会被写成尾帧。
+    KFRef 判定先看实现方再看任务键：首帧参考混合实现方（id=100）已挂进类型 37
+    参考生的 implementations，新提交 type=37 + implementation=100 时必须用 KFRef
+    模板和槽位原句校验；历史在途 type=50 行（implementation 同为 100）由任务键
+    兜底覆盖。KFRef 必须先返回——否则两张参考图会被后面的首尾帧兜底读成 FL2VA，
+    Picture 2 会被写成尾帧。
     """
+    impl_name = _resolve_ai_tool_implementation_name(ai_tool)
+    if impl_name == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
+        counts = resolve_h3_reference_asset_counts(ai_tool)
+        if counts["images"] or counts["audios"]:
+            return H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+        return None
     if task_key == DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO:
         counts = resolve_h3_reference_asset_counts(ai_tool)
         if counts["images"] or counts["audios"]:

@@ -452,7 +452,6 @@
     "msg_generating_new_voiceover": "正在生成新配音…（下方播放的仍是旧配音）",
     "msg_generating_now": "正在生成...",
     "msg_generating_qrcode": "正在生成支付二维码...",
-    "msg_h3_keyframe_ref_route": "本次使用 MiniMax H3 首帧参考混合模型",
     "msg_image_format_unsupported": "仅支持 JPG、PNG、GIF、WebP 图片",
     "msg_image_gen_failed": "生图失败：{msg}",
     "msg_image_submitted_generating": "生图任务已提交，右侧候选区生成中",
