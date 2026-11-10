@@ -4,14 +4,18 @@
 
 `video_workflow.html`（节点画布）与 `storyboard.html`（故事板编辑器）承载同一集内容的两种编辑形态。本文档描述两者的内容互转：用户在任一页面点击切换按钮，即可把当前内容转换到另一形态并跳转。
 
-## 转换语义（一次性）
+## 转换语义（首次一次性 + 已关联增量同步）
 
-**转换只支持「对方不存在」的情况**：
+**首次转换只支持「对方不存在」的情况**：
 
-- 画布 → 故事板：该画布尚无关联故事板时才创建转换；已有关联故事板时接口直接返回该故事板（`created=false`），前端照常打开，**不做场景同步/覆盖**。
-- 故事板 → 画布：该故事板尚无关联画布时才创建转换；已关联时接口直接返回该画布（`created=false`），前端照常打开，**不覆盖画布内容**。
+- 画布 → 故事板：该画布尚无关联故事板时才创建转换（场景/台词/资产全量落库）。
+- 故事板 → 画布：该故事板尚无关联画布时才创建转换（剧本/分镜组/分镜帧/资产节点全量生成）。
 
-理由：转换后两边会各自独立演进（画布有手工节点、故事板有资产绑定），增量同步需要处理双向冲突，语义复杂且易误伤；一次性转换语义简单可预期。
+**已关联时不再"停在转换时刻的快照"**，入口动作触发**增量资产同步**（只增不改不删、选中跟随最后操作端）：
+
+- 故事板 → 画布（已关联）：接口返回既有画布 + 只读资产包 `sync_assets`，由画布前端在 `loadWorkflow` 后合并（`web/js/storyboard_asset_sync.js`）。**必须在前端合并**：画布保存是前端内存态整体覆盖写（content_version 乐观锁 + last_write_id 会话互判 409），后端直写会被下一次 autoSave 静默回滚。
+- 画布 → 故事板（已关联）：接口内直接增量落库（`_sync_assets_to_existing_storyboard`）——故事板是分表字段级 CRUD，且跳转后目标页全量加载，后端行级写天然安全、无画布方向的 P0 竞态。
+- 已知边界（只增语义）：画布上删除过的节点会再次补回；故事板删除的场景/资产不受影响；匹配不到分镜帧（`source_shot_key` ≠ `shot_id`）跳过。
 
 ## 页面入口
 
@@ -43,15 +47,15 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
    - 剧本节点缺失时用 `shotJson.db_character_info` 追加 `{id: str(db_id), character_db_id, name}` 兜底角色；
    - 台词缺 `character_id`（工作流 shotJson 常只有 `character_name`）按名回填；
    - `characters_present` 含不可解析 id 时退化为 `db_character_info` 的 db id。
-   - 同时产出每帧资产映射 `{source_shot_key: {first_frame, last_frame, videos[], image_candidates[]}}`（key 规则与场景 payload 一致：`shot_id or scene_{n}`）。首帧图来源优先级：分镜帧自带 `imageUrl` > 连线 image 节点；候选全量保留。
+   - 同时产出每帧资产映射 `{source_shot_key: {first_frame, selected_first_frame, last_frame, videos[], image_candidates[]}}`（key 规则与场景 payload 一致：`shot_id or scene_{n}`）。首帧候选来源优先级：分镜「视频首帧」槽 `previewImageUrl`（画布选中态）> 分镜帧自带 `imageUrl` > 连线 image 节点；候选全量保留，首位即落库选中。
 5. 复用 `build_storyboard_scenes_from_parsed_script`（`api/storyboard.py`）生成场景 payload——与剧本拆分发布完全同一条字段映射链。
 6. 守卫：画布无 `default_world_id` → 400「请先选择世界」；无分镜帧 → 400「画布上没有可转换的分镜节点」。
 7. 创建故事板：集数 = `max_episode_number + 1`；标题 `{画布名}故事板`；比例/画风继承画布与世界默认；`script_id` 取剧本节点 `data.scriptId`；`workflow_id` 回写关联。
 8. `_create_scenes_with_assets` 逐场景创建并迁移资产：
    - 场景 + 台词（`source_shot_key` 落库）；
-   - 首帧候选（自带图 + 连线图片节点，抽卡多张全收）→ 逐个建 `first_frame` 资产，**选中第一张**；
+   - 首帧候选（分镜「视频首帧」槽选中图 + 自带图 + 连线图片节点，抽卡多张全收）→ 逐个建 `first_frame` 资产，**选中 `selected_first_frame`**（画布选中态，候选首位；不在候选中时回退首位）；
    - `lastFrameUrl` → `last_frame` 资产并选中；
-   - 下挂视频 → 逐个建 `video` 资产，**选中第一个**。
+   - 下挂视频 → 逐个建 `video` 资产，**选中第一个**（连线序；故事板转来的画布已把选中视频排连线首位，往返选中还原）。
    - 结束 `recalc_total_duration`。
 
 ### POST /api/storyboard/{storyboard_id}/to-workflow
@@ -67,11 +71,11 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
    - `shot_type/camera_angle/camera_movement` 取自 `video_config_json`。
 3. `_build_workflow_data_from_storyboard` 生成 `serializeWorkflow` 同构的 `workflow_data`：
    - 剧本节点（可取到正文时）→ 按 `act_name` 分组的 `shot_group` 节点 → 每场景一个 `shot_frame` 节点；
-   - 选中首帧 → `shot_frame.data.previewImageUrl`（分镜「视频首帧」槽）**并创建独立 `image` 节点**（普通连线 `shot_frame → image`，与画布原生"生成分镜图"产物形态一致），同时补 `firstFrameConnections`（`image → shot_frame`，画到分镜节点「视频首帧」端口）。`imageUrl` 留空：该字段会在「视频尾帧」控件下方再渲染一张无标题图，看起来像把首帧当成了尾帧；
+   - **全量首帧候选图**（`StoryboardSceneAssetModel.list_storyboard_assets`，选中排首位）逐个创建独立 `image` 节点（普通连线 `shot_frame → image`，与画布原生抽卡产物形态一致：纵向 280 排布、多数命名 `分镜N图1/2...`）；选中的候选写 `shot_frame.data.previewImageUrl`（分镜「视频首帧」槽）并补 `firstFrameConnections`（`image → shot_frame`，画到分镜节点「视频首帧」端口，只连选中那张）。`imageUrl` 留空：该字段会在「视频尾帧」控件下方再渲染一张无标题图，看起来像把首帧当成了尾帧；
    - 选中尾帧 → `data.lastFrameUrl`（只在故事板确实有尾帧时写入，不用首帧顶替）；
-   - 选中视频 → 独立 `video` 节点（`data.url/name`）+ 普通连线 `shot_frame → video`。首帧连线指向分镜节点，不指向视频节点（视频节点没有 `.first-frame-port`，线画不出来）；
+   - **全量视频**（选中排首位）逐个创建独立 `video` 节点（`data.url/name`，多数命名 `分镜N视频1/2...`）+ 普通连线 `shot_frame → video`。首帧连线指向分镜节点，不指向视频节点（视频节点没有 `.first-frame-port`，线画不出来）；
    - `script → group → frame → image/video` 连线、计数器（含 `nextFirstFrameConnId`）、timeline（含每分镜一格的时间轴柱子，见下节）、默认视口齐备，前端 `restoreNode` 原样可恢复；
-   - **资产 URL 相对化**：本机绝对地址（`http://127.0.0.1:{port}` / `http://localhost:{port}`，生成链路会写死当时的 host:port）统一剥掉 origin 转为 `/upload/...` 相对路径——前端按当前页面 origin 补全，画布换端口打开不裂图（相对路径的视频上传产物本就是此形态）；**布局游标累进**：帧间距 960px、组间距按组内帧数动态撑开，节点不叠压（叠压会导致拖动图片节点整理布局时误触邻近分镜帧的首帧/尾帧端口，把图片误设为尾帧）。
+   - **资产 URL 相对化**：本机绝对地址（`http://127.0.0.1:{port}` / `http://localhost:{port}`，生成链路会写死当时的 host:port）统一剥掉 origin 转为 `/upload/...` 相对路径——前端按当前页面 origin 补全，画布换端口打开不裂图（相对路径的视频上传产物本就是此形态）；**布局游标累进**：帧间距取固定 960px 与产物列高（纵向 280/个）的较大者、组间额外间隔，多候选图/视频时节点不叠压（叠压会导致拖动图片节点整理布局时误触邻近分镜帧的首帧/尾帧端口，把图片误设为尾帧）。
 4. `VideoWorkflowModel.create`（名称 `{故事板标题}画布`，世界/比例/画风继承）+ `StoryboardModel.update(workflow_id)` 回写关联。
 
 ## 字段映射速查
@@ -89,11 +93,32 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
 | `video_type`（含手动切换的数字人/视频选择） | `shotJson.video_type`（反向 `resolve_scene_video_type` 经 `_llm_presentation` 优先采信，往返保留手动选择） |
 | `dialogues[]` | `dialogue[{character_name, text}]` |
 | `act_name` | `shot_group` 分组（分组名） |
-| `first_frame_url`（选中首帧） | `shot_frame.data.previewImageUrl`，外加独立 `image` 节点（普通连线）和 `firstFrameConnections`（`image` → 分镜「视频首帧」端口）。`imageUrl` 留空 |
+| `first_frame` 资产全量（选中标记 `selected_first_frame_id`） | 每候选一个独立 `image` 节点（普通连线）；选中排连线首位并写 `shot_frame.data.previewImageUrl` + `firstFrameConnections`（`image` → 分镜「视频首帧」端口，只连选中）。`imageUrl` 留空 |
 | `last_frame_url`（选中尾帧） | `shot_frame.data.lastFrameUrl`（无尾帧时为空，不拿首帧填充） |
-| `video_url`（选中视频） | 下挂 `video` 节点 `data.url`（普通连线 `shot_frame → video`） |
+| `video` 资产全量（选中标记 `selected_video_id`） | 每资产一个下挂 `video` 节点 `data.url`（普通连线 `shot_frame → video`）；选中排连线首位 |
 | `source_shot_key` | `shot.shot_id`（转换沿用场景原 key；手工场景无 key 时为 `sb_{scene.id}`） |
 | `prompt_json.three_scene_code` | `shotJson.three_scene_code` + `shotJson.three_scene_seq_start`（3D 空间透传，见下节；反向经共享 builder 原样回写 `prompt_json.three_scene_code`，往返稳定） |
+
+## 资产与选中态双向同步
+
+故事板场景资产（`storyboard_scene_asset`）每场景可有多条 first_frame/video 记录，选中指针在场景行（`selected_first_frame_id` / `selected_video_id`）；画布的对应语义：
+
+| 端 | 选中表达 | 全量表达 |
+| --- | --- | --- |
+| 故事板 | 场景 `selected_first_frame_id` / `selected_video_id` | `storyboard_scene_asset` 多行 |
+| 画布 | 分镜帧 `data.previewImageUrl`（「视频首帧」槽）；视频无显式选中（连线序首位即选中） | 分镜帧连线下挂的多个 `image`/`video` 节点 |
+
+**首次转换契约（往返选中还原）**：
+
+- **S→W**：全量资产各建节点，**选中资产排连线首位**（首帧同时写 `previewImageUrl`、首帧端口只连选中图）。
+- **W→S**：首帧候选 = `previewImageUrl`（画布选中）> 自带图 > 连线 image 节点；**落库选中取候选首位**（`selected_first_frame`），不再固定取第一张。视频落库选中取连线第一（S→W 已把选中排首位，往返闭环）；画布原生新生成的视频按连线序自然生效。
+- 选中资产 URL 经 `_relativize_asset_url` 后与候选比对，口径一致。
+
+**已关联增量同步**（入口动作触发，选中跟随最后操作端）：
+
+- **S→W 已关联**：`to-workflow` 返回 `sync_assets`（`_assemble_sync_payload`：每场景全量候选 URL + 选中 URL，只读）→ 故事板页 `sessionStorage` 暂存（`StoryboardAssetSync.stash`）→ 画布页 `loadWorkflow` 后 `applyPending` 合并：缺失 URL 补 image/video 节点（纵向 280 追加、URL 去重幂等）、`previewImageUrl`/首帧端口连线指向选中图、选中视频连线重排首位、尾帧有值才覆盖；实际变更检测避免"已最新"时白保存（PUT 全量写放大）。多标签页并发交由既有 409 会话互判机制兜底。
+- **W→S 已关联**：`from-workflow` 内 `_sync_assets_to_existing_storyboard` 直接落库：画布产物 URL（同源字符串口径，本机地址剥 origin 归一）按 `source_shot_key` 匹配场景，缺失 INSERT（无 `ai_tool_id` 纯 URL 引用）、选中 `set_selected`（画布有对应产物才覆盖：首帧=选中槽、视频=连线首位、尾帧=lastFrameUrl）；画布行锁串行化 + 幂等可重跑。
+- 往返收敛：用户在 A 端改选中后跳 B 端 → 同步以 A 端为准；两边对齐后重复同步无副作用。
 
 ## 时间轴柱子（S→W 转换与兜底链）
 

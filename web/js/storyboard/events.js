@@ -3234,6 +3234,14 @@ function handleRoute(route) {
             api.convertStoryboardToWorkflow(state.storyboardId)
                 .then((res) => {
                     state.workflowId = res.workflow_id;
+                    // 已关联画布：后端附带增量资产包，暂存给画布页在
+                    // loadWorkflow 后合并（storyboard_asset_sync.js）
+                    if (res.sync_assets && window.StoryboardAssetSync) {
+                        window.StoryboardAssetSync.stash({
+                            workflow_id: res.workflow_id,
+                            scenes: res.sync_assets.scenes || [],
+                        });
+                    }
                     openWorkflowCanvas(res.workflow_id);
                 })
                 .catch((err) => {
