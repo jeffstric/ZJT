@@ -503,3 +503,20 @@ def test_voice_reference_capability_flag_wired_on_expected_models_only():
         config for config in UnifiedConfigRegistry.get_all() if "grok" in config.key
     )
     assert grok.to_frontend_dict()["supports_voice_input"] is False
+
+
+def test_append_single_frame_guard_appends_and_is_idempotent():
+    from services.storyboard_reference_prompt_service import append_single_frame_guard
+
+    guarded = append_single_frame_guard("中景：【【赵志高】】站在仓库门口，怒视前方。")
+
+    assert "单幅静止画面" in guarded
+    assert guarded.startswith("中景：【【赵志高】】站在仓库门口，怒视前方。")
+    assert "禁止宫格" in guarded
+
+    # 幂等：重复追加不产生第二段守卫
+    assert append_single_frame_guard(guarded) == guarded
+
+    # 空提示词不追加
+    assert append_single_frame_guard("") == ""
+    assert append_single_frame_guard("   ") == ""

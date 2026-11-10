@@ -20,6 +20,23 @@ from config.constant import (
 ROLE_TAG_RE = re.compile(r"【【([^】]+)】】")
 PROP_TAG_RE = re.compile(r"〖〖([^〗]+)〗〗")
 
+# 单幅画面守卫：分镜首帧是"单张静止图像"，提示词若含先后多画面描述，
+# 生图模型会画出宫格/多格拼图。所有分镜生图提交口统一追加此守卫。
+SINGLE_FRAME_GUARD_TEXT = (
+    "画面要求：单幅静止画面，只呈现一个定格瞬间的完整构图；"
+    "禁止宫格、多格拼图、分屏、对比图、连环画式多个画面。"
+)
+
+
+def append_single_frame_guard(prompt: str) -> str:
+    """Append the single-frame guard to an image prompt tail (idempotent)."""
+    body = str(prompt or "").rstrip()
+    if not body:
+        return body
+    if SINGLE_FRAME_GUARD_TEXT in body:
+        return body
+    return f"{body}\n\n{SINGLE_FRAME_GUARD_TEXT}"
+
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     if isinstance(value, dict):
