@@ -132,7 +132,7 @@ DEFAULT_CONFIGS: List[Dict[str, Any]] = [
     {
         'key': 'upload.max_video_duration_seconds',
         'value_type': 'int',
-        'description': 'Agent 对话模式上传视频最大时长限制（秒），超时长的视频将被截断',
+        'description': 'Agent 对话模式上传视频/音频总时长平台级上限（秒），超时长的视频将被截断；前端实际生效值另与所选模型最大生成时长取小',
         'editable': True,
         'is_sensitive': False
     },

@@ -15,7 +15,7 @@ from config.unified_config import UnifiedConfigRegistry
 from config.config_util import get_config_value, get_dynamic_config_value
 from config.version import get_app_version
 from config.strategy.edition_strategy import IS_COMMUNITY_EDITION
-from config.constant import Edition, ExternalLinks, ChannelLevel
+from config.constant import Edition, ExternalLinks, ChannelLevel, UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +209,7 @@ async def get_server_config():
         version = get_app_version()
         max_image_size_mb = get_dynamic_config_value('upload', 'max_image_size_mb', default=10)
         max_video_size_mb = get_dynamic_config_value('upload', 'max_video_size_mb', default=50)
-        max_video_duration_seconds = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=15)
+        max_video_duration_seconds = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT)
         enable_vue_error_output = get_config_value('frontend', 'enable_vue_error_output', default=False)
         email_enabled = get_dynamic_config_value('email', 'enabled', default=False)
 

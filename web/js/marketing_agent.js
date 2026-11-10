@@ -1043,6 +1043,19 @@
                 return durations.length > 0 ? Math.max(...durations) : 15;
             }
 
+            // 上传素材（视频/音频）总时长上限：平台配置上限 与 所选模型最大生成时长 取小；
+            // 未选模型/模型无时长档位时回落到平台上限。
+            // 与 getMaxSupportedDuration 的 15s 兜底不同：那是「auto 时长提交」的计费行为，不能复用。
+            // 注意：切换模型后已上传素材超出新上限不做追溯清理，仅新增上传时按本上限校验。
+            function computeUploadDurationLimit(modelConfig, serverCap) {
+                const nums = (modelConfig?.durations || []).filter(d => typeof d === 'number');
+                if (nums.length === 0) return serverCap;
+                return Math.min(serverCap, Math.max(...nums));
+            }
+
+            const effectiveUploadDurationLimit = Vue.computed(() =>
+                computeUploadDurationLimit(getCurrentVideoModelConfig(), maxVideoDurationSeconds.value));
+
             function resolveSelectedDurationForSubmission() {
                 if (selectedDuration.value === 'auto') {
                     return getMaxSupportedDuration(getCurrentVideoModelConfig());
@@ -6242,10 +6255,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -6262,10 +6275,10 @@
 
                                 for (const file of sizeFiltered) {
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('video_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('video_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
-                                    let fileDuration = maxVideoDurationSeconds.value;
+                                    let fileDuration = effectiveUploadDurationLimit.value;
                                     try {
                                         const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                                         fileDuration = info.duration || 0;
@@ -6281,7 +6294,7 @@
                         }
                     }
 
-                    // 处理音频（最多 5 个，总时长不超过 15 秒）
+                    // 处理音频（最多 5 个，总时长不超过模型上限，随所选模型动态）
                     if (audioFiles.length > 0) {
                         const remainingAudioSlots = AGENT_AUDIO_MAX_COUNT - agentAudioFiles.value.length;
                         if (remainingAudioSlots <= 0) {
@@ -6289,10 +6302,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -6307,7 +6320,7 @@
                                         continue;
                                     }
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('audio_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('audio_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
                                     let fileDuration = 0;
@@ -6350,12 +6363,12 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
-                        let fileDuration = maxVideoDurationSeconds.value;
+                        let fileDuration = effectiveUploadDurationLimit.value;
                         try {
                             const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                             fileDuration = info.duration || 0;
@@ -6381,9 +6394,9 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
                         let fileDuration = 0;
@@ -6734,7 +6747,7 @@
                     // 前端压缩（如果需要）
                     if (typeof VIDEO_COMPRESSOR !== 'undefined') {
                         vidItem.compressing = true;
-                        const effectiveMaxDuration = maxDurationForThis || maxVideoDurationSeconds.value;
+                        const effectiveMaxDuration = maxDurationForThis || effectiveUploadDurationLimit.value;
                         const compressVideo = VIDEO_COMPRESSOR.compressVideoForReference || VIDEO_COMPRESSOR.compressVideoTo480p;
                         if (typeof compressVideo !== 'function') {
                             throw new Error('VIDEO_COMPRESSOR missing reference video compression method');
@@ -6754,7 +6767,7 @@
                             console.log(`[Agent] 视频压缩: ${(file.size/1024/1024).toFixed(1)}MB → ${(result.blob.size/1024/1024).toFixed(1)}MB`);
                         }
                     } else {
-                        vidItem.duration = maxDurationForThis || maxVideoDurationSeconds.value;
+                        vidItem.duration = maxDurationForThis || effectiveUploadDurationLimit.value;
                     }
 
                     vidItem.uploading = true;
@@ -7334,10 +7347,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -7354,10 +7367,10 @@
 
                                 for (const file of sizeFiltered) {
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('video_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('video_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
-                                    let fileDuration = maxVideoDurationSeconds.value;
+                                    let fileDuration = effectiveUploadDurationLimit.value;
                                     try {
                                         const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                                         fileDuration = info.duration || 0;
@@ -7373,7 +7386,7 @@
                         }
                     }
 
-                    // 处理音频（最多 5 个，总时长不超过 15 秒）
+                    // 处理音频（最多 5 个，总时长不超过模型上限，随所选模型动态）
                     if (audioFiles.length > 0) {
                         const remainingAudioSlots = AGENT_AUDIO_MAX_COUNT - agentAudioFiles.value.length;
                         if (remainingAudioSlots <= 0) {
@@ -7381,10 +7394,10 @@
                         } else {
                             (async () => {
                                 const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                                let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                                let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
 
                                 if (remainingDuration <= 0) {
-                                    showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                                    showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                                     return;
                                 }
 
@@ -7399,7 +7412,7 @@
                                         continue;
                                     }
                                     if (remainingDuration <= 0) {
-                                        showError(window.t('audio_duration_limit_name_skipped', {dur: maxVideoDurationSeconds.value, name: file.name}));
+                                        showError(window.t('audio_duration_limit_name_skipped', {dur: effectiveUploadDurationLimit.value, name: file.name}));
                                         break;
                                     }
                                     let fileDuration = 0;
@@ -7440,12 +7453,12 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentVideoFiles.value.reduce((sum, v) => sum + (v.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('video_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('video_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
-                        let fileDuration = maxVideoDurationSeconds.value;
+                        let fileDuration = effectiveUploadDurationLimit.value;
                         try {
                             const info = await VIDEO_COMPRESSOR.getVideoResolution(file);
                             fileDuration = info.duration || 0;
@@ -7466,9 +7479,9 @@
                     }
                     (async () => {
                         const currentTotalDuration = agentAudioFiles.value.reduce((sum, a) => sum + (a.duration || 0), 0);
-                        let remainingDuration = maxVideoDurationSeconds.value - currentTotalDuration;
+                        let remainingDuration = effectiveUploadDurationLimit.value - currentTotalDuration;
                         if (remainingDuration <= 0) {
-                            showError(window.t('audio_duration_limit_reached', {dur: maxVideoDurationSeconds.value}));
+                            showError(window.t('audio_duration_limit_reached', {dur: effectiveUploadDurationLimit.value}));
                             return;
                         }
                         let fileDuration = 0;
@@ -8361,6 +8374,7 @@
                 AGENT_VIDEO_MAX_COUNT,
                 maxVideoSizeMB,
                 maxVideoDurationSeconds,
+                effectiveUploadDurationLimit,
                 isDragging,
                 handleDragOver,
                 handleDragLeave,

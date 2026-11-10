@@ -361,7 +361,7 @@ storyboard:
 upload:
   max_image_size_mb: 10  # 角色、场景、道具的参考图片最大大小限制（MB）
   max_video_size_mb: 50  # Agent 对话模式上传视频最大大小限制（MB）
-  max_video_duration_seconds: 15  # Agent 对话模式上传视频最大时长（秒）
+  max_video_duration_seconds: 30  # Agent 对话模式上传视频/音频总时长平台级上限（秒）；前端实际生效值另与所选模型最大生成时长取小
 
 # Frontend debug mode
 frontend:

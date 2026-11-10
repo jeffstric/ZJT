@@ -45,6 +45,7 @@ from config.constant import (
     MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH,
     OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE,
     SSE_STREAM_SEND_TIMEOUT_SECONDS,
+    UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT,
 )
 from api.auth_identity import resolve_authorization_user_id
 from model.user_tokens import UserTokensModel
@@ -6043,7 +6044,7 @@ async def upload_agent_video(
         # ffprobe 验证分辨率和时长
         video_info = await get_video_info(file_path)
         if video_info:
-            max_duration = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=15)
+            max_duration = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT)
 
             if video_info['duration'] > max_duration + 1:
                 os.remove(file_path)
