@@ -460,6 +460,17 @@ class MinimaxH3ChenyuV1Driver(BaseVideoDriver):
                         "status": "RUNNING",
                         "message": "任务查询暂不可用，稍后将重试"
                     }
+                if isinstance(status_code, int) and 500 <= status_code < 600:
+                    # 上游 5xx 为临时故障（网关抖动/服务重启）：判死会误退款且上游任务
+                    # 可能仍在跑（晨羽完成后按 GPU 实际分钟数结算，持续产生费用），
+                    # 保持 RUNNING 继续轮询，任务过期检查兜底终态（对齐 AutoDL 驱动）。
+                    self.logger.warning(
+                        f"晨羽状态查询上游 {status_code}（临时故障），保持轮询: run_order_id={project_id}"
+                    )
+                    return {
+                        "status": "RUNNING",
+                        "message": "上游服务暂时不可用，稍后将重试"
+                    }
                 error_body = self._extract_http_error_body(http_error)
                 msg = str(error_body.get("msg")) if isinstance(error_body, dict) and error_body.get("msg") else str(http_error)
                 return {

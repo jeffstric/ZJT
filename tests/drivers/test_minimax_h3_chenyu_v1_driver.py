@@ -235,6 +235,21 @@ def test_check_status_order_not_found_keeps_running():
     assert driver.check_status("wfr_abc")["status"] == "RUNNING"
 
 
+@pytest.mark.parametrize("status_code", [500, 502, 503, 504])
+def test_check_status_http_5xx_keeps_running(status_code):
+    """上游 5xx（网关抖动/服务重启）不判死：判死会误退款且上游任务可能仍在跑
+    （晨羽完成后按 GPU 实际分钟数结算，持续产生费用），保持轮询由任务过期
+    检查兜底终态（对齐 AutoDL 驱动 a80fae37 的 5xx 策略）"""
+    driver = make_driver()
+    response = requests.Response()
+    response.status_code = status_code
+    http_error = requests.exceptions.HTTPError(response=response)
+    driver._request = MagicMock(side_effect=http_error)
+    result = driver.check_status("wfr_abc")
+    assert result["status"] == "RUNNING"
+    assert driver.logger.warning.called
+
+
 def test_check_status_unknown_status_keeps_running():
     driver = make_driver()
     _patched_request(driver, {"code": 0, "msg": "查询成功",
