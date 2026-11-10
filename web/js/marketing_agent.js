@@ -3332,12 +3332,14 @@
                     startImageStatusCheck(msgUid, submittedProjectIds, requestSessionId);
 
                 } catch (e) {
-                    showError(e.message || window.t('image_generation_request_failed'));
+                    // 优先透传后端 detail（如张数校验 400 的具体原因），避免只显示 axios 原文
+                    const detail = e && e.response && e.response.data && e.response.data.detail;
+                    showError(detail || e.message || window.t('image_generation_request_failed'));
                     // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'image');
+                    const violationContent = describeSubmitViolation(detail || (e && e.message), 'image');
                     messages.value.push({
                         role: 'ai',
-                        content: violationContent || window.t('image_generation_prefix_failed') + (e.message || window.t('send_failed')),
+                        content: violationContent || window.t('image_generation_prefix_failed') + (detail || e.message || window.t('send_failed')),
                         timestamp: new Date().toISOString()
                     });
                 } finally {
@@ -3832,9 +3834,32 @@
                                     allImageFiles.push(ref.file);
                                 }
                             });
+                            // 提交前守卫：图片数超过当前模式/模型上限（maxImageCount 按模型
+                            // max_multi_ref_images 计算，首尾帧模式为 2/1）时直接拦截并给出
+                            // 明确文案，避免打向后端才吃 400（后端 detail 亦已透传，双保险）
+                            if (allImageFiles.length > maxImageCount.value) {
+                                showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
+                                messages.value.push({
+                                    role: 'ai',
+                                    content: window.t('video_image_mode_max_n', { max: maxImageCount.value }),
+                                    timestamp: new Date().toISOString()
+                                });
+                                scrollToBottom();
+                                return;
+                            }
                             allImageFiles.forEach(file => form.append('images', file));
                         } else if (hasUrlImage) {
                             // URL 图片（重新编辑带回的参考图、或从已生成图片直接转视频，无 File 对象）
+                            if (urlOnlyImages.length > maxImageCount.value) {
+                                showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
+                                messages.value.push({
+                                    role: 'ai',
+                                    content: window.t('video_image_mode_max_n', { max: maxImageCount.value }),
+                                    timestamp: new Date().toISOString()
+                                });
+                                scrollToBottom();
+                                return;
+                            }
                             form.append('image_urls', urlOnlyImages.join(','));
                         }
 
@@ -3923,12 +3948,14 @@
                     startVideoStatusCheck(msgUid, submittedProjectIds, requestSessionId);
 
                 } catch (e) {
-                    showError(e.message || window.t('video_generation_request_failed'));
+                    // 优先透传后端 detail（如张数校验 400 的具体原因），避免只显示 axios 原文
+                    const detail = e && e.response && e.response.data && e.response.data.detail;
+                    showError(detail || e.message || window.t('video_generation_request_failed'));
                     // 内容违规：提交阶段即被安全系统拦截时，气泡显示红色违规文案
-                    const violationContent = describeSubmitViolation(e && e.message, 'video');
+                    const violationContent = describeSubmitViolation(detail || (e && e.message), 'video');
                     messages.value.push({
                         role: 'ai',
-                        content: violationContent || window.t('video_generation_prefix_failed') + (e.message || window.t('send_failed')),
+                        content: violationContent || window.t('video_generation_prefix_failed') + (detail || e.message || window.t('send_failed')),
                         timestamp: new Date().toISOString()
                     });
                 } finally {
@@ -6414,8 +6441,10 @@
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
                 if (isVideoModeVal && videoImageMode.value === 'multi_reference' && hasUploadedImage.value) {
-                    if (referenceImageFiles.value.length >= 5) {
-                        showError(window.t('reference_max_5'));
+                    // 参考图名额 = 当前模型上限 - 主图 1 张（与 handleReferenceFileChange 口径一致）
+                    const maxRefImages = maxImageCount.value - 1;
+                    if (referenceImageFiles.value.length >= maxRefImages) {
+                        showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
@@ -6931,7 +6960,7 @@
                 const maxRef = maxImageCount.value - (hasUploadedImage.value ? 1 : 0);
                 const remaining = maxRef - referenceImageFiles.value.length;
                 if (remaining <= 0) {
-                    showError(window.t('reference_max_5'));
+                    showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                     if (referenceInputRef.value) referenceInputRef.value.value = '';
                     return;
                 }
@@ -7492,8 +7521,10 @@
                 }
                 // 视频+全能参考模式下，已有主图时添加为参考图
                 if (isVideoMode && videoImageMode.value === 'multi_reference' && hasUploadedImage.value) {
-                    if (referenceImageFiles.value.length >= 5) {
-                        showError(window.t('reference_max_5'));
+                    // 参考图名额 = 当前模型上限 - 主图 1 张（与 handleReferenceFileChange 口径一致）
+                    const maxRefImages = maxImageCount.value - 1;
+                    if (referenceImageFiles.value.length >= maxRefImages) {
+                        showError(window.t('video_image_mode_max_n', { max: maxImageCount.value }));
                         return;
                     }
                     const refUrl = URL.createObjectURL(file);
