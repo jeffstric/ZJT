@@ -441,15 +441,18 @@ state.timeline.pillars = data.timeline.pillars || [];
 
 ```javascript
 function autoMigratePillars() {
-  // 1. 检查是否已有柱子数据
-  if (state.timeline.pillars.length > 0) return false;
-  
+  // 1. 检查是否已有分镜柱子数据。
+  //    ⚠️ 不能只看 pillars.length：视频落入自由柱时 getOrCreateFreePillar 会把
+  //    __free__ 塞进 pillars 并随 autoSave 持久化，pillars=['__free__'] 正是
+  //    "缺分镜柱"的受损形态（转换产物视频误落 __free__ 后保存过），必须照常迁移
+  if (state.timeline.pillars.some(p => p.id !== '__free__')) return false;
+
   // 2. 扫描画布上所有已解析的剧本节点
-  const scriptNodes = state.nodes.filter(n => 
+  const scriptNodes = state.nodes.filter(n =>
     n.type === 'script' && n.data.parsedData
   );
-  
-  // 3. 基于剧本的 parsedData 重建柱子
+
+  // 3. 基于剧本的 parsedData 重建柱子（另有分镜组节点 shots 第二来源）
   scriptNodes.forEach(scriptNode => {
     const parsedData = scriptNode.data.parsedData;
     parsedData.shot_groups.forEach(shotGroup => {
@@ -458,8 +461,12 @@ function autoMigratePillars() {
       });
     });
   });
-  
-  // 4. 自动显示时间轴
+
+  // 4. 把柱子缺失期误落 __free__ 的片段归位到分镜柱
+  //    （reassignFreePillarClips：按片段 nodeId → getPillarForNode 重新归属，
+  //    解析不到分镜柱的保持独立片段语义不动）
+
+  // 5. 自动显示时间轴
   state.timeline.visible = true;
   return true;
 }
@@ -470,6 +477,7 @@ function autoMigratePillars() {
 - **无感知迁移**：用户首次点击"加时间轴"时自动完成迁移
 - **提示信息**：显示"已自动迁移历史数据到新时间轴结构"
 - **自动保存**：迁移完成后自动保存工作流，下次加载时不再需要迁移
+- **受损画布自愈**：`pillars` 仅含 `__free__` 的画布（柱子缺失期视频落入自由柱且已保存）重载后照常补建分镜柱，且已落 `__free__` 的可归位片段自动收回分镜柱
 
 ### 迁移条件
 
