@@ -23,6 +23,7 @@
 - `pending_review` 为内容审核阶段（2026-11-08 E2E 实测出现），仍在执行流中
 - 业务错误走 HTTP 200 + `code != 0`（如 `code:1 "运行记录不存在"`）；订单不存在可能是刚提交的传播延迟，按 RUNNING 等待
 - 轮询期 HTTP 429/404/5xx 均不判死（保持 RUNNING 继续轮询，任务过期检查兜底终态）：判死会误退款且上游任务可能仍在跑——晨羽完成后按 GPU 实际分钟数结算，持续产生费用（5xx 策略与 AutoDL 驱动 a80fae37 对齐）
+- FAILED 分支返回 `message` 键（非主契约 `error` 键），消费端 `visual_task` 已做 `error or message` 兜底——上游 `error_message`（内容审核拒绝/GPU 异常等）可透传到 ai_tools.message 供排障
 - 幂等：`idempotency_key = zjt_h3_chenyu_{ai_tool.id}`，调度层重试提交同一任务不重复计费（重放时 `data.idempotent_replay=true`）
 - 媒体：`n114_image` 直接传公网 HTTPS URL（文档明说支持，无需走 `/assets` 临时资源上传）
 
