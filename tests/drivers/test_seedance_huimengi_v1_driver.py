@@ -324,6 +324,87 @@ class TestBuildCreateRequest(unittest.TestCase):
         )
         self.assertEqual(req['json']['params']['omni_reference_task_type'], 'edit')
 
+    def test_25_reference_video_prepare_fail_returns_user_error(self):
+        """2.5 + 参考视频规范化失败（如 0 字节 webm）：fail-fast 返回 USER 错误，
+        不得静默跳过后仍以 edit 类型提交（事故：火山 400 TaskTypeConstraint）"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频编辑',
+            extra_config={'image_mode': 'multi_reference', 'ratio': '9:16'},
+            duration=5,
+            video_path='http://example.com/ref.webm',
+        )
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': [],
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(False, None, 'ffmpeg 转码失败: EBML header parsing failed', [])):
+            result = driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+        self.assertIn('重新上传', result['error'])
+
+    def test_25_reference_video_cdn_upload_fail_returns_user_error(self):
+        """2.5 + 参考视频上传 CDN 失败：fail-fast 返回 USER 错误，不静默降级为图生视频"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频编辑',
+            extra_config={'image_mode': 'multi_reference', 'ratio': '9:16'},
+            duration=5,
+            video_path='http://example.com/ref.mp4',
+        )
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': [],
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(True, 'http://example.com/ref.mp4', None, [])), \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(False, None, '上传超时')):
+            result = driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+
+    def test_25_multi_reference_videos_do_not_set_edit(self):
+        """2.5 + 多个参考视频：火山 edit 要求恰好 1 个参考视频，多视频不下发 edit，
+        ratio/duration 用用户值（计价层吸附的视频总时长）"""
+        from task.visual_drivers.seedance_huimengi_v1_driver import Seedance25HuimengiV1Driver
+        from task.visual_drivers import seedance_huimengi_v1_driver as drv_mod
+        driver = _create_driver(Seedance25HuimengiV1Driver)
+        ai_tool = _make_ai_tool(
+            prompt='参考两个视频生成',
+            extra_config={'image_mode': 'multi_reference', 'ratio': '9:16'},
+            duration=10,
+            video_path='http://example.com/ref1.mp4,http://example.com/ref2.mp4',
+        )
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': [],
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(True, 'http://example.com/ref.mp4', None, [])), \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(True, 'http://cdn.example.com/ref.mp4', None)):
+            req = driver.build_create_request(ai_tool)
+
+        params = req['json']['params']
+        self.assertEqual(len(params['reference_videos']), 2)
+        self.assertNotIn('omni_reference_task_type', params)
+        self.assertEqual(params['ratio'], '9:16')
+        self.assertEqual(params['duration'], 10)
+
     def test_text_to_video_empty_prompt_rejected(self):
         """文生视频空 prompt 应返回错误"""
         driver = self._driver()

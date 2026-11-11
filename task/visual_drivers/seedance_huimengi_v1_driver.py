@@ -374,20 +374,13 @@ class SeedanceHuimengiV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
         # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
         # 使接口提前校验参数限制（ratio 必须 adaptive、duration 必须 -1）。
         # 判定入口与计价层共用同一函数；字段放 params 内，依赖 huimengi 网关透传。
-        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
-        if is_25_video_edit:
-            params["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
-            params["ratio"] = "adaptive"
-            params["duration"] = -1
-            self.logger.info(
-                f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
-                "ratio=adaptive duration=-1"
-            )
-        else:
-            if ratio:
-                params["ratio"] = ratio
-            if ai_tool.duration:
-                params["duration"] = ai_tool.duration
+        # edit 以「实际成功下发的参考视频恰好 1 个」为准（火山要求 exactly one），
+        # 判定移至 MULTI_REFERENCE 分支视频处理完成后（见下方），处理失败已 fail-fast，
+        # 避免「标 edit 却无视频」的必死请求；此处先落用户比例/时长。
+        if ratio:
+            params["ratio"] = ratio
+        if ai_tool.duration:
+            params["duration"] = ai_tool.duration
 
         resolution = self._get_resolution_for_payload(extra_config)
         if resolution:
@@ -471,6 +464,9 @@ class SeedanceHuimengiV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                 params["reference_images"] = processed_reference_images
 
             # 参考视频（需上传到 CDN）
+            # 处理失败（规范化/上传 CDN）直接 fail-fast 返回 USER 错误，不静默跳过：
+            # 视频编辑任务的编辑对象不可丢，跳过后会以 edit 类型提交却无参考视频，
+            # 被火山 400 拒绝；个别网关放行时更糟——按编辑计费、实际按图生视频出片
             reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
             if reference_video_raw:
                 video_paths = [v.strip() for v in reference_video_raw.split(",") if v.strip()]
@@ -482,18 +478,42 @@ class SeedanceHuimengiV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                     )
                     try:
                         if not prep_success or not prepared_path:
-                            self.logger.warning(f"参考视频规范化失败，跳过: {prep_error}")
-                            continue
+                            self.logger.error(f"参考视频规范化失败: {prep_error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
 
                         success, cdn_url, error = upload_media_to_cdn_sync(prepared_path, self._config)
-                        if success and cdn_url:
-                            processed_video_urls.append(cdn_url)
-                        else:
-                            self.logger.warning(f"参考视频上传 CDN 失败，跳过: {error}")
+                        if not (success and cdn_url):
+                            self.logger.error(f"参考视频上传 CDN 失败: {error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
+                        processed_video_urls.append(cdn_url)
                     finally:
                         _cleanup_seedance_reference_video_temps(cleanup_paths)
                 if processed_video_urls:
                     params["reference_videos"] = processed_video_urls
+
+                # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
+                # 使接口提前校验参数限制（ratio 必须 adaptive、duration 必须 -1）。
+                # 以「实际成功下发的参考视频恰好 1 个」为准（火山 edit 要求
+                # exactly one）；多视频走 auto 判定，此时 params.duration 已是
+                # 计价层吸附的视频总时长（ai_tool.duration），计费一致。
+                if is_video_edit_billing_task(self.driver_type, reference_video_raw) and len(processed_video_urls) == 1:
+                    params["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
+                    params["ratio"] = "adaptive"
+                    params["duration"] = -1
+                    self.logger.info(
+                        f"视频编辑模式: omni_reference_task_type={OMNI_REFERENCE_TASK_TYPE_EDIT}, "
+                        "ratio=adaptive duration=-1"
+                    )
 
             # 参考音频（需上传到 CDN）
             # 火山 r2v 限制音频总时长与条数（见类属性 R2V_AUDIO_MAX_*），超限自动截断/截条

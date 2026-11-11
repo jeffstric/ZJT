@@ -6013,6 +6013,15 @@ async def upload_agent_image(
         }, status_code=500)
 
 
+def _safe_remove_file(file_path: str):
+    """删除校验不通过而落盘的临时文件；删除失败（如 Windows 文件占用）只记日志不抛错，避免掩盖 400 响应。"""
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except OSError as e:
+        logger.warning(f'删除校验失败的视频文件出错: {file_path}, {e}')
+
+
 @router.post('/upload-agent-video')
 @require_permission("script_writer:upload_image")
 async def upload_agent_video(
@@ -6054,6 +6063,14 @@ async def upload_agent_video(
         max_size_bytes = max_size_mb * 1024 * 1024
 
         content = await file.read()
+        # 空文件硬拦截：前端 MediaRecorder 在个别浏览器（如 360极速浏览器）下
+        # 可能产出 0 字节压缩结果，若放行落盘会成为"上传成功"的损坏视频，
+        # 下游 ffmpeg EBML 解析失败 → 视频编辑任务缺参考视频被供应商 400
+        if not content:
+            return JSONResponse({
+                'success': False,
+                'error': '视频文件为空（前端压缩可能失败），请重新上传'
+            }, status_code=400)
         if len(content) > max_size_bytes:
             return JSONResponse({
                 'success': False,
@@ -6075,43 +6092,52 @@ async def upload_agent_video(
             f.write(content)
 
         # ffprobe 验证分辨率和时长
+        # 无法解析（返回 None）一律拒绝：曾因 None 跳过全部校验把 0 字节/损坏
+        # 视频当成功放行，后续驱动层只能静默丢视频（edit 任务缺参考视频被 400）
         video_info = await get_video_info(file_path)
-        if video_info:
-            max_duration = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT)
+        if video_info is None:
+            _safe_remove_file(file_path)
+            logger.warning(f'Agent 视频无法解析(已删除): {file_path}, size={len(content)}B')
+            return JSONResponse({
+                'success': False,
+                'error': '视频无法解析（文件可能已损坏），请重新上传'
+            }, status_code=400)
 
-            if video_info['duration'] > max_duration + 1:
-                os.remove(file_path)
-                return JSONResponse({
-                    'success': False,
-                    'error': f'视频时长 {video_info["duration"]:.1f}s 超过限制 {max_duration}s'
-                }, status_code=400)
+        max_duration = get_dynamic_config_value('upload', 'max_video_duration_seconds', default=UPLOAD_MAX_VIDEO_DURATION_SECONDS_DEFAULT)
 
-            if not is_reference_video_pixel_count_valid(video_info):
-                os.remove(file_path)
-                width = video_info.get('width', 0)
-                height = video_info.get('height', 0)
-                pixel_count = width * height
-                return JSONResponse({
-                    'success': False,
-                    'error': (
-                        f'视频分辨率 {width}x{height} 总像素 {pixel_count} '
-                        f'低于最低要求 {MediaConstants.VIDEO_REFERENCE_MIN_PIXEL_COUNT}'
-                    )
-                }, status_code=400)
+        if video_info['duration'] > max_duration + 1:
+            _safe_remove_file(file_path)
+            return JSONResponse({
+                'success': False,
+                'error': f'视频时长 {video_info["duration"]:.1f}s 超过限制 {max_duration}s'
+            }, status_code=400)
 
-            # 帧率校验：doubao-seedance r2v 要求参考视频帧率 ≤60fps，高刷屏浏览器
-            # 压缩可能产出 120fps 等超频视频，此处拦截避免下游 InvalidParameter。
-            fps = video_info.get('fps', 0) or 0
-            max_fps = MediaConstants.VIDEO_REFERENCE_MAX_FPS
-            if fps > max_fps:
-                os.remove(file_path)
-                return JSONResponse({
-                    'success': False,
-                    'error': (
-                        f'视频帧率 {fps:.1f}fps 超过限制 {max_fps}fps'
-                        '（建议使用 30fps 以内的视频）'
-                    )
-                }, status_code=400)
+        if not is_reference_video_pixel_count_valid(video_info):
+            _safe_remove_file(file_path)
+            width = video_info.get('width', 0)
+            height = video_info.get('height', 0)
+            pixel_count = width * height
+            return JSONResponse({
+                'success': False,
+                'error': (
+                    f'视频分辨率 {width}x{height} 总像素 {pixel_count} '
+                    f'低于最低要求 {MediaConstants.VIDEO_REFERENCE_MIN_PIXEL_COUNT}'
+                )
+            }, status_code=400)
+
+        # 帧率校验：doubao-seedance r2v 要求参考视频帧率 ≤60fps，高刷屏浏览器
+        # 压缩可能产出 120fps 等超频视频，此处拦截避免下游 InvalidParameter。
+        fps = video_info.get('fps', 0) or 0
+        max_fps = MediaConstants.VIDEO_REFERENCE_MAX_FPS
+        if fps > max_fps:
+            _safe_remove_file(file_path)
+            return JSONResponse({
+                'success': False,
+                'error': (
+                    f'视频帧率 {fps:.1f}fps 超过限制 {max_fps}fps'
+                    '（建议使用 30fps 以内的视频）'
+                )
+            }, status_code=400)
 
         # 根据 is_local 配置决定返回本地 URL 还是 CDN URL
         is_local = get_dynamic_config_value('server', 'is_local', default=False)

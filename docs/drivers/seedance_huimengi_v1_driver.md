@@ -140,7 +140,7 @@ Authorization: Bearer hm-xxxxxxxxxxxxxxxx
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `ratio` | string | 否 | 宽高比，默认 adaptive，可选 16:9 / 4:3 / 1:1 / 3:4 / 9:16 / 21:9 / adaptive。Seedance 2.5 带参考视频时驱动强制下发 `adaptive` |
-| `omni_reference_task_type` | string | 否 | Seedance 2.5 全模态参考任务类型引导。带参考视频时驱动显式下发 `edit`（与 `ratio=adaptive`、`duration=-1` 同时生效），依赖网关透传给火山；若网关未透传，行为退化为现状（不劣化）。判定入口与计价层共用 `utils/computing_power.py::is_video_edit_billing_task` |
+| `omni_reference_task_type` | string | 否 | Seedance 2.5 全模态参考任务类型引导。带参考视频时驱动显式下发 `edit`（与 `ratio=adaptive`、`duration=-1` 同时生效），依赖网关透传给火山；若网关未透传，行为退化为现状（不劣化）。判定入口与计价层共用 `utils/computing_power.py::is_video_edit_billing_task`，且以「实际成功下发的参考视频恰好 1 个」为准（火山 edit 要求 exactly one，多视频走 auto 下发用户时长）；参考视频规范化/上传 CDN 失败时 fail-fast 返回 USER 错误，不再静默跳过（0 字节 webm 曾致 edit 任务缺参考视频被上游 400） |
 | `prompt` | string | 是 | 视频描述文本（建议 500 字以内） |
 | `duration` | integer | 否 | 视频时长（秒）。2.0 系列取值 [4, 15]，2.5 取值 [4, 30]，默认 5。Seedance 2.5 带参考视频时驱动强制下发 `-1`（跟随参考视频）。**计费时长**：视频编辑任务按参考视频总时长计（向上取整吸附 5–30 档，探测失败回退用户输入），统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，与火山驱动计费口径一致 |
 | `image_url` | string | 否 | 首帧图片 URL（图生视频-首帧） |

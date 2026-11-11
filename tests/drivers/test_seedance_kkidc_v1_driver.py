@@ -313,6 +313,48 @@ class TestBuildCreateRequest(unittest.TestCase):
         self.assertNotIn('reference_images', metadata)
         self.assertNotIn('first_frame_image', metadata)
 
+    def test_reference_video_prepare_fail_returns_user_error(self):
+        """参考视频规范化失败（如 0 字节 webm）：fail-fast 返回 USER 错误，
+        不静默跳过（用户参考视频是明确输入意图，跳过会改变任务语义）"""
+        from task.visual_drivers import seedance_kkidc_v1_driver as drv_mod
+        driver = self._driver()
+        ai_tool = _make_ai_tool(prompt='参考视频编辑', image_path=None, image_mode_declared=True,
+                                video_path='http://example.com/ref.webm')
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': []
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(False, None, 'ffmpeg 转码失败: EBML header parsing failed', [])):
+            result = driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+        self.assertIn('重新上传', result['error'])
+
+    def test_reference_video_cdn_upload_fail_returns_user_error(self):
+        """参考视频上传 CDN 失败：fail-fast 返回 USER 错误，不静默降级为纯图生视频"""
+        from task.visual_drivers import seedance_kkidc_v1_driver as drv_mod
+        driver = self._driver()
+        ai_tool = _make_ai_tool(prompt='参考视频编辑', image_path=None, image_mode_declared=True,
+                                video_path='http://example.com/ref.mp4')
+        with patch.object(driver, 'get_all_images_by_mode', return_value={
+            'mode': 'multi_reference',
+            'first_frame': None,
+            'last_frame': None,
+            'reference_images': []
+        }), patch.object(drv_mod, 'prepare_seedance_reference_video_sync',
+                          return_value=(True, 'http://example.com/ref.mp4', None, [])), \
+             patch.object(drv_mod, 'upload_media_to_cdn_sync',
+                          return_value=(False, None, '上传超时')):
+            result = driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+
 
 # ============================================================
 # r2v 参考音频预算测试
