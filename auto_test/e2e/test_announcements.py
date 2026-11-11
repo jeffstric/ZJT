@@ -209,9 +209,16 @@ def test_admin_invalid_publish_at_rejected(api_client):
         _cleanup(api_client, aid)
 
 
-def test_non_admin_denied(api_client, secondary_auth_token):
-    """ann_009 - 非管理员访问管理侧应权限不足"""
-    headers = {"Authorization": f"Bearer {secondary_auth_token}"}
+def test_non_admin_denied(api_client, secondary_auth_token, secondary_user_id):
+    """ann_009 - 非管理员访问管理侧应权限不足
+
+    X-User-Id 与副账号 token 属主保持一致，避免被全站一致性中间件
+    （auth_identity）以 401 user_mismatch 先行拒绝。
+    """
+    headers = {
+        "Authorization": f"Bearer {secondary_auth_token}",
+        "X-User-Id": str(secondary_user_id),
+    }
     resp = api_client.post(
         "/api/admin/announcements",
         json={"title": "非管理员创建", "content": "", "level": "info"},
