@@ -32,6 +32,7 @@ _ERROR_CODE_SOURCE = {
     "outputtextsensitivecontentdetected": SOURCE_OUTPUT,
     "outputimagesensitivecontentdetected": SOURCE_OUTPUT,
     "outputvideosensitivecontentdetected": SOURCE_OUTPUT,
+    "outputaudiosensitivecontentdetected": SOURCE_OUTPUT,
     "sensitivecontentdetected": SOURCE_GENERAL,
     "textsensitivecontentdetected": SOURCE_PROMPT,
     "imagesensitivecontentdetected": SOURCE_REFERENCE_IMAGE,
@@ -81,14 +82,18 @@ _MESSAGE_SOURCE_HINTS = (
         "output video",
         "outputvideo",
         "output text",
+        "output audio",
+        "outputaudio",
         "generated image was blocked",
         "generated image contains",
         "generated image",
+        "generated audio",
         "output may contain",
         "image_safety",
         "生成结果",
         "输出图片",
         "输出图像",
+        "输出音频",
     )),
     (SOURCE_REFERENCE_IMAGE, (
         "input image",
@@ -170,6 +175,25 @@ _SOURCE_HINT_MESSAGES = {
     SOURCE_GENERAL: f"{FRIENDLY_PREFIX}：请求被安全系统拦截，请检查提示词和参考图后重试",
 }
 
+# 输出音频版权限制专属文案（与前端 web/js/content_violation.js SOURCE_MESSAGES 对齐）
+_OUTPUT_AUDIO_COPYRIGHT_MESSAGE = (
+    f"{FRIENDLY_PREFIX}（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，"
+    "请更换参考音频/视频或调整配乐描述后重试"
+)
+
+
+def _is_output_audio_copyright(code: str, message: str) -> bool:
+    """识别"输出音频 + 版权限制"组合错误（音频生成模型特有）。"""
+    text = f"{_normalize_code(code)} {_normalize_code(message)}".lower().replace(" ", "")
+    has_output_audio = "outputaudio" in text or "generatedaudio" in text
+    has_copyright = (
+        "copyright" in text
+        or "trademark" in text
+        or "版权" in text
+        or "商标" in text
+    )
+    return has_output_audio and has_copyright
+
 _SAFETY_VIOLATIONS_RE = re.compile(
     r"safety_violations\s*=\s*\[([^\]]*)\]",
     re.IGNORECASE,
@@ -187,7 +211,8 @@ _CODE_IN_TEXT_RE = re.compile(
     r"channel:image_generation_failed|"
     r"OutputImageSensitiveContentDetected|InputImageSensitiveContentDetected|"
     r"InputTextSensitiveContentDetected|OutputTextSensitiveContentDetected|"
-    r"OutputVideoSensitiveContentDetected|SensitiveContentDetected|"
+    r"OutputVideoSensitiveContentDetected|OutputAudioSensitiveContentDetected|"
+    r"SensitiveContentDetected|"
     r"IMAGE_SAFETY|IMAGE_OTHER|IMAGE_PROHIBITED_CONTENT|PROHIBITED_CONTENT)\b",
     re.IGNORECASE,
 )
@@ -231,7 +256,7 @@ def _infer_source_from_code(code: str) -> Optional[str]:
         return SOURCE_PROMPT
     if "input" in compact and ("image" in compact or "video" in compact):
         return SOURCE_REFERENCE_IMAGE
-    if "output" in compact and ("image" in compact or "video" in compact or "text" in compact):
+    if "output" in compact and ("image" in compact or "video" in compact or "text" in compact or "audio" in compact):
         return SOURCE_OUTPUT
     if "prompt" in compact:
         return SOURCE_PROMPT
@@ -390,6 +415,18 @@ def classify_content_moderation(
             source = SOURCE_COPYRIGHT
 
     violations = parse_safety_violations(message)
+
+    # 音频版权细分（2026-11-11）：Seedance 2.5 等带音频生成模型的
+    # OutputAudioSensitiveContentDetected.PolicyViolation——AI 把参考素材中的
+    # 版权音乐复刻进了输出音频被拦。通用版权文案（"提示词或参考内容…请修改
+    # 提示词"）会误导用户去改提示词，实际应更换参考音频/视频，故单独成文案。
+    if _is_output_audio_copyright(code, message):
+        return {
+            "source": SOURCE_COPYRIGHT,
+            "violations": violations or ["音频版权"],
+            "error_code": code,
+            "friendly_message": _OUTPUT_AUDIO_COPYRIGHT_MESSAGE,
+        }
 
     if source == SOURCE_COPYRIGHT:
         friendly = _SOURCE_HINT_MESSAGES[SOURCE_COPYRIGHT]

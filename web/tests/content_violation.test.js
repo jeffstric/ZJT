@@ -116,6 +116,16 @@ describe('describe', () => {
     );
   });
 
+  test('输出音频版权限制 → 音频版权文案（Seedance 2.5 视频克隆参考音频被拦）', () => {
+    expect(cv.describe('OutputAudioSensitiveContentDetected.PolicyViolation: The request failed because the output audio may be related to copyright restrictions.')).toBe(
+      '内容审核未通过（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，请更换参考音频/视频或调整配乐描述后重试'
+    );
+    // 兜底：无错误码仅 message 关键词
+    expect(cv.describe('The output audio may be related to copyright restrictions.')).toBe(
+      '内容审核未通过（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，请更换参考音频/视频或调整配乐描述后重试'
+    );
+  });
+
   test('火山 Input 隐私 → 参考图文案', () => {
     expect(cv.describe('InputImageSensitiveContentDetected.PrivacyInformation: The input image may contain real person.')).toBe(
       '内容审核未通过：参考图片包含敏感内容，请更换参考图后重试'
