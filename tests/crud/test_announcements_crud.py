@@ -103,7 +103,11 @@ class TestAnnouncementsModel(unittest.TestCase):
         self.assertIn("INSERT INTO announcements", sql)
         # images 以 JSON 字符串入库
         self.assertEqual(json.loads(params[4]), ["/upload/a.png"])
-        self.assertEqual(params[6], AnnouncementStatus.PUBLISHED)
+        # 列序：title/content/link_url/link_text/images/level/popup/status/...
+        # popup 为 no_165 新增列（默认 0），status 相应顺延至 params[7]
+        self.assertEqual(params[5], "info")
+        self.assertEqual(params[6], 0)
+        self.assertEqual(params[7], AnnouncementStatus.PUBLISHED)
 
     @patch('model.announcements.execute_update')
     def test_update_status(self, mock_update):

@@ -102,7 +102,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_qwen_desc',
         category: 'llm',
         icon: '🧠',
-        docUrl: 'https://dashscope.console.aliyun.com/apiKey',
+        docUrl: 'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key',
         lazyRecommended: false,
         displayOrder: 3,
         baseName: 'qwen',
@@ -293,7 +293,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_qwen_media_desc',
         category: 'multimedia',
         icon: '🧠',
-        docUrl: 'https://dashscope.console.aliyun.com/apiKey',
+        docUrl: 'https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key',
         lazyRecommended: false,
         displayOrder: 3,
         baseName: 'qwen',
@@ -532,7 +532,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_chenyu_video_desc',
         category: 'multimedia',
         icon: '🪶',
-        docUrl: 'https://www.chenyu.cn/console/apiServer',
+        docUrl: 'https://www.chenyu.cn/console/login?invitationCode=SQRTZE',
         lazyRecommended: false,
         displayOrder: 23,
         baseName: 'chenyu',
@@ -1122,6 +1122,7 @@ const AdminApp = {
                 title: '',
                 content: '',
                 level: 'info',
+                popup: false,
                 link_url: '',
                 link_text: '',
                 images: [],
@@ -6150,6 +6151,7 @@ const AdminApp = {
             this.announcementForm.title = item.title || '';
             this.announcementForm.content = item.content || '';
             this.announcementForm.level = item.level || 'info';
+            this.announcementForm.popup = !!item.popup;
             this.announcementForm.link_url = item.link_url || '';
             this.announcementForm.link_text = item.link_text || '';
             this.announcementForm.images = Array.isArray(item.images) ? [...item.images] : [];
@@ -6181,6 +6183,7 @@ const AdminApp = {
                     title: form.title.trim(),
                     content: form.content,
                     level: form.level,
+                    popup: !!form.popup,
                     link_url: form.link_url.trim() || null,
                     link_text: form.link_text.trim() || null,
                     images: form.images,

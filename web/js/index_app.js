@@ -177,7 +177,12 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken'
+      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken' | 'aigc'
+      // AIGC 显式标识（明水印）全局开关（用户设置"内容标识"tab）
+      aigcWatermarkOff: false,      // true=用户已全局关闭明水印（scope=user opt-out 生效中）
+      aigcOptOutLoading: false,
+      aigcOptOutError: '',
+      aigcOptOutSuccess: '',
       // 个人资料（昵称）编辑
       nicknameInput: '',
       profileSaving: false,
@@ -190,7 +195,7 @@
       isCommunityEdition: false,
       isEditionLoaded: false,
       zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
-      // 创作默认偏好（剧本/营销世界默认 LLM + 生图；与 CLI media_pref 隔离）
+      // 创作偏好（剧本/营销世界默认 LLM + 生图；与 CLI media_pref 隔离）
       creationDefaultsLoading: false,
       creationDefaultsError: '',
       creationDefaultsSuccess: '',
@@ -324,7 +329,13 @@
           }
         }
       }
-      
+
+      // ?aigc_tab=1：营销智能体等页面"查看内容标识设置"直达入口（AIGC 明水印合规引导）。
+      // 此处仅暂存标记，登录态就绪后由 maybeOpenPendingAigcSettings 打开设置弹窗。
+      if (urlParams.get('aigc_tab') === '1') {
+        sessionStorage.setItem('pending_aigc_settings', '1');
+      }
+
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
       this.userEmail = urlParams.get('email') || '';
@@ -384,6 +395,8 @@
         this.fetchUserRole();
         this.fetchCheckinStatus();
         this.fetchChannelLevel();
+        // ?aigc_tab=1 直达：已登录则立即打开"内容标识"设置
+        this.maybeOpenPendingAigcSettings();
       } else {
         // 无 localStorage token：即使 HttpOnly cookie 仍有效，也无法填 Form/JSON
         // 调用点。probe 若发现 cookie 有效则强制重新登录以完成双写；
@@ -1208,7 +1221,13 @@
               } else if(redirectUrl){
                 localStorage.removeItem('redirect_after_login');
               }
-              
+
+              // ?aigc_tab=1 直达：登录成功后打开"内容标识"设置（AIGC 合规引导）
+              this.maybeOpenPendingAigcSettings();
+
+              // 弹窗公告（popup=1）：登录成功后补检一次（DOMContentLoaded 时可能尚未登录）
+              if (window.AnnouncementPopup) window.AnnouncementPopup.maybeShow();
+
               // 登录成功后留在首页，检查模式选择
               this.checkCreationMode();
               // 注册后的官方微信群轻量引导（不阻塞主路径）
@@ -1505,6 +1524,87 @@
         this.loadApiToken();
       },
 
+      // ==================== AIGC 明水印全局开关（用户设置"内容标识"tab） ====================
+
+      switchToAigcTab() {
+        this.userSettingsTab = 'aigc';
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        this.loadAigcOptOutStatus();
+      },
+
+      // ?aigc_tab=1 直达：登录态就绪后打开设置弹窗并切到"内容标识"tab。
+      // 先 showUserSettingsModal 再 switchToAigcTab（show 会把 tab 重置回 preferences）。
+      maybeOpenPendingAigcSettings() {
+        if (sessionStorage.getItem('pending_aigc_settings') !== '1') return;
+        sessionStorage.removeItem('pending_aigc_settings');
+        if (!this.authToken && !this.cookieSession) return; // 未登录：等下次登录触发
+        this.showUserSettingsModal();
+        this.switchToAigcTab();
+      },
+
+      async loadAigcOptOutStatus() {
+        if (!this.authToken && !this.cookieSession) {
+          this.aigcOptOutError = '请先登录后再配置内容标识';
+          return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        try {
+          const response = await axios.get('/api/aigc/explicit-optout/status', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !!response.data.opt_out;
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '加载标识状态失败';
+          }
+        } catch (error) {
+          console.error('Load AIGC optout status failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '加载标识状态失败';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
+      },
+
+      async toggleAigcWatermark(enable) {
+        // enable=true 恢复添加明水印（resume）；enable=false 全局关闭明水印（opt-out，第9条留痕）
+        if (!enable) {
+          const confirmed = confirm(
+            '确认全局关闭"AI生成"提示标识？\n\n' +
+            '· 生成图片、生成视频、数字人视频与语音合成后续不再添加画面/音频提示；\n' +
+            '· 您须自行承担发布、传播 AI 内容时的主动声明义务；\n' +
+            '· 本次变更将依法记录留存不少于 6 个月；\n' +
+            '· 文件元数据中的隐式标识始终保留（法律法规要求，不可关闭）。'
+          );
+          if (!confirmed) return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        try {
+          const response = await axios.post('/api/aigc/explicit-optout', {
+            scope: 'user',
+            action: enable ? 'resume' : 'opt_out'
+          }, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !enable;
+            this.aigcOptOutSuccess = response.data.message
+              || (enable ? '已恢复添加 AI 生成标识' : '已全局关闭 AI 生成标识');
+            setTimeout(() => { this.aigcOptOutSuccess = ''; }, 3000);
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '操作失败';
+          }
+        } catch (error) {
+          console.error('Toggle AIGC watermark failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '操作失败，请稍后重试';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
+      },
+
       switchToCreationDefaultsTab() {
         this.userSettingsTab = 'creationDefaults';
         this.creationDefaultsError = '';
@@ -1541,7 +1641,7 @@
 
       async ensureCreationDefaultsLoaded() {
         if (!this.authToken && !this.cookieSession) {
-          this.creationDefaultsError = '请先登录后再配置创作默认偏好';
+          this.creationDefaultsError = '请先登录后再配置创作偏好';
           return;
         }
         if (this.creationDefaultsLoading) return;
@@ -1557,7 +1657,7 @@
           }
         } catch (error) {
           console.error('Load creation defaults failed:', error);
-          this.creationDefaultsError = error?.message || '加载创作默认偏好失败';
+          this.creationDefaultsError = error?.message || '加载创作偏好失败';
         } finally {
           this.creationDefaultsLoading = false;
         }

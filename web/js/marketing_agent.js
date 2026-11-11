@@ -2241,6 +2241,7 @@
 
             function augmentGeneratedImageCards(root) {
                 if (!root || !window.AssetLibrary) return;
+                maybeShowAigcNotice(root);
                 root.querySelectorAll('.generated-image-wrapper').forEach(wrapper => {
                     if (wrapper.querySelector('[data-asset-add-src]')) return;
                     const img = wrapper.querySelector('img.generated-image') || wrapper.querySelector('img');
@@ -2360,6 +2361,32 @@
                 noticeMessage.value = msg;
                 if (_showNoticeTimer) clearTimeout(_showNoticeTimer);
                 _showNoticeTimer = setTimeout(() => { noticeMessage.value = ''; }, 5000);
+            }
+
+            // ========== AIGC 内容标识一次性引导条（深度合成合规，docs/backend/aigc_marking.md） ==========
+            const aigcNoticeVisible = ref(false);
+            const AIGC_NOTICE_DISMISS_KEY = 'marketing_aigc_notice_dismissed';
+
+            function dismissAigcNotice() {
+                aigcNoticeVisible.value = false;
+                try { localStorage.setItem(AIGC_NOTICE_DISMISS_KEY, '1'); } catch (e) { /* 隐私模式忽略 */ }
+            }
+
+            function openAigcSettings() {
+                // 新标签页打开首页并直达"设置→内容标识"（index_app.js 处理 ?aigc_tab=1）
+                window.open('/index.html?aigc_tab=1', '_blank');
+            }
+
+            // 首次出现生成结果卡时展示（flag 在展示时写入，确保全程仅提示一次）
+            function maybeShowAigcNotice(root) {
+                if (!root || aigcNoticeVisible.value) return;
+                let dismissed = false;
+                try { dismissed = localStorage.getItem(AIGC_NOTICE_DISMISS_KEY) === '1'; } catch (e) { /* 忽略 */ }
+                if (dismissed) return;
+                if (root.querySelector('.generated-result-card')) {
+                    aigcNoticeVisible.value = true;
+                    try { localStorage.setItem(AIGC_NOTICE_DISMISS_KEY, '1'); } catch (e) { /* 忽略 */ }
+                }
             }
 
             // 重新编辑：落库分辨率档位 → 输入栏选项文案。
@@ -8269,6 +8296,9 @@
                 isInitializing,
                 errorMessage,
                 noticeMessage,
+                aigcNoticeVisible,
+                dismissAigcNotice,
+                openAigcSettings,
                 searchQuery,
                 activeView,
                 switchView,

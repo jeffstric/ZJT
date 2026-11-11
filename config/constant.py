@@ -1594,6 +1594,54 @@ DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 # 错误是否为许可证类由续租门面（task/license_rebootstrap_task）判定。
 LICENSE_DENIED_RESCHEDULE_SECONDS = 600
 
+# ===== AIGC 生成合成内容隐式标识（深度合成合规） =====
+# 依据：《互联网信息服务深度合成管理规定》第16条（隐式标识）+《人工智能生成合成内容标识办法》
+# 第5条（文件元数据：内容属性/服务提供者名称或编码/内容编号）+ GB 45438-2025 附录E（XMP 包格式）。
+# 写入实现见 utils/aigc_marking.py；挂点：media_cache.download_and_cache（落盘）、
+# download_queue worker（宫格裁剪后兜底）、/api/download（下载出口兜底）、compose/TTS 直接落盘点。
+# 显式标识（视频起始画面/音频提示/图片角标）为后续阶段，见 docs/compliance/aigc_labeling_plan.md
+AIGC_MARK_ENABLED = True
+# 服务提供者名称或编码（标识办法第5条允许二选一）。⚠️占位值：标识服务平台（aigc.cac.gov.cn）
+# 申请到正式编码后必须替换。
+AIGC_CONTENT_PRODUCER = "zjt"
+# Label 枚举：1 = AI 生成合成内容（GB 45438-2025 附录E）
+AIGC_LABEL_VALUE = "1"
+# 单文件标识写入超时（秒）：ffmpeg remux（-c copy，秒级）+ Pillow 写入的兜底上限
+AIGC_MARK_TIMEOUT_SECONDS = 90
+# XMP AIGC 命名空间（TC260 实践指南），XMP 属性键 Xmp.TC260.AIGC，值为 JSON 字符串
+AIGC_XMP_NS_URI = "http://www.tc260.org.cn/ns/AIGC/1.0/"
+AIGC_XMP_NS_PREFIX = "TC260"
+# PNG XMP 承载：iTXt 块 keyword（Adobe 规范固定值）
+AIGC_PNG_XMP_KEYWORD = "XML:com.adobe.xmp"
+# JPEG XMP 承载：APP1 段 namespace（含结尾 \x00，Adobe 规范固定值）
+AIGC_JPEG_APP1_XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
+
+# ===== AIGC 显式标识（明水印）烧录 =====
+# 依据：《深度合成规定》第17条 +《标识办法》第4条（视频起始画面/图片适当位置/音频语音或节奏提示）。
+# 分级（docs/compliance/aigc_labeling_plan.md 3.3；2026-11-11 产品决策）：
+# - L1 强制默认烧录：数字人视频（人脸生成）、TTS 合成人声、**全部生成图片与生成视频**
+#   （系统无法检测产出是否含人脸，保守按"人脸生成/可能混淆"对待，全量默认烧录；
+#   用户可申请关闭，第9条留痕表 aigc_explicit_opt_out_log 用户级状态机）。
+#   生成链挂点：download_queue worker / visual_task 入队失败兜底 / sync_task_executor
+#   （统一走 utils/aigc_explicit_marker.maybe_burn_generated_media），**必须先于
+#   transition_with_cdn_sync 执行**——保证 CDN 上传对象与本地文件一致带标。
+# - L2 提供功能：结果卡按钮按需烧录保留（覆盖存量内容与 opt-out 恢复后的单件需求）。
+# 实现 utils/aigc_explicit_marker.py；烧录会重编码丢原元数据，统一以 extra_fields={'ExplicitLabel':'1'}
+# 重写隐式标识（幂等判定依据）。⚠️显式关闭功能的前置条件是用户协议含 AIGC 标识条款（第8条）。
+AIGC_EXPLICIT_LABEL_TEXT = "AI生成"
+AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS = 3      # 视频起始画面提示展示时长（秒）
+AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS = 600     # 视频重编码超时（秒）：全片 libx264 转码
+AIGC_EXPLICIT_FONT_REL = "files/fonts/NotoSansSC-Regular.otf"   # 中文角标字体（相对项目根）
+AIGC_EXPLICIT_NOTICE_AUDIO_REL = "files/audio/aigc_notice_v2.mp3"  # 音频节奏提示资产（相对项目根；v2 提升响度，文件名带版本号以强制各环境重新生成——_ensure_notice_audio 仅在文件缺失时合成）
+AIGC_EXPLICIT_FONT_SIZE_RATIO = 0.045        # 角标字号占画面高度比例（实践指南：不超画面高度 1/10）
+# 生成图片默认烧录总开关（Pillow 角标，单张几十~几百 ms，成本可忽略）
+AIGC_EXPLICIT_IMAGE_BURN_ENABLED = True
+# 生成视频默认烧录总开关（drawtext 全片重编码，1080p 10s 片约 10~40s/条，占 CPU；
+# worker 吞吐吃紧时可独立关闭，图片烧录不受影响。观测点：download_queue "tick done" 日志）
+AIGC_EXPLICIT_VIDEO_BURN_ENABLED = True
+AIGC_EXPLICIT_X264_PRESET = "fast"   # 重编码 preset：调 'veryfast' 可降 CPU（同画质下文件略大）
+AIGC_EXPLICIT_VIDEO_CRF = 20         # 重编码 CRF：18≈视觉无损（画质敏感时下调，文件变大）
+
 # ===== 商业许可证周期续租（scheduler job 触发间隔） =====
 # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
 # 进程启动时获取的短期许可证租约（约 24h）到期后，进程内商业能力校验会全部

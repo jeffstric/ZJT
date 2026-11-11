@@ -54,6 +54,7 @@ from config.constant import (
     TASK_STATUS_CANCELLED,
     RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT,
     VIDEO_TASK_RETRY_DELAY_MAX_SECONDS,
+    AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
     get_sync_orphan_grace_seconds
 )
 from model.ai_tool_pipeline_steps import (
@@ -63,6 +64,7 @@ from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from config.constant import AI_TOOL_CANCELLABLE_STATUSES, AI_TOOL_ACTIVE_STATUSES
 from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.aigc_explicit_marker import maybe_burn_generated_media
 from utils.content_moderation_error import classify_content_moderation
 
 logging.basicConfig(level=logging.INFO)
@@ -1182,7 +1184,25 @@ async def _handle_task_success(project_id, task_id, media_url):
                            message="下载/缓存完成",
                            duration_ms=download_ms,
                            detail={'source_url': media_url, 'final_url': final_url})
-        
+
+        # L1 显式标识（明水印）：入队失败走本同步下载兜底的漏斗补挂——与 download_queue
+        # worker 同层：裁剪之后、transition_with_cdn_sync 之前（CDN 对象带标时序）。
+        # 失败不阻断交付；与 worker 主链路幂等（ExplicitLabel 判定，双挂点不叠加）。
+        if final_url and final_url.startswith('/upload/'):
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(
+                        maybe_burn_generated_media, final_url, task_id, media_type),
+                    timeout=AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"AIGC 显式标识烧录超时(>{AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS}s，"
+                    f"不阻断交付): ai_tool={task_id} {final_url}")
+            except Exception as be:  # noqa: BLE001
+                logger.warning(
+                    f"AIGC 显式标识烧录异常(不阻断交付): ai_tool={task_id} {final_url}: {be}")
+
         completed = AIToolsModel.transition_with_cdn_sync(
             task_id,
             [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],

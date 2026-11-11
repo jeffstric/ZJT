@@ -164,6 +164,16 @@
             </header>
 
             <template v-if="activeView === 'generate'">
+            <!-- AIGC 内容标识一次性引导条：首次出现生成结果时显示（深度合成合规，docs/backend/aigc_marking.md） -->
+            <div v-if="aigcNoticeVisible" style="display: flex; align-items: flex-start; gap: 10px; margin: 0 16px 12px; padding: 12px 14px; background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.35); border-left: 3px solid #3b82f6; border-radius: 8px; font-size: 13px; line-height: 1.6; color: #e5e7eb;">
+                <div style="flex: 1;">
+                    <div style="font-weight: 600; margin-bottom: 4px; color: #93c5fd;">AI 生成内容标识说明</div>
+                    根据《人工智能生成合成内容标识办法》：您生成的内容已依法添加标识——文件元数据含隐式标识（不可关闭）；生成图片默认带"AI生成"角标、生成视频起始画面带"AI生成"提示。可在
+                    <a href="javascript:void(0)" @click="openAigcSettings" style="color: #60a5fa; text-decoration: underline;">首页【设置 → 内容标识】</a>
+                    一键关闭；发布传播时请主动声明 AI 生成属性。
+                </div>
+                <button @click="dismissAigcNotice" style="flex-shrink: 0; background: transparent; border: none; color: #9ca3af; font-size: 16px; cursor: pointer; padding: 2px 6px; line-height: 1;" aria-label="关闭">✕</button>
+            </div>
             <!-- 消息流 -->
             <div class="chat-messages" ref="chatMessages">
                 <!-- 欢迎卡片 -->
@@ -991,6 +1001,10 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     {{ $t('generate_video') }}
                 </button>
+                <button id="imgModalAigcBtn" style="padding: 8px 20px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'" onclick="event.stopPropagation(); window.AigcLabel && window.AigcLabel.addToCurrentModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
+                    图片添加AI标识
+                </button>
             </div>
         </div>
 
@@ -1099,5 +1113,7 @@
     <script src="/js/marketing_article_card.js?v=__VERSION__"></script>
     <script src="/js/download_attachment.js?v=__VERSION__"></script>
     <script src="/js/marketing_agent.js?v=__VERSION__"></script>
+    <script src="/js/aigc_label.js?v=__VERSION__"></script>
+    <script src="/js/announcement_popup.js?v=__VERSION__"></script>
 </body>
 </html>
