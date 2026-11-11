@@ -68,13 +68,12 @@ class TestH3KeyframeRefAsImplementation(unittest.TestCase):
         self.assertTrue(UnifiedConfigRegistry.get_implementation(KFR_IMPL).enabled)
 
     def test_driver_implementation_mapping_updated(self):
-        """映射表：类型 37 列表含 KFR；类型 50 映射保留（历史行找驱动）"""
+        """映射表：类型 37 列表含 KFR；类型 50 不挂映射条目（避免实现方管理页
+        渲染出冗余的 minimax_h3_keyframe_ref_to_video 分组，历史行找驱动走
+        create_driver_by_implementation 按实现方名解析，不依赖映射）"""
         ref_mapping = constant.DRIVER_IMPLEMENTATION_MAPPING[DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO]
         self.assertIn(KFR_IMPL, ref_mapping)
-        self.assertEqual(
-            constant.DRIVER_IMPLEMENTATION_MAPPING[DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO],
-            KFR_IMPL,
-        )
+        self.assertNotIn(DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO, constant.DRIVER_IMPLEMENTATION_MAPPING)
 
     def test_route_flag_removed(self):
         """旧路由开关 H3_KEYFRAME_REF_ROUTE_ENABLED 已删除（前后端不再各自镜像常量）"""

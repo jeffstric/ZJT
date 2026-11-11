@@ -68,7 +68,7 @@ VideoDriverFactory.get_implementation_for_user(37, user_id, input_probe=probe)
 
 `config/constant.py`：
 - 删除 `H3_KEYFRAME_REF_ROUTE_ENABLED`（1281-1287 行，含「三处同步」注释）。
-- `DRIVER_IMPLEMENTATION_MAPPING`（1068 行起）：类型 37 列表（1143-1147）补 KFR；类型 50 映射（1149）**保留**，加注释「历史在途任务找驱动用，新任务不再产生 type=50」。
+- `DRIVER_IMPLEMENTATION_MAPPING`（1068 行起）：类型 37 列表（1143-1147）补 KFR；类型 50 **不挂映射条目**（2026-11-11 追加调整：映射是 `api/admin.py` implementation-configs 分组的来源之一，挂了会在实现方管理页渲染出冗余的 `minimax_h3_keyframe_ref_to_video` 分组；历史在途行找驱动走 `create_driver_by_implementation` 按实现方名解析，不依赖该映射）。
 
 不涉及表结构变化，**无 alembic 迁移**。
 
@@ -189,7 +189,8 @@ def trim_reference_images_to_limit(urls: list[str], prompt: str, max_images: int
 
 | 项 | 处理 |
 | --- | --- |
-| 在途 type=50 行（状态查询/优化/重试） | 状态查询优先 `create_driver_by_implementation(100)`（历史行 implementation=100，不走任务级 enabled 拦截）；重试候选 `DRIVER_IMPLEMENTATION_MAPPING` 50→KFR 保留；`needs_h3_atomic_param_prepare(50)` 仍 True；`resolve_h3_prompt_variant` 的 task_key==50 兜底保留 |
+| 在途 type=50 行（状态查询/优化/重试） | 状态查询优先 `create_driver_by_implementation(100)`（历史行 implementation=100，不走任务级 enabled 拦截）；重试候选走类型 37 配置的 `implementations` 声明；`needs_h3_atomic_param_prepare(50)` 仍 True；`resolve_h3_prompt_variant` 的 task_key==50 兜底保留 |
+| 实现方管理页分组 | KFR 不再单独成组（映射条目已删 + admin 兜底扫描跳过 `enabled=False` 条目）；KFR 实现方在 `minimax_h3_reference_to_video`（参考生）组内管理，算力/排序/启用配置键 `(kfr, driver_key=type37)` 不变 |
 | 旧页面仍 POST task_id=50 | server.py 翻译为 37 + 强制 KFR 实现 + 警告日志（Step 4.1） |
 | 管理页 `implementation_power_config` 旧行 | 旧行 `(kfr, driver_key=type50)` 对不上新键 `(kfr, driver_key=type37)`，**不迁移不抄**；新键无记录用代码默认（sort 5204 / enabled True） |
 | 用户偏好键 | 偏好一直存 `minimax_h3_reference_to_video` 下，无需迁移；固定 AutoDL/RH 参考生的行为不变（兼容矩阵两条「兼容」） |

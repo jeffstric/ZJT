@@ -1147,8 +1147,10 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,      # AutoDL.Art 参考生（9图+3音频）
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
-    # 历史在途 type=50 行找驱动用（新提交不再产生类型 50，混合实现方挂在类型 37 下）
-    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
+    # 注意：历史类型 50（KFRef）不在此映射挂条目——它在实现方管理页会渲染出
+    # 冗余的 minimax_h3_keyframe_ref_to_video 分组（混合实现方已挂在类型 37 组）。
+    # 历史在途 type=50 行的驱动解析走 create_driver_by_implementation（按实现方名
+    # 查 _registered_drivers），不依赖本映射；类型 50 配置本身保留在 unified_config。
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
