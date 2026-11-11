@@ -99,6 +99,7 @@ from config.constant import (
     ASSET_LIST_DB_QUERY_TIMEOUT,
     ASSET_MUTATION_DB_TIMEOUT,
     ASSET_STAGING_IO_TIMEOUT,
+    AIGC_MARK_TIMEOUT_SECONDS,
     BrandingConstants,
     MediaUploadSafetyConstants,
     SMART_INSERT_SHOT_TIMEOUT,
@@ -143,6 +144,7 @@ from utils.computing_power import (
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
 )
 from utils.video_resolution import validate_video_resolution
+from utils.aigc_marking import ensure_marked
 from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
@@ -622,6 +624,10 @@ from api.script_split import (
     ScriptSplitPreconditionError,
 )
 app.include_router(script_split_router)
+
+# AIGC 显式标识管理（深度合成合规，见 docs/backend/aigc_marking.md）
+from api.aigc import router as aigc_router
+app.include_router(aigc_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
 from api.agent_auth import router as agent_auth_router
@@ -1130,6 +1136,24 @@ async def download_image(
         file_path = _resolve_local_upload_path(url, '/upload/cache/')
         if file_path is not None:
             if file_path.is_file():
+                # AIGC 标识出口兜底（《标识办法》第4条：下载时确保文件含有标识）。
+                # 主链路已在落盘时标记，此处仅补漏标文件；幂等（已标识毫秒级返回），
+                # 失败不阻断下载。ProduceID 从缓存文件名 {task_id}_{ts}_{hash} 首段解析。
+                _pid = file_path.name.split('_')[0]
+                try:
+                    int(_pid)
+                except ValueError:
+                    _pid = file_path.stem
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(ensure_marked, str(file_path), _pid),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[download] AIGC 标识兜底超时(不阻断下载): {file_path}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[download] AIGC 标识兜底异常(不阻断下载): {file_path}: {e}")
+
                 # 确定文件名
                 if not filename:
                     filename = file_path.name

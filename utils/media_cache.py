@@ -8,7 +8,8 @@ import aiohttp
 import asyncio
 from pathlib import Path
 
-from config.constant import DOWNLOAD_WRITE_CHUNK_TIMEOUT
+from config.constant import DOWNLOAD_WRITE_CHUNK_TIMEOUT, AIGC_MARK_TIMEOUT_SECONDS
+from utils.aigc_marking import mark_file_for_task
 from utils.download_io_pool import get_download_io_executor
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -304,6 +305,22 @@ class MediaCacheManager:
                 # 生成本地URL（相对于upload目录）
                 relative_path = file_path.relative_to(self.root_dir)
                 local_url = f"/{relative_path.as_posix()}"
+
+                # AIGC 隐式标识写入（深度合成合规，《标识办法》第5条，docs/compliance/aigc_labeling_plan.md）：
+                # 所有生成产物落盘的汇聚点，一处挂点覆盖全部生成驱动链路。
+                # 失败不阻断交付（mark_file_for_task 内部全容错）；wait_for 防 ffmpeg 卡死；
+                # 标记完成先于 CDN 上传/终态回写（transition_with_cdn_sync 在下载成功后触发），
+                # 保证 CDN 对象与本地文件均已携带标识。幂等：重试/重复落盘不重复写。
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(mark_file_for_task, str(file_path), task_id, media_type),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"AIGC 标识写入超时(>{AIGC_MARK_TIMEOUT_SECONDS}s，不阻断交付): {file_path}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"AIGC 标识写入异常(不阻断交付): {file_path}: {e}")
 
                 logger.info(
                     f"媒体文件缓存成功: {local_url} (大小: {file_size} bytes"

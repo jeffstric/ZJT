@@ -177,7 +177,12 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken'
+      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken' | 'aigc'
+      // AIGC 显式标识（明水印）全局开关（用户设置"内容标识"tab）
+      aigcWatermarkOff: false,      // true=用户已全局关闭明水印（scope=user opt-out 生效中）
+      aigcOptOutLoading: false,
+      aigcOptOutError: '',
+      aigcOptOutSuccess: '',
       // 个人资料（昵称）编辑
       nicknameInput: '',
       profileSaving: false,
@@ -1503,6 +1508,77 @@
         this.apiTokenError = '';
         this.apiTokenNewToken = '';
         this.loadApiToken();
+      },
+
+      // ==================== AIGC 明水印全局开关（用户设置"内容标识"tab） ====================
+
+      switchToAigcTab() {
+        this.userSettingsTab = 'aigc';
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        this.loadAigcOptOutStatus();
+      },
+
+      async loadAigcOptOutStatus() {
+        if (!this.authToken && !this.cookieSession) {
+          this.aigcOptOutError = '请先登录后再配置内容标识';
+          return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        try {
+          const response = await axios.get('/api/aigc/explicit-optout/status', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !!response.data.opt_out;
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '加载标识状态失败';
+          }
+        } catch (error) {
+          console.error('Load AIGC optout status failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '加载标识状态失败';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
+      },
+
+      async toggleAigcWatermark(enable) {
+        // enable=true 恢复添加明水印（resume）；enable=false 全局关闭明水印（opt-out，第9条留痕）
+        if (!enable) {
+          const confirmed = confirm(
+            '确认全局关闭"AI生成"提示标识？\n\n' +
+            '· 数字人视频与语音合成后续不再添加画面/语音提示；\n' +
+            '· 您须自行承担发布、传播 AI 内容时的主动声明义务；\n' +
+            '· 本次变更将依法记录留存不少于 6 个月；\n' +
+            '· 文件元数据中的隐式标识始终保留（法律法规要求，不可关闭）。'
+          );
+          if (!confirmed) return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        try {
+          const response = await axios.post('/api/aigc/explicit-optout', {
+            scope: 'user',
+            action: enable ? 'resume' : 'opt_out'
+          }, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !enable;
+            this.aigcOptOutSuccess = response.data.message
+              || (enable ? '已恢复添加 AI 生成标识' : '已全局关闭 AI 生成标识');
+            setTimeout(() => { this.aigcOptOutSuccess = ''; }, 3000);
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '操作失败';
+          }
+        } catch (error) {
+          console.error('Toggle AIGC watermark failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '操作失败，请稍后重试';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
       },
 
       switchToCreationDefaultsTab() {

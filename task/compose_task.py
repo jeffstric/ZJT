@@ -56,6 +56,9 @@ from model.compose_jobs import ComposeJobModel
 from model.ai_tools_log import AIToolsLogEvent, AIToolsLogModel
 from perseids_server.client import make_perseids_request
 from utils.audio_duration_util import _get_ffmpeg_path, _get_ffprobe_path
+from utils.aigc_marking import mark_file_for_task
+from utils.aigc_explicit_marker import burn_explicit_label
+from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 from utils.computing_power import (
     build_refund_transaction_id,
     is_already_refunded,
@@ -931,6 +934,29 @@ def _process_one_compose(task) -> None:
         # 不写 try_count：该计数属补段预算，拼接失败有自己的 concat_attempts
         _schedule_next(task, _retry_delay_seconds(concat_attempts))
         return
+
+    # AIGC 隐式标识：拼接成片在 CDN 上传/终态回写前打标（深度合成合规，
+    # docs/compliance/aigc_labeling_plan.md）。本函数为同步主循环上下文，
+    # 直接同步调用安全；mark_file_for_task 内部全容错，失败不阻断交付。
+    try:
+        _marked_path = resolve_upload_url_to_local_path(result_url)
+        mark_file_for_task(_marked_path, f"compose_{compose_id}", 'video')
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[compose_job] compose={compose_id} AIGC 标识写入异常(不阻断): {e}")
+        _marked_path = None
+
+    # L1 显式标识（明水印）：数字人属"人脸生成"（深度合成规定第17条第1款），
+    # 默认烧录起始画面提示；用户已申请关闭（标识办法第9条留痕）则跳过——
+    # 任务级（本条任务）与用户级（scope=user，全局对其后续数字人合成生效）均视为已申请。
+    # 烧录失败降级交付无显式标识版本并告警（隐式标识已先行写入，不重复）。
+    try:
+        _opt_out_user = getattr(job, 'user_id', None)
+        if _marked_path and not (
+                AigcExplicitOptOutModel.has_opt_out(compose_id)
+                or AigcExplicitOptOutModel.has_opt_out_user(_opt_out_user)):
+            burn_explicit_label(_marked_path, f"compose_{compose_id}", user_id=_opt_out_user)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[compose_job] compose={compose_id} AIGC 显式标识烧录异常(不阻断): {e}")
 
     mapping_id = _attach_cdn_mapping(job, result_url)
     _finish_compose(

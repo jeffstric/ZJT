@@ -991,6 +991,10 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                     {{ $t('generate_video') }}
                 </button>
+                <button id="imgModalAigcBtn" style="padding: 8px 20px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer; font-size: 14px; display: flex; align-items: center; gap: 6px; transition: background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.25)'" onmouseout="this.style.background='rgba(255,255,255,0.15)'" onclick="event.stopPropagation(); window.AigcLabel && window.AigcLabel.addToCurrentModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 12h8M12 8v8"/></svg>
+                    图片添加AI标识
+                </button>
             </div>
         </div>
 
@@ -1099,5 +1103,6 @@
     <script src="/js/marketing_article_card.js?v=__VERSION__"></script>
     <script src="/js/download_attachment.js?v=__VERSION__"></script>
     <script src="/js/marketing_agent.js?v=__VERSION__"></script>
+    <script src="/js/aigc_label.js?v=__VERSION__"></script>
 </body>
 </html>
