@@ -63,12 +63,19 @@ with purged_modules('task.visual_task'), stub_modules({
         RUNNINGHUB_TASK_TYPES=[],
         RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT=30,
         VIDEO_TASK_RETRY_DELAY_MAX_SECONDS=96,
+        # AIGC 烧录超时（visual_task 顶层引用，本测试不涉烧录流程，给真实值即可）
+        AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS=600,
         # f668 孤儿宽限：0 = 禁用（本测试只关注失败原因归一化，不涉及孤儿恢复）
         get_sync_orphan_grace_seconds=MagicMock(return_value=0),
     ),
     'config.config_util': module_stub(
         'config.config_util',
         get_dynamic_config_value=MagicMock(return_value=False),
+    ),
+    # AIGC 显式标识烧录（visual_task 落盘后调用）：真实模块依赖 config 常量全量清单，mock 掉
+    'utils.aigc_explicit_marker': module_stub(
+        'utils.aigc_explicit_marker',
+        maybe_burn_generated_media=MagicMock(),
     ),
     'perseids_server.client': module_stub(
         'perseids_server.client',
