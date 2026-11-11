@@ -27,6 +27,7 @@ Video generation task processing
 import logging
 import json
 import asyncio
+import threading
 from datetime import datetime, timedelta
 import uuid
 from perseids_server.client import make_perseids_request
@@ -73,6 +74,10 @@ logger = logging.getLogger(__name__)
 # 社区版不注册，_enterprise_failure_handler 保持 None
 _enterprise_failure_handler = None
 
+# 任务失败 agent 通知器钩子（企业版注册：FAILED 终态后把失败原因回传发起会话的
+# 大模型，营销链路用于"音频版权失败 → 询问用户去音轨重试"等引导；社区版不注册）
+_agent_failure_notifier = None
+
 # process_func 返回契约（process_task_with_retry 调度循环消费，见该函数文档）：
 #   PROCESS_RESULT_SUCCESS   → 任务到达成功终态（COMPLETED/DOWNLOADING）
 #   PROCESS_RESULT_FAILED    → 已被 _handle_task_failure 处理为终态失败
@@ -101,6 +106,32 @@ def register_enterprise_failure_handler(handler):
     global _enterprise_failure_handler
     _enterprise_failure_handler = handler
     logger.info("[Enterprise] Failure retry handler registered")
+
+
+def register_agent_failure_notifier(handler):
+    """
+    注册任务失败 agent 通知器
+
+    由 enterprise/__init__.py 在加载时调用：任务到达 FAILED 终态（无可用重试）
+    后，把失败原因通知到发起会话的大模型（见 enterprise/services/
+    agent_failure_notifier.py）。社区版不调用此函数，通知不生效。
+
+    Args:
+        handler: 通知函数，签名为:
+            handler(task_id, reason, project_id=None) -> None
+            实现方自行保证幂等与自容错；主流程以 daemon 线程调用、不等待结果
+    """
+    global _agent_failure_notifier
+    _agent_failure_notifier = handler
+    logger.info("[Enterprise] Agent failure notifier registered")
+
+
+def _notify_agent_failure_async(task_id, reason, project_id):
+    """daemon 线程中调用通知器，异常只记日志（绝不影响失败主流程/调度循环）"""
+    try:
+        _agent_failure_notifier(task_id, reason, project_id=project_id)
+    except Exception as e:
+        logger.warning(f"Agent failure notifier error for task {task_id}: {e}")
 
 
 def _log_cancel_guard_rejected(task_id, user_id, action):
@@ -1332,7 +1363,22 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
 
     if not won_failure:
         return PROCESS_RESULT_FAILED
-    
+
+    # FAILED 终态确认：通知 agent 会话（营销链路大模型感知失败原因并按 SOP 引导，
+    # 如音频版权 → 询问去音轨重试）。企业版重试接管的任务在上面提前 return 不会
+    # 到这里——只有真正终态失败才通知，天然不会在重试期间打扰用户。
+    # daemon 线程执行：通知内部有 HTTP 自调用，不能阻塞调度循环。
+    if _agent_failure_notifier:
+        try:
+            threading.Thread(
+                target=_notify_agent_failure_async,
+                args=(task_id, reason, project_id),
+                name=f"agent-failure-notify-{task_id}",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.warning(f"Failed to spawn agent failure notifier for task {task_id}: {e}")
+
     # Refund computing power (note: auth_token not available in background task)
     try:
         # 获取 AI 工具详情

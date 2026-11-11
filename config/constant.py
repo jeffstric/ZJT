@@ -605,6 +605,11 @@ PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 s
 # 同一批工具名曾散落 3 个文件共 6 份清单（expert_agent 的 project_ids 收集
 # 白名单、power_confirm 的计费/图片/视频/标签清单、pm_agent 的视频专家技能
 # 清单），两段式数字人上线时 confirm_digital_human 漏配 project_ids 白名单，
+# 参考视频去音轨（strip_reference_audio，音频版权失败重试用）超时：
+# 下载参考视频 / ffmpeg 流复制重封装（-c:v copy -an）各自的兜底上限
+STRIP_AUDIO_DOWNLOAD_TIMEOUT_SECONDS = 300
+STRIP_AUDIO_FFMPEG_TIMEOUT_SECONDS = 300
+
 # video_task_submitted 事件不推送，前端全程看不到"视频生成中"（事故：dev2
 # 会话 cf028375，project 12752 视频实际生成成功但界面无感知）。现集中于此，
 # 各使用点只允许从下方派生常量取用，禁止再在业务模块手写工具名清单。

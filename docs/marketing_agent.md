@@ -750,6 +750,17 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
 - 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini）、Seedance 2.5（seedance2.5）、MiniMax H3 参考生视频（MiniMax H3 / minimax_h3-r2v）和万相3.0 参考生视频（wan3_r2v，2026-11-12 加入，参考视频硬上限：最多 5 段且总时长 ≤15 秒、参考总时长+输出时长 ≤30 秒）；白名单单一事实来源为 `config/unified_config.py::VIDEO_CLONE_DRIVER_KEYS`。用户选择普通 MiniMax H3（首尾帧）做克隆时，由 `resolve_video_clone_task_config` 自动改用 MiniMax H3 参考生视频；选择万相3.0 文生视频时自动改用万相3.0 参考生视频（`VIDEO_CLONE_FAMILY_FALLBACK`）。创建营销任务时，界面选中的视频模型会写入全部兼容 video 槽位（含 `video.reference_to_video`），`image_to_video` 工具优先使用 `model_source=request` 的快照，避免参考槽里初始化留下的 MiniMax H3 覆盖界面上的 Seedance 2.5。专家提示词必须通过 `video_urls` 传入参考视频。人脸遮盖对 Seedance 2.0 / Fast / Mini / 2.5 显示「是否处理人脸」（`SEEDANCE_FACE_MASK_DRIVER_KEYS`，不含 MiniMax H3）；克隆提示词基线**不含**「将人脸位置的黑色方框修改为真人人脸」句，该句由 seedance 系 driver 在执行时按 pipeline steps 的素材实际遮盖状态动态决定：volcengine / oversea / kkidc（消费遮盖结果，画面有黑框）自动追加，huimengi（网关 `human_review` 自动处理人脸，使用原始素材）自动移除，保证供应商轮换（跨实现方重试）下提示词与素材状态始终一致。公共逻辑位于 `task/visual_drivers/face_mask_prompt.py`，常量为 `config/constant.py::FaceMaskPromptConstants`。Seedance 2.5 克隆（带参考视频）时驱动将 `ratio` 改为 `adaptive`、`duration` 改为 `-1`，输出跟随参考视频，避免火山 `TaskTypeConstraint`。
+
+### 任务失败通知大模型（2026-11-12）
+
+营销会话的视频生成任务到达 FAILED 终态（企业版换供应商重试耗尽、无可用候选）后，失败原因会回传给发起会话的大模型，由 PM 主动向用户解释并按 SOP 引导（音频版权失败 → 询问是否去音轨重试）。此前终态失败只有前端轮询 `reason` 展示，大模型完全不知道任务失败（用户追问"为什么失败"时模型无上下文）。
+
+- **钩子**：`task/visual_task.py::register_agent_failure_notifier`（仿 `register_enterprise_failure_handler` 注册模式）。`_handle_task_failure` 在社区版 FAILED 落库 CAS 获胜后以 daemon 线程调用通知器；企业版重试接管的任务（进 WAITING_BEFORE_FINISH）提前 return 不会触发——只有真正终态失败才通知。社区版不注册，零影响。
+- **通知器**：`enterprise/services/agent_failure_notifier.py::notify_agent_task_failure`。project_id → session_id 反查走 chat_messages pending 行的幂等键 `pending:{session_id}:{event_type}:{ids}`（前端 `replace_pending_task` 原位替换 content 后幂等键仍保留），兜底查未替换行的 `__PENDING_TASK__` content；仅 `session_type=2`（营销会话）注入；防重复标记 `task-failed-notify:{project_id}` 随消息文本落库。
+- **触发一轮**：通知器内部 HTTP 自调用 `POST /api/session/{session_id}/task`（复用完整建任务链路：消息落库、SSE、PM daemon 线程执行），auth_token 取 `chat_sessions.auth_token` 走 Authorization 头（X3 红线：不拼 URL）。大模型读到 `[系统通知] 视频生成任务（ID: xxx）生成失败：{reason}` 后按 `sop-video-clone` 引导用户。
+- **去音轨重试**：`enterprise/tools/video_tools.py::strip_reference_audio`（LLM 可见工具）。ffmpeg `-c:v copy -an` 流复制去音轨（不重编码），本系统 `/upload/` URL 直接本地映射、远程 URL 下载临时文件（try/finally 清理）；本地环境直出 `/upload/marketing/video/strip_audio/` URL，生产上传 CDN（30 天签名，失败降级本地 URL）。大模型用新 URL 作为 `video_urls` 重新提交克隆。超时常量 `config/constant.py::STRIP_AUDIO_*`。
+- 测试：`tests/task/test_agent_failure_notifier.py`（钩子注册/异常吞掉/反查双通道/营销过滤/幂等跳过/Authorization 头断言）。
+
 - 本地生活营销视频（餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等）仍走 `sop-video-generation` 并委托 `marketing-video`。此类视频推荐 10~15秒，且推荐使用 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini），因为该系列更适合完整短视频叙事，并能更好表达 BGM、TTS 口播和音效
 - Seedance2.0 系列是普通本地生活视频的推荐模型，不是全局硬限制。若用户当前选择其他视频模型，PM Agent 可以提醒效果差异，但不能拒绝、不得拒绝继续调用当前模型；只有视频克隆等明确限制场景才按硬限制处理
 - 本地生活视频提示词由 `enterprise/skills/marketing-video/SKILL.md` 组织为画面提示词、口播旁白、BGM 与音效提示、店招/品牌文字要求；涉及中文店名、中文口播和招牌文字时可使用中文结构化提示词，避免翻译破坏品牌信息
