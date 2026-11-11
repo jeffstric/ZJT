@@ -329,9 +329,16 @@ def test_api_admin_channel_level_missing_user(api_client):
 
 
 @pytest.mark.admin
-def test_api_admin_channel_level_non_admin(api_client, secondary_auth_token):
-    """admin_api_024 - 非管理员访问渠道等级接口 403"""
-    headers = {"Authorization": f"Bearer {secondary_auth_token}"}
+def test_api_admin_channel_level_non_admin(api_client, secondary_auth_token, secondary_user_id):
+    """admin_api_024 - 非管理员访问渠道等级接口 403
+
+    X-User-Id 必须与副账号 token 属主一致，否则全站一致性中间件
+    （auth_identity）会先以 401 user_mismatch 拒绝，到不了 403 权限判断。
+    """
+    headers = {
+        "Authorization": f"Bearer {secondary_auth_token}",
+        "X-User-Id": str(secondary_user_id),
+    }
     assert api_client.get("/api/admin/users/1/channel-level", headers=headers).status_code == 403
     assert api_client.put(
         "/api/admin/users/1/channel-level", json={"level": 2}, headers=headers
@@ -376,8 +383,14 @@ def test_api_admin_remark_missing_user(api_client):
 
 
 @pytest.mark.admin
-def test_api_admin_remark_non_admin(api_client, secondary_auth_token):
-    """admin_api_027 - 非管理员设置用户备注 403"""
-    headers = {"Authorization": f"Bearer {secondary_auth_token}"}
+def test_api_admin_remark_non_admin(api_client, secondary_auth_token, secondary_user_id):
+    """admin_api_027 - 非管理员设置用户备注 403
+
+    X-User-Id 与副账号 token 属主保持一致（同 admin_api_024 说明）。
+    """
+    headers = {
+        "Authorization": f"Bearer {secondary_auth_token}",
+        "X-User-Id": str(secondary_user_id),
+    }
     resp = api_client.put("/api/admin/users/1/remark", json={"remark": "x"}, headers=headers)
     assert resp.status_code == 403

@@ -236,7 +236,10 @@ def test_export_world_doc_owner_mismatch(api_client, base_url, e2e_config, user_
     login_data = login_resp.json()
     token = (login_data.get("data") or login_data).get("token")
     assert token, f"登录响应缺 token: {login_data}"
-    headers = {"Authorization": f"Bearer {token}"}
+    sub_uid = str((login_data.get("data") or login_data).get("user_id"))
+    # X-User-Id 与副账号 token 属主保持一致，避免被全站一致性中间件
+    # （auth_identity）以 401 user_mismatch 先行拒绝；端点自身属主断言仍会 403
+    headers = {"Authorization": f"Bearer {token}", "X-User-Id": sub_uid}
     resp = api_client.get(
         "/api/export-world-doc",
         params={"user_id": str(user_id), "world_id": "1"},
@@ -306,9 +309,9 @@ def test_session_list_cross_user_not_leaked(base_url, e2e_config, user_id):
     secondary_user_id = (login_resp.json().get("data") or login_resp.json()).get("user_id")
 
     resp = httpx.get(
-        f"{base_url}/api/script-writer/sessions",
+        f"{base_url}/api/sessions",
         params={"user_id": str(user_id)},  # 试图枚举主账号会话
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {token}", "X-User-Id": str(secondary_user_id)},
         timeout=15,
     )
     # 收紧后只返回副账号自己的会话（不携带主账号数据）；任何形态的主账号
