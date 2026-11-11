@@ -532,7 +532,7 @@ const PROVIDER_DEFINITIONS = [
         descKey: 'provider_chenyu_video_desc',
         category: 'multimedia',
         icon: '🪶',
-        docUrl: 'https://www.chenyu.cn/console/apiServer',
+        docUrl: 'https://www.chenyu.cn/console/login?invitationCode=SQRTZE',
         lazyRecommended: false,
         displayOrder: 23,
         baseName: 'chenyu',
