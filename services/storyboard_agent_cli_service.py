@@ -345,6 +345,40 @@ def resolve_probed_reference_implementation(
     return impl
 
 
+def apply_reference_implementation_policy(
+    user_id: Any,
+    task_type: Any,
+    prompt: Any,
+    urls: Sequence[str],
+    items: Optional[Sequence[Dict[str, Any]]],
+    image_mode: Any,
+) -> Tuple[str, List[str], List[Dict[str, Any]], Optional[str]]:
+    """点名首尾帧的 H3 参考生提交编排：兼容探测选实现方 + 选混合实现方时裁图。
+
+    cli_service 批量/单发链路与 api/storyboard.py 场景生成链路共用本函数，
+    两入口探测输入一致（同源幂等），实现方策略不再散落调用方。非 H3 参考生
+    任务原样返回（selected_impl=None）；探测解析抛 StoryboardCliError（固定
+    语义快速失败），裁图抛 FrameMentionError，由调用方按各自协议翻译错误。
+
+    调用时机约束：必须在图例 suffix 拼接之前，保证「图K是…」序号与保留图对齐。
+    """
+    if not is_h3_reference_task(task_type):
+        return prompt, list(urls or []), list(items or []), None
+
+    selected_impl = resolve_probed_reference_implementation(
+        user_id, task_type, prompt, urls, image_mode,
+    )
+    out_urls = list(urls or [])
+    out_items = list(items or [])
+    if selected_impl != DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
+        return prompt, out_urls, out_items, selected_impl
+    rewritten, out_urls, out_items = trim_reference_images_for_implementation(
+        prompt, out_urls, out_items,
+        max_images=H3_KEYFRAME_REF_MAX_IMAGES,
+    )
+    return rewritten, out_urls, out_items, selected_impl
+
+
 def _public_upload_url(url: Any) -> str:
     if not url:
         return ""
@@ -1226,24 +1260,21 @@ class StoryboardAgentCliService:
                 )
             task_type = int(generation_snapshot['task_id'])
 
-        # 首帧参考混合实现方裁图：点名首尾帧的 H3 参考生按兼容探测选实现方（默认
-        # 选首帧参考混合模型，用户固定其他供应商时尊重偏好），选混合实现方时参考图
-        # 裁到 3 张（两端保留裁中间）。裁图必须在图例 suffix 拼接之前，保证「图K是…」
+        # 首帧参考混合实现方裁图：探测选实现方 + 选混合实现方时裁图的编排收敛在
+        # apply_reference_implementation_policy（与 api/storyboard.py 场景生成链路
+        # 共用同一函数，同源幂等）。裁图必须在图例 suffix 拼接之前，保证「图K是…」
         # 序号与保留图对齐；任务保持类型 37，实现方由最终建行入口（/api/ai-app-run-image）
         # 按同一探测口径解析写库（幂等，两次解析输入一致）。
         selected_ref_impl = None
-        if mention_applied and mode == "image_to_video" and is_h3_reference_task(task_type):
-            selected_ref_impl = resolve_probed_reference_implementation(
-                user_id, task_type, prompt_text, resolved_urls, image_mode,
-            )
-            if selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1 and resolved_urls:
-                try:
-                    prompt_text, resolved_urls, legend_items = trim_reference_images_for_implementation(
-                        prompt_text, resolved_urls, legend_items,
-                        max_images=H3_KEYFRAME_REF_MAX_IMAGES,
+        if mention_applied and mode == "image_to_video":
+            try:
+                prompt_text, resolved_urls, legend_items, selected_ref_impl = (
+                    apply_reference_implementation_policy(
+                        user_id, task_type, prompt_text, resolved_urls, legend_items, image_mode,
                     )
-                except FrameMentionError as exc:
-                    raise StoryboardCliError(exc.code, exc.message) from exc
+                )
+            except FrameMentionError as exc:
+                raise StoryboardCliError(exc.code, exc.message) from exc
 
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与

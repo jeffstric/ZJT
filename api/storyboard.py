@@ -101,10 +101,8 @@ from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
     FrameMentionError,
-    H3_KEYFRAME_REF_MAX_IMAGES,
     prompt_has_frame_mention,
     read_explicit_frame_url,
-    trim_reference_images_for_implementation,
 )
 from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
 from services.storyboard_agent_command_service import StoryboardAgentCommandService
@@ -4775,8 +4773,8 @@ async def generate_scene_video(
         )
 
     # 兼容探测选实现方 + 按实现方裁图（必须在图例 suffix 拼接之前，保证「图K是…」
-    # 序号与保留图对齐）：点名首尾帧的 H3 参考生默认选首帧参考混合实现方，用户固定
-    # 其他供应商时尊重偏好；选混合实现方时参考图裁到 3 张（两端保留裁中间）。
+    # 序号与保留图对齐）：编排收敛在 services 层 apply_reference_implementation_policy
+    # （与 cli_service 批量/单发链路共用同一函数，同源幂等），API 层只做错误翻译。
     # 任务保持类型 37（下拉参考生），实现方写库与扣费都用这里解析的结果。
     selected_ref_impl = None
     if (
@@ -4784,32 +4782,23 @@ async def generate_scene_video(
         and collected_urls
         and image_mode == ImageMode.MULTI_REFERENCE
     ):
-        mention_task_config = None
         try:
             from services.storyboard_agent_cli_service import (
-                is_h3_reference_task,
-                resolve_probed_reference_implementation,
+                apply_reference_implementation_policy,
             )
-            if is_h3_reference_task(mention_task_id):
-                selected_ref_impl = await asyncio.to_thread(
-                    resolve_probed_reference_implementation,
-                    user_id, mention_task_id, prompt, collected_urls, image_mode,
-                )
-        except StoryboardCliError as exc:
-            return JSONResponse(status_code=400, content=exc.to_dict())
-        except Exception as e:
-            logger.warning(f"generate-video scene {scene_id}: probed impl resolve failed: {e}")
-        if selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
-            try:
-                prompt, collected_urls, legend_items = trim_reference_images_for_implementation(
-                    prompt, collected_urls, legend_items,
-                    max_images=H3_KEYFRAME_REF_MAX_IMAGES,
-                )
-            except FrameMentionError as exc:
-                return JSONResponse(status_code=400, content={'error': exc.message})
+            prompt, collected_urls, legend_items, selected_ref_impl = await asyncio.to_thread(
+                apply_reference_implementation_policy,
+                user_id, mention_task_id, prompt, collected_urls, legend_items, image_mode,
+            )
             reference_images_json = (
                 json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
             )
+        except StoryboardCliError as exc:
+            return JSONResponse(status_code=400, content=exc.to_dict())
+        except FrameMentionError as exc:
+            return JSONResponse(status_code=400, content={'error': exc.message})
+        except Exception as e:
+            logger.warning(f"generate-video scene {scene_id}: probed impl resolve failed: {e}")
 
     if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
         if collected_urls and legend_items:
