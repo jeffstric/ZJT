@@ -31,6 +31,9 @@ _STUB_NAMES = [
     'task.mock_interceptor',
     'utils.media_cache',
     'utils.file_storage',
+    # visual_task 顶层引用 AIGC 烧录：真实模块依赖 config 常量全量清单/DB/ffmpeg，整模块 stub
+    'utils.aigc_explicit_marker',
+    'model.aigc_explicit_opt_out',
 ]
 
 
@@ -102,6 +105,8 @@ def _install_module_stubs():
     constant.RUNNINGHUB_TASK_TYPES = []
     constant.RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30
     constant.VIDEO_TASK_RETRY_DELAY_MAX_SECONDS = 96
+    # AIGC 烧录超时（visual_task 顶层引用，本测试不涉烧录流程，给真实值即可）
+    constant.AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS = 600
     # f668 孤儿宽限：0 = 禁用（本测试只关注 attempt 写入，不涉及孤儿恢复）
     constant.get_sync_orphan_grace_seconds = MagicMock(return_value=0)
     sys.modules['config.constant'] = constant
@@ -146,6 +151,14 @@ def _install_module_stubs():
     media_cache = types.ModuleType('utils.media_cache')
     media_cache.download_and_cache = MagicMock()
     sys.modules['utils.media_cache'] = media_cache
+
+    aigc_marker = types.ModuleType('utils.aigc_explicit_marker')
+    aigc_marker.maybe_burn_generated_media = MagicMock(return_value=False)
+    sys.modules['utils.aigc_explicit_marker'] = aigc_marker
+
+    opt_out = types.ModuleType('model.aigc_explicit_opt_out')
+    opt_out.AigcExplicitOptOutModel = MagicMock()
+    sys.modules['model.aigc_explicit_opt_out'] = opt_out
 
     file_storage = types.ModuleType('utils.file_storage')
     sys.modules['utils.file_storage'] = file_storage
