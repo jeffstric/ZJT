@@ -161,7 +161,8 @@ async def request_explicit_opt_out(request: Request, body: ExplicitOptOutRequest
                 'message': '已恢复：后续内容将重新添加 AI 生成标识'}
     logger.info(f"[aigc] 显式标识关闭申请留痕 user={user_id} ai_tool={ai_tool_id} scope={body.scope}")
     return {'success': True, 'opt_out': True,
-            'message': '已记录申请：该内容后续不再添加画面/语音提示，文件元数据标识将保留'}
+            'message': '已记录申请：后续生成的图片、视频、数字人、语音合成不再添加画面/音频提示，'
+                       '文件元数据标识将保留'}
 
 
 @router.get('/explicit-optout/status')

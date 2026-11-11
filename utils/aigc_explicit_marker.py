@@ -13,8 +13,10 @@ AIGC 显式标识（明水印）烧录模块
 - L2 提供显著标识功能：普通图片/视频——前端结果卡按钮按需烧录（POST /api/aigc/explicit-label）
 
 实现要点：
-- 图片：Pillow 右下角"AI生成"角标（黑底半透明条 + NotoSansSC 白字）；JPEG 重存 quality=95
-- 视频：ffmpeg drawtext 起始画面（enable=between(t,0,N)），全片重编码（滤镜需解码），音频 copy；
+- 图片：Pillow 右下角"AI生成"角标（黑底半透明条 + NotoSansSC 白字，独立 overlay
+  alpha_composite 真混合，JPEG 混合后落 RGB，JPEG/PNG 观感一致）；JPEG 重存 quality=95
+- 视频：ffmpeg drawtext 起始画面右下角角标（enable=between(t,0,N)，位置/半透明条样式与图片一致），
+  全片重编码（滤镜需解码），音频 copy；
   ⚠️ ffmpeg 滤镜串里 Windows 盘符冒号必须转义——统一以项目根为 cwd 用相对路径绕开
 - 音频：开头拼接节奏提示资产（第4条允许"语音或节奏提示"；资产由 _ensure_notice_audio 用 ffmpeg 合成）
 - 烧录会重编码/重存丢原元数据，统一在烧录成功后以 extra_fields={'ExplicitLabel':'1'}
@@ -33,7 +35,13 @@ from config.constant import (
     AIGC_EXPLICIT_FONT_REL,
     AIGC_EXPLICIT_NOTICE_AUDIO_REL,
     AIGC_EXPLICIT_FONT_SIZE_RATIO,
+    AIGC_EXPLICIT_IMAGE_BURN_ENABLED,
+    AIGC_EXPLICIT_VIDEO_BURN_ENABLED,
+    AIGC_EXPLICIT_X264_PRESET,
+    AIGC_EXPLICIT_VIDEO_CRF,
 )
+from model.ai_tools import AIToolsModel
+from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 from utils.aigc_marking import (
     mark_file,
     has_explicit_label,
@@ -86,17 +94,20 @@ def _burn_image(file_path: Path) -> bool:
         if getattr(img, 'is_animated', False):
             logger.warning(f"动图暂不支持显式标识烧录，跳过: {file_path}")
             return False
-        # JPEG 不支持 alpha 通道，统一落 RGB（PNG 保留 RGBA）
-        if file_path.suffix.lower() in ('.jpg', '.jpeg'):
-            img = img.convert('RGB')
-        elif img.mode not in ('RGB', 'RGBA'):
-            img = img.convert('RGB')
+        icc = (img.info or {}).get('icc_profile')  # 重存前取原 ICC（convert 链可能丢 info）
+        # 半透明必须经 alpha 真混合实现：JPEG 无 alpha 通道，落盘前才转 RGB，
+        # 保证 JPEG/PNG 观感一致（直接画 RGB 会丢 alpha 成纯黑条）
+        drop_alpha = file_path.suffix.lower() in ('.jpg', '.jpeg') or img.mode != 'RGBA'
+        if img.mode != 'RGBA':
+            img = img.convert('RGBA')
         w, h = img.size
         font_size = max(14, int(min(w, h) * AIGC_EXPLICIT_FONT_SIZE_RATIO))
         font_path = _load_font()
         font = ImageFont.truetype(font_path, font_size) if font_path else None
 
-        draw = ImageDraw.Draw(img)
+        # 角标画在独立 overlay 上再 alpha_composite：直接画底图是像素替换而非混合
+        overlay = Image.new('RGBA', img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
         # 文本尺寸（Pillow 10 兼容：无 textsize 时用 textbbox）
         if font:
             bbox = draw.textbbox((0, 0), AIGC_EXPLICIT_LABEL_TEXT, font=font)
@@ -114,14 +125,16 @@ def _burn_image(file_path: Path) -> bool:
         if font:
             draw.text((x1 + pad, y1 + pad), AIGC_EXPLICIT_LABEL_TEXT,
                       fill=(255, 255, 255, 255), font=font)
+        img = Image.alpha_composite(img, overlay)
 
         save_kwargs = {'quality': 95} if file_path.suffix.lower() in ('.jpg', '.jpeg') else {}
-        icc = (img.info or {}).get('icc_profile')
         if icc:
             save_kwargs['icc_profile'] = icc
         tmp_path = f"{file_path}.aigc_exp_{os.getpid()}.tmp"
         # tmp 扩展名无法供 Pillow 推断格式，显式指定（按原文件类型）
         img_format = 'JPEG' if file_path.suffix.lower() in ('.jpg', '.jpeg') else 'PNG'
+        if drop_alpha:
+            img = img.convert('RGB')
         img.save(tmp_path, img_format, **save_kwargs)
     os.replace(tmp_path, file_path)
     return True
@@ -140,13 +153,19 @@ def _burn_video(file_path: Path) -> bool:
         return False
     fontsize = max(16, int(h * AIGC_EXPLICIT_FONT_SIZE_RATIO))
     display_secs = AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS
-    # 位置：底部居中，距底 5%（第4条：视频起始画面及周边添加标识）
+    # 与图片角标一致：右下角黑底半透明条 + 白字（boxborderw≈图片 pad，边距≈图片 margin）
+    margin = max(8, int(h * 0.02))
+    borderw = max(4, fontsize // 3)
+    box_alpha = f"{160 / 255:.3f}"  # 与图片条 alpha=160 一致
+    # 位置：右下角（第4条：视频起始画面及周边添加标识）
+    # 注意：x/y 表达式只用 text_w/text_h 渲染常量（ffmpeg 4.x 无 boxborderw 变量），
+    # borderw/margin 在 Python 侧算成数值，避免依赖高版本 ffmpeg 表达式变量
     vf = (
         f"drawtext=fontfile={AIGC_EXPLICIT_FONT_REL}"
         f":text={AIGC_EXPLICIT_LABEL_TEXT}"
         f":fontsize={fontsize}:fontcolor=white"
-        f":box=1:boxcolor=black@0.5:boxborderw={max(4, int(fontsize * 0.35))}"
-        f":x=(w-text_w)/2:y=h*0.95-text_h"
+        f":box=1:boxcolor=black@{box_alpha}:boxborderw={borderw}"
+        f":x=w-text_w-{borderw + margin}:y=h-text_h-{borderw + margin}"
         f":enable='between(t,0,{display_secs})'"
     )
     tmp_path = f"{file_path}.aigc_exp_{os.getpid()}.tmp.mp4"
@@ -154,7 +173,8 @@ def _burn_video(file_path: Path) -> bool:
         cmd = [
             _get_ffmpeg_path(), '-y', '-loglevel', 'error',
             '-i', str(file_path), '-vf', vf,
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+            '-c:v', 'libx264', '-preset', AIGC_EXPLICIT_X264_PRESET,
+            '-crf', str(AIGC_EXPLICIT_VIDEO_CRF),
             '-c:a', 'copy',
             '-movflags', '+faststart',
             tmp_path,
@@ -183,13 +203,15 @@ def _ensure_notice_audio() -> Path:
     notice_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = f"{notice_path}.aigc_{os.getpid()}.tmp"
     try:
-        # 三声短提示音（440Hz + 880Hz 叠加，各 0.15s、间隔 0.1s），首尾 30ms 淡入淡出
+        # 三短音节奏提示（880Hz，tremolo 4Hz 全深度调制出 ~3 个脉冲，0.8s），
+        # 峰值约 -9 dBFS。⚠️ ffmpeg sine 源默认 1/8 幅值（-18dB）且 4.x 无 amplitude
+        # 选项，响度只能经 volume 补偿（旧版 volume=0.5 实测峰值 -24dB，不可闻）
         cmd = [
             _get_ffmpeg_path(), '-y', '-loglevel', 'error',
-            '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.6',
+            '-f', 'lavfi', '-i', 'sine=frequency=880:duration=0.8',
             '-filter_complex',
-            "volume=0.5,afade=t=in:st=0:d=0.03,afade=t=out:st=0.55:d=0.05,"
-            "tremolo=f=5:d=0.8,atrim=0:0.6",
+            "volume=2.8,tremolo=f=4:d=1,afade=t=in:st=0:d=0.02,"
+            "afade=t=out:st=0.75:d=0.05,atrim=0:0.8",
             '-c:a', 'libmp3lame', '-q:a', '3',
             '-f', 'mp3',
             tmp_path,
@@ -292,4 +314,55 @@ def burn_explicit_label(file_path, produce_id, media_kind: str = 'auto',
         return True
     except Exception as e:  # noqa: BLE001
         logger.warning(f"AIGC 显式标识烧录异常（不阻断交付）: {file_path}: {e}")
+        return False
+
+
+# ==================== 生成链默认烧录入口（L1，图片/视频） ====================
+
+def maybe_burn_generated_media(result_url, ai_tool_id, media_type: str) -> bool:
+    """生成产物默认烧录 L1 显式标识（图片/视频）。
+
+    2026-11-11 产品决策（保守合规）：系统无法检测产出内容是否含人脸，全部生成
+    图片/视频按"人脸生成/可能造成公众混淆"对待，默认烧录"AI生成"标识；
+    用户可在设置中全局关闭（标识办法第9条留痕 aigc_explicit_opt_out_log）。
+    详见 docs/compliance/aigc_labeling_plan.md 3.3。
+
+    生成链三处调用点（download_queue worker / visual_task 入队失败兜底 /
+    sync_task_executor），调用方必须保证本函数先于 transition_with_cdn_sync /
+    建 media_file_mapping 执行——上传线程触发后才读本地文件，时序保证 CDN
+    对象与本地文件一致带标。
+
+    - 非本地 /upload/ 文件、开关关闭（AIGC_EXPLICIT_*_BURN_ENABLED）、
+      音频等其他类型（音频走 volcengine_tts_service 自身挂点）、
+      opt-out 用户 → 跳过返回 False
+    - 全容错：任何异常仅告警返回 False（失败不阻断交付，隐式标识已先行写入）
+
+    阻塞操作（Pillow/ffmpeg），须在 to_thread 或同步 worker 中调用，勿放事件循环。
+    """
+    try:
+        if media_type == 'image':
+            if not AIGC_EXPLICIT_IMAGE_BURN_ENABLED:
+                return False
+        elif media_type == 'video':
+            if not AIGC_EXPLICIT_VIDEO_BURN_ENABLED:
+                return False
+        else:
+            return False
+        if not (result_url or '').startswith('/upload/'):
+            return False
+        path = Path(get_project_root()) / result_url.lstrip('/')
+        if not path.is_file():
+            logger.warning(f"AIGC 显式标识跳过：产物文件不存在 {path}")
+            return False
+        tool = AIToolsModel.get_by_id(ai_tool_id)
+        uid = getattr(tool, 'user_id', None)
+        if not uid:
+            logger.warning(f"AIGC 显式标识跳过：任务无 user_id ai_tool={ai_tool_id}")
+            return False
+        if AigcExplicitOptOutModel.has_opt_out_user(uid):
+            return False  # 用户级明水印关闭生效中（第9条留痕；隐式标识保留）
+        return burn_explicit_label(str(path), str(ai_tool_id), media_type, uid)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            f"AIGC 生成产物显式标识异常(不阻断交付): ai_tool={ai_tool_id} {result_url}: {e}")
         return False

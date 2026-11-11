@@ -70,6 +70,7 @@ class AnnouncementCreateRequest(BaseModel):
     link_text: Optional[str] = None
     images: List[str] = []
     level: str = "info"
+    popup: bool = False  # 弹窗通知（进页强弹窗展示，已读后不再弹）
     status: str = AnnouncementStatus.DRAFT  # draft / published
     publish_at: Optional[str] = None
     expire_at: Optional[str] = None
@@ -82,6 +83,7 @@ class AnnouncementUpdateRequest(BaseModel):
     link_text: Optional[str] = None
     images: List[str] = []
     level: str = "info"
+    popup: Optional[bool] = None  # None=不修改
     publish_at: Optional[str] = None
     expire_at: Optional[str] = None
 

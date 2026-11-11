@@ -39,7 +39,8 @@
 | **下载出口兜底** | `server.py /api/download` 本地 FileResponse 分支 | 漏标文件下载时补标（幂等，已标识毫秒级返回） |
 | **数字人拼接** | `task/compose_task.py` 拼接完成后、`_attach_cdn_mapping` 前 | 分段拼接成片（同步主循环上下文） |
 | **TTS 合成** | `services/volcengine_tts_service.py _write_file` | 正式合成音频（to_thread 同步上下文） |
-| **TTS 试听缓存** | `api/tts.py preview_voice._write_preview` | 试听缓存首次生成 |
+| **TTS 克隆/配音** | `task/audio_task.py _submit_new_task` 落盘后、CDN 注册前 | /audio-generate 页面与 storyboard 配音（IndexTTS 克隆+情感控制，async worker 内 asyncio.to_thread 同步执行） |
+| **TTS 试听缓存** | `api/tts.py preview_voice._write_preview` | 试听缓存首次生成（仅隐式标识，按设计不烧显式） |
 
 **时序链**：download_and_cache（标记）→ 宫格 trim（重写→重新兜底）→ transition_with_cdn_sync（建 mapping + 触发 CDN 上传）——标记先于 CDN，保证云端对象与本地文件一致带标。
 
@@ -70,24 +71,34 @@ python -I temp/test_aigc_marking.py
 
 | 级别 | 内容类型 | 策略 | 实现 |
 |------|---------|------|------|
-| **L1 强制默认烧录** | 数字人视频（人脸生成）、TTS 合成人声 | 默认烧录；用户可申请关闭（第 9 条留痕） | 视频起始画面 ffmpeg drawtext"AI生成"（全片重编码 libx264 fast crf20，音频 copy）；音频开头拼接节奏提示资产 `files/audio/aigc_notice.mp3`（第 4 条允许"语音或节奏提示"，资产由 ffmpeg 合成生成一次复用） |
-| **L2 提供显著标识功能** | 普通图片/视频 | 结果卡按钮按需烧录 | 聊天流弹窗"添加AI标识"按钮 → POST /api/aigc/explicit-label；图片右下角 Pillow 角标（NotoSansSC，黑底半透明条），视频同 drawtext |
+| **L1 强制默认烧录** | **全部生成图片与生成视频**（2026-11-11 产品决策：系统无法检测产出是否含人脸，保守按"人脸生成/可能混淆"对待）+ 数字人视频（人脸生成）、TTS 合成人声 | 默认烧录；用户可申请关闭（第 9 条留痕，用户级全局） | 图片右下角 Pillow 角标（NotoSansSC，overlay alpha_composite 真混合的黑底半透明条，JPEG 混合后落 RGB 与 PNG 观感一致，几十~几百 ms/张）；视频起始画面右下角 ffmpeg drawtext 角标（位置/黑底半透明条样式与图片一致，全片重编码 libx264，preset/CRF 常量可调，音频 copy，1080p 10s 片约 10~40s/条）；音频开头拼接节奏提示资产 `files/audio/aigc_notice_v2.mp3`（880Hz 三短音 0.8s，峰值约 -9 dBFS；v1 峰值 -24dB 不可闻，v2 改文件名强制各环境重新生成） |
+| **L2 提供显著标识功能** | （保留）存量内容、opt-out 恢复后的单件需求 | 结果卡按钮按需烧录 | 聊天流弹窗"添加AI标识"按钮 → POST /api/aigc/explicit-label |
+
+总开关常量（config/constant.py）：`AIGC_EXPLICIT_IMAGE_BURN_ENABLED` / `AIGC_EXPLICIT_VIDEO_BURN_ENABLED`（视频吞吐吃紧可独立关闭）、`AIGC_EXPLICIT_X264_PRESET` / `AIGC_EXPLICIT_VIDEO_CRF`（画质/CPU 调优）。
 
 ### 关键机制
 
-- **关闭申请留痕**（第 9 条硬要求）：表 `aigc_explicit_opt_out_log`（迁移 no_163，`model/aigc_explicit_opt_out.py`，append-only 禁删；`action` 列为 opt_out/resume 状态机，最新记录决定当前状态）。**用户自助入口：index.html「设置 → 内容标识」tab**——勾选框控制数字人/语音明水印全局开关（`scope: "user"` 一次申请对其后续所有 TTS 与数字人合成均跳过烧录；取消勾选走 resume 恢复）。任务级 API：`POST /api/aigc/explicit-optout`（`ai_tool_id`），状态查询：`GET /api/aigc/explicit-optout/status`。
+- **关闭申请留痕**（第 9 条硬要求）：表 `aigc_explicit_opt_out_log`（迁移 no_163，`model/aigc_explicit_opt_out.py`，append-only 禁删；`action` 列为 opt_out/resume 状态机，最新记录决定当前状态）。**用户自助入口：index.html「设置 → 内容标识」tab**——勾选框控制全部显式标识（图片/视频/数字人/语音）全局开关（`scope: "user"` 一次申请对其后续所有生成均跳过烧录；取消勾选走 resume 恢复）。任务级 API：`POST /api/aigc/explicit-optout`（`ai_tool_id`），状态查询：`GET /api/aigc/explicit-optout/status`。
 - **幂等判定**：显式烧录后统一 `mark_file(extra_fields={'ExplicitLabel':'1'})` 重写隐式标识（烧录重编码丢原元数据，隐式是强制义务必须补回）；`has_explicit_label` 读该字段防角标叠加。
-- **L1 挂点**：`compose_task.py`（拼接后、CDN 前，查 `has_opt_out(compose_id)` 跳过）+ `volcengine_tts_service.py _write_file`（查 `has_opt_out_user` 跳过）；烧录失败降级交付无显式版本并告警（隐式已先行写入）。
-- **CDN 重传**：explicit-label API 烧录后触发 `trigger_cdn_upload` 覆盖旧对象。
-- **协议前置**（第 8 条）：正式上线前用户协议须补 AIGC 标识条款章节；前端确认弹窗文案已含义务声明作为过渡。
+- **L1 生成链挂点**（统一入口 `utils/aigc_explicit_marker.maybe_burn_generated_media`：开关判定→本地文件解析→查 user→opt-out 跳过→烧录）：
+  1. `task/download_queue_task.py::_process_one`——主链路（45+ 驱动经 download_queue 汇聚），**宫格裁剪之后、transition_with_cdn_sync 之前**；
+  2. `task/visual_task.py`——入队 DB 异常时的同步下载兜底分支（trim 后、状态更新前）；
+  3. `task/sync_task_executor.py`——同步执行器 worker 子进程（trim_sync 后、return 前）；
+  4. 数字人拼接 `compose_task.py`（拼接后、CDN 前）与 TTS `volcengine_tts_service.py _write_file` 沿用原挂点（幂等，与上面不叠加）。
+  烧录失败降级交付无显式版本并告警（隐式已先行写入，不阻断交付）。
+- **CDN 时序保证**：烧录在 `transition_with_cdn_sync`（建 media_file_mapping）之前同步完成——上传线程（`trigger_cdn_upload` 独立线程/mapping 后台处理）触发后才读本地文件，故 CDN 对象必为烧录版；`os.replace` 同路径替换，对象 key/签名 URL 不受影响；新内容首次上传前已带标，无边缘缓存旧对象问题。**边界**：L2 手动烧录存量内容时覆盖 CDN 对象，边缘节点可能在 TTL 内仍返回旧无水印版（未接七牛对象刷新 API，后续可选）。
+- **用户引导五触点**（2026-11-11）：① **弹窗公告**——公告系统新增 `popup` 字段（迁移 no_165，`announcement_popup.js` 组件接入 index/marketing_agent/video_workflow 三页，进页强弹窗、已读服务端记录不再弹），运营在 /admin 发布勾选"弹窗通知"的公告即可主动触达全部活跃用户；首个全局弹窗公告（AIGC 标识规则变更通知，链接 `/index.html?aigc_tab=1` 直达"设置→内容标识"）已由迁移 no_166 以数据迁移植入（`popup=1`+`published`，幂等按标题判重）；② 条款重新同意（迁移 no_164）；③ marketing_agent 首次出现生成结果的一次性引导条（localStorage `marketing_aigc_notice_dismissed`，`augmentGeneratedImageCards` MutationObserver 钩子触发）；④ `index.html?aigc_tab=1` 直达"设置→内容标识"（index_app.js mounted 解析 + sessionStorage `pending_aigc_settings` 暂存，登录态就绪后打开）。
+- **协议前置**（第 8 条）：默认用户条款《AI工具服务使用条款》/《AI Tool Service Terms》（files/ 目录）已于 2026-11-11 补充"AI生成内容标识"章节（隐式/显式标识说明、关闭申请与 ≥6 个月留痕告知、禁止删标），并修订原 6.1"不含水印版本"表述；线上无自定义条款覆盖，随版本发布即生效。**待法务审核定稿**；前端确认弹窗文案作为过渡保留。
+- **条款重新同意**（迁移 no_164，2026-11-11）：`UPDATE users SET terms_agreed=0`，全体用户下次登录必须重新勾选新版条款——登录时未勾选则返回"请阅读并同意AI工具服务使用条款"（auth_service.py login），前端收到该错误自动弹出条款弹窗（index_app.js loginShowTerms），勾选后重新提交登录并回写 terms_agreed=1。注意：已登录会话（token 未过期）不受影响，下次登录才触发。**须与新条款文件同版本发布**（避免用户重新同意的还是旧版条款）。
 - **L2 按钮跟踪时序**（修复 2026-11-10）：`web/js/aigc_label.js` 跟踪弹窗当前 `aiToolId` 走两条路径：**主路径=点击捕获**——marketing_agent.js 打开弹窗的委托直调闭包函数（不经 window），包装 window 函数收不到通知（e2e 实测按钮恒报"缺少任务信息"）；捕获阶段从被点媒体卡（`[data-modal-src]`/`img[data-full-src]`）外层 `[data-tool-id]` 记录，弹窗打开后采纳。辅路径=晚绑定访问器包装 `window.setModalImageInfo/resetModalImageInfo`（其赋值在 Vue `setup()` 挂载时才执行，**不可回退为加载时浅包装**，会被后到赋值覆盖）。
 
 ### 已知边界
 
 1. L2 入口目前仅聊天流弹窗（marketing_agent）；视频工作流/画布节点菜单下轮接入（API 已就绪，传 ai_tool_id 即可）
-2. 数字人/TTS 关闭申请的前端独立入口下轮接入（API+留痕表已就绪，暂可经客服/后台渠道申请）
-3. GIF/WebP 不支持显式烧录；音频提示音为节奏提示（合成语音提示需 TTS 资产，后续可换语音版）
-4. `/api/download` 外链代理与 max_try 兜底 remote_url 不落盘场景同隐式标识边界
+2. GIF/WebP 不支持显式烧录；音频提示音为节奏提示（合成语音提示需 TTS 资产，后续可换语音版）
+3. `/api/download` 外链代理与 max_try 兜底 remote_url 不落盘场景同隐式标识边界
+4. **绕过 download_queue 的资产类图片未挂显式烧录**：宫格批量图（`grid_image_task.py` 裸 requests 直存+PIL 拆分）、多角度图（`location_multi_angle_task.py`）、storyboard 宫格拆分 driver 重写文件——这些是世界资产而非用户直接下载的生成结果，隐式标识部分亦未覆盖，后续阶段统一补
+5. L2 手动烧录存量内容后 CDN 边缘缓存可能在 TTL 内返回旧无水印对象（见上方 CDN 时序说明）
 
 ## 九、自测脚本
 
@@ -98,6 +109,6 @@ python -I temp/test_aigc_marking.py
 
 1. **下载 max_try 兜底 remote_url**（`download_queue_task.py` 达上限用上游 URL 兜底 COMPLETED）与 `/api/download` 外链代理模式：文件不落盘，无法写标识——属已知边界，需后续评估改为"先落盘再交付"
 2. **存量补标**：本轮不做（用户决策）；方案见 labeling_plan 3.6 节
-3. **显式标识**（视频起始画面 drawtext / 音频提示 / 图片角标，L1/L2 分级）：后续阶段，见 labeling_plan 3.3 节
+3. ~~**显式标识**（视频起始画面 drawtext / 音频提示 / 图片角标，L1/L2 分级）：后续阶段~~ → **已实施**（2026-11-08 数字人/TTS；2026-11-11 图片/视频全量纳入 L1，见第八节）
 4. **正式编码替换**：`AIGC_CONTENT_PRODUCER` 占位值待申请后更新
 5. storyboard/剪映/世界包导出链路暂未接（导出源文件已带标，仅二次压缩场景需复查）

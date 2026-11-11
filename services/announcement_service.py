@@ -91,8 +91,9 @@ class AnnouncementService:
             return '公告标题不能为空'
         if level not in VALID_LEVELS:
             return f"无效的公告级别: {level}，可选 {VALID_LEVELS}"
-        if link_url and not link_url.startswith(('http://', 'https://')):
-            return '链接必须以 http:// 或 https:// 开头'
+        if link_url and not (link_url.startswith(('http://', 'https://'))
+                             or (link_url.startswith('/') and not link_url.startswith('//'))):
+            return '链接必须以 http(s):// 开头，或为站内相对路径（以 / 开头，如 /index.html?aigc_tab=1）'
         for url in (images or []):
             if not isinstance(url, str) or not url.startswith(('/', 'http://', 'https://')):
                 return '图片地址无效'
@@ -129,6 +130,7 @@ class AnnouncementService:
             link_text=(payload.get('link_text') or '').strip() or None,
             images=images,
             level=level,
+            popup=1 if payload.get('popup') else 0,
             status=status,
             publish_at=publish_at,
             expire_at=expire_at,
@@ -147,6 +149,7 @@ class AnnouncementService:
         level = payload.get('level') or announcement.level
         link_url = (payload.get('link_url') or '').strip() or None
         images = payload.get('images') if payload.get('images') is not None else announcement.images
+        popup = int(bool(payload['popup'])) if payload.get('popup') is not None else announcement.popup
         publish_at = AnnouncementService._normalize_datetime_str(payload.get('publish_at'))
         expire_at = AnnouncementService._normalize_datetime_str(payload.get('expire_at'))
 
@@ -164,6 +167,7 @@ class AnnouncementService:
             link_text=(payload.get('link_text') or '').strip() or None,
             images=images,
             level=level,
+            popup=popup,
             publish_at=publish_at,
             expire_at=expire_at,
         )
