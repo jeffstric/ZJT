@@ -609,6 +609,31 @@ class TestVideoCloneDriverKeys(unittest.TestCase):
         self.assertIn(DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
         self.assertIn(DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
         self.assertNotIn(DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        # 万相3.0 参考生视频（2026-11-12 加入克隆白名单）
+        self.assertIn(DriverKey.WAN3_REFERENCE_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+        self.assertNotIn(DriverKey.WAN3_TEXT_TO_VIDEO, VIDEO_CLONE_DRIVER_KEYS)
+
+    def test_wan3_text_to_video_family_fallback(self):
+        from config.unified_config import (
+            VIDEO_CLONE_FAMILY_FALLBACK,
+            DriverKey,
+            resolve_video_clone_task_config,
+            UnifiedConfigRegistry,
+        )
+
+        self.assertEqual(
+            VIDEO_CLONE_FAMILY_FALLBACK.get(DriverKey.WAN3_TEXT_TO_VIDEO),
+            DriverKey.WAN3_REFERENCE_TO_VIDEO,
+        )
+        wan3_t2v = UnifiedConfigRegistry.get_by_key('wan3_text_to_video')
+        self.assertIsNotNone(wan3_t2v)
+        resolved = resolve_video_clone_task_config(wan3_t2v.id)
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.key, 'wan3_reference_to_video')
+
+        wan3_r2v = UnifiedConfigRegistry.get_by_key('wan3_reference_to_video')
+        self.assertIsNotNone(wan3_r2v)
+        self.assertIsNotNone(wan3_r2v.to_frontend_dict()['supports_video_clone'])
 
     def test_frontend_dict_supports_video_clone_flag(self):
         from config.unified_config import UnifiedConfigRegistry
