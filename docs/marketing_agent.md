@@ -473,6 +473,8 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 - 压缩阈值：文件 > 10MB、短边 > 480px、总像素 < 409600 或超过最大时长
 - 支持 WebM (VP9/VP8) 和 MP4 格式
 - 超过最大时长的视频自动截断
+- **0 字节产物降级重试与回退**：个别浏览器（实测 360极速浏览器）的 MediaRecorder `isTypeSupported` 通过但编码器实际不吐数据（VP9 硬编静默失败，采集正常 `drewFrames>0` 但 `recordedBytes=0`），录制结果为 0 字节 Blob。处理链：首选编码 0 字节 → `vp8RetryMime()` 降级 VP8 变体重录一次 → 仍 0 字节则 `buildRecorderResult()` 回退上传原始文件（`compressed: false`，后端 `/api/upload-agent-video` 校验兜底）；关键节点（编码支持表、录制开始/停止、帧绘制计数、产物字节数、降级重试）均有 `[VideoCompressor]` 前缀的 console 日志便于定位
+- 后端 `/api/upload-agent-video` 对空文件、ffprobe 无法解析（损坏）的视频一律 400 拒绝并删除落盘文件，不再跳过校验当成功放行（曾致 0 字节 webm 入库 → 下游 ffmpeg EBML 解析失败 → 视频编辑任务缺参考视频被火山 400）
 
 #### @ 引用系统
 
