@@ -4,6 +4,8 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from task.visual_drivers.minimax_h3_keyframe_ref_runninghub_v1_driver import (
     MinimaxH3KeyframeRefRunninghubV1Driver,
 )
@@ -69,9 +71,15 @@ def test_both_markers_fill_start_reference_end():
     assert request["json"]["usePersonalQueue"] == "false"
 
     nodes = node_map(request)
+    # 六槽矩阵：P1=首帧、P2=参考、P3~P5 空槽、P6=尾帧
     assert nodes[("137", "image")]["fieldValue"] == "https://rh.example/first.png"
     assert nodes[("156", "image")]["fieldValue"] == "https://rh.example/ref.png"
-    assert nodes[("187", "image")]["fieldValue"] == "https://rh.example/last.png"
+    assert nodes[("187", "image")]["fieldValue"] == ""
+    assert nodes[("190", "image")]["fieldValue"] == ""
+    assert nodes[("191", "image")]["fieldValue"] == ""
+    assert nodes[("192", "image")]["fieldValue"] == "https://rh.example/last.png"
+    picture_nodes = [node for node in request["json"]["nodeInfoList"] if node["fieldName"] == "image"]
+    assert len(picture_nodes) == 6
     assert nodes[("157", "audio")]["fieldValue"] == "None"
     assert nodes[("188", "audio")]["fieldValue"] == "None"
     assert nodes[("138", "value")]["fieldValue"] == "图1是首帧，图2是林月，图3是尾帧。"
@@ -103,7 +111,7 @@ def test_only_last_reads_original_prompt_not_optimized_text():
     nodes = node_map(request)
     assert nodes[("137", "image")]["fieldValue"] == "https://rh.example/ref.png"
     assert nodes[("156", "image")]["fieldValue"] == ""
-    assert nodes[("187", "image")]["fieldValue"] == "https://rh.example/last.png"
+    assert nodes[("192", "image")]["fieldValue"] == "https://rh.example/last.png"
     assert nodes[("138", "value")]["fieldValue"] == "subject_definitions: rewritten without frame marks"
 
 
@@ -119,13 +127,13 @@ def test_only_first_puts_second_reference_on_picture_3():
     assert nodes[("187", "image")]["fieldValue"] == "https://rh.example/ref2.png"
 
 
-def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
+def test_two_audios_fill_both_nodes_and_third_is_truncated():
     """双说话人双声明：两路上传 fileName；声明 2 路上限外（第 3 路）由驱动截断。"""
     driver = make_driver()
     optimized = (
         "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
         "<Audio 1> is the voice-timbre reference for the woman in <Picture 2> (S1): timbre.\n"
-        "<Audio 2> is the voice-timbre reference for the man in <Picture 3> (S2): timbre."
+        "<Audio 2> is the voice-timbre reference for the man in <Picture 6> (S2): timbre."
     )
     extra = {
         "image_mode": "multi_reference",
@@ -138,7 +146,6 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     }
     request = asyncio.run(driver.build_create_request(make_ai_tool(
         audio_path="voice1.wav,voice2.wav",
-        video_path="clip.mp4",
         prompt=optimized,
         extra_config=json.dumps(extra, ensure_ascii=False),
     )))
@@ -147,8 +154,6 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     assert nodes[("157", "audio")]["description"] == "<Audio 1>"
     assert nodes[("188", "audio")]["fieldValue"] == "openapi/voice2.wav"
     assert nodes[("188", "audio")]["description"] == "<Audio 2>"
-    assert "clip.mp4" not in driver._storage.calls
-    driver.logger.warning.assert_called()
 
     third = make_driver()
     third_request = asyncio.run(third.build_create_request(make_ai_tool(
@@ -160,7 +165,16 @@ def test_two_audios_fill_both_nodes_and_extra_audio_and_video_are_dropped():
     assert third_nodes[("157", "audio")]["fieldValue"] == "openapi/a.wav"
     assert third_nodes[("188", "audio")]["fieldValue"] == "openapi/b.wav"
     assert "c.wav" not in third._storage.calls
-    third.logger.warning.assert_called()
+
+
+def test_reference_video_fails_explicitly_for_retry_switch():
+    """混合 webapp 无视频槽：带视频提交显式失败（不再静默丢弃），
+    由 before_finish 重试切到带视频槽的参考生实现方（67/AutoDL）。"""
+    driver = make_driver()
+    with pytest.raises(ValueError, match="不支持参考视频"):
+        asyncio.run(driver.build_create_request(make_ai_tool(
+            video_path="clip.mp4",
+        )))
 
 
 def test_single_speaker_uploads_only_declared_audio():
@@ -303,3 +317,29 @@ def test_requires_at_least_one_picture():
     except ValueError:
         return
     raise AssertionError("没有图片时应抛 ValueError")
+
+
+def test_no_mark_fills_all_six_slots_as_references():
+    """没点名首尾帧：P1~P6 全参考图（同一混合 webapp 的无锚点模式），7 张起丢弃"""
+    driver = make_driver()
+    request = asyncio.run(driver.build_create_request(make_ai_tool(
+        reference_images=json.dumps(
+            ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"], ensure_ascii=False
+        ),
+        prompt="一只猫在草地上奔跑。",
+    )))
+    nodes = node_map(request)
+    for slot_index, node_id in enumerate(("137", "156", "187", "190", "191", "192")):
+        expected = f"https://rh.example/{'abcdef'[slot_index]}.png"
+        assert nodes[(node_id, "image")]["fieldValue"] == expected
+
+    overloaded = make_driver()
+    asyncio.run(overloaded.build_create_request(make_ai_tool(
+        reference_images=json.dumps(
+            ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png", "g.png", "h.png"],
+            ensure_ascii=False,
+        ),
+        prompt="一只猫在草地上奔跑。",
+    )))
+    assert "h.png" not in overloaded._storage.calls and "g.png" not in overloaded._storage.calls
+    overloaded.logger.warning.assert_called()

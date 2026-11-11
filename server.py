@@ -48,7 +48,6 @@ from PIL import Image
 from task.scheduler import init_scheduler
 from model.migration import run_migrations, get_alembic_config
 from config.unified_config import (
-    DriverImplementation,
     UnifiedConfigRegistry,
     get_implementation_id,
     get_implementation_name,
@@ -3076,18 +3075,17 @@ async def ai_app_run_image(
         # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
         auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
         # 旧路线兼容：类型 50（minimax_h3_kfr，首帧参考混合）已硬禁用，不再创建。
-        # 旧页面仍提交 50 时翻译成类型 37 + 强制混合实现方（等价旧行为），并打警告日志。
+        # 旧页面仍提交 50 时翻译成类型 37（参考生）即可——首帧参考混合实现方是 37
+        # 的排序首位默认实现方，正常解析结果与旧 force 等价（用户固定其他实现方时
+        # 尊重固定），并打警告日志。
         from task.visual_drivers.driver_factory import VideoDriverFactory
-        force_keyframe_ref_impl = False
         try:
             if int(task_id) == int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO):
                 logger.warning(
-                    "Legacy minimax_h3_kfr (type=50) submit by user %s: re-recording as "
-                    "type=37 + keyframe_ref implementation",
+                    "Legacy minimax_h3_kfr (type=50) submit by user %s: re-recording as type=37",
                     user_id,
                 )
                 task_id = int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
-                force_keyframe_ref_impl = True
         except (TypeError, ValueError):
             pass
         # 通过 task_id 获取任务配置
@@ -3214,40 +3212,23 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
-        # 实现方解析（必须在图片/音频/视频归位之后：兼容探测要读最终素材形态）。
-        # H3 参考生挂载了首帧参考混合实现方（有输入条件：提示词点名首尾帧才兼容，
-        # 见 minimax_h3_keyframe_ref_runninghub_v1.validate_input_compatibility），
-        # 三层选择（偏好 → 排序 → 默认）都会带探测对象跳过不兼容候选；其他任务
-        # 类型的行为与旧版一致。旧 50 提交强制走混合实现方（等价旧路线）。
-        if force_keyframe_ref_impl:
-            actual_impl = DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
-        else:
-            from task.visual_drivers.base_video_driver import DriverInputProbe
-            input_probe = DriverInputProbe(
-                prompt=prompt or "",
-                extra_config=json.dumps({IMAGE_MODE_EXTRA_CONFIG_KEY: image_mode}, ensure_ascii=False),
-                reference_images=reference_images_json,
-                image_path=image_path,
-                audio_path=audio_path,
-                video_path=video_path,
-            )
-            actual_impl = await asyncio.to_thread(
-                VideoDriverFactory.get_implementation_for_user,
-                task_id, user_id, input_probe,
-            )
-            if not actual_impl:
-                create_error = VideoDriverFactory.get_last_create_error() or {}
-                # 固定实现方与本次输入不兼容：按固定语义快速失败（不静默换供应商、
-                # 不扣费不建任务）；偏好已被工厂顺手清除
-                if str(create_error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
-                    raise HTTPException(
-                        status_code=400,
-                        detail=str(create_error.get("message") or "固定的实现方当前不可用"),
-                    )
+        # 实现方解析（偏好 → 排序 → 默认）：类型 37 默认即首帧参考混合实现方
+        # （排序首位、无输入条件），解析失败按固定语义快速失败（不扣费不建任务）。
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            task_id, user_id,
+        )
+        if not actual_impl:
+            create_error = VideoDriverFactory.get_last_create_error() or {}
+            if str(create_error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
                 raise HTTPException(
                     status_code=400,
-                    detail=str(create_error.get("message") or "没有可用的实现方"),
+                    detail=str(create_error.get("message") or "固定的实现方当前不可用"),
                 )
+            raise HTTPException(
+                status_code=400,
+                detail=str(create_error.get("message") or "没有可用的实现方"),
+            )
         resolution = validate_video_resolution(resolution, actual_impl)
 
         # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
@@ -3258,29 +3239,6 @@ async def ai_app_run_image(
         )
         if not duration_ok:
             raise HTTPException(status_code=400, detail=duration_reject_reason)
-
-        # 选出首帧参考混合实现方时按其 3 图槽上限裁参考图（两端保留、裁中间并同步
-        # 重写提示词里的「图K是…」图例句序号）。上游（故事板/画布排图链路）已裁过
-        # 时此步为空操作；张数以服务端按实现方裁切为准，前端不再预拦截。
-        if (
-            actual_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
-            and reference_images_json
-        ):
-            from services.storyboard_frame_mention import (
-                FrameMentionError,
-                H3_KEYFRAME_REF_MAX_IMAGES,
-                trim_reference_images_for_implementation,
-            )
-            _ref_urls = json.loads(reference_images_json)
-            if len(_ref_urls) > H3_KEYFRAME_REF_MAX_IMAGES:
-                try:
-                    prompt, _ref_urls, _ = trim_reference_images_for_implementation(
-                        prompt or "", _ref_urls, None,
-                        max_images=H3_KEYFRAME_REF_MAX_IMAGES,
-                    )
-                except FrameMentionError as exc:
-                    raise HTTPException(status_code=400, detail=exc.message)
-                reference_images_json = json.dumps(_ref_urls, ensure_ascii=False)
 
         # 数字人（DIGITAL_HUMAN）与图生视频/参考生视频是不同品类：
         # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。

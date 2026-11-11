@@ -42,9 +42,9 @@
 - 没被只读字段或手写标记点名的首帧或尾帧不加入参考图，也不改已有序号
 - 超过 `max_multi_ref_images` 时先裁掉中间的角色/场景/道具，被点名的首尾帧留在两端。名额放不下预留的首尾帧时提示并中止
 - 调用 `/api/ai-app-run-image` 端点，`image_mode` 仍是 `multi_reference`，不使用 `first_last_with_ref`
-- 提交的 `task_id` 始终是下拉选中的模型（H3 参考生 = 类型 37），前端不再换绑隐藏任务。当前模型是 MiniMax H3 参考生视频（`minimax_h3_r2v`）且提示词含 `@首帧图` 或 `@尾帧图` 时，服务端在 `/api/ai-app-run-image` 按实现方兼容探测选择首帧参考混合实现方 `minimax_h3_keyframe_ref_runninghub_v1`（挂在类型 37 参考生的 implementations 下，sort 5204），参考图裁到 3 张（两端保留、图例句序号同步重排）、音频最多 2 路。用户固定 AutoDL 时尊重偏好走 AutoDL；没点名的提交落到普通参考生实现方。前端张数按模型上限（9 张）校验，不再预裁 3
-- 首帧参考混合实现方是「有输入条件的实现方」：只有提示词点名首帧/尾帧才兼容（见驱动的 `validate_input_compatibility`），管理员可在管理页禁用它，禁用后点名提交落到下一个兼容实现方
-- 故事板全能参考使用同一对标记，由服务端 `services/storyboard_frame_mention.py` 排图，实现方选择同一套探测口径。见 `docs/storyboard/storyboard_reference_to_video.md`
+- 提交的 `task_id` 始终是下拉选中的模型（H3 参考生 = 类型 37），前端不再换绑隐藏任务。首帧参考混合实现方 `minimax_h3_keyframe_ref_runninghub_v1`（挂在类型 37 参考生的 implementations 下，sort 5204）是类型 37 的默认实现方（无输入条件），服务端在 `/api/ai-app-run-image` 按（偏好 → 排序 → 默认）解析。混合 webapp 六槽（P1~P6）全容量接收参考图（不再裁 3）：点名首尾帧时锁帧（KFRef 变体），没点名时全参考图（Ref2VA 变体）；音频最多 2 路。用户固定 AutoDL 时尊重偏好走 AutoDL。前端张数按模型上限（9 张）校验，不预裁
+- 管理员可在管理页禁用首帧参考混合实现方，禁用后类型 37 提交落到下一个实现方（参考生 RunningHub）；带参考视频的提交走混合实现方显式失败，由失败重试自动切到带视频槽的实现方
+- 故事板全能参考使用同一对标记，由服务端 `services/storyboard_frame_mention.py` 排图，实现方解析同一套口径（偏好 → 排序 → 默认）。见 `docs/storyboard/storyboard_reference_to_video.md`
 - 若没有参考图，也没有被点名的首尾帧，自动回退到文生视频 API（`/api/ai-app-run`）
 - 视频模型列表：仅显示支持 multi_reference 且驱动已配置的模型（如 MiniMax H3 参考生视频、seedance 2.0、vidu_q2、happy_horse_r2v）
 - 无已保存模型时默认性价比档 MiniMax H3 参考生视频（`minimax_h3_r2v`），效果档为 Seedance 2.0；未配置供应商的模型不出现在新下拉中

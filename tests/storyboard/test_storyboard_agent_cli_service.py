@@ -2878,16 +2878,11 @@ def test_generate_video_multi_reference_appends_legend_and_style(patched_storybo
     assert "构图倾向：rule of thirds" in kwargs["prompt"]
 
 
-def test_generate_video_frame_mentions_keyframe_ref_impl_trims_to_three(patched_storyboard_cli, monkeypatch):
-    """点名首尾帧 + 探测选中首帧参考混合实现方：任务保持 37，参考图裁 3、两端保留"""
-    from config.unified_config import DriverImplementation
+def test_generate_video_frame_mentions_keep_all_images_and_anchor_prompt(patched_storyboard_cli):
+    """点名首尾帧：任务保持 37，不再裁图（混合 webapp 六槽全容量），锚点句进提交文本"""
     from services.storyboard_agent_cli_service import StoryboardCliError
 
     module = patched_storyboard_cli.module
-    monkeypatch.setattr(
-        module, "resolve_probed_reference_implementation",
-        lambda *a, **k: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
-    )
     service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
     saved = {
         "video.reference_to_video": {
@@ -2917,7 +2912,9 @@ def test_generate_video_frame_mentions_keyframe_ref_impl_trims_to_three(patched_
     urls = [part for part in kwargs["image_urls"].split(",") if part]
     assert urls[0] == "https://cdn.test/first.png"
     assert urls[-1] == "https://cdn.test/last.png"
-    assert len(urls) == 3
+    # 不再裁到 3：5 张（首帧 + 3 中间参考 + 尾帧）全容量提交，槽位分配交给驱动
+    assert len(urls) == 5
+    assert "https://cdn.test/umbrella.png" in urls and "https://cdn.test/style.png" in urls
     assert "图1是首帧" in kwargs["prompt"]
     assert f"图{len(urls)}是尾帧" in kwargs["prompt"]
     assert "@首帧图" not in kwargs["prompt"]
@@ -2944,15 +2941,9 @@ def test_generate_video_frame_mentions_keyframe_ref_impl_trims_to_three(patched_
     assert len(patched_storyboard_cli.submitter.calls) == before
 
 
-def test_generate_video_frame_mentions_other_impl_keeps_nine(patched_storyboard_cli, monkeypatch):
-    """探测选中其他实现方（如用户固定 AutoDL）：不裁 3，参考图按任务级上限"""
-    from config.unified_config import DriverImplementation
-
+def test_generate_video_frame_mentions_submit_full_image_list(patched_storyboard_cli):
+    """参考图不再按实现方裁剪：全部随提交上传，槽位分配由驱动按六槽矩阵处理"""
     module = patched_storyboard_cli.module
-    monkeypatch.setattr(
-        module, "resolve_probed_reference_implementation",
-        lambda *a, **k: DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,
-    )
     service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
     service.generate_video(
         scene_id=11,
@@ -2993,85 +2984,3 @@ def test_generate_video_multi_reference_falls_back_to_text_when_no_images(
     assert patched_storyboard_cli.submitter.calls[-1][0] == "text_to_video"
     prompt = patched_storyboard_cli.submitter.calls[-1][1]["prompt"]
     assert "图片风格：cinematic noir" in prompt
-
-
-def test_apply_reference_implementation_policy_non_h3_task_passthrough(monkeypatch):
-    """非 H3 参考生任务：原样返回，selected_impl=None，不触发探测解析"""
-    from services.storyboard_agent_cli_service import apply_reference_implementation_policy
-
-    def _boom(*a, **k):
-        raise AssertionError("非 H3 任务不应触发探测解析")
-
-    monkeypatch.setattr(
-        "services.storyboard_agent_cli_service.resolve_probed_reference_implementation", _boom
-    )
-    prompt, urls, items, selected = apply_reference_implementation_policy(
-        user_id=7, task_type=13, prompt="p", urls=["u1"], items=[{"label": "图1"}],
-        image_mode="multi_reference",
-    )
-    assert (prompt, urls, items, selected) == ("p", ["u1"], [{"label": "图1"}], None)
-
-
-def test_apply_reference_implementation_policy_kfr_trims_and_renumbers(monkeypatch):
-    """选中首帧参考混合实现方：4 图裁 3（两端保留），提示词序号重排"""
-    from config.unified_config import DriverImplementation
-
-    module = __import__(
-        "services.storyboard_agent_cli_service", fromlist=["apply_reference_implementation_policy"]
-    )
-    monkeypatch.setattr(
-        module, "resolve_probed_reference_implementation",
-        lambda *a, **k: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
-    )
-    prompt = "图1是首帧 图2是中间 图4是尾帧 body"
-    urls = ["u1", "u2", "u3", "u4"]
-    items = [{"label": f"图{i + 1}"} for i in range(4)]
-    rewritten, out_urls, out_items, selected = module.apply_reference_implementation_policy(
-        user_id=7, task_type=37, prompt=prompt, urls=urls, items=items,
-        image_mode="multi_reference",
-    )
-    assert selected == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
-    # 上限 3：首尾两端保留，中间预算 1 张（裁中间尾部）
-    assert out_urls == ["u1", "u2", "u4"]
-    assert [i["label"] for i in out_items] == ["图1", "图2", "图4"]
-    assert "图1是首帧" in rewritten and "图3是尾帧" in rewritten
-    assert "图3是中间" not in rewritten and "图4是尾帧" not in rewritten
-
-
-def test_apply_reference_implementation_policy_other_impl_keeps_urls(monkeypatch):
-    """选中其他实现方（固定偏好）：不裁图，urls/items 原样"""
-    from config.unified_config import DriverImplementation
-
-    module = __import__(
-        "services.storyboard_agent_cli_service", fromlist=["apply_reference_implementation_policy"]
-    )
-    monkeypatch.setattr(
-        module, "resolve_probed_reference_implementation",
-        lambda *a, **k: DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,
-    )
-    prompt, urls, items, selected = module.apply_reference_implementation_policy(
-        user_id=7, task_type=37, prompt="p", urls=["u1", "u2"], items=[{"label": "图1"}],
-        image_mode="multi_reference",
-    )
-    assert selected == DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1
-    assert urls == ["u1", "u2"] and items == [{"label": "图1"}]
-
-
-def test_apply_reference_implementation_policy_propagates_fixed_semantics(monkeypatch):
-    """固定实现方与输入不兼容：StoryboardCliError 向上冒泡（固定语义快速失败）"""
-    from services.storyboard_agent_cli_service import (
-        StoryboardCliError,
-        apply_reference_implementation_policy,
-    )
-
-    def _raise(*a, **k):
-        raise StoryboardCliError("fixed_implementation_unavailable", "固定的实现方当前不可用")
-
-    monkeypatch.setattr(
-        "services.storyboard_agent_cli_service.resolve_probed_reference_implementation", _raise
-    )
-    with pytest.raises(StoryboardCliError) as exc_info:
-        apply_reference_implementation_policy(
-            user_id=7, task_type=37, prompt="p", urls=["u1"], items=[], image_mode="multi_reference",
-        )
-    assert exc_info.value.error_code == "fixed_implementation_unavailable"

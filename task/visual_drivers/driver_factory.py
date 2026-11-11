@@ -226,7 +226,6 @@ class VideoDriverFactory:
         cls,
         task_type: int,
         user_id: Optional[int] = None,
-        input_probe=None,
     ) -> Optional[str]:
         """
         获取实现方名称（公开方法，供外部调用）
@@ -234,10 +233,6 @@ class VideoDriverFactory:
         Args:
             task_type: 任务类型
             user_id: 用户ID（可选）
-            input_probe: DriverInputProbe 或 None。传入时三层选择（偏好/排序/默认）
-                对每个候选调用驱动的 validate_input_compatibility 做输入兼容探测，
-                不兼容的候选按「不可用」语义跳过；None 时行为与旧版完全一致，
-                其他任务类型的调用方不受影响。
 
         Returns:
             实现方名称，如果不存在返回 None
@@ -246,7 +241,7 @@ class VideoDriverFactory:
         if not config:
             return None
 
-        impl_name, _ = cls._get_implementation_for_user(task_type, user_id, config, input_probe=input_probe)
+        impl_name, _ = cls._get_implementation_for_user(task_type, user_id, config)
         return impl_name
 
     @classmethod
@@ -299,7 +294,6 @@ class VideoDriverFactory:
         task_type: int,
         user_id: Optional[int],
         config,
-        input_probe=None,
     ) -> Tuple[Optional[str], Dict[str, Any]]:
         """
         获取实现方名称和驱动参数（考虑用户偏好）
@@ -311,16 +305,10 @@ class VideoDriverFactory:
         注意：用户偏好不能绕过 admin 禁用（_is_impl_enabled 检查）
         若用户将该任务类型「固定」供应商，偏好不可用时不降级，并写入 _last_create_error。
 
-        input_probe（DriverInputProbe，可选）：传入时三层候选都追加调用驱动的
-        validate_input_compatibility；偏好层不兼容按「不可用」语义处理（锁定→
-        固定失败并清偏好；未锁定→自动选择），排序/默认层不兼容直接跳过该候选。
-        不传时行为与旧版完全一致（见 _candidate_input_compatible）。
-
         Args:
             task_type: 任务类型
             user_id: 用户ID
             config: 任务配置
-            input_probe: 兼容性探测对象（可选）
 
         Returns:
             (implementation_name, driver_params) 元组
@@ -342,10 +330,8 @@ class VideoDriverFactory:
                 user_pref = UsersModel.get_implementation_preference(user_id, task_key)
                 if user_pref:
                     # 验证用户偏好：配置就绪 且 已启用（admin 禁用的实现方不能被偏好绕过）
-                    # 且与本次输入兼容（input_probe 传入时）
                     pref_usable = cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name)
-                    pref_compatible, incompatible_reason = cls._candidate_input_compatible(user_pref, input_probe)
-                    if pref_usable and pref_compatible:
+                    if pref_usable:
                         logger.debug(f"Using user preference for task {task_key}: {user_pref}")
                         impl_name = user_pref
                     elif UsersModel.is_implementation_locked(user_id, task_key):
@@ -353,9 +339,6 @@ class VideoDriverFactory:
                         message = FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
                             display_name=display_name
                         )
-                        if pref_usable and not pref_compatible and incompatible_reason:
-                            # 固定实现方就绪但与本次输入不兼容：沿用固定语义（不静默换供应商）
-                            message = f"{message}（{incompatible_reason}）"
                         cls._last_create_error = {
                             "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
                             "message": message,
@@ -376,11 +359,11 @@ class VideoDriverFactory:
                                 f"task {task_key}: {cleanup_error}"
                             )
                         logger.warning(
-                            f"User locked preference {user_pref} unavailable/disabled/incompatible "
+                            f"User locked preference {user_pref} unavailable or disabled "
                             f"for task {task_key}, skip auto-select"
                         )
                     else:
-                        logger.warning(f"User preference {user_pref} unavailable/disabled/incompatible, will auto-select")
+                        logger.warning(f"User preference {user_pref} unavailable or disabled, will auto-select")
             except Exception as e:
                 logger.warning(f"Failed to get user preference: {e}")
 
@@ -389,13 +372,6 @@ class VideoDriverFactory:
             available_impls = config._get_implementations_info()
             for impl in available_impls:
                 if not cls._is_driver_available(impl['name']):
-                    continue
-                compatible, incompatible_reason = cls._candidate_input_compatible(impl['name'], input_probe)
-                if not compatible:
-                    logger.info(
-                        f"Skip implementation {impl['name']} for task {config.key}: "
-                        f"input incompatible ({incompatible_reason})"
-                    )
                     continue
                 impl_name = impl['name']
                 logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
@@ -410,10 +386,8 @@ class VideoDriverFactory:
                 )
 
                 default_impl = config.implementation
-                default_compatible, _ = cls._candidate_input_compatible(default_impl, input_probe) if default_impl else (True, None)
                 if (
                     default_impl
-                    and default_compatible
                     and cls._is_driver_available(default_impl)
                     and cls._is_impl_enabled(default_impl, config.driver_name)
                 ):
@@ -437,44 +411,6 @@ class VideoDriverFactory:
                 driver_params = impl_config.driver_params.copy()
 
         return impl_name, driver_params
-
-    @classmethod
-    def _candidate_input_compatible(cls, impl_name: str, input_probe) -> Tuple[bool, Optional[str]]:
-        """
-        探测候选实现方与本次提交输入的兼容性
-
-        - input_probe 为 None：恒兼容（旧调用方不传探测对象，行为与旧版完全一致，
-          避免其他任务类型的实现方选择被误伤）
-        - 驱动未注册/无法实例化：恒兼容（可用性由 _is_driver_available 层面判定，
-          探测层面不重复惩罚）
-        - 驱动无 validate_input_compatibility 钩子：恒兼容（等价于基类默认恒兼容）
-        - 钩子抛异常：不兼容（保守，跳过该候选）
-
-        Args:
-            impl_name: 实现方名称
-            input_probe: DriverInputProbe（字段与 AIToolsModel 同名同形态）
-
-        Returns:
-            (是否兼容, 不兼容原因)
-        """
-        if input_probe is None:
-            return True, None
-        driver_class = cls._registered_drivers.get(impl_name)
-        if driver_class is None:
-            return True, None
-        try:
-            driver = driver_class()
-        except Exception:
-            return True, None
-        validate = getattr(driver, "validate_input_compatibility", None)
-        if not callable(validate):
-            return True, None
-        try:
-            ok, reason = validate(input_probe)
-        except Exception as e:
-            logger.warning(f"validate_input_compatibility raised for {impl_name}: {e}")
-            return False, "兼容性探测异常"
-        return bool(ok), (None if ok else (reason or "输入不兼容"))
 
     @classmethod
     def _is_driver_available(cls, impl_name: str) -> bool:

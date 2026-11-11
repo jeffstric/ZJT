@@ -2,6 +2,12 @@
 
 状态：已实现（develop_f1186，见 h3_keyframe_ref_as_reference_impl_design.md）。本文是当时的方案决定记录。
 
+> **2026-11-12 演进**：上游混合 webapp 扩到 6 图片槽后，本方案的「有输入条件的
+> 实现方 + 提交期探测 + 裁到 3 张」整体退役——混合实现方现在是类型 37 参考生
+> 的**无输入条件默认实现方**：点名首尾帧锁帧（KFRef 变体）、没点名全参考图
+> （Ref2VA 变体），分派点在 `resolve_h3_prompt_variant`；probe/裁图/编排机制已删。
+> 用户固定其他供应商时尊重偏好的决定不变。演进详情见设计文档头部更新块。
+
 ## 问题
 
 带首帧的 H3 参考生现在会在提交前把任务从 `minimax_h3_reference_to_video`（类型 37）改成隐藏任务 `minimax_h3_keyframe_ref_to_video`（类型 50，短键 `minimax_h3_kfr`）。类型 50 只有一个实现方 `minimax_h3_keyframe_ref_runninghub_v1`。

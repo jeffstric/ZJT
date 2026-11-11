@@ -21,18 +21,14 @@ from config.constant import (
     MediaGenerationType,
 )
 from config.unified_config import (
-    DriverImplementation,
     SceneVideoType,
     TaskTypeId,
     UnifiedConfigRegistry,
 )
 from services.storyboard_frame_mention import (
     FrameMentionError,
-    H3_KEYFRAME_REF_MAX_IMAGES,
-    is_h3_reference_model,
     prepare_frame_mentions,
     prompt_has_frame_mention,
-    trim_reference_images_for_implementation,
     url_key,
 )
 from model.ai_tools import AIToolsModel
@@ -62,7 +58,10 @@ from services.storyboard_reference_prompt_service import (
     reference_urls,
 )
 from task.pipeline_drivers import PipelineDriverFactory
-from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
+from task.pipeline_drivers.h3_prompt_optimize_util import (
+    has_quoted_dialogue,
+    prompt_marks_first_or_last_frame,
+)
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
@@ -301,82 +300,6 @@ def _peek_snapshot_task_id(generation_snapshots: Dict[str, Dict[str, Any]]) -> O
             except (TypeError, ValueError):
                 continue
     return None
-
-
-def is_h3_reference_task(task_type: Any) -> bool:
-    """task_id 是否 MiniMax H3 参考生（类型 37，首帧参考混合实现方挂载的任务）"""
-    try:
-        config = UnifiedConfigRegistry.get_by_id(int(task_type))
-    except (TypeError, ValueError):
-        return False
-    if config is None:
-        return False
-    return is_h3_reference_model(getattr(config, "key", ""), getattr(config, "short_key", ""))
-
-
-def resolve_probed_reference_implementation(
-    user_id: Any,
-    task_type: Any,
-    prompt: Any,
-    urls: Sequence[str],
-    image_mode: Any,
-) -> Optional[str]:
-    """H3 参考生提交的兼容探测实现方解析（排图后、建行前）。
-
-    与最终建行入口（/api/ai-app-run-image）按同一 probe 口径解析（幂等）。
-    固定实现方与本次输入不兼容时按固定语义快速失败（不静默换供应商、不建任务）。
-    """
-    from task.visual_drivers.base_video_driver import DriverInputProbe
-    from task.visual_drivers.driver_factory import VideoDriverFactory
-
-    probe = DriverInputProbe(
-        prompt="" if prompt is None else str(prompt),
-        extra_config=DriverInputProbe.build_extra_config("" if image_mode is None else str(image_mode)),
-        reference_images=json.dumps([str(u) for u in (urls or [])], ensure_ascii=False) if urls else None,
-    )
-    impl = VideoDriverFactory.get_implementation_for_user(int(task_type), int(user_id), input_probe=probe)
-    if not impl:
-        error = VideoDriverFactory.get_last_create_error() or {}
-        if str(error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
-            raise StoryboardCliError(
-                "fixed_implementation_unavailable",
-                str(error.get("message") or "固定的实现方当前不可用"),
-            )
-    return impl
-
-
-def apply_reference_implementation_policy(
-    user_id: Any,
-    task_type: Any,
-    prompt: Any,
-    urls: Sequence[str],
-    items: Optional[Sequence[Dict[str, Any]]],
-    image_mode: Any,
-) -> Tuple[str, List[str], List[Dict[str, Any]], Optional[str]]:
-    """点名首尾帧的 H3 参考生提交编排：兼容探测选实现方 + 选混合实现方时裁图。
-
-    cli_service 批量/单发链路与 api/storyboard.py 场景生成链路共用本函数，
-    两入口探测输入一致（同源幂等），实现方策略不再散落调用方。非 H3 参考生
-    任务原样返回（selected_impl=None）；探测解析抛 StoryboardCliError（固定
-    语义快速失败），裁图抛 FrameMentionError，由调用方按各自协议翻译错误。
-
-    调用时机约束：必须在图例 suffix 拼接之前，保证「图K是…」序号与保留图对齐。
-    """
-    if not is_h3_reference_task(task_type):
-        return prompt, list(urls or []), list(items or []), None
-
-    selected_impl = resolve_probed_reference_implementation(
-        user_id, task_type, prompt, urls, image_mode,
-    )
-    out_urls = list(urls or [])
-    out_items = list(items or [])
-    if selected_impl != DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
-        return prompt, out_urls, out_items, selected_impl
-    rewritten, out_urls, out_items = trim_reference_images_for_implementation(
-        prompt, out_urls, out_items,
-        max_images=H3_KEYFRAME_REF_MAX_IMAGES,
-    )
-    return rewritten, out_urls, out_items, selected_impl
 
 
 def _public_upload_url(url: Any) -> str:
@@ -1260,21 +1183,9 @@ class StoryboardAgentCliService:
                 )
             task_type = int(generation_snapshot['task_id'])
 
-        # 首帧参考混合实现方裁图：探测选实现方 + 选混合实现方时裁图的编排收敛在
-        # apply_reference_implementation_policy（与 api/storyboard.py 场景生成链路
-        # 共用同一函数，同源幂等）。裁图必须在图例 suffix 拼接之前，保证「图K是…」
-        # 序号与保留图对齐；任务保持类型 37，实现方由最终建行入口（/api/ai-app-run-image）
-        # 按同一探测口径解析写库（幂等，两次解析输入一致）。
-        selected_ref_impl = None
-        if mention_applied and mode == "image_to_video":
-            try:
-                prompt_text, resolved_urls, legend_items, selected_ref_impl = (
-                    apply_reference_implementation_policy(
-                        user_id, task_type, prompt_text, resolved_urls, legend_items, image_mode,
-                    )
-                )
-            except FrameMentionError as exc:
-                raise StoryboardCliError(exc.code, exc.message) from exc
+        # 首帧参考混合实现方（类型 37 默认，排序首位）按实现方排序在最终建行入口
+        # （/api/ai-app-run-image）解析写库，这里不再做探测/裁图：混合 webapp 六槽
+        # 全容量接收，锁帧与否由优化分派按提示词点名决定（resolve_h3_prompt_variant）。
 
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
@@ -1310,10 +1221,10 @@ class StoryboardAgentCliService:
         # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
         # （character.voice_desc），批量补视频与单发链路同口径：H3 参考音频只是
         # 弱微调，音色一致性靠文字指纹渲染进提示词。纯文本不占音频槽，
-        # 非 H3 模型零变化；选中的实现方是首帧参考混合模型且无对白镜头时与音色
-        # 注入同口径跳过（防诱导配音；未解析到实现方时保守注入，由优化步骤兜底）。
+        # 非 H3 模型零变化；点名首尾帧（走 KFRef 变体）且无对白镜头时与音色
+        # 注入同口径跳过（防诱导配音；KFRef 变体 iff 点名，见 resolve_h3_prompt_variant）。
         if PipelineDriverFactory.is_h3_prompt_optimize_type(int(task_type)) and not (
-            selected_ref_impl == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
+            prompt_marks_first_or_last_frame(prompt_text)
             and not has_quoted_dialogue(prompt_text)
         ):
             prompt_text = append_voice_casting_note(
@@ -4783,10 +4694,10 @@ class StoryboardAgentCliService:
     ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
         """全能参考下按 @首帧图 / @尾帧图 重排参考图（排图，不裁图）。
 
-        返回 (prompt, urls, items)。裁图延后到选出实现方之后（见
-        trim_reference_images_for_implementation）。缺图时抛 StoryboardCliError，
-        调用方不得建任务。frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；
-        传入空字符串表示界面上没有这张图。
+        返回 (prompt, urls, items)。参考图不再按实现方裁剪（混合 webapp 六槽
+        全容量接收）。缺图时抛 StoryboardCliError，调用方不得建任务。
+        frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；传入空字符串表示
+        界面上没有这张图。
         """
         context = context or {}
         if frame_first_url is _FRAME_URL_UNSET:

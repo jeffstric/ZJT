@@ -5,7 +5,7 @@ const {
   placeShotFrameMentionImages,
 } = require('../js/shot_frame_video_generator.js');
 
-describe('H3 首帧参考混合实现方（服务端探测选择，前端不再换绑）', () => {
+describe('H3 首帧参考混合实现方（类型 37 默认实现方，前端不换绑不预裁）', () => {
   test('前端不再换绑 task_id：导出面不包含换绑函数与常量', () => {
     const module = require('../js/shot_frame_video_generator.js');
     expect(module.shouldUseH3KeyframeRefModel).toBeUndefined();
@@ -21,12 +21,12 @@ describe('H3 首帧参考混合实现方（服务端探测选择，前端不再�
     expect(isH3ReferenceVideoModel('minimax_h3_t2v')).toBe(false);
   });
 
-  test('张数上限回到模型默认（测试环境无 TaskConfig 时为 5），不再预裁 3', () => {
+  test('张数上限回到模型默认（测试环境无 TaskConfig 时为 5），前端不预裁', () => {
     expect(shotFrameMultiRefLimit('minimax_h3_r2v')).toBe(5);
     expect(shotFrameMultiRefLimit('seedance_2_0')).toBe(5);
   });
 
-  test('点名排图仍把首尾帧放到两端并改写提示词（服务端按实现方裁 3）', () => {
+  test('点名排图仍把首尾帧放到两端并改写提示词（参考图全容量提交，服务端六槽接收）', () => {
     const placed = placeShotFrameMentionImages(
       '从 @首帧图 走到 @尾帧图',
       ['m1.png', 'm2.png', 'm3.png'],

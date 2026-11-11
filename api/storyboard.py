@@ -100,7 +100,6 @@ from utils.resource_access import (
 from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
-    FrameMentionError,
     prompt_has_frame_mention,
     read_explicit_frame_url,
 )
@@ -4772,33 +4771,9 @@ async def generate_scene_video(
             json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
         )
 
-    # 兼容探测选实现方 + 按实现方裁图（必须在图例 suffix 拼接之前，保证「图K是…」
-    # 序号与保留图对齐）：编排收敛在 services 层 apply_reference_implementation_policy
-    # （与 cli_service 批量/单发链路共用同一函数，同源幂等），API 层只做错误翻译。
-    # 任务保持类型 37（下拉参考生），实现方写库与扣费都用这里解析的结果。
-    selected_ref_impl = None
-    if (
-        will_apply_mentions
-        and collected_urls
-        and image_mode == ImageMode.MULTI_REFERENCE
-    ):
-        try:
-            from services.storyboard_agent_cli_service import (
-                apply_reference_implementation_policy,
-            )
-            prompt, collected_urls, legend_items, selected_ref_impl = await asyncio.to_thread(
-                apply_reference_implementation_policy,
-                user_id, mention_task_id, prompt, collected_urls, legend_items, image_mode,
-            )
-            reference_images_json = (
-                json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
-            )
-        except StoryboardCliError as exc:
-            return JSONResponse(status_code=400, content=exc.to_dict())
-        except FrameMentionError as exc:
-            return JSONResponse(status_code=400, content={'error': exc.message})
-        except Exception as e:
-            logger.warning(f"generate-video scene {scene_id}: probed impl resolve failed: {e}")
+    # 实现方由下方扣费前的统一解析（偏好 → 排序 → 默认）确定：类型 37 默认即
+    # 首帧参考混合实现方（排序首位），点名与否只影响优化变体分派，不再
+    # 需要提交期探测/裁图（混合 webapp 六槽全容量接收）。
 
     if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
         if collected_urls and legend_items:
@@ -4981,12 +4956,9 @@ async def generate_scene_video(
     try:
         from task.visual_drivers import VideoDriverFactory
         from config.unified_config import get_implementation_id
-        # H3 参考生点名首尾帧的提交：复用排图后带兼容探测解析出的实现方（与裁图、
-        # 扣费、写库同源）；其余提交维持原解析（偏好 → 排序 → 默认）
-        if selected_ref_impl:
-            actual_impl_name = selected_ref_impl
-        else:
-            actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        # 实现方统一按（偏好 → 排序 → 默认）解析：类型 37 默认即首帧参考混合
+        # 实现方，扣费=执行（事故 13452）
+        actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
         if actual_impl_name:
             impl_id = get_implementation_id(actual_impl_name) or 0
     except Exception as e:
@@ -5220,10 +5192,9 @@ async def estimate_scene_video_power(
     context = {'image_mode': image_mode}
     if resolution:
         context['resolution'] = resolution
-    # 口径说明：H3 参考生点名首尾帧时实际执行首帧参考混合实现方（提交链路按
-    # validate_input_compatibility 探测选择），当前该实现方与默认参考生同价
-    # （MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER），估价与扣费无分叉；若混合
-    # 实现方独立调价，需把 prompt（点名标记）纳入本接口请求体按同一探测口径估价。
+    # 口径说明：类型 37 默认实现方即首帧参考混合（排序首位），当前与参考生
+    # RunningHub 同价（MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER），估价与扣费
+    # 无分叉；若混合实现方独立调价，需按（偏好 → 排序 → 默认）同一解析口径估价。
     # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
     computing_power = await asyncio.to_thread(
         get_computing_power_for_task,

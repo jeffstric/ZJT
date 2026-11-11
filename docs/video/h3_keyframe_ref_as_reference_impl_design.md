@@ -1,6 +1,29 @@
 # 首帧参考混合收成参考生实现方——详细实现方案
 
-状态：已实现（develop_f1186）。上游决定见 [h3_keyframe_ref_as_reference_implementation.md](h3_keyframe_ref_as_reference_implementation.md)（下称「决定文档」）。
+状态：已实现（develop_f1186），**2026-11-12 起方案演进：输入条件已删除**。上游决定见 [h3_keyframe_ref_as_reference_implementation.md](h3_keyframe_ref_as_reference_implementation.md)（下称「决定文档」）。
+
+## ⚠️ 2026-11-12 演进：混合实现方成为无输入条件的默认实现方
+
+本文主体描述的是「有输入条件的实现方 + 提交期探测 + 裁到 3 张」的原始方案；
+上游混合 webapp 工作流扩到 6 图片槽（P1~P6：137/156/187/190/191/192）后，
+方案简化为（当前生效形态）：
+
+- **无输入条件**：KFR 删除 `validate_input_compatibility` 正向钩子，作为类型 37
+  参考生的排序首位默认实现方；`ai_tools.implementation=100` 语义稳定（唯一 webapp）。
+- **同一 webapp 两种形态**：点名「图N是首帧/尾帧」→ KFRef 优化变体（锚点 EXACT
+  校验 + P1=首帧/P6=尾帧锁帧）；没点名 → Ref2VA 优化变体 + 全参考图。分派点是
+  `resolve_h3_prompt_variant`（唯一分流逻辑）。
+- **不裁图**：六槽全容量接收（点名+首尾占用后中间参考容量 4），超出槽位由驱动
+  按 unused_urls 丢弃并打 warning；`trim_reference_images_for_implementation` 及
+  排图/裁图两步分离的设计整体退役。
+- **探测机制删除**：`DriverInputProbe`、`driver_factory` 的 probe 三层过滤、
+  `resolve_probed_reference_implementation`、`apply_reference_implementation_policy`
+  全部删除；实现方解析统一走（偏好 → 排序 → 默认）。基类
+  `validate_input_compatibility` 钩子保留（AutoDL 视频槽等输入契约差异仍依赖）。
+- **带参考视频**：混合 webapp 无视频槽，提交显式失败（不再静默丢弃），由
+  before_finish 重试自动切到带视频槽的参考生实现方（67/AutoDL）。
+
+下文 Step 1~8 与兼容矩阵按原始方案描述，凡与本节冲突处以本节为准。
 
 实现与设计的差异（实现期发现）：
 - `DriverInputProbe.image_mode` 改为 `extra_config`（JSON 字符串）字段——AIToolsModel 上 image_mode 存于 extra_config，钩子统一走 `parse_image_mode`，probe 与 ORM 行完全同形态。

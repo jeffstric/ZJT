@@ -4,7 +4,7 @@
 
 通过 RunningHub AI-App 调用「全能参考+首帧+音频｜MiniMax H3声音角色双一致」。
 
-画布上的分镜节点仍然停在参考模式。本实现方挂在参考生任务（类型 37，`minimax_h3_reference_to_video`）的 `implementations` 下（sort 5204，显示名 `RunningHub（首帧参考）`），是**有输入条件的实现方**：只有提示词点名首帧/尾帧（「图N是首帧/图N是尾帧」锚点句或 `@首帧图`/`@尾帧图` token）且为 `multi_reference` 模式时才兼容（`validate_input_compatibility`），没点名的提交被实现方选择跳过、落到普通参考生；用户固定其他供应商（如 AutoDL）时尊重偏好。选中后任务 `ai_tools.type=37`、`implementation=100`，参考图由提交链路裁到 3 张（两端保留裁中间）。类型 50（`minimax_h3_kfr`）仅保留历史在途任务收尾（`enabled=False` 拒绝新创建），旧行仍按 `implementation=100` 找到本驱动轮询。`audio_path` 里逗号分隔的参考音频会在同一条历史里用播放器逐段显示。
+画布上的分镜节点仍然停在参考模式。本实现方挂在参考生任务（类型 37，`minimax_h3_reference_to_video`）的 `implementations` 下（sort 5204，显示名 `RunningHub（首帧参考）`），是类型 37 的**默认实现方**（排序首位，无输入条件）：同一混合 webapp 六槽（P1~P6）兼容两种形态——提示词点名首帧/尾帧（「图N是首帧/图N是尾帧」锚点句或 `@首帧图`/`@尾帧图` token）时锁帧（P1=首帧、P6=尾帧、中间参考，KFRef 优化变体），没点名时全部当参考图（Ref2VA 优化变体）；用户固定其他供应商（如 AutoDL）时尊重偏好。选中后任务 `ai_tools.type=37`、`implementation=100`，参考图不再裁剪（六槽全容量，超出丢弃并打 warning）。类型 50（`minimax_h3_kfr`）仅保留历史在途任务收尾（`enabled=False` 拒绝新创建），旧行仍按 `implementation=100` 找到本驱动轮询。`audio_path` 里逗号分隔的参考音频会在同一条历史里用播放器逐段显示。
 
 有结束关键帧时，KFRef 指令要求大模型把镜头写成从首帧走到尾帧。原文里的「固定运镜」和起始姿势不能写成 fixed camera 或保持到结尾，结尾景别只由尾帧图决定。否则视频模型会停在首帧构图，尾帧对不上。
 

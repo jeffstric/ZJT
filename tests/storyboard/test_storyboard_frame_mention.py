@@ -1,16 +1,15 @@
-"""故事板 @首帧图 / @尾帧图 排图与按实现方裁图。
+"""故事板 @首帧图 / @尾帧图 排图。
 
-首帧参考混合实现方挂在类型 37 参考生下（见 docs/video/h3_keyframe_ref_as_reference_impl_design.md）：
-排图（prepare_frame_mentions）产出「图N是首帧/尾帧」锚点句，实现方选出后由
-trim_reference_images_for_implementation 按上限裁中间参考并重排图例序号。
+首帧参考混合实现方是类型 37 参考生的默认实现方（见
+docs/video/h3_keyframe_ref_as_reference_impl_design.md）：排图
+（prepare_frame_mentions）产出「图N是首帧/尾帧」锚点句，作为优化变体分派
+（resolve_h3_prompt_variant）与驱动槽位分配的统一数据源；参考图不再裁剪，
+混合 webapp 六槽全容量接收。
 """
 from services.storyboard_frame_mention import (
     FrameMentionError,
-    effective_frame_flags,
-    is_h3_reference_model,
     prepare_frame_mentions,
     prompt_has_frame_mention,
-    trim_reference_images_for_implementation,
 )
 
 
@@ -72,102 +71,6 @@ def test_prepare_places_frames_at_both_ends_and_rewrites_prompt():
     assert "图1" in prompt and "图5" in prompt
 
 
-def test_trim_keeps_both_ends_and_renumbers_legend_sentences():
-    """KFR 裁 3：两端保留裁中间；被裁图例句删除、保留序号重排为连续
-
-    prompt 是排图产物：auto 句「@首帧图是首帧/@尾帧图是尾帧」改写后含锚点句
-    （图N是首帧/尾帧），中间图例句由图例 suffix 拼接生成。
-    """
-    prepared_prompt = (
-        "图1是首帧。从这一格开始推进剧情。\n"
-        "图2是角色Lin。\n图3是场景Alley。\n图4是画风。\n"
-        "图5是尾帧。"
-    )
-    urls = [
-        "https://cdn.test/first.png",
-        "https://cdn.test/lin.png",
-        "https://cdn.test/alley.png",
-        "https://cdn.test/style.png",
-        "https://cdn.test/last.png",
-    ]
-    prompt, out_urls, out_items = trim_reference_images_for_implementation(
-        prepared_prompt, urls, None, max_images=3,
-    )
-    assert out_urls == [
-        "https://cdn.test/first.png",
-        "https://cdn.test/lin.png",
-        "https://cdn.test/last.png",
-    ]
-    # 中间只留 1 张（图2 角色），被裁的图3/图4 图例句整句删除
-    assert "图3是场景" not in prompt
-    assert "图4是画风" not in prompt
-    assert "图2是角色Lin" in prompt
-    # 首尾锚点句保留且序号重排为 1/3
-    assert "图1是首帧" in prompt
-    assert "图3是尾帧" in prompt
-    assert len(out_items) == 3
-
-
-def test_trim_first_only_keeps_head_and_budget_middle():
-    prepared_prompt = "图1是首帧。图2是角色Lin。图3是场景Alley。"
-    urls = [
-        "https://cdn.test/first.png",
-        "https://cdn.test/lin.png",
-        "https://cdn.test/alley.png",
-    ]
-    prompt, out_urls, _ = trim_reference_images_for_implementation(
-        prepared_prompt, urls, None, max_images=2,
-    )
-    assert out_urls == ["https://cdn.test/first.png", "https://cdn.test/lin.png"]
-    assert "图1是首帧" in prompt
-    assert "图2是角色Lin" in prompt
-    assert "图3是场景" not in prompt
-
-
-def test_trim_accepts_mention_token_form_for_agent_chain():
-    """agent 链路提交原文保留 @首帧图 token（排图改写不回传）：同样两端保留"""
-    urls = [
-        "https://cdn.test/first.png",
-        "https://cdn.test/lin.png",
-        "https://cdn.test/alley.png",
-        "https://cdn.test/last.png",
-    ]
-    prompt, out_urls, _ = trim_reference_images_for_implementation(
-        "从 @首帧图 走到 @尾帧图", urls, None, max_images=3,
-    )
-    assert out_urls == [
-        "https://cdn.test/first.png",
-        "https://cdn.test/lin.png",
-        "https://cdn.test/last.png",
-    ]
-    # @token 不做序号改写（该链路无图例句），保持原文
-    assert prompt == "从 @首帧图 走到 @尾帧图"
-
-
-def test_trim_without_mention_cuts_tail_plainly():
-    urls = [f"https://cdn.test/{i}.png" for i in range(5)]
-    prompt, out_urls, _ = trim_reference_images_for_implementation(
-        "没有点名标记的普通提交", urls, None, max_images=3,
-    )
-    assert out_urls == urls[:3]
-    assert prompt == "没有点名标记的普通提交"
-
-
-def test_trim_within_limit_is_noop():
-    urls = ["https://cdn.test/a.png", "https://cdn.test/b.png"]
-    prompt, out_urls, _ = trim_reference_images_for_implementation(
-        "图1是首帧。图2是尾帧。", urls, None, max_images=3,
-    )
-    assert out_urls == urls
-    assert prompt == "图1是首帧。图2是尾帧。"
-
-
-def test_effective_frame_flags_matches_both_forms():
-    assert effective_frame_flags("从 @首帧图 出发") == (True, False)
-    assert effective_frame_flags("图1是首帧。图2是尾帧。") == (True, True)
-    assert effective_frame_flags("没有任何标记") == (False, False)
-
-
 def test_prepare_only_last_keeps_storyboard_image_in_the_middle():
     _prompt, urls, items = prepare_frame_mentions(
         "停在 @尾帧图",
@@ -217,13 +120,6 @@ def test_prepare_missing_last_raises_and_same_url_can_fill_both_ends():
     assert items[0]["type"] == "首帧"
     assert items[-1]["type"] == "尾帧"
     assert urls.count("https://cdn.test/same.png") == 2
-
-
-def test_h3_reference_keys_do_not_match_i2v_or_t2v():
-    assert is_h3_reference_model("minimax_h3_r2v") is True
-    assert is_h3_reference_model("minimax_h3_reference_to_video") is True
-    assert is_h3_reference_model("minimax_h3", "minimax_h3_image_to_video") is False
-    assert is_h3_reference_model("minimax_h3_t2v") is False
 
 
 def test_disabled_task50_falls_back_when_explicitly_requested():

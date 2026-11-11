@@ -3,7 +3,6 @@
 所有视频生成驱动都需要继承此基类并实现其抽象方法
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Dict, Any, Optional, List, Tuple
 import logging
 import traceback
@@ -20,54 +19,6 @@ class ImageMode:
     FIRST_LAST_FRAME = 'first_last_frame'      # 首尾帧模式
     MULTI_REFERENCE = 'multi_reference'         # 多参考图模式
     FIRST_LAST_WITH_REF = 'first_last_with_ref' # 首尾帧+参考图模式
-
-
-@dataclass
-class DriverInputProbe:
-    """实现方兼容性探测对象
-
-    提交期（ai_tools 行落库之前）实现方选择用：只携带 validate_input_compatibility
-    需要读取的字段，字段名与 AIToolsModel 同名、形态一致（reference_images 为
-    JSON 数组字符串；image_mode 存于 extra_config JSON），驱动钩子代码对 ORM 行
-    与 probe 通用——一律走 get_reference_images / parse_image_mode 等基类解析。
-
-    见 docs/video/h3_keyframe_ref_as_reference_impl_design.md §2。
-    """
-    prompt: str = ""
-    # JSON 字符串（同 AIToolsModel.extra_config），驱动经 parse_image_mode 读 image_mode
-    extra_config: Optional[str] = None
-    # JSON 数组字符串（同 AIToolsModel.reference_images），驱动经 get_reference_images 解析
-    reference_images: Optional[str] = None
-    image_path: Optional[str] = None
-    audio_path: Optional[str] = None
-    video_path: Optional[str] = None
-
-    @staticmethod
-    def build_extra_config(image_mode: Optional[str]) -> Optional[str]:
-        """构造只含 image_mode 的 extra_config JSON（探测对象用）"""
-        return json.dumps({"image_mode": image_mode}, ensure_ascii=False) if image_mode else None
-
-    def with_prompt(self, prompt: str) -> "DriverInputProbe":
-        """返回替换 prompt 的副本（排图改写后重建探测用）"""
-        return DriverInputProbe(
-            prompt=prompt,
-            extra_config=self.extra_config,
-            reference_images=self.reference_images,
-            image_path=self.image_path,
-            audio_path=self.audio_path,
-            video_path=self.video_path,
-        )
-
-    def with_reference_images(self, urls: List[str]) -> "DriverInputProbe":
-        """返回替换参考图列表的副本（urls 为 URL 列表，内部转 JSON 字符串）"""
-        return DriverInputProbe(
-            prompt=self.prompt,
-            extra_config=self.extra_config,
-            reference_images=json.dumps(urls, ensure_ascii=False) if urls else None,
-            image_path=self.image_path,
-            audio_path=self.audio_path,
-            video_path=self.video_path,
-        )
 
 
 logger = logging.getLogger(__name__)

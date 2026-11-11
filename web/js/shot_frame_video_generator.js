@@ -358,8 +358,8 @@ async function generateShotFrameVideo(nodeId, node){
       videoPrompt = ensureShotFrameMentionTokens(videoPrompt, autoFirstUrl, autoLastUrl);
 
       // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
-      // 张数按模型上限（H3 参考生 9 张）：点名首尾帧时服务端按实现方兼容探测选择
-      // 首帧参考混合模型并裁到 3 张（两端保留、图例句同步重排），前端不预裁。
+      // 张数按模型上限（H3 参考生 9 张）：参考图全容量提交，服务端混合实现方
+      //（类型 37 默认）六槽接收，锁帧与否由优化分派按提示词点名决定，前端不预裁。
       const placedMentions = placeShotFrameMentionImages(
         videoPrompt,
         referenceImageUrls,
@@ -397,7 +397,7 @@ async function generateShotFrameVideo(nodeId, node){
 
       if(referenceImageUrls.length > 0) {
         // 有参考图 → image_to_video + multi_reference。任务始终是下拉参考生（37）：
-        // 点名首尾帧时服务端按实现方兼容探测自动选首帧参考混合模型（不改 task_id）。
+        // 任务始终是下拉参考生（37），首帧参考混合为其默认实现方（不改 task_id）。
         const taskId = TaskConfig.getTaskIdByKey(videoModel, 'image_to_video');
         if(!taskId) {
           throw new Error(`未找到视频模型 ${videoModel} 对应的图生视频任务配置`);

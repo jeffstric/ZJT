@@ -94,6 +94,12 @@ _H3_KF_ROLE_END = "end"
 _H3_KF_ROLE_REFERENCE = "reference"
 _H3_KF_ROLE_EMPTY = "empty"
 
+# 首帧参考混合 webapp（2108549232725680129）的图片节点数：P1~P6
+# （137/156/187/190/191/192），与驱动 _PICTURE_NODE_IDS 一一对应。
+# 槽位约定：首帧固定 P1、尾帧固定 P6，中间 P2~P5 放角色/场景/道具参考；
+# 只点名一端时另一端槽位也当参考；没有标记时 6 个槽全放参考图。
+H3_KFREF_PICTURE_SLOTS = 6
+
 
 def parse_extra_config(ai_tool: Any) -> Dict[str, Any]:
     raw = getattr(ai_tool, "extra_config", None)
@@ -150,11 +156,12 @@ def _kf_slot(url: str, role: str) -> tuple:
 
 
 def assign_h3_keyframe_ref_pictures(image_urls: Optional[List[str]], prompt: Optional[str]) -> Dict[str, Any]:
-    """按原文「图N是首帧 / 图N是尾帧」把参考图列表填进 Picture 1/2/3。
+    """按原文「图N是首帧 / 图N是尾帧」把参考图列表填进 Picture 1~6。
 
-    Picture 2 只放角色、场景或道具参考，不会是尾帧。
-    只点名首帧时，Picture 3 是第二张参考；只点名尾帧时，Picture 3 才是结束关键帧。
-    没有标记时，前三张都当参考图。超出槽位的中间参考放进 unused_urls。
+    槽位约定（见 H3_KFREF_PICTURE_SLOTS）：首帧固定 P1、尾帧固定 P6，
+    中间 P2~P5 放角色、场景或道具参考，不会是尾帧；只点名一端时另一端
+    槽位也当参考；没有标记时 6 个槽全放参考图（同一混合 webapp 的
+    无锚点模式）。超出槽位的参考放进 unused_urls（驱动打 warning 丢弃）。
     """
     urls = [str(item).strip() for item in (image_urls or []) if str(item or "").strip()]
     text = prompt or ""
@@ -165,43 +172,21 @@ def assign_h3_keyframe_ref_pictures(image_urls: Optional[List[str]], prompt: Opt
     consumed = {index for index in (first_index, last_index) if index is not None}
     refs = [url for index, url in enumerate(urls) if index not in consumed]
 
-    if first_match and last_match:
-        picture_1, role_1 = _kf_slot(urls[first_index] if first_index is not None else "", _H3_KF_ROLE_START)
-        if refs:
-            picture_2, role_2 = refs[0], _H3_KF_ROLE_REFERENCE
-            unused = refs[1:]
+    slots: List[tuple] = []
+    for slot_index in range(H3_KFREF_PICTURE_SLOTS):
+        if first_match and slot_index == 0:
+            slots.append(_kf_slot(urls[first_index] if first_index is not None else "", _H3_KF_ROLE_START))
+        elif last_match and slot_index == H3_KFREF_PICTURE_SLOTS - 1:
+            slots.append(_kf_slot(urls[last_index] if last_index is not None else "", _H3_KF_ROLE_END))
         else:
-            picture_2, role_2 = "", _H3_KF_ROLE_EMPTY
-            unused = []
-        picture_3, role_3 = _kf_slot(urls[last_index] if last_index is not None else "", _H3_KF_ROLE_END)
-    elif first_match:
-        picture_1, role_1 = _kf_slot(urls[first_index] if first_index is not None else "", _H3_KF_ROLE_START)
-        picture_2, role_2 = _kf_slot(refs[0] if refs else "", _H3_KF_ROLE_REFERENCE)
-        picture_3, role_3 = _kf_slot(refs[1] if len(refs) > 1 else "", _H3_KF_ROLE_REFERENCE)
-        unused = refs[2:]
-    elif last_match:
-        picture_1, role_1 = _kf_slot(refs[0] if refs else "", _H3_KF_ROLE_REFERENCE)
-        picture_2, role_2 = _kf_slot(refs[1] if len(refs) > 1 else "", _H3_KF_ROLE_REFERENCE)
-        picture_3, role_3 = _kf_slot(urls[last_index] if last_index is not None else "", _H3_KF_ROLE_END)
-        unused = refs[2:]
-    else:
-        slots = []
-        for index in range(3):
-            if index < len(urls):
-                slots.append((urls[index], _H3_KF_ROLE_REFERENCE))
-            else:
-                slots.append(("", _H3_KF_ROLE_EMPTY))
-        (picture_1, role_1), (picture_2, role_2), (picture_3, role_3) = slots
-        unused = urls[3:]
+            ref = refs.pop(0) if refs else ""
+            slots.append(_kf_slot(ref, _H3_KF_ROLE_REFERENCE))
+    unused = refs
 
     return {
-        "picture_1": picture_1,
-        "picture_2": picture_2,
-        "picture_3": picture_3,
+        **{f"picture_{slot_index + 1}": slots[slot_index][0] for slot_index in range(H3_KFREF_PICTURE_SLOTS)},
         "roles": {
-            "picture_1": role_1,
-            "picture_2": role_2,
-            "picture_3": role_3,
+            f"picture_{slot_index + 1}": slots[slot_index][1] for slot_index in range(H3_KFREF_PICTURE_SLOTS)
         },
         "unused_urls": unused,
     }
@@ -243,20 +228,24 @@ def _resolve_ai_tool_implementation_name(ai_tool: Any) -> Optional[str]:
 
 
 def resolve_h3_prompt_variant(ai_tool: Any, task_key: Optional[str] = None) -> Optional[str]:
-    """首帧参考混合 → KFRef；参考生视频 → Ref2VA；仅首帧 → I2VA；有尾帧 → FL2VA；无可用输入 → None。
+    """首帧参考混合按点名分派 KFRef/Ref2VA；参考生视频 → Ref2VA；仅首帧 → I2VA；有尾帧 → FL2VA；无可用输入 → None。
 
-    KFRef 判定先看实现方再看任务键：首帧参考混合实现方（id=100）已挂进类型 37
-    参考生的 implementations，新提交 type=37 + implementation=100 时必须用 KFRef
-    模板和槽位原句校验；历史在途 type=50 行（implementation 同为 100）由任务键
-    兜底覆盖。KFRef 必须先返回——否则两张参考图会被后面的首尾帧兜底读成 FL2VA，
-    Picture 2 会被写成尾帧。
+    首帧参考混合实现方（id=100）是类型 37 参考生的默认实现方（无输入条件，
+    同一混合 webapp 兼容两种形态）：提示词点名「图N是首帧/尾帧」或 @首帧图
+    token → KFRef 变体（锚点 EXACT 校验 + 槽位锁帧）；没点名 → 同一 webapp
+    全参考图模式，走 Ref2VA 变体（与 impl=67 同路，无锚点要求）。
+    历史在途 type=50 行（implementation 同为 100）由任务键兜底，创建时必点名，
+    保持 KFRef。KFRef 分支必须先于首尾帧兜底返回——否则两张参考图会被后面
+    的兜底读成 FL2VA，Picture 2 会被写成尾帧。
     """
     impl_name = _resolve_ai_tool_implementation_name(ai_tool)
     if impl_name == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1:
         counts = resolve_h3_reference_asset_counts(ai_tool)
-        if counts["images"] or counts["audios"]:
+        if not (counts["images"] or counts["audios"]):
+            return None
+        if prompt_marks_first_or_last_frame(getattr(ai_tool, "prompt", None)):
             return H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
-        return None
+        return H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
     if task_key == DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO:
         counts = resolve_h3_reference_asset_counts(ai_tool)
         if counts["images"] or counts["audios"]:
@@ -347,12 +336,12 @@ def _build_ref2va_instruction(
 def _kfref_roles(keyframe_slots: Optional[Dict[str, Any]], ref_counts: Optional[Dict[str, int]]) -> Dict[str, str]:
     slots = keyframe_slots if isinstance(keyframe_slots, dict) else {}
     roles = slots.get("roles") if isinstance(slots.get("roles"), dict) else {}
-    if any(roles.get(f"picture_{index}") for index in (1, 2, 3)):
-        return {f"picture_{index}": str(roles.get(f"picture_{index}") or _H3_KF_ROLE_EMPTY) for index in (1, 2, 3)}
+    if any(roles.get(f"picture_{index}") for index in range(1, H3_KFREF_PICTURE_SLOTS + 1)):
+        return {f"picture_{index}": str(roles.get(f"picture_{index}") or _H3_KF_ROLE_EMPTY) for index in range(1, H3_KFREF_PICTURE_SLOTS + 1)}
     images = int((ref_counts or {}).get("images") or 0)
     return {
         f"picture_{index}": _H3_KF_ROLE_REFERENCE if index <= images else _H3_KF_ROLE_EMPTY
-        for index in (1, 2, 3)
+        for index in range(1, H3_KFREF_PICTURE_SLOTS + 1)
     }
 
 
@@ -375,7 +364,7 @@ def kfref_required_clauses(
     if isinstance(keyframe_slots, dict) and isinstance(keyframe_slots.get("roles"), dict):
         roles = keyframe_slots["roles"]
     clauses = []
-    for index in (1, 2, 3):
+    for index in range(1, H3_KFREF_PICTURE_SLOTS + 1):
         clause = kfref_keyframe_clause(index, str(roles.get(f"picture_{index}") or ""), duration or 5)
         if clause:
             clauses.append(clause)
@@ -494,7 +483,7 @@ def _build_kfref_instruction(
     lines = []
     has_keyframe = False
     has_reference = False
-    for index in (1, 2, 3):
+    for index in range(1, H3_KFREF_PICTURE_SLOTS + 1):
         role = roles.get(f"picture_{index}") or _H3_KF_ROLE_EMPTY
         clause = kfref_keyframe_clause(index, role, duration)
         if role == _H3_KF_ROLE_START and clause:
@@ -537,8 +526,8 @@ def _build_kfref_instruction(
         "才在前缀末尾追加 \u201c + audio reference\u201d，否则前缀保持基础值。"
     )
     seconds = f"{float(duration or 5):.2f}"
-    has_start = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_START for index in (1, 2, 3))
-    has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in (1, 2, 3))
+    has_start = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_START for index in range(1, H3_KFREF_PICTURE_SLOTS + 1))
+    has_end = any(roles.get(f"picture_{index}") == _H3_KF_ROLE_END for index in range(1, H3_KFREF_PICTURE_SLOTS + 1))
     # 事故 ai_tools 13131（2026-10-31）：首帧图只有一个人，优化结果却把第二个角色写成
     # 「stays silent throughout ... nod ... glance」，视频模型为让对话成立，第 0 帧就生成
     # 双人构图，推翻「pixel-consistently」首帧句。参考模式画布的首帧约束只是提示词软约束，
