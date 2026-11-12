@@ -178,16 +178,31 @@
             // enterprise/services/agent_failure_notifier.py）。该轮次是新的 agent_task，
             // 前端没有它的 SSE 监听（SSE 按 task 维度建立），PM 回复只落库 chat_messages，
             // 不刷新页面就看不到。本监视器在任务失败终态后启动：90 秒内每 10 秒拉一次
-            // 会话历史，把基线之后新增的 AI 侧消息（PM 询问卡片 / 说明文本）追加到当前
-            // 消息流并滚动展示；用户活跃收发时跳过本轮，避免与主动发送的本地状态冲突。
+            // 会话历史做【幂等对账】——history 是事实源，屏幕是投影，每轮把投影补齐：
+            // 逐条检查 AI 侧消息（assistant 文本 / verification 询问卡片）屏幕上是否
+            // 已存在（消息 id / verification_id / 近似内容三级匹配），不存在即补渲染。
+            // ⚠️ 设计上刻意不设"基线快照"：快照语义是"启动时刻的 history=屏幕"，而
+            // 提交期失败场景（2026-11-13 实测）通知链路落库（T0+6s）早于前端轮询感知
+            // 失败（T0+10s）→ watcher 启动时询问已在 history 但从未渲染——快照会把它
+            // 当"已显示"永久吞掉。对账语义没有这个竞争窗口。
             const SESSION_WATCH_DURATION_MS = 90000;
             const SESSION_WATCH_INTERVAL_MS = 10000;
-            const sessionMessageWatchers = new Map(); // sessionId -> { deadline, knownIds, timer }
+            const sessionMessageWatchers = new Map(); // sessionId -> { deadline, timer }
 
-            function _historyMessageWatchKey(h) {
-                if (h.message_id) return 'id:' + h.message_id;
-                const content = typeof h.content === 'string' ? h.content.slice(0, 80) : String(h.content || '').slice(0, 80);
-                return 'ts:' + (h.timestamp || '') + '|' + content;
+            // 对账匹配：history 行在屏幕上是否已存在（三级匹配，任一命中即视为已显示）
+            function _historyMessageOnScreen(h) {
+                // 1) message_id 精确匹配（页面加载 history 恢复路径渲染的消息带 _dbMessageId）
+                if (h.message_id && messages.value.some(m => m._dbMessageId === h.message_id)) return true;
+                // 2) verification_id 匹配（SSE handleVerification 渲染的卡片带 verificationId）
+                let verId = h.verification_id || null;
+                if (!verId && typeof h.content === 'string' && h.content.trim().startsWith('{')) {
+                    try { verId = JSON.parse(h.content).verification_id || null; } catch (e) { verId = null; }
+                }
+                if (verId && messages.value.some(m => m.verificationId === verId)) return true;
+                // 3) 近似内容兜底（SSE 实时渲染的 assistant 消息无 _dbMessageId）
+                const text = typeof unwrapHistoryText(h.content) === 'string'
+                    ? unwrapHistoryText(h.content) : String(h.content || '');
+                return window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, text) || false;
             }
 
             function startSessionMessageWatcher(sessionId) {
@@ -198,7 +213,7 @@
                     existing.deadline = Date.now() + SESSION_WATCH_DURATION_MS;
                     return;
                 }
-                const state = { deadline: Date.now() + SESSION_WATCH_DURATION_MS, knownIds: null, timer: null };
+                const state = { deadline: Date.now() + SESSION_WATCH_DURATION_MS, timer: null };
                 sessionMessageWatchers.set(sessionId, state);
 
                 const stop = () => {
@@ -217,65 +232,27 @@
                         const history = await loadSessionHistory(sessionId);
                         const visible = (history || []).filter(filterHistoryMessage);
                         if (!Array.isArray(visible) || visible.length === 0) return;
-                        if (state.knownIds === null) {
-                            // 首轮：建立基线（已有消息 id 集合），不追加普通历史消息。
-                            // ⚠️ 但必须补渲染【最后一个未回答的 verification 询问卡片】：
-                            // 提交期失败场景（2026-11-13 本地实测）时序竞争——调度器提交
-                            // 失败后通知器立即触发，PM 的 ask_user 询问落库（T0+5s）早于
-                            // 前端轮询拿到 FAILED（轮询间隔最长 10s）→ 失败气泡/watcher
-                            // 启动时询问已在 history 里，若只记基线会把它当"已有消息"
-                            // 永久吞掉，用户看不到询问（本 BUG 的根因）。
-                            state.knownIds = new Set(visible.map(_historyMessageWatchKey));
-                            // 已回答判定（与 restorePendingVerificationFromHistory 同口径）：
-                            // verification 行之后存在同 id 的 verification_answer 行即已回答
-                            const answeredIds = new Set();
-                            for (const h of visible) {
-                                if (h.message_type === 'verification_answer' && h.verification_id) {
-                                    answeredIds.add(h.verification_id);
-                                }
+                        // 已回答的询问 id 集合（verification 行之后存在同 id 的 answer 行）
+                        const answeredIds = new Set();
+                        for (const h of visible) {
+                            if (h.message_type === 'verification_answer' && h.verification_id) {
+                                answeredIds.add(h.verification_id);
                             }
-                            let pendingVerRow = null;
-                            for (let i = visible.length - 1; i >= 0; i--) {
-                                const h = visible[i];
-                                if (h.role !== 'verification' || !h.verification_id) continue;
-                                if (answeredIds.has(h.verification_id)) continue;
-                                pendingVerRow = h; // 倒序第一个未回答的 = 最后一次询问
-                                break;
-                            }
-                            if (pendingVerRow) {
-                                const parsed = parseHistoryMessage(pendingVerRow);
-                                // 本地尚未渲染过（isNearDuplicate 查重），补渲染卡片并激活
-                                const dup = window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, parsed.content || '') || false;
-                                if (!dup) {
-                                    messages.value.push(parsed);
-                                    if (parsed.isVerification && parsed.verificationId && !['answered', 'expired', 'cancelled', 'skipped'].includes(parsed.verificationStatus)) {
-                                        pendingVerificationId.value = parsed.verificationId;
-                                    }
-                                    scrollToBottom();
-                                }
-                            }
-                            return;
                         }
                         const fresh = [];
                         for (const h of visible) {
-                            const key = _historyMessageWatchKey(h);
-                            if (state.knownIds.has(key)) continue;
-                            state.knownIds.add(key);
-                            // 只追加 AI 侧新消息（assistant 文本 / verification 询问卡片）
+                            // 只补 AI 侧消息（assistant 文本 / verification 询问卡片）；
+                            // user 消息由用户自己产生屏幕必有；tool_call 行被过滤器排除
                             if (h.role !== 'assistant' && h.role !== 'verification') continue;
-                            const parsed = parseHistoryMessage(h);
-                            // 内容查重：SSE/本地状态可能已渲染同内容消息（dual write 防线）
-                            const dup = window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, parsed.content || '') || false;
-                            if (!dup) fresh.push(parsed);
+                            // 已回答的询问不补（历史恢复路径会渲染禁用卡片，且不再是活跃验证）
+                            if (h.verification_id && answeredIds.has(h.verification_id)) continue;
+                            if (_historyMessageOnScreen(h)) continue;
+                            fresh.push(parseHistoryMessage(h));
                         }
                         if (fresh.length > 0) {
                             for (const msg of fresh) messages.value.push(msg);
-                            // verification 询问卡片（如 PM 的"是否去音轨重试"）：同步登记为
-                            // 活跃验证。SSE 路径（handleVerification）推送时会设置
-                            // pendingVerificationId 使选项按钮可点；watcher 走 history 拉取
-                            // 不经过该路径，不登记则按钮按"历史已回答"渲染为禁用
-                            // （dev3 实测 2026-11-12：卡片显示了但按钮全部禁用）。
-                            // 已回答/过期状态不激活（避免覆盖正常流程的活跃验证）。
+                            // 追加了未回答的 verification 询问卡片：登记为活跃验证使按钮可点
+                            // （SSE 路径 handleVerification 会登记；watcher 对账路径同样要登记）
                             const verificationMsg = fresh.find(m => m.isVerification && m.verificationId);
                             if (verificationMsg && !['answered', 'expired', 'cancelled', 'skipped'].includes(verificationMsg.verificationStatus)) {
                                 pendingVerificationId.value = verificationMsg.verificationId;
@@ -287,7 +264,7 @@
                     }
                 };
 
-                tick(); // 立即建立基线
+                tick(); // 立即对账
                 state.timer = trackedSetInterval(tick, SESSION_WATCH_INTERVAL_MS);
             }
 

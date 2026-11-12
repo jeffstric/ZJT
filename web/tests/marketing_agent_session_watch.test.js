@@ -9,20 +9,14 @@ const AgentMessageDedupe = require_('../js/agent_message_dedupe.js');
 const root = path.resolve(import.meta.dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'web/js/marketing_agent.js'), 'utf8');
 
-// 回归背景（2026-11-12，dev3 实测）：生成任务失败后，后端通知器主动触发一轮
-// PM（询问是否去音轨重试），该轮次是新的 agent_task，前端没有它的 SSE 监听
-// （SSE 按 task 维度建立），PM 回复只落库 chat_messages，不刷新页面就看不到。
-// 方案 A 契约：
-//   1. 失败终态后启动 startSessionMessageWatcher（agent 视频/图片两处 poll 失败分支）
-//   2. 首轮 tick 只建立基线（已有消息 id 集合），不追加历史
-//   3. 后续 tick 发现基线之后新增的 AI 侧消息（assistant/verification）追加并滚动
-//   4. 内容查重防线：同内容消息不重复追加；user 消息不追加
-//   5. 会话切换即停止并清理；用户活跃收发（isLoading）跳过本轮
-//   6. 同会话重复启动只续期不重复建 watcher
+// 回归背景（2026-11-13）：watcher 原为"基线快照"语义——启动时记下 history 现有
+// 消息集合，之后只追加集合之外的新消息。提交期失败实测暴露时序竞争：通知链路
+// 落库（T0+6s）早于前端轮询感知失败（T0+10s），watcher 启动时询问已在 history
+// 里，被基线当"已显示"永久吞掉，用户看不到询问。
+// 现语义（幂等对账）：不设快照，每轮对 history 逐条检查屏幕上是否已存在
+// （message_id / verification_id / 近似内容三级匹配），不存在即补渲染。
+// 对账语义没有竞争窗口——任何先落库后启动的时序天然被覆盖。
 
-// ---------- 从 IIFE 源码切片提取被测函数，注入 mock 依赖后真实执行 ----------
-// 注意：整个场景在单次 AsyncFunction 内完成（作用域内 Map/计数跨步骤共享），
-// 断言所需状态通过 return 的 result 对象带出。
 function extractSlice(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
     expect(start, `未找到切片起点 ${startMarker}`).toBeGreaterThan(-1);
@@ -30,12 +24,25 @@ function extractSlice(startMarker, endMarker) {
     return source.slice(start, end > start ? end : undefined);
 }
 
-const fnKey = extractSlice('function _historyMessageWatchKey', 'function startSessionMessageWatcher');
+const fnOnScreen = extractSlice('function _historyMessageOnScreen', 'function startSessionMessageWatcher');
 const fnWatch = extractSlice('function startSessionMessageWatcher', 'function stopTaskAfterRepeatedErrors');
 
-async function runScenario(historyQueue, script) {
+const BASE_HISTORY = [
+    { message_id: 'm1', role: 'user', content: '帮我克隆视频', timestamp: '2026-11-12T10:00:00' },
+    { message_id: 'm2', role: 'assistant', content: '已提交视频生成任务', timestamp: '2026-11-12T10:00:05' },
+    { message_id: 'm3', role: 'assistant', content: '<span style="color:#dc2626;">内容审核未通过（音频版权）…</span>', timestamp: '2026-11-12T10:05:00' },
+];
+
+// 屏幕初始状态：页面加载 history 恢复已渲染的消息（带 _dbMessageId）
+const SCREEN_RESTORED = BASE_HISTORY.map(h => ({
+    _dbMessageId: h.message_id,
+    role: h.role === 'user' ? 'user' : 'ai',
+    content: h.content,
+}));
+
+async function runScenario(historyQueue, screenMessages, script) {
     const calls = { historyFetches: 0, scrolled: 0, intervals: [], cleared: [] };
-    const messages = { value: [] };
+    const messages = { value: screenMessages.map(m => ({ ...m })) };
     const pendingVerificationId = { value: null };
     const scope = `
         const window = { AgentMessageDedupe: this.agentMessageDedupe };
@@ -53,18 +60,32 @@ async function runScenario(historyQueue, script) {
             return q.length > 1 ? q.shift() : q[0];
         };
         const filterHistoryMessage = (h) => h.role !== 'system' && h.role !== 'tool' && h.message_type !== 'context_summary';
+        // 与真实 unwrapHistoryText 行为一致：{text:...} 取 text，其余原样返回
+        const unwrapHistoryText = (content) => {
+            if (content == null) return '';
+            if (typeof content === 'object') return typeof content.text === 'string' ? content.text : '';
+            const raw = String(content);
+            const trimmed = raw.trim();
+            if (trimmed.startsWith('{')) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    if (parsed && typeof parsed.text === 'string') return parsed.text;
+                } catch (e) { /* 非 JSON */ }
+            }
+            return raw;
+        };
         const parseHistoryMessage = (h) => {
             let vData = null;
             if (h.role === 'verification' && typeof h.content === 'string') {
                 try { vData = JSON.parse(h.content); } catch (e) { vData = null; }
             }
             return {
-                // 与真实 parseHistoryMessage 一致：assistant/verification 统一归一为 'ai'
+                _dbMessageId: h.message_id || null,
                 role: (h.role === 'assistant' || h.role === 'verification') ? 'ai' : h.role,
                 content: h.content,
                 isVerification: h.role === 'verification',
-                verificationOptions: h.role === 'verification' ? ['去除音轨后重新克隆'] : undefined,
-                verificationId: vData ? vData.verification_id : null,
+                verificationOptions: h.role === 'verification' ? (vData ? vData.options : ['去除音轨后重新克隆']) : undefined,
+                verificationId: vData ? vData.verification_id : (h.verification_id || null),
                 verificationStatus: vData ? (vData.status || null) : null,
             };
         };
@@ -74,18 +95,18 @@ async function runScenario(historyQueue, script) {
         const settle = () => new Promise(r => setTimeout(r, 0));
     `;
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-    const fn = new AsyncFunction(`${scope}\n${fnKey}\n${fnWatch}\n${script}`);
-    const result = await fn.call({ calls, messages, historyQueue, currentSessionId: { value: 'sess-1' }, isLoading: { value: false }, pendingVerificationId, agentMessageDedupe: AgentMessageDedupe });
+    const fn = new AsyncFunction(`${scope}\n${fnOnScreen}\n${fnWatch}\n${script}`);
+    const result = await fn.call({
+        calls, messages, historyQueue,
+        currentSessionId: { value: 'sess-1' },
+        isLoading: { value: false },
+        pendingVerificationId,
+        agentMessageDedupe: AgentMessageDedupe,
+    });
     return { calls, messages, pendingVerificationId, result };
 }
 
-const BASE_HISTORY = [
-    { message_id: 'm1', role: 'user', content: '帮我克隆视频', timestamp: '2026-11-12T10:00:00' },
-    { message_id: 'm2', role: 'assistant', content: '已提交视频生成任务', timestamp: '2026-11-12T10:00:05' },
-    { message_id: 'm3', role: 'assistant', content: '<span style="color:#dc2626;">内容审核未通过（音频版权）…</span>', timestamp: '2026-11-12T10:05:00' },
-];
-
-describe('marketing_agent 会话新消息临时监视（失败通知回复实时感知，方案 A）', () => {
+describe('marketing_agent 会话消息临时监视——幂等对账语义（方案 A v2）', () => {
     it('触发点挂载：agent 视频/图片轮询失败分支调用 startSessionMessageWatcher，成功分支不调用', () => {
         const videoStart = source.indexOf('function pollAgentVideoStatus');
         const videoBody = source.slice(videoStart, videoStart + 7000);
@@ -102,166 +123,119 @@ describe('marketing_agent 会话新消息临时监视（失败通知回复实时
         expect(imgBody.slice(imgFailIdx, imgFailIdx + 300)).toContain('startSessionMessageWatcher(pollSessionId)');
     });
 
-    it('首轮 tick 只建立基线不追加；interval 已注册', async () => {
+    it('对账不设基线：屏幕已恢复的历史消息不重复追加（_dbMessageId 精确匹配）', async () => {
         const historyQueue = [BASE_HISTORY];
-        const { calls, messages } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            return { intervals: calls.intervals.length, appended: messages.value.length, fetches: calls.historyFetches };
-        `);
-        expect(result_or_self({ intervals: calls.intervals.length, appended: messages.value.length, fetches: calls.historyFetches }));
-        expect(calls.intervals.length).toBe(1);
-        expect(messages.value.length).toBe(0);
-        expect(calls.historyFetches).toBe(1);
+        const { messages } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(SCREEN_RESTORED.length);
     });
 
-    it('基线后新增 assistant/verification 消息被追加滚动，user 消息不追加', async () => {
-        const withNew = [
-            ...BASE_HISTORY,
-            { message_id: 'm4', role: 'assistant', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？', timestamp: '2026-11-12T10:08:00' },
-            { message_id: 'm5', role: 'verification', content: JSON.stringify({ title: 'marketing-video 向您提问', description: '如何处理？', options: ['去除音轨后重新克隆'], verification_id: 'v1' }), timestamp: '2026-11-12T10:08:05' },
-            { message_id: 'm6', role: 'user', content: '用户自己的新消息', timestamp: '2026-11-12T10:08:10' },
-        ];
-        const historyQueue = [BASE_HISTORY, withNew];
-        const { calls, messages } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();          // 第一轮：基线
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle(); // 第二轮：发现新增
-            return { appended: messages.value.length, scrolled: calls.scrolled };
-        `);
-        expect(messages.value.length).toBe(2); // assistant + verification，user 不追加
-        expect(messages.value[0].content).toContain('去除参考视频的音轨');
-        expect(messages.value[1].isVerification).toBe(true);
-        expect(calls.scrolled).toBeGreaterThan(0);
-    });
-
-    it('内容查重：本地已有同内容消息时不重复追加', async () => {
-        const withNew = [
-            ...BASE_HISTORY,
-            { message_id: 'm4', role: 'assistant', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？', timestamp: '2026-11-12T10:08:00' },
-        ];
-        const historyQueue = [BASE_HISTORY, withNew];
-        const { messages } = await runScenario(historyQueue, `
-            // 本地已渲染过同内容消息（如经其他通道到达）
-            messages.value.push({ role: 'ai', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？' });
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle();
-            return { appended: messages.value.length };
-        `);
-        expect(messages.value.length).toBe(1); // 未追加重复
-    });
-
-    it('会话切换后 tick 自停并清理 watcher', async () => {
-        const historyQueue = [BASE_HISTORY];
-        const { calls, result } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            currentSessionId.value = 'sess-other';  // 模拟切换会话
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle();
-            return { stillWatching: sessionMessageWatchers.has('sess-1'), cleared: calls.cleared.length };
-        `);
-        expect(result.stillWatching).toBe(false);
-        expect(result.cleared).toBeGreaterThan(0);
-    });
-
-    it('isLoading 活跃时跳过本轮拉取', async () => {
-        const historyQueue = [BASE_HISTORY];
-        const { calls } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            isLoading.value = true;
-            const fetchesBefore = calls.historyFetches;
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle();
-            return { before: fetchesBefore, after: calls.historyFetches };
-        `);
-        expect(result_or_self({ after: calls.historyFetches }));
-        expect(calls.historyFetches).toBe(1); // 第二轮被 isLoading 拦截，未拉取
-    });
-
-    it('首轮基线含未回答 verification 时补渲染并激活（提交期失败时序竞争场景）', async () => {
-        // 提交期失败：ask_user 落库早于 watcher 启动 → 询问出现在基线里，
-        // 必须补渲染 + 激活，否则用户永远看不到询问
+    it('时序竞争场景（询问已落库但屏幕无）→ 对账补渲染并激活按钮', async () => {
         const withPendingVer = [
             ...BASE_HISTORY,
             { message_id: 'm4', role: 'verification', message_type: 'verification_request', verification_id: 'verif-first', content: JSON.stringify({ title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'], verification_id: 'verif-first' }), timestamp: '2026-11-12T10:08:00' },
         ];
         const historyQueue = [withPendingVer];
-        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle(); await settle();
-            return { appended: messages.value.length, fetches: calls.historyFetches };
-        `);
-        expect(messages.value.length).toBe(1);
-        expect(messages.value[0].isVerification).toBe(true);
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(SCREEN_RESTORED.length + 1);
+        const card = messages.value.find(m => m.isVerification);
+        expect(card).toBeTruthy();
         expect(pendingVerificationId.value).toBe('verif-first');
     });
 
-    it('首轮基线含已回答 verification（其后有 answer 行）时不补渲染', async () => {
+    it('SSE 已渲染的近似内容（无 _dbMessageId）→ 近似匹配跳过不重复追加', async () => {
+        const sseRendered = [...SCREEN_RESTORED, { role: 'ai', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？' }];
+        const withNew = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'assistant', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？', timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withNew];
+        const { messages } = await runScenario(historyQueue, sseRendered, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(sseRendered.length);
+    });
+
+    it('已回答的询问（history 有 answer 行）不补渲染不激活', async () => {
         const withAnsweredVer = [
             ...BASE_HISTORY,
             { message_id: 'm4', role: 'verification', message_type: 'verification_request', verification_id: 'verif-old', content: JSON.stringify({ title: 'q', description: 'd', options: ['a'], verification_id: 'verif-old' }), timestamp: '2026-11-12T10:08:00' },
             { message_id: 'm5', role: 'user', message_type: 'verification_answer', verification_id: 'verif-old', content: '去除音轨后重新克隆', timestamp: '2026-11-12T10:09:00' },
         ];
         const historyQueue = [withAnsweredVer];
-        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle(); await settle();
-            return { appended: messages.value.length };
-        `);
-        expect(messages.value.length).toBe(0);
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(SCREEN_RESTORED.length);
         expect(pendingVerificationId.value).toBeNull();
     });
 
-    it('追加 verification 询问卡片时登记活跃验证（按钮可点）', async () => {
-        const verifMsg = { message_id: 'm4', role: 'verification', content: JSON.stringify({ title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'], verification_id: 'verif-9' }), timestamp: '2026-11-12T10:08:00' };
-        const historyQueue = [BASE_HISTORY, [...BASE_HISTORY, verifMsg]];
-        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle();
-            return { appended: messages.value.length };
-        `);
-        expect(messages.value.length).toBe(1);
-        expect(messages.value[0].isVerification).toBe(true);
-        // 核心断言：登记活跃验证 → isActiveVerificationMessage 为真 → 按钮可点
-        expect(pendingVerificationId.value).toBe('verif-9');
+    it('history 新增 assistant 消息（屏幕没有）正常补渲染', async () => {
+        const withNew = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'assistant', content: '两次确认都已超时，请直接回复选择方案。', timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [BASE_HISTORY, withNew];
+        const { messages } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'const lastInterval = calls.intervals[calls.intervals.length - 1];',
+            'await lastInterval.fn(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(SCREEN_RESTORED.length + 1);
+        expect(messages.value[messages.value.length - 1].content).toContain('两次确认都已超时');
     });
 
-    it('已回答状态的 verification 不登记为活跃验证', async () => {
-        const verifMsg = { message_id: 'm4', role: 'verification', content: JSON.stringify({ title: 'q', description: 'd', options: ['a'], verification_id: 'verif-old', status: 'answered' }), timestamp: '2026-11-12T10:08:00' };
-        const historyQueue = [BASE_HISTORY, [...BASE_HISTORY, verifMsg]];
-        const { pendingVerificationId } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle(); await settle();
-            const lastInterval = calls.intervals[calls.intervals.length - 1];
-            await lastInterval.fn(); await settle();
-            return {};
-        `);
-        expect(pendingVerificationId.value).toBeNull();
+    it('会话切换后 tick 自停并清理 watcher', async () => {
+        const historyQueue = [BASE_HISTORY];
+        const { calls, result } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            "currentSessionId.value = 'sess-other';",
+            'const lastInterval = calls.intervals[calls.intervals.length - 1];',
+            'await lastInterval.fn(); await settle();',
+            "return { stillWatching: sessionMessageWatchers.has('sess-1'), cleared: calls.cleared.length };",
+        ].join('\n'));
+        expect(result.stillWatching).toBe(false);
+        expect(result.cleared).toBeGreaterThan(0);
+    });
+
+    it('isLoading 活跃时跳过本轮拉取', async () => {
+        const historyQueue = [BASE_HISTORY];
+        const { calls } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'isLoading.value = true;',
+            'const before = calls.historyFetches;',
+            'const lastInterval = calls.intervals[calls.intervals.length - 1];',
+            'await lastInterval.fn(); await settle();',
+            'return { before, after: calls.historyFetches };',
+        ].join('\n'));
+        expect(calls.historyFetches).toBe(1);
     });
 
     it('同会话重复启动只续期不重复建 watcher', async () => {
         const historyQueue = [BASE_HISTORY];
-        const { calls, result } = await runScenario(historyQueue, `
-            startSessionMessageWatcher('sess-1');
-            await settle();
-            startSessionMessageWatcher('sess-1');  // 第二次：应走续期分支
-            await settle();
-            return { watchers: sessionMessageWatchers.size, intervals: calls.intervals.length };
-        `);
+        const { result } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle();',
+            "startSessionMessageWatcher('sess-1');",
+            'await settle();',
+            "return { watchers: sessionMessageWatchers.size, intervals: calls.intervals.length };",
+        ].join('\n'));
         expect(result.watchers).toBe(1);
         expect(result.intervals).toBe(1);
     });
 });
-
-// runScenario 返回 { calls, messages, result }；此辅助仅用于让断言目标显式
-function result_or_self(obj) {
-    expect(obj).toBeTruthy();
-    return obj;
-}
