@@ -212,7 +212,11 @@
                 // 3) 近似内容兜底（SSE 实时渲染的 assistant 消息无 _dbMessageId）
                 const text = typeof unwrapHistoryText(h.content) === 'string'
                     ? unwrapHistoryText(h.content) : String(h.content || '');
-                return window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, text) || false;
+                // 全等比对（保守，不误杀增量消息）：近似子串判定曾审查出吞增量
+                // 追问的误判风险（2026-11-13 AI 审查确认）且真实双份总结结构差异
+                // 大（互不包含）收益未兑现，故回退全等。双份总结观感待单一事实
+                // 来源重构根治。
+                return window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, text) || false;
             }
 
             function startSessionMessageWatcher(sessionId) {
@@ -4550,7 +4554,7 @@
                             if (data.type === 'message') {
                                 hasReceivedData = true;
                                 resetTaskErrorCount(streamErrorKey);
-                                if (window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, data.content, msgUid)) {
+                                if (window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, data.content, msgUid)) {
                                     console.log('[SSE] 跳过历史中已展示的消息:', data.id);
                                     return;
                                 }

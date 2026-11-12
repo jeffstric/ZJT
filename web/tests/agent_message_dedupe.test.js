@@ -1,6 +1,6 @@
 const AgentMessageDedupe = require('../js/agent_message_dedupe.js');
 
-const { normalizeContent, hasDisplayedAssistantMessage, isNearDuplicateAssistantMessage, shouldPersistUserMessage, formatAgentUserMessageForDisplay } = AgentMessageDedupe;
+const { normalizeContent, hasDisplayedAssistantMessage, shouldPersistUserMessage, formatAgentUserMessageForDisplay } = AgentMessageDedupe;
 
 // ── normalizeContent ──
 describe('normalizeContent', () => {
@@ -138,39 +138,3 @@ describe('formatAgentUserMessageForDisplay', () => {
   });
 });
 
-describe('isNearDuplicateAssistantMessage（LLM 复读总结近似查重，2026-11-12 dev3 实测双份总结）', () => {
-  const LONG_SUMMARY = [
-    '## 工作总结',
-    '- **执行状态**：成功（已提交）',
-    '- **project_ids**：[1864]',
-    '- **算力消耗**：总计消耗420算力',
-    '- **任务说明**：已完成参考视频音轨去除，使用去音轨后的无音频参考视频提交视频克隆任务，前端会自动轮询展示生成进度和最终结果。',
-  ].join('\n');
-
-  it('完全相同的内容判重', () => {
-    const messages = [{ role: 'ai', content: LONG_SUMMARY }];
-    expect(isNearDuplicateAssistantMessage(messages, LONG_SUMMARY)).toBe(true);
-  });
-
-  it('LLM 复读版（个别空格/标点差异）判重——全等比对拦不住的场景', () => {
-    const messages = [{ role: 'ai', content: LONG_SUMMARY }];
-    const paraphrased = LONG_SUMMARY.replace('（已提交）', ' (已提交) ').replace('420算力', '420 算力').replace('\n', '\n\n');
-    expect(paraphrased).not.toBe(LONG_SUMMARY);
-    expect(isNearDuplicateAssistantMessage(messages, paraphrased)).toBe(true);
-  });
-
-  it('短提示不被长总结误杀（长度比例保护）', () => {
-    const messages = [{ role: 'ai', content: LONG_SUMMARY }];
-    expect(isNearDuplicateAssistantMessage(messages, '视频生成失败，请稍后重试。')).toBe(false);
-  });
-
-  it('内容不同的两条正常消息不判重', () => {
-    const messages = [{ role: 'ai', content: LONG_SUMMARY }];
-    expect(isNearDuplicateAssistantMessage(messages, '## 工作总结\n- **执行状态**：失败（任务未提交）\n- **project_ids**：[]')).toBe(false);
-  });
-
-  it('excludeUid 排除自身', () => {
-    const messages = [{ _uid: 'u1', role: 'ai', content: LONG_SUMMARY }];
-    expect(isNearDuplicateAssistantMessage(messages, LONG_SUMMARY, 'u1')).toBe(false);
-  });
-});

@@ -118,7 +118,6 @@
 
   return {
     hasDisplayedAssistantMessage: hasDisplayedAssistantMessage,
-    isNearDuplicateAssistantMessage: isNearDuplicateAssistantMessage,
     normalizeContent: normalizeContent,
     shouldPersistUserMessage: shouldPersistUserMessage,
     formatAgentUserMessageForDisplay: formatAgentUserMessageForDisplay
