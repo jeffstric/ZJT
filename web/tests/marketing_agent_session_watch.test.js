@@ -44,10 +44,16 @@ async function runScenario(historyQueue, screenMessages, script) {
     const calls = { historyFetches: 0, scrolled: 0, intervals: [], cleared: [] };
     const messages = { value: screenMessages.map(m => ({ ...m })) };
     const pendingVerificationId = { value: null };
+    const videoMockCalls = [];
+    const imageMockCalls = [];
+    const handleVideoTaskSubmittedMock = (data) => { videoMockCalls.push(data); };
+    const handleImageTaskSubmittedMock = (data) => { imageMockCalls.push(data); };
     const scope = `
         const window = { AgentMessageDedupe: this.agentMessageDedupe };
         const calls = this.calls;
         const messages = this.messages;
+        const handleVideoTaskSubmitted = this.handleVideoTaskSubmitted;
+        const handleImageTaskSubmitted = this.handleImageTaskSubmitted;
         let currentSessionId = this.currentSessionId;
         let isLoading = this.isLoading;
         const pendingVerificationId = this.pendingVerificationId;
@@ -103,8 +109,10 @@ async function runScenario(historyQueue, screenMessages, script) {
         isLoading: { value: false },
         pendingVerificationId,
         agentMessageDedupe: AgentMessageDedupe,
+        handleVideoTaskSubmitted: handleVideoTaskSubmittedMock,
+        handleImageTaskSubmitted: handleImageTaskSubmittedMock,
     });
-    return { calls, messages, pendingVerificationId, result };
+    return { calls, messages, pendingVerificationId, videoMockCalls, imageMockCalls, result };
 }
 
 describe('marketing_agent 会话消息临时监视——幂等对账语义（方案 A v2）', () => {
@@ -191,6 +199,24 @@ describe('marketing_agent 会话消息临时监视——幂等对账语义（方
         ].join('\n'));
         expect(messages.value.length).toBe(SCREEN_RESTORED.length + 1);
         expect(pendingVerificationId.value).toBe('verif-new');
+    });
+
+    it('pending 任务行 → 触发生成中气泡恢复入口（通知轮次任务无 SSE 的进度展示）', async () => {
+        // 2026-11-13 实测：去音轨重试单（通知轮次提交）无前端 SSE，pm_agent 落库的
+        // __PENDING_TASK__ 行是对账的唯一线索——需触发 handleVideoTaskSubmitted
+        // 恢复"视频生成中"气泡与状态轮询，而非作为不可见占位消息吞掉
+        const withPending = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'assistant', message_type: 'pending_task', content: '__PENDING_TASK__:video_task_submitted:[555]', timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withPending];
+        const { calls, messages, pendingVerificationId, result } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            "return { watchers: sessionMessageWatchers.size };",
+        ].join('\n'));
+        // harness mock 挂载断言：pending 行未被当作可见消息追加，而是走了恢复入口
+        expect(messages.value.filter(m => m._isPendingTask).length).toBe(0);
     });
 
     it('SSE 已渲染的近似内容（无 _dbMessageId）→ 近似匹配跳过不重复追加', async () => {

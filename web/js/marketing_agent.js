@@ -251,6 +251,27 @@
                         }
                         const fresh = [];
                         for (const h of visible) {
+                            // pending 任务行（通知触发轮次提交的生成任务）：恢复"生成中"
+                            // 气泡与状态轮询。这类轮次前端没有 SSE（同 watcher 缘由），
+                            // pm_agent 落库的 __PENDING_TASK__ 行是唯一线索——不走恢复
+                            // 入口的话任务永远没有进度展示（2026-11-13 实测：去音轨重试
+                            // 单 555 提交后无生成中卡片，任务完成也无从展示）。
+                            // ⚠️ content 可能是对象（history 接口还原形态），先归一为
+                            // 字符串再正则匹配，否则 .match 抛 TypeError 被整轮 catch 吞掉
+                            const contentStr = typeof h.content === 'string' ? h.content : '';
+                            const pendingMatch = h.message_type === 'pending_task' || h.role === 'assistant'
+                                ? contentStr.match(/__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/) : null;
+                            if (pendingMatch) {
+                                try {
+                                    const pids = JSON.parse(pendingMatch[2]);
+                                    if (pendingMatch[1] === 'video_task_submitted') {
+                                        handleVideoTaskSubmitted({ project_ids: pids }, sessionId);
+                                    } else {
+                                        handleImageTaskSubmitted({ project_ids: pids }, sessionId);
+                                    }
+                                } catch (e) { /* project_ids 解析失败跳过 */ }
+                                continue; // pending 行本身不作为可见消息追加（恢复入口会插入气泡）
+                            }
                             // 只补 AI 侧消息（assistant 文本 / verification 询问卡片）；
                             // user 消息由用户自己产生屏幕必有；tool_call 行被过滤器排除
                             if (h.role !== 'assistant' && h.role !== 'verification') continue;
