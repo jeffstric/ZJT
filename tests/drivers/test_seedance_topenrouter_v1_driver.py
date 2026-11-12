@@ -36,7 +36,8 @@ with stub_modules({
     'utils.sentry_util': MagicMock(),
     'utils.image_upload_utils': MagicMock(),
 }):
-    from task.visual_drivers import seedance_volcengine_v1_driver as _volc_drv_mod  # noqa: E402
+    from config.constant import TOPENROUTER_SUBMIT_TIMEOUT_SECONDS  # noqa: E402
+from task.visual_drivers import seedance_volcengine_v1_driver as _volc_drv_mod  # noqa: E402
 
 
 def _passthrough_reference_audio_budget(paths, max_total_seconds, **kwargs):
@@ -421,6 +422,41 @@ class TestSubclassInstantiation(unittest.TestCase):
             d25 = Seedance25TopenrouterV1Driver()
             self.assertEqual(d25.driver_type, 36)
             self.assertEqual(d25._model, 'doubao-seedance-2-5-260628')
+
+
+class TestSubmitTimeoutInjection(unittest.TestCase):
+    """创建任务接口单独超时（2026-11-12 dev3：全局 10s 导致提交反复 Read timed out，
+    上游网关同步预审实测 9~10s+，仅放宽提交这一处，轮询 GET 仍走全局超时）"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+
+    def test_create_request_injects_submit_timeout(self):
+        with patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync') as mock_compress:
+            mock_compress.return_value = (True, 'https://cdn.example.com/first.png', None)
+            ai_tool = _make_ai_tool(extra_config={'image_mode': 'first_last_frame'})
+            result = self.driver.build_create_request(ai_tool)
+        self.assertFalse(result.get('success') is False)
+        self.assertEqual(result.get('timeout'), TOPENROUTER_SUBMIT_TIMEOUT_SECONDS)
+
+    def test_error_result_keeps_no_timeout(self):
+        # 构建失败的错误结果（success=False）不应注入 timeout（父类直接透传错误）
+        with patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync') as mock_compress:
+            mock_compress.return_value = (False, None, 'boom')
+            ai_tool = _make_ai_tool(extra_config={'image_mode': 'first_last_frame'})
+            result = self.driver.build_create_request(ai_tool)
+        self.assertTrue(result.get('success') is False)
+        self.assertNotIn('timeout', result)
+
+    def test_submit_timeout_constant_is_seconds_semantics(self):
+        # coerce 阈值 1000 以上按毫秒换算；常量必须保持秒语义（60 < 1000 原样保留）
+        from config.constant import HTTP_REQUEST_TIMEOUT_MS_THRESHOLD, TOPENROUTER_SUBMIT_TIMEOUT_SECONDS
+        from config.constant import coerce_http_timeout_seconds
+        self.assertLess(TOPENROUTER_SUBMIT_TIMEOUT_SECONDS, HTTP_REQUEST_TIMEOUT_MS_THRESHOLD)
+        self.assertEqual(
+            coerce_http_timeout_seconds(TOPENROUTER_SUBMIT_TIMEOUT_SECONDS),
+            float(TOPENROUTER_SUBMIT_TIMEOUT_SECONDS),
+        )
 
 
 if __name__ == '__main__':
