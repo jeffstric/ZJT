@@ -177,7 +177,7 @@ class TestAgentFailureNotifierService:
 
         captured = {}
 
-        def fake_trigger(session_id, auth_token, message):
+        def fake_trigger(session_id, auth_token, message, session=None):
             captured.update(session_id=session_id, auth_token=auth_token, message=message)
             return True
 
@@ -210,7 +210,7 @@ class TestAgentFailureNotifierService:
         captured = {}
         monkeypatch.setattr(
             notifier, "_trigger_agent_turn",
-            lambda sid, tok, msg: captured.update(token=tok) or True,
+            lambda sid, tok, msg, session=None: captured.update(token=tok) or True,
         )
         notifier.notify_agent_task_failure(67, "原因", project_id=67)
         assert captured["token"] == "tok-session-stored"
@@ -239,10 +239,49 @@ class TestAgentFailureNotifierService:
         captured = {}
         monkeypatch.setattr(
             notifier, "_trigger_agent_turn",
-            lambda sid, tok, msg: captured.update(token=tok) or True,
+            lambda sid, tok, msg, session=None: captured.update(token=tok) or True,
         )
         notifier.notify_agent_task_failure(68, "原因", project_id=68)
         assert captured["token"] == "tok-fallback"
+
+    def test_trigger_payload_includes_model_id_from_latest_task(self, monkeypatch, notifier):
+        # POST task 端点要求 model_id 必填（缺失 400）——通知器从会话最近
+        # agent_task 取 model_id 注入 payload（2026-11-13 dev3/本地实测 400）
+        class _Entity:
+            model_id = 11
+
+        import model.agent_tasks as at_mod
+        monkeypatch.setattr(at_mod.AgentTasksModel, "get_latest_by_session", staticmethod(lambda sid: _Entity()))
+
+        payload_holder = {}
+
+        class _Sess:
+            id = "sess-1"
+            session_type = 2
+            user_id = "7"
+            auth_token = "tok"
+
+        import model.chat_sessions as cs_mod
+        monkeypatch.setattr(cs_mod.ChatSessionsModel, "get_by_session_id", staticmethod(lambda sid: _Sess()))
+        monkeypatch.setattr(notifier, "_trigger_agent_turn", None)  # 占位避免误用
+        # 直接测 _resolve_trigger_payload
+        payload = notifier._resolve_trigger_payload(_Sess(), "通知消息")
+        assert payload["model_id"] == 11
+        assert payload["message"] == "通知消息"
+
+    def test_trigger_payload_falls_back_to_session_model_id(self, monkeypatch, notifier):
+        class _Entity:
+            model_id = None
+
+        import model.agent_tasks as at_mod
+        monkeypatch.setattr(at_mod.AgentTasksModel, "get_latest_by_session", staticmethod(lambda sid: _Entity()))
+
+        class _Sess:
+            id = "sess-1"
+            model_id = 26
+
+        payload = notifier._resolve_trigger_payload(_Sess(), "m")
+        assert payload["model_id"] == 26
 
     def test_trigger_uses_authorization_header_not_query(self, monkeypatch, notifier):
         """token 走 Authorization 头（X3 红线），URL 不携带 token"""
@@ -263,7 +302,11 @@ class TestAgentFailureNotifierService:
         monkeypatch.setattr(mod.httpx, "post", fake_post)
         monkeypatch.setattr(mod, "_resolve_inner_base_url", lambda: "http://127.0.0.1:13009")
 
-        ok = mod._trigger_agent_turn("sess-1", "secret-token", "[系统通知] 测试")
+        class _Sess:
+            id = "sess-1"
+            model_id = 11
+
+        ok = mod._trigger_agent_turn("sess-1", "secret-token", "[系统通知] 测试", session=_Sess())
         assert ok is True
         assert captured["url"] == "http://127.0.0.1:13009/api/session/sess-1/task"
         assert "secret-token" not in captured["url"]
