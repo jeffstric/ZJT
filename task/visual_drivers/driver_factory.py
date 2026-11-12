@@ -222,7 +222,11 @@ class VideoDriverFactory:
         return cls._last_create_error
 
     @classmethod
-    def get_implementation_for_user(cls, task_type: int, user_id: Optional[int] = None) -> Optional[str]:
+    def get_implementation_for_user(
+        cls,
+        task_type: int,
+        user_id: Optional[int] = None,
+    ) -> Optional[str]:
         """
         获取实现方名称（公开方法，供外部调用）
 
@@ -285,7 +289,12 @@ class VideoDriverFactory:
         return impl_name
 
     @classmethod
-    def _get_implementation_for_user(cls, task_type: int, user_id: Optional[int], config) -> Tuple[Optional[str], Dict[str, Any]]:
+    def _get_implementation_for_user(
+        cls,
+        task_type: int,
+        user_id: Optional[int],
+        config,
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
         """
         获取实现方名称和驱动参数（考虑用户偏好）
 
@@ -321,16 +330,18 @@ class VideoDriverFactory:
                 user_pref = UsersModel.get_implementation_preference(user_id, task_key)
                 if user_pref:
                     # 验证用户偏好：配置就绪 且 已启用（admin 禁用的实现方不能被偏好绕过）
-                    if cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name):
+                    pref_usable = cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name)
+                    if pref_usable:
                         logger.debug(f"Using user preference for task {task_key}: {user_pref}")
                         impl_name = user_pref
                     elif UsersModel.is_implementation_locked(user_id, task_key):
                         display_name = cls._get_display_name_for_impl(user_pref)
+                        message = FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
+                            display_name=display_name
+                        )
                         cls._last_create_error = {
                             "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
-                            "message": FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
-                                display_name=display_name
-                            ),
+                            "message": message,
                             "implementation": user_pref,
                         }
                         locked_pref_failed = True
@@ -360,10 +371,11 @@ class VideoDriverFactory:
         if not impl_name and not locked_pref_failed:
             available_impls = config._get_implementations_info()
             for impl in available_impls:
-                if cls._is_driver_available(impl['name']):
-                    impl_name = impl['name']
-                    logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
-                    break
+                if not cls._is_driver_available(impl['name']):
+                    continue
+                impl_name = impl['name']
+                logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
+                break
 
             # 回退到默认实现方；与偏好路径接受同样的校验（可实例化 + 未被 admin 禁用）。
             # 管理员禁用的实现方绝不能被兜底静默放行，宁可任务失败也要尊重禁用。
@@ -374,7 +386,11 @@ class VideoDriverFactory:
                 )
 
                 default_impl = config.implementation
-                if default_impl and cls._is_driver_available(default_impl) and cls._is_impl_enabled(default_impl, config.driver_name):
+                if (
+                    default_impl
+                    and cls._is_driver_available(default_impl)
+                    and cls._is_impl_enabled(default_impl, config.driver_name)
+                ):
                     impl_name = default_impl
                 else:
                     cls._last_create_error = {
@@ -384,7 +400,7 @@ class VideoDriverFactory:
                     }
                     logger.error(
                         f"No available implementation for task {config.key}; default "
-                        f"{default_impl!r} is disabled or unavailable"
+                        f"{default_impl!r} is disabled/unavailable/incompatible"
                     )
 
         # 3. 获取驱动参数

@@ -34,7 +34,9 @@ from .minimax_h3_reference_runninghub_v1_driver import (
 )
 
 _WEBAPP_ID = "2108549232725680129"
-_PICTURE_NODE_IDS = ("137", "156", "187")
+# 混合 webapp 的 6 个图片节点（P1~P6），与 H3_KFREF_PICTURE_SLOTS 一一对应。
+# 槽位约定：首帧固定 P1、尾帧固定 P6，中间 P2~P5 参考；没点名时全部当参考图。
+_PICTURE_NODE_IDS = ("137", "156", "187", "190", "191", "192")
 _AUDIO_NODE_IDS = ("157", "188")
 _EMPTY_AUDIO_FIELD_VALUE = "None"
 # 优化结果里的音频绑定声明（<Audio 1> / <Audio 2>）：声明几路上传几路
@@ -42,7 +44,13 @@ _AUDIO_DECL_RE = re.compile(r"<Audio\s*([0-9]+)>")
 
 
 class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Driver):
-    """RunningHub「全能参考+首帧+音频」应用。提交和查询复用参考生视频驱动。"""
+    """RunningHub「全能参考+首帧+音频」应用。提交和查询复用参考生视频驱动。
+
+    类型 37 参考生的默认实现方（排序首位，无输入条件）：同一混合 webapp 兼容
+    两种形态——提示词点名首尾帧时锁帧（KFRef 优化变体），没点名时全参考图
+    （Ref2VA 优化变体，见 resolve_h3_prompt_variant）。不带参考视频槽：带视频
+    的提交在 build_create_request 显式失败，由 before_finish 重试切参考生实现方。
+    """
 
     def __init__(self):
         super().__init__()
@@ -55,7 +63,7 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
         extra_config = self._parse_extra_config(ai_tool)
         slot_prompt = h3_slot_source_prompt(extra_config, getattr(ai_tool, "prompt", None) or "")
         plan = assign_h3_keyframe_ref_pictures(image_urls, slot_prompt)
-        pictures = [plan["picture_1"], plan["picture_2"], plan["picture_3"]]
+        pictures = [plan[f"picture_{index}"] for index in range(1, len(_PICTURE_NODE_IDS) + 1)]
         if not any(pictures):
             raise ValueError("MiniMax H3 首帧参考生视频至少需要一张图片")
 
@@ -125,9 +133,15 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                 audios = audios[:declared_count]
         videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
         if videos:
+            # 混合 webapp 无参考视频槽：显式失败而不是静默丢弃，让 before_finish
+            # 重试切到带视频槽的参考生实现方（67/AutoDL），视频素材不丢（此前
+            # warning+丢弃会把用户的视频参考悄悄扔掉）。
             self.logger.warning(
-                "MiniMax H3 首帧参考混合模型不支持参考视频，已忽略 %s 个",
+                "MiniMax H3 首帧参考混合模型不支持参考视频（%s 个），提交失败待重试切换",
                 len(videos),
+            )
+            raise ValueError(
+                "首帧参考混合模型不支持参考视频，已自动切换支持视频的参考生模型重试"
             )
 
         uploaded_audios: List[str] = []

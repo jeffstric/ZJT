@@ -21,12 +21,6 @@ const H3_REFERENCE_KEYS = new Set([
     'minimax_h3_reference_to_video',
 ]);
 
-export const H3_KEYFRAME_REF_MAX_IMAGES = 3;
-// 与 config/constant.py 的 H3_KEYFRAME_REF_ROUTE_ENABLED、
-// web/js/shot_frame_video_generator.js 保持一致。true 时，参考模式点名首帧或尾帧
-// 按混合模型 3 张上限校验，并提示本次使用首帧参考混合模型。
-export const H3_KEYFRAME_REF_ROUTE_ENABLED = true;
-
 function mentionFlags(prompt) {
     const text = prompt == null ? '' : String(prompt);
     FIRST_MENTION_RE.lastIndex = 0;
@@ -75,15 +69,11 @@ export function isH3ReferenceVideoModel(model) {
     return keys.some((key) => H3_REFERENCE_KEYS.has(String(key || '')));
 }
 
-export function shouldUseH3KeyframeRef(imageMode, model, prompt) {
-    if (!H3_KEYFRAME_REF_ROUTE_ENABLED) return false;
-    return imageMode === 'multi_reference'
-        && isH3ReferenceVideoModel(model)
-        && promptHasFrameMention(prompt);
-}
-
 /**
  * @returns {'missing_first'|'missing_last'|'over_capacity'|null}
+ *
+ * 张数按模型上限校验：点名首尾帧时服务端按实现方兼容探测选择首帧参考混合
+ * 模型并裁到 3 张（两端保留），前端不预裁。
  */
 export function findFrameMentionError({ imageMode, prompt, firstUrl, lastUrl, model }) {
     if (imageMode !== 'multi_reference') return null;
@@ -93,9 +83,7 @@ export function findFrameMentionError({ imageMode, prompt, firstUrl, lastUrl, mo
     if (wantsLast && !String(lastUrl || '').trim()) return 'missing_last';
     const reserved = (wantsFirst ? 1 : 0) + (wantsLast ? 1 : 0);
     let max = 0;
-    if (shouldUseH3KeyframeRef(imageMode, model, prompt)) {
-        max = H3_KEYFRAME_REF_MAX_IMAGES;
-    } else if (model) {
+    if (model) {
         const parsed = Number(model.max_multi_ref_images ?? model.maxMultiRefImages ?? 0);
         if (Number.isFinite(parsed) && parsed > 0) max = parsed;
     }

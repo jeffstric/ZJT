@@ -3102,6 +3102,20 @@ async def ai_app_run_image(
         # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
         # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
         auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
+        # 旧路线兼容：类型 50（minimax_h3_kfr，首帧参考混合）已硬禁用，不再创建。
+        # 旧页面仍提交 50 时翻译成类型 37（参考生）即可——首帧参考混合实现方是 37
+        # 的排序首位默认实现方，正常解析结果与旧 force 等价（用户固定其他实现方时
+        # 尊重固定），并打警告日志。
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        try:
+            if int(task_id) == int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO):
+                logger.warning(
+                    "Legacy minimax_h3_kfr (type=50) submit by user %s: re-recording as type=37",
+                    user_id,
+                )
+                task_id = int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
+        except (TypeError, ValueError):
+            pass
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -3109,26 +3123,13 @@ async def ai_app_run_image(
         # 验证任务分类是否正确（支持图生视频和数字人）
         if task_config.category not in [TaskCategory.IMAGE_TO_VIDEO, TaskCategory.DIGITAL_HUMAN]:
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图生视频或数字人任务")
-        
+
         image_to_video_type = task_id
 
         # 验证 image_mode 参数
         valid_image_modes = ['first_last_frame', 'multi_reference', 'first_last_with_ref']
         if image_mode not in valid_image_modes:
             raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
-
-        from task.visual_drivers.driver_factory import VideoDriverFactory
-        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
-        resolution = validate_video_resolution(resolution, actual_impl)
-
-        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
-        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
-        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
-        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
-            task_config, duration_seconds, actual_impl,
-        )
-        if not duration_ok:
-            raise HTTPException(status_code=400, detail=duration_reject_reason)
 
         # 记录输入的图片信息
         logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
@@ -3243,6 +3244,34 @@ async def ai_app_run_image(
         elif video:
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
+
+        # 实现方解析（偏好 → 排序 → 默认）：类型 37 默认即首帧参考混合实现方
+        # （排序首位、无输入条件），解析失败按固定语义快速失败（不扣费不建任务）。
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            task_id, user_id,
+        )
+        if not actual_impl:
+            create_error = VideoDriverFactory.get_last_create_error() or {}
+            if str(create_error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
+                raise HTTPException(
+                    status_code=400,
+                    detail=str(create_error.get("message") or "固定的实现方当前不可用"),
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=str(create_error.get("message") or "没有可用的实现方"),
+            )
+        resolution = validate_video_resolution(resolution, actual_impl)
+
+        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
+        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
+        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
+        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
+            task_config, duration_seconds, actual_impl,
+        )
+        if not duration_ok:
+            raise HTTPException(status_code=400, detail=duration_reject_reason)
 
         # 数字人（DIGITAL_HUMAN）与图生视频/参考生视频是不同品类：
         # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。

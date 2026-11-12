@@ -1,9 +1,15 @@
-"""故事板 @首帧图 / @尾帧图 排图，以及隐藏混合任务可被显式选中。"""
+"""故事板 @首帧图 / @尾帧图 排图。
+
+首帧参考混合实现方是类型 37 参考生的默认实现方（见
+docs/video/h3_keyframe_ref_as_reference_impl_design.md）：排图
+（prepare_frame_mentions）产出「图N是首帧/尾帧」锚点句，作为优化变体分派
+（resolve_h3_prompt_variant）与驱动槽位分配的统一数据源；参考图不再裁剪，
+混合 webapp 六槽全容量接收。
+"""
 from services.storyboard_frame_mention import (
     FrameMentionError,
     prepare_frame_mentions,
     prompt_has_frame_mention,
-    should_use_h3_keyframe_ref,
 )
 
 
@@ -30,7 +36,8 @@ def test_prepare_keeps_storyboard_image_when_no_token():
     assert "https://cdn.test/last.png" not in urls
 
 
-def test_prepare_both_tokens_caps_middle_and_rewrites_prompt():
+def test_prepare_places_frames_at_both_ends_and_rewrites_prompt():
+    """排图不裁：点名帧移两端、去重、改写提示词；上限裁剪延后到选出实现方"""
     prompt, urls, items = prepare_frame_mentions(
         "从 @首帧图 走到 @尾帧图",
         [
@@ -48,18 +55,20 @@ def test_prepare_both_tokens_caps_middle_and_rewrites_prompt():
         image_mode="multi_reference",
         first_url="https://cdn.test/first.png",
         last_url="https://cdn.test/last.png",
-        max_images=3,
     )
+    # 排图后全量保留（未裁）：首帧 + 3 中间 + 尾帧
     assert urls == [
         "https://cdn.test/first.png",
         "https://cdn.test/lin.png",
+        "https://cdn.test/alley.png",
+        "https://cdn.test/style.png",
         "https://cdn.test/last.png",
     ]
-    assert [item["type"] for item in items] == ["首帧", "角色", "尾帧"]
+    assert [item["type"] for item in items] == ["首帧", "角色", "场景", "全局画风参考图", "尾帧"]
     assert items[0]["source_type"] == "asset"
-    assert items[2]["source_type"] == "asset"
+    assert items[-1]["source_type"] == "asset"
     assert "@首帧图" not in prompt and "@尾帧图" not in prompt
-    assert "图1" in prompt and "图3" in prompt
+    assert "图1" in prompt and "图5" in prompt
 
 
 def test_prepare_only_last_keeps_storyboard_image_in_the_middle():
@@ -73,7 +82,6 @@ def test_prepare_only_last_keeps_storyboard_image_in_the_middle():
         image_mode="multi_reference",
         first_url="https://cdn.test/first.png",
         last_url="https://cdn.test/last.png",
-        max_images=3,
     )
     assert urls[0] == "https://cdn.test/first.png"
     assert urls[-1] == "https://cdn.test/last.png"
@@ -106,7 +114,6 @@ def test_prepare_missing_last_raises_and_same_url_can_fill_both_ends():
         image_mode="multi_reference",
         first_url="https://cdn.test/same.png",
         last_url="https://cdn.test/same.png",
-        max_images=3,
     )
     assert urls[0] == "https://cdn.test/same.png"
     assert urls[-1] == "https://cdn.test/same.png"
@@ -115,39 +122,16 @@ def test_prepare_missing_last_raises_and_same_url_can_fill_both_ends():
     assert urls.count("https://cdn.test/same.png") == 2
 
 
-def test_h3_reference_keys_do_not_match_i2v_or_t2v():
-    from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
-
-    # 开关关闭时，H3 参考 + @首帧 也不改交混合模型。
-    assert should_use_h3_keyframe_ref(
-        "multi_reference", "从 @首帧图 出发", "minimax_h3_r2v"
-    ) is H3_KEYFRAME_REF_ROUTE_ENABLED
-    assert should_use_h3_keyframe_ref(
-        "multi_reference", "从 @首帧图 出发", "minimax_h3_reference_to_video"
-    ) is H3_KEYFRAME_REF_ROUTE_ENABLED
-    assert should_use_h3_keyframe_ref(
-        "multi_reference", "从 @首帧图 出发", "minimax_h3", "minimax_h3_image_to_video"
-    ) is False
-    assert should_use_h3_keyframe_ref(
-        "multi_reference", "从 @首帧图 出发", "minimax_h3_t2v"
-    ) is False
-    assert should_use_h3_keyframe_ref(
-        "first_last_frame", "从 @首帧图 出发", "minimax_h3_r2v"
-    ) is False
-    assert should_use_h3_keyframe_ref(
-        "multi_reference", "没有标记", "minimax_h3_r2v"
-    ) is False
-
-
-def test_explicit_h3_keyframe_ref_task_is_accepted_when_hidden():
-    from config.unified_config import TaskCategory, TaskTypeId
+def test_disabled_task50_falls_back_when_explicitly_requested():
+    """类型 50 已 enabled=False：显式传 50 回退到偏好/默认（不再创建类型 50）"""
+    from config.unified_config import TaskCategory, TaskTypeId, UnifiedConfigRegistry
     from enterprise.tools.video_tools import _get_video_task_id
 
     task_id = int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO)
-    assert _get_video_task_id(
-        TaskCategory.IMAGE_TO_VIDEO,
-        preferred_task_id=task_id,
-    ) == task_id
+    config = UnifiedConfigRegistry.get_by_id(task_id)
+    assert config.enabled is False and config.hidden is True
+    resolved = _get_video_task_id(TaskCategory.IMAGE_TO_VIDEO, preferred_task_id=task_id)
+    assert resolved != task_id
 
 
 def test_token_with_unique_id_suffix_is_consumed_without_residue():

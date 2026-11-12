@@ -4,7 +4,7 @@
 
 通过 RunningHub AI-App 调用「全能参考+首帧+音频｜MiniMax H3声音角色双一致」。
 
-画布上的分镜节点仍然停在参考模式。只有当前模型是 MiniMax H3 参考生视频，并且视频提示词里有 `@首帧图` 或 `@尾帧图` 时，这次提交才换成这个任务。`image_mode` 保持 `multi_reference`，不切到首帧模式。任务在模型下拉里隐藏。图生视频历史记录的类型列表包含隐藏任务，所以这条记录能在首页图生视频的历史里看到，类型名来自 `task_type_name_map`。`audio_path` 里逗号分隔的参考音频会在同一条历史里用播放器逐段显示。
+画布上的分镜节点仍然停在参考模式。本实现方挂在参考生任务（类型 37，`minimax_h3_reference_to_video`）的 `implementations` 下（sort 5204，显示名 `RunningHub（首帧参考）`），是类型 37 的**默认实现方**（排序首位，无输入条件）：同一混合 webapp 六槽（P1~P6）兼容两种形态——提示词点名首帧/尾帧（「图N是首帧/图N是尾帧」锚点句或 `@首帧图`/`@尾帧图` token）时锁帧（P1=首帧、P6=尾帧、中间参考，KFRef 优化变体），没点名时全部当参考图（Ref2VA 优化变体）；用户固定其他供应商（如 AutoDL）时尊重偏好。选中后任务 `ai_tools.type=37`、`implementation=100`，参考图不再裁剪（六槽全容量，超出丢弃并打 warning）。类型 50（`minimax_h3_kfr`）仅保留历史在途任务收尾（`enabled=False` 拒绝新创建），旧行仍按 `implementation=100` 找到本驱动轮询。`audio_path` 里逗号分隔的参考音频会在同一条历史里用播放器逐段显示。
 
 有结束关键帧时，KFRef 指令要求大模型把镜头写成从首帧走到尾帧。原文里的「固定运镜」和起始姿势不能写成 fixed camera 或保持到结尾，结尾景别只由尾帧图决定。否则视频模型会停在首帧构图，尾帧对不上。
 
@@ -13,7 +13,7 @@
 指令还常驻「镜头指令保留」规则：原文里任何镜头运动描述（固定镜头/固定机位、推镜头、拉镜头、摇镜、跟随、手持等）必须原样保留到优化结果并遵守，不得删除、替换或弱化——固定镜头写成 `static locked-off shot`，禁止 push in / pull back / pan / tilt / zoom / dolly，原文构图与景别偏好通过人物走位和动作实现；推、拉、摇、移按原文方向与速度保留。规则常驻指令、由 LLM 按原文判断有无镜头描述，代码不做关键词枚举；唯一例外是存在结束关键帧时，镜头必须从首帧走到尾帧、固定镜头让位（既有 end_override 优先级；事故 ai_tools 13134：原文「固定镜头」被优化结果改写成 `pushes in slowly toward a medium close-up`，视频模型照做）。
 
 - **webapp_id**：`2108549232725680129`
-- **任务类型**：TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO = 50
+- **挂载任务**：TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO = 37（implementations 之一）；类型 50 仅为历史在途任务保留（enabled=False）
 - **DriverKey**：`minimax_h3_keyframe_ref_to_video`
 - **short_key**：`minimax_h3_kfr`
 - **实现方**：`minimax_h3_keyframe_ref_runninghub_v1`（id=100）

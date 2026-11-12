@@ -533,48 +533,152 @@ def test_keyframe_ref_two_images_is_kfref_not_fl2va():
     ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
 
 
+def test_reference_task_with_keyframe_ref_impl_dispatches_by_marks():
+    """type=37 + implementation=100（首帧参考混合实现方，类型 37 默认）按点名分派
+
+    提示词点名「图N是首帧/尾帧」→ KFRef 变体（锚点 EXACT 校验 + 槽位锁帧）；
+    没点名 → 同一混合 webapp 全参考图模式，走 Ref2VA 变体（与 impl=67 同路）。
+    """
+    named = SimpleNamespace(
+        type=37,
+        implementation=100,
+        prompt="图1是首帧，图3是尾帧。",
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        named, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+    unnamed = SimpleNamespace(
+        type=37,
+        implementation=100,
+        prompt="一只猫在草地上奔跑",
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        unnamed, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+
+
+def test_reference_task_with_keyframe_ref_impl_and_mention_token_is_kfref():
+    """agent 链路原文保留 @首帧图 token（排图结果不回传）：token 命中同样走 KFRef"""
+    tool = SimpleNamespace(
+        type=37,
+        implementation=100,
+        prompt="从 @首帧图 走到 @尾帧图。",
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+
+def test_reference_task_without_impl_id_falls_back_to_task_key():
+    """旧行（implementation=0）按任务键兜底：37 → Ref2VA，50 → KFRef"""
+    tool = SimpleNamespace(
+        type=37,
+        implementation=0,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+    legacy = SimpleNamespace(
+        type=50,
+        implementation=0,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        legacy, task_key=DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
+
+
+def test_unknown_impl_id_falls_back_to_task_key():
+    """implementation id 反查失败（实现方已下线）：忽略 id，走任务键"""
+    tool = SimpleNamespace(
+        type=37,
+        implementation=99999,
+        image_path=None,
+        reference_images='["a.png", "b.png"]',
+        video_path=None,
+        audio_path=None,
+        extra_config='{"image_mode": "multi_reference"}',
+    )
+    assert resolve_h3_prompt_variant(
+        tool, task_key=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO
+    ) == H3_PROMPT_OPTIMIZE_VARIANT_REF2VA
+
+
 def test_assign_keyframe_ref_pictures():
+    """六槽矩阵：首帧固定 P1、尾帧固定 P6，中间 P2~P5 参考；没点名全参考"""
     both = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref.png", "last.png"],
         "图1是首帧，图2是林月，图3是尾帧。",
     )
-    assert (both["picture_1"], both["picture_2"], both["picture_3"]) == ("first.png", "ref.png", "last.png")
-    assert both["roles"] == {"picture_1": "start", "picture_2": "reference", "picture_3": "end"}
+    assert both["picture_1"] == "first.png" and both["roles"]["picture_1"] == "start"
+    assert both["picture_2"] == "ref.png" and both["roles"]["picture_2"] == "reference"
+    assert all(both["roles"][f"picture_{i}"] == "empty" for i in (3, 4, 5))
+    assert both["picture_6"] == "last.png" and both["roles"]["picture_6"] == "end"
+    assert both["unused_urls"] == []
 
     only_first = assign_h3_keyframe_ref_pictures(
         ["first.png", "ref1.png", "ref2.png"],
         "图1是首帧，图2是甲，图3是乙。",
     )
-    assert (only_first["picture_1"], only_first["picture_2"], only_first["picture_3"]) == (
-        "first.png", "ref1.png", "ref2.png",
-    )
-    assert only_first["roles"]["picture_3"] == "reference"
+    assert only_first["picture_1"] == "first.png" and only_first["roles"]["picture_1"] == "start"
+    assert only_first["picture_2"] == "ref1.png" and only_first["picture_3"] == "ref2.png"
+    assert all(only_first["roles"][f"picture_{i}"] == "reference" for i in (2, 3))
+    assert all(only_first["roles"][f"picture_{i}"] == "empty" for i in (4, 5, 6))
+    assert only_first["unused_urls"] == []
 
     only_last = assign_h3_keyframe_ref_pictures(
         ["ref.png", "last.png"],
         "图2是尾帧。",
     )
-    assert (only_last["picture_1"], only_last["picture_2"], only_last["picture_3"]) == ("ref.png", "", "last.png")
-    assert only_last["roles"]["picture_3"] == "end"
+    assert only_last["picture_1"] == "ref.png" and only_last["roles"]["picture_1"] == "reference"
+    assert only_last["picture_6"] == "last.png" and only_last["roles"]["picture_6"] == "end"
 
-    last_only_image = assign_h3_keyframe_ref_pictures(["last.png"], "图1是尾帧。")
-    assert (last_only_image["picture_1"], last_only_image["picture_2"], last_only_image["picture_3"]) == ("", "", "last.png")
+    no_mark = assign_h3_keyframe_ref_pictures(
+        ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"],
+        "一只猫在草地上奔跑。",
+    )
+    assert [no_mark[f"picture_{i}"] for i in range(1, 7)] == ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png"]
+    assert all(no_mark["roles"][f"picture_{i}"] == "reference" for i in range(1, 7))
 
-    first_and_last = assign_h3_keyframe_ref_pictures(
-        ["first.png", "last.png"],
-        "图1是首帧，图2是尾帧。",
+    overloaded = assign_h3_keyframe_ref_pictures(
+        ["a.png", "b.png", "c.png", "d.png", "e.png", "f.png", "g.png", "h.png"],
+        "一只猫在草地上奔跑。",
     )
-    assert (first_and_last["picture_1"], first_and_last["picture_2"], first_and_last["picture_3"]) == (
-        "first.png", "", "last.png",
-    )
+    assert overloaded["unused_urls"] == ["g.png", "h.png"]
 
-    dropped = assign_h3_keyframe_ref_pictures(
-        ["first.png", "ref1.png", "ref2.png", "last.png"],
-        "图1是首帧，图4是尾帧。",
+    named_overload = assign_h3_keyframe_ref_pictures(
+        ["first.png", "r1.png", "r2.png", "r3.png", "r4.png", "r5.png", "last.png"],
+        "图1是首帧，图7是尾帧。",
     )
-    assert dropped["picture_2"] == "ref1.png"
-    assert dropped["picture_3"] == "last.png"
-    assert dropped["unused_urls"] == ["ref2.png"]
+    assert named_overload["picture_1"] == "first.png"
+    assert [named_overload[f"picture_{i}"] for i in (2, 3, 4, 5)] == ["r1.png", "r2.png", "r3.png", "r4.png"]
+    assert named_overload["picture_6"] == "last.png"
+    assert named_overload["unused_urls"] == ["r5.png"]
 
 
 def test_kfref_instruction_uses_real_slots_and_capital_picture():
@@ -594,7 +698,7 @@ def test_kfref_instruction_uses_real_slots_and_capital_picture():
     assert "类型前缀基础为 [keyframe completion + reference generation]" in message
     assert " + audio reference" in message
     assert "<Picture 1> is the EXACT starting key frame at 0.00 seconds." in message
-    assert "<Picture 3> is the EXACT ending key frame at 6.00 seconds (ref_image3)." in message
+    assert "<Picture 6> is the EXACT ending key frame at 6.00 seconds (ref_image6)." in message
     picture2 = next(line for line in message.splitlines() if "<Picture 2>" in line)
     assert "not an ending key frame" in picture2
     assert "尾帧" not in picture2
@@ -743,7 +847,7 @@ def test_kfref_instruction_omits_the_unused_keyframe_sentence():
         keyframe_slots=last_only,
     )
     assert "EXACT starting key frame" not in last_message
-    assert "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3)." in last_message
+    assert "<Picture 6> is the EXACT ending key frame at 10.00 seconds (ref_image6)." in last_message
 
 
 def test_kfref_instruction_start_keyframe_timeline_rule():
@@ -853,13 +957,13 @@ def test_kfref_validator_requires_exact_keyframe_sentences():
         "<Picture 1> is the EXACT starting key frame at 0.00 seconds. "
         "The opening frame must not be reinterpreted.\n\n"
         "<Picture 2> is a character reference.\n\n"
-        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "<Picture 6> is the EXACT ending key frame at 10.00 seconds (ref_image6). "
         "It is the target last frame.\n\n"
         "[Shot 1] The supervisor speaks."
     )
     assert kfref_required_clauses(slots, 10) == [
         "<Picture 1> is the EXACT starting key frame at 0.00 seconds.",
-        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3).",
+        "<Picture 6> is the EXACT ending key frame at 10.00 seconds (ref_image6).",
     ]
     assert validate_h3_optimized_prompt(
         written_by_model,
@@ -884,7 +988,7 @@ def test_kfref_validator_forbids_audio_refs_for_silent_shots():
     silent_with_audio = (
         "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
         "<Picture 2> is a character reference.\n\n"
-        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "<Picture 6> is the EXACT ending key frame at 10.00 seconds (ref_image6). "
         "It is the target last frame.\n\n"
         "<Audio 1> is a reference audio for voice timbre.\n\n"
         "[Shot 1] Broom sweeps the ground."
@@ -892,7 +996,7 @@ def test_kfref_validator_forbids_audio_refs_for_silent_shots():
     silent_clean = (
         "<Picture 1> is the EXACT starting key frame at 0.00 seconds.\n\n"
         "<Picture 2> is a character reference.\n\n"
-        "<Picture 3> is the EXACT ending key frame at 10.00 seconds (ref_image3). "
+        "<Picture 6> is the EXACT ending key frame at 10.00 seconds (ref_image6). "
         "It is the target last frame.\n\n"
         "[Shot 1] Broom sweeps the ground. Ambient sound of footsteps only."
     )
@@ -952,11 +1056,10 @@ def test_kfref_step_config_passes_slot_plan(_mock_cfg):
     assert len(configs) == 1
     params = configs[0]["params"]
     assert params["variant"] == H3_PROMPT_OPTIMIZE_VARIANT_KF_REF
-    assert params["keyframe_slots"]["roles"] == {
-        "picture_1": "start",
-        "picture_2": "reference",
-        "picture_3": "end",
-    }
+    assert params["keyframe_slots"]["roles"]["picture_1"] == "start"
+    assert params["keyframe_slots"]["roles"]["picture_2"] == "reference"
+    assert params["keyframe_slots"]["roles"]["picture_6"] == "end"
+    assert params["keyframe_slots"]["picture_6"] == "last.png"
     assert params["ref_counts"]["audios"] == 1
 
 

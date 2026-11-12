@@ -2860,7 +2860,11 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
         implementations=[
-            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub（默认）
+            # 首帧参考混合实现方是参考生默认（排序首位，无输入条件）：同一混合 webapp
+            # 点名时锁帧（KFRef 变体）、没点名全参考图（Ref2VA 变体），见
+            # resolve_h3_prompt_variant；参考生 RunningHub 与 AutoDL 保留为重试/固定备选
+            DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # RunningHub 首帧参考（混合 webapp，默认）
+            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub 参考生（重试/固定备选）
             DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,       # AutoDL.Art 参考生（zm_u24，9图+3音频）
         ],
         computing_power=0,
@@ -2871,7 +2875,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=36,
         supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
         supports_last_frame=False,
-        max_multi_ref_images=9,  # 最多 9 张参考图
+        max_multi_ref_images=9,  # 最多 9 张参考图；首帧参考混合实现方选中时服务端裁到 3 张（两端保留）
         supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
         supports_voice_input=True,  # 参考生自动带入角色音色（LoadAudio ≤2）
         power_modifiers=[
@@ -2935,13 +2939,17 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         default_image_mode=ImageMode.MULTI_REFERENCE,
         sort_order=38,
-        # 画布仍是参考模式。只有提示词点名 @首帧图/@尾帧图 时，前端把 task_id 换成这个隐藏任务。
+        # 历史任务收尾专用：新提交不再创建类型 50（首帧参考混合实现方已挂进类型 37 的
+        # implementations）。在途 type=50 行仍靠 implementation=100 / 本配置找驱动轮询。
         supported_image_modes=[ImageMode.MULTI_REFERENCE],
         supports_last_frame=False,
         max_multi_ref_images=3,
         supports_ref_audio_video=True,  # 最多 2 路音频（节点 157/188）；参考视频由驱动丢弃
         supports_voice_input=True,
         hidden=True,
+        # 代码级硬禁用：拒绝新的类型 50 创建（enabled=False 不能被 implementation_power_config
+        # 重新打开）。旧页面仍提交 minimax_h3_kfr 时由提交入口翻译成类型 37 + 混合实现方。
+        enabled=False,
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -4396,12 +4404,13 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
     ),
     ImplementationConfig(
         name='minimax_h3_keyframe_ref_runninghub_v1',
-        display_name='RunningHub',
+        display_name='RunningHub（首帧参考）',
         driver_class='MinimaxH3KeyframeRefRunninghubV1Driver',
         default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
-        description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）',
-        sort_order=5207.0,
+        description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）。挂载在参考生任务下，仅提示词点名「图N是首帧/尾帧」时兼容',
+        # 排在参考生实现方（5205/5208）之前：未设偏好且点名首尾帧时，默认走能锁帧的混合模型
+        sort_order=5204.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
