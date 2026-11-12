@@ -439,6 +439,31 @@ STATIC_VERSION = get_app_version()
 # 缓存已处理的 HTML 内容，避免每次请求都重新处理
 _PROCESSED_HTML_CACHE = {}
 
+# 静态文件内容指纹缓存：path -> (mtime, md5 前 8 位)
+# 用于 ?v= 缓存参数按文件内容自动失效（2026-11-12）：版本号（如 2.6.0）整个
+# 版本周期不变，部署新前端代码后浏览器仍命中旧缓存（前端修复"看不到"的事故
+# 反复发生）。指纹随文件 mtime 变化重算——文件变 → URL 变 → 浏览器自动拉新。
+_static_fingerprint_cache = {}
+
+
+def _static_file_fingerprint(url_path: str) -> str:
+    """静态文件内容指纹（md5 前 8 位），mtime 未变时走缓存"""
+    path = os.path.join(static_dir, url_path.lstrip('/').replace('/', os.sep))
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return 'nofile'
+    cached = _static_fingerprint_cache.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
+        with open(path, 'rb') as f:
+            digest = hashlib.md5(f.read()).hexdigest()[:8]
+    except OSError:
+        return 'nofile'
+    _static_fingerprint_cache[path] = (mtime, digest)
+    return digest
+
 
 def _get_processed_html(file_path: str) -> bytes:
     """
@@ -458,6 +483,14 @@ def _get_processed_html(file_path: str) -> bytes:
     # 会原样输出 "?v=__VERSION__" 这样的占位字符串
     if "__VERSION__" in content:
         content = content.replace("__VERSION__", STATIC_VERSION)
+
+    # 缓存指纹升级：js/css 的 ?v= 参数在版本号后追加文件内容指纹（md5 前 8 位），
+    # 部署新前端代码后 URL 自动变化，浏览器拉新文件（不再依赖手动改版本号/强刷）
+    content = re.sub(
+        r'(/(?:js|i18n)/[^\s"\']+?\.(?:js))\?v=' + re.escape(STATIC_VERSION),
+        lambda m: f"{m.group(1)}?v={STATIC_VERSION}.{_static_file_fingerprint(m.group(1))}",
+        content,
+    )
 
     # ===== 品牌定制 SSR 注入（通过 services.branding 门面，与 __VERSION__ 同机制，进缓存）=====
     # 安全说明：品牌配置读取走 Provider 门面。社区版 Provider 永远返回默认值（智剧通），
