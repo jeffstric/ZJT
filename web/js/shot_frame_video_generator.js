@@ -300,6 +300,11 @@ async function generateShotFrameVideo(nodeId, node){
 
     // 使用节点中用户编辑的视频提示词文本，而不是JSON格式
     let videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';
+    // 存量节点的提示词可能仍含「动作内逐字台词 + 对话行」重复，提交前兜底去重
+    // （新节点已在 convertVideoPromptToText 生成时去重）
+    if(typeof dedupeVideoPromptDialogue === 'function'){
+      videoPrompt = dedupeVideoPromptDialogue(videoPrompt);
+    }
     const duration = node.data.videoDuration || 15;
     const count = node.data.videoDrawCount || 1;
     const videoModel = node.data.videoModel || (mode === 'multi_reference' ? 'veo3' : 'sora2');

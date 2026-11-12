@@ -47,6 +47,7 @@ from model.world import WorldModel
 from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
+    append_single_frame_guard,
     append_storyboard_visual_suffix,
     append_voice_casting_note,
     append_voice_reference_note,
@@ -931,11 +932,11 @@ class StoryboardAgentCliService:
         from script_writer_core.mcp_tool import scoped_image_generation_snapshot
         with scoped_image_generation_snapshot(generation_snapshot):
             if mode == "text_to_image":
-                prompt_text = append_storyboard_visual_suffix(
+                prompt_text = append_single_frame_guard(append_storyboard_visual_suffix(
                     prompt_text,
                     style=storyboard.get("style"),
                     composition_preference=storyboard.get("composition_preference"),
-                )
+                ))
                 result = self.submitter.text_to_image(
                     user_id=str(user_id),
                     world_id=world_id,
@@ -952,11 +953,11 @@ class StoryboardAgentCliService:
                     prompt_text,
                     self._with_source_image_legend(reference_items, context, source_image),
                 )
-                prompt_text = append_storyboard_visual_suffix(
+                prompt_text = append_single_frame_guard(append_storyboard_visual_suffix(
                     prompt_text,
                     style=storyboard.get("style"),
                     composition_preference=storyboard.get("composition_preference"),
-                )
+                ))
                 result = self.submitter.image_edit(
                     user_id=str(user_id),
                     world_id=world_id,

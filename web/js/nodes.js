@@ -3714,7 +3714,23 @@
         if(data.action) text += t('video_prompt_action', { value: data.action }) + '\n';
         if(data.mood) text += t('video_prompt_mood', { value: data.mood }) + '\n';
         if(data.dialogue && Array.isArray(data.dialogue) && data.dialogue.length > 0){
-          text += t('video_prompt_dialogue', { value: data.dialogue.map(d => `${d.character_name}: ${d.text}`).join('; ') }) + '\n';
+          // 台词已按「视频提示词必须含完整对白」规则逐字写入 描述/场景细节/动作 时，
+          // dialogue[] 再整份渲染会让同一句台词出现两次（视频模型收到重复文本）。
+          // 已完整出现在正文中的台词不再渲染；与后端 _format_dialogues_for_video_prompt 幂等策略一致。
+          const bodyNorm = (typeof normalizeDialogueTextForMatch === 'function')
+            ? normalizeDialogueTextForMatch([data.description, data.scene_detail, data.action].join('\n'))
+            : '';
+          const dialogueEntries = data.dialogue
+            .map(d => `${(d && d.character_name) || ''}: ${(d && d.text) || ''}`.trim())
+            .filter((entry, idx) => {
+              if(!bodyNorm) return true;
+              const norm = normalizeDialogueTextForMatch(data.dialogue[idx] && data.dialogue[idx].text);
+              if(!norm || norm.length < 4) return true;
+              return bodyNorm.indexOf(norm) === -1;
+            });
+          if(dialogueEntries.length > 0){
+            text += t('video_prompt_dialogue', { value: dialogueEntries.join('; ') }) + '\n';
+          }
         }
         if(data.audio_notes) text += t('video_prompt_audio_notes', { value: data.audio_notes }) + '\n';
         if(data.environment_sound) text += t('video_prompt_environment_sound', { value: data.environment_sound }) + '\n';
@@ -4127,6 +4143,9 @@
             } catch(e) {
               // 保持原样
             }
+          } else if(typeof dedupeVideoPromptDialogue === 'function'){
+            // 存量节点文本可能仍含「动作内台词 + 对话行」重复，提交前兜底去重
+            shotPrompt = dedupeVideoPromptDialogue(shotPrompt);
           }
           
           videoPromptParts.push(`镜头${index + 1}：${startTime}~${endTime}S，${shotPrompt}`);

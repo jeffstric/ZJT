@@ -257,3 +257,59 @@ async function compressImageFile(file, maxBytes) {
     URL.revokeObjectURL(objectUrl);
   }
 }
+
+/**
+ * 台词匹配归一化：剔除角色/道具标记、各类引号、标点、空白与大小写差异，
+ * 只保留 CJK/字母/数字，用于判断两段台词是否为同一句。
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeDialogueTextForMatch(text) {
+  return String(text || '')
+    .replace(/[^0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 视频提示词「对话：」行去重。
+ *
+ * LLM 按「视频提示词必须含完整对白」硬性规则把台词逐字写进 描述/场景细节/动作，
+ * 而 dialogue[] 结构化字段又被整份渲染为「对话：」行 → 同一句台词在提示词里
+ * 出现两次，视频模型收到重复文本（线上案例：video_workflow id=13 分镜9）。
+ *
+ * 文本级兜底：某条台词（归一化后）已完整出现在提示词其余部分时，从「对话：」
+ * 行剔除该条；全部剔除则整行移除。兼容中（对话：）/英（Dialogue:）两种标签
+ * 与分号分隔的多条格式（convertVideoPromptToText 的 join('; ')）。
+ * 新节点已在 convertVideoPromptToText 内做结构化去重，本函数主要覆盖
+ * 存量节点遗留的重复文本（videoPromptText 为用户可编辑字段，落库后不会自愈）。
+ * @param {string} text
+ * @returns {string}
+ */
+function dedupeVideoPromptDialogue(text) {
+  const raw = String(text || '');
+  if (!raw) return raw;
+  if (raw.indexOf('对话') === -1 && raw.toLowerCase().indexOf('dialogue') === -1) return raw;
+  const lines = raw.split('\n');
+  const dialogueLineRe = /^(\s*(?:对话|Dialogue)\s*[：:]\s*)(.*)$/;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = dialogueLineRe.exec(lines[i]);
+    if (!m || !m[2].trim()) { out.push(lines[i]); continue; }
+    const entries = m[2].split(/\s*[;；]\s*/).filter(function(e) { return e.trim(); });
+    if (entries.length === 0) { out.push(lines[i]); continue; }
+    const restNorm = normalizeDialogueTextForMatch(
+      lines.slice(0, i).concat(lines.slice(i + 1)).join('\n'));
+    const kept = entries.filter(function(entry) {
+      const colonIdx = entry.search(/[：:]/);
+      const speech = colonIdx >= 0 ? entry.slice(colonIdx + 1) : entry;
+      const norm = normalizeDialogueTextForMatch(speech);
+      // 过短台词（如“嗯”）不参与去重，防归一化后误伤
+      if (!norm || norm.length < 4) return true;
+      return restNorm.indexOf(norm) === -1;
+    });
+    if (kept.length === entries.length) { out.push(lines[i]); continue; }
+    if (kept.length === 0) continue; // 全部重复：整行移除
+    out.push(m[1] + kept.join('; '));
+  }
+  return out.join('\n');
+}
