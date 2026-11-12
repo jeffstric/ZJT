@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+
+const require_ = createRequire(import.meta.url);
+const AgentMessageDedupe = require_('../js/agent_message_dedupe.js');
 
 const root = path.resolve(import.meta.dirname, '../..');
 const source = fs.readFileSync(path.join(root, 'web/js/marketing_agent.js'), 'utf8');
@@ -34,6 +38,7 @@ async function runScenario(historyQueue, script) {
     const messages = { value: [] };
     const pendingVerificationId = { value: null };
     const scope = `
+        const window = { AgentMessageDedupe: this.agentMessageDedupe };
         const calls = this.calls;
         const messages = this.messages;
         let currentSessionId = this.currentSessionId;
@@ -70,7 +75,7 @@ async function runScenario(historyQueue, script) {
     `;
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const fn = new AsyncFunction(`${scope}\n${fnKey}\n${fnWatch}\n${script}`);
-    const result = await fn.call({ calls, messages, historyQueue, currentSessionId: { value: 'sess-1' }, isLoading: { value: false }, pendingVerificationId });
+    const result = await fn.call({ calls, messages, historyQueue, currentSessionId: { value: 'sess-1' }, isLoading: { value: false }, pendingVerificationId, agentMessageDedupe: AgentMessageDedupe });
     return { calls, messages, pendingVerificationId, result };
 }
 

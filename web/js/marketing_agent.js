@@ -231,7 +231,7 @@
                             if (h.role !== 'assistant' && h.role !== 'verification') continue;
                             const parsed = parseHistoryMessage(h);
                             // 内容查重：SSE/本地状态可能已渲染同内容消息（dual write 防线）
-                            const dup = messages.value.some(m => m.role === parsed.role && (m.content || '') === (parsed.content || ''));
+                            const dup = window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, parsed.content || '') || false;
                             if (!dup) fresh.push(parsed);
                         }
                         if (fresh.length > 0) {
@@ -4508,7 +4508,7 @@
                             if (data.type === 'message') {
                                 hasReceivedData = true;
                                 resetTaskErrorCount(streamErrorKey);
-                                if (window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, data.content, msgUid)) {
+                                if (window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, data.content, msgUid)) {
                                     console.log('[SSE] 跳过历史中已展示的消息:', data.id);
                                     return;
                                 }
