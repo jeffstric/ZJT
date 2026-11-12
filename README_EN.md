@@ -1,6 +1,6 @@
-# 🎬 ZhiJuTong - AI Short Drama Production Platform
+# 🎬 ZhiJuTong - AI Marketing Content Production Platform
 
-> Collaborate with AI agents to generate professional short dramas in minutes
+> Collaborate with AI agents to generate professional marketing content in minutes — brand videos, marketing shorts, and short dramas
 > All-in-one solution: Script Creation → Storyboard Generation → Video Synthesis
 
 ![ZhiJuTong](files/广告图.png)
@@ -22,6 +22,103 @@ English | [中文](README.md) | [Live Demo](http://ailive.perseids.cn) | [Full T
 | 🖥️ Cross-Platform Support | 🐳 Docker Deployment | 🧪 Complete Test Coverage | 🎓 Education-Ready |
 |:---:|:---:|:---:|:---:|
 | Windows / Linux / macOS native support | Container deployment | Full API tests, production-ready | User-level billing, cost-transparent |
+
+---
+
+## 📣 Marketing Capabilities: Why Marketing Teams Love It
+
+ZhiJuTong ships a dedicated **Marketing mode** alongside its short-drama mode — a one-stop workbench for marketing content: **from brief to finished video in a single conversation**, with asset reuse across campaigns.
+
+### 1. Marketing Agent: brief in, video out
+
+- Feed it product selling points, product photos, or a reference video/script — the agent orchestrates image/video generation tools to produce **sales scripts, ad creatives, product copy, and talking-head videos**
+- The agent asks you targeted questions (`ask_user`) to align on audience, tone, ratio, and duration — no endless back-and-forth
+- Three creation modes: **Agent chat** (LLM-driven, default), direct image generation, direct video generation
+
+### 2. Article-to-Video: turn existing content into video (Enterprise)
+
+- Paste a **WeChat Official Account / Xiaohongshu (RED)** article link and get a talking-head video: body text and images are fetched automatically, an LLM distills the key messages, and visual understanding picks reference shots
+- **Pre-render confirmation card**: a second-level voiceover timeline + key-message coverage tags — you approve before anything renders. Controllable, reviewable marketing assets
+
+### 3. Digital human voiceover: no studio, no cast, at scale
+
+- One portrait image + a script → digital human talking-head video; provide no audio and the system synthesizes a reference voice
+- **Long-form support**: long scripts are auto-split into segments and seamlessly stitched (up to 600 s total, 2000-character scripts)
+- **Voice cloning**: extract your brand/spokesperson's voice from a short reference audio and reuse it across content
+- Character images rendered directly, subtle hand motion — output is publish-ready
+
+### 4. Video cloning: replicate a viral, swap the product
+
+- Give it one viral reference video and the system replicates its content and pacing; optionally upload **your own product photo to replace the product in the video** — the same proven structure, reused across many SKUs
+- "Ride the wave" of creative that already works: no new shoot, no new script — wrap your product in a structure with a track record
+- Requires a reference-based video model (see video model settings)
+
+### 5. Creative mass production & A/B testing
+
+- **×1 ~ ×4 batch generation**: one prompt, multiple variants, straight into A/B ad testing
+- 10+ LLMs and multiple image/video models — balance quality vs. cost per campaign
+
+### 6. Every platform's format & quality
+
+- 9:16 (Douyin / TikTok vertical), 3:4 (Xiaohongshu), 1:1, 4:3, 16:9 (Bilibili / YouTube), 21:9, and more
+- 1K / 2K / 4K image resolution; clips under 15 s can be upscaled to 1920P via the **video enhancement** module
+
+### 7. Brand asset consistency (no "character drift")
+
+- **World system**: brand characters/locations/props are maintained once and inherited across works — your brand IP stays consistent across a whole campaign
+- **Character locking + multi-panel grids**: the same character looks the same across every asset
+- **Shared asset library**: platform-wide brand library with permission groups and `@` references — reuse, don't recreate
+- **Global art-style settings**, synced across worlds
+
+### 8. Voice: 107 preset voices + emotional TTS
+
+- 107 preset TTS voices plus custom voices via an acoustic "voice fingerprint" description
+- **Emotional vector TTS** (joy/anger/sadness/fear/disgust/low/surprise/calm — 8 dimensions) so sales copy sounds like selling, not reading
+- **Multi-speaker voice binding**: each speaker keeps their own voice in multi-voice voiceovers — no swaps in interviews or dialogues
+
+### 9. Template community: start from "make this"
+
+- **Inspiration feed**: curated, reviewed work in a waterfall layout; one click on **"Make this / Use as reference"** carries the template into the generation page
+- Great creatives become templates — your team starts from proven structures, not a blank canvas
+
+### 10. Short-drama mode = story-driven marketing (brand IP promotion)
+
+The short-drama mode is not only for short dramas — its full pipeline (script → storyboard → episodes → video) is itself a high-completion content format for marketing:
+
+- **Brand IP promotion**: build your brand IP (mascot / virtual spokesperson / series lead) in the World system; character locking keeps the same IP consistent across episodes and works; serialized short dramas keep building IP mindshare far longer than a single ad
+- **Brand short dramas / story-driven campaigns**: weave product selling points into the plot (brand placement, product appearances, story-driven "seeding") — "story-account" content that typically beats plain talking-head ads on completion and engagement
+- **Serialized episodes**: automatic episode splitting (Novel Splitter) supports serialized IP operations and episodic ad campaigns (publish per episode, follow per episode)
+- Digital humans, emotional TTS, timeline, and CapCut (JianYing) export all work in short-drama mode too — human finishing before release is still on the table
+
+### 11. End-to-end quality control & re-editing (controllable, auditable, revisable)
+
+Many tools automate generation, but marketing assets must be **controllable, reviewable, and revisable** before they go live:
+
+- **Pre-render confirmation card**: a second-level voiceover timeline + key-message coverage tags before anything renders — content is controllable and reviewable
+- **Automatic compliance review** (banned words / policy) — fewer ad rejections and publishing violations
+- **Timeline + CapCut (JianYing) export**: hand AI-rendered clips to a human for finishing (cuts, subtitles, music) before release — "AI drafts, the human decides"
+- Fully traceable: sessions, assets, and compute spend are all logged for team audit
+
+### 12. Enterprise-grade deployment & data security
+
+- **Local / private deployment**: one-click launch on Windows / macOS, plus Docker and Linux — creative assets, user data, and billing ledgers stay in your own domain; no asset leakage
+- **Open-source + commercial editions**: the open-source edition is free to deploy and use commercially (modified Apache 2.0); the commercial (enterprise) edition unlocks enterprise capabilities such as article-to-video and video cloning
+- A live demo environment + a 60+ page official documentation center — start from zero
+
+### 13. Extensible by design: MCP + SOP
+
+- **50+ built-in MCP tools** (data management / AI generation / user interaction); the agent is loosely coupled from its tools
+- Marketing workflows are driven by **SOPs (standard operating procedures)**: new capabilities like video cloning and article-to-video are plugged in as SOPs without touching the core
+- Connect it to your existing agent ecosystem and workflows — use ZhiJuTong as a "marketing content generation middle platform" inside your current stack
+
+### 14. Team collaboration & cost control
+
+- **User-level compute accounts + per-task compute caps**: every member's and every campaign's spend is bounded and auditable
+- Browser-based team collaboration with two permission levels; assets and sessions are shared
+
+### 15. Multilingual (i18n)
+
+- The UI ships in Chinese and English and is extensible — naturally fits cross-border and overseas marketing teams
 
 ---
 

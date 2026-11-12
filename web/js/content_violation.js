@@ -83,12 +83,14 @@
     safety: '安全策略', prohibited: '违禁内容', copyright: '版权/商标', trademark: '版权/商标'
   };
 
-  // 与后端 _SOURCE_HINT_MESSAGES / _source_action_hint 对齐
+  // 与后端 _SOURCE_HINT_MESSAGES / _OUTPUT_AUDIO_COPYRIGHT_MESSAGE 对齐
   var SOURCE_MESSAGES = {
     prompt: FRIENDLY_PREFIX + '：提示词包含敏感/违禁内容，请修改提示词后重试',
     reference_image: FRIENDLY_PREFIX + '：参考图片包含敏感内容，请更换参考图后重试',
     output: FRIENDLY_PREFIX + '：生成结果可能包含敏感内容，请调整提示词或参考图后重试',
     copyright: FRIENDLY_PREFIX + '（版权/商标）：提示词或参考内容可能涉及受保护形象/标识，请修改后重试',
+    // 输出音频版权限制（Seedance 2.5 等音频生成模型 OutputAudioSensitive… + copyright）
+    audio_copyright: FRIENDLY_PREFIX + '（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，请更换参考音频/视频或调整配乐描述后重试',
     general: FRIENDLY_PREFIX + '：请求被安全系统拦截，请检查提示词和参考图后重试'
   };
 
@@ -181,7 +183,14 @@
     var lower = msg.toLowerCase();
     var source = inferSource(msg, lower);
     var labels = extractLabels(msg);
-    if (source === 'copyright') return SOURCE_MESSAGES.copyright;
+    if (source === 'copyright') {
+      // 音频版权细分（与后端 _is_output_audio_copyright 对齐）：
+      // 生成音频触发版权限制时给出换参考音频/视频的动作提示，而非改提示词
+      if (/output\s*audio/i.test(msg) || /outputaudio/i.test(msg) || /generated\s*audio/i.test(msg)) {
+        return SOURCE_MESSAGES.audio_copyright;
+      }
+      return SOURCE_MESSAGES.copyright;
+    }
     var action = SOURCE_MESSAGES[source] ? SOURCE_MESSAGES[source].slice(FRIENDLY_PREFIX.length + 1) : SOURCE_MESSAGES.general.slice(FRIENDLY_PREFIX.length + 1);
     if (labels.length) {
       return FRIENDLY_PREFIX + '（' + labels.join('、') + '）：' + action;

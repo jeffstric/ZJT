@@ -229,6 +229,12 @@ SEEDANCE_ASSET_URL_SCHEME = "asset://"
 # TopenRouter 网关视频 API 兜底地址（topenrouter.base_url 未配置时使用；
 # 该网关视频与素材接口同址，素材地址另有 asset_base_url 回落链）
 TOPENROUTER_API_BASE_URL = "https://tp-api.chinadatapay.com:8000"
+# TopenRouter 创建任务接口（POST /v1/video/tasks）单独超时（秒）。该接口上游
+# 网关同步做参数预审，实测正常响应就要 9~10 秒+，全局 request_timeout（10s）
+# 会导致提交反复 Read timed out（2026-11-12 dev3：单任务重试 12+ 次）。仅放宽
+# 创建任务这一处，轮询 GET/素材库上传仍走全局超时；>=1000 会被
+# coerce_http_timeout_seconds 当毫秒换算，故常量保持秒语义（60 < 1000 阈值）。
+TOPENROUTER_SUBMIT_TIMEOUT_SECONDS = 60
 # TopenRouter Seedance 模型名默认映射（火山原生名 → TopenRouter 名）。
 # 平台文档仅明确 doubao-seedance-2.0，fast/mini/2.5 为命名惯例推测，
 # 可通过动态配置 topenrouter.model_aliases（JSON）热修正，配置优先于本默认表。
@@ -605,6 +611,11 @@ PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 s
 # 同一批工具名曾散落 3 个文件共 6 份清单（expert_agent 的 project_ids 收集
 # 白名单、power_confirm 的计费/图片/视频/标签清单、pm_agent 的视频专家技能
 # 清单），两段式数字人上线时 confirm_digital_human 漏配 project_ids 白名单，
+# 参考视频去音轨（strip_reference_audio，音频版权失败重试用）超时：
+# 下载参考视频 / ffmpeg 流复制重封装（-c:v copy -an）各自的兜底上限
+STRIP_AUDIO_DOWNLOAD_TIMEOUT_SECONDS = 300
+STRIP_AUDIO_FFMPEG_TIMEOUT_SECONDS = 300
+
 # video_task_submitted 事件不推送，前端全程看不到"视频生成中"（事故：dev2
 # 会话 cf028375，project 12752 视频实际生成成功但界面无感知）。现集中于此，
 # 各使用点只允许从下方派生常量取用，禁止再在业务模块手写工具名清单。

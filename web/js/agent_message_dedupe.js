@@ -20,6 +20,41 @@
     });
   }
 
+  // 去所有空白后的近似重复判定：LLM 复读工作总结时常有个别空格/标点/换行差异
+  // （2026-11-12 dev3 实测：同一总结以两条几乎相同的气泡展示），全等比对拦不住。
+  // 判据：去空白后短的一方被长的一方完整包含，且短方长度 ≥ 长方 75%。
+  // 长度比例条件保护真正的短消息（如"视频生成失败，请稍后重试。"）不被长总结误杀。
+  // 全角/半角标点归一表：LLM 复读常伴随标点形态漂移（（↔( 、：↔: 等）
+  var PUNCT_NORMALIZE_MAP = {
+    '（': '(', '）': ')', '：': ':', '，': ',', '、': ',', '；': ';',
+    '！': '!', '?': '?', '？': '?',
+    '【': '[', '】': ']', '《': '<', '》': '>'
+  };
+
+  function normalizeLoose(content) {
+    return String(content || '')
+      .replace(/\s+/g, '')
+      .replace(/[（）:：,，、；;！?？【】《》]/g, function(ch) {
+        return PUNCT_NORMALIZE_MAP[ch] || ch;
+      });
+  }
+
+  function isNearDuplicateAssistantMessage(messages, content, excludeUid) {
+    const target = normalizeLoose(content);
+    if (!target) return false;
+
+    return (messages || []).some(function(message) {
+      if (!message || (excludeUid && message._uid === excludeUid)) return false;
+      if (message.role !== 'ai' && message.role !== 'assistant') return false;
+      const existing = normalizeLoose(message.content);
+      if (!existing) return false;
+      if (existing === target) return true;
+      const shorter = existing.length < target.length ? existing : target;
+      const longer = existing.length < target.length ? target : existing;
+      return longer.indexOf(shorter) !== -1 && shorter.length >= longer.length * 0.75;
+    });
+  }
+
   function shouldPersistUserMessage(selectedType) {
     return selectedType !== 'agent';
   }
@@ -83,6 +118,7 @@
 
   return {
     hasDisplayedAssistantMessage: hasDisplayedAssistantMessage,
+    isNearDuplicateAssistantMessage: isNearDuplicateAssistantMessage,
     normalizeContent: normalizeContent,
     shouldPersistUserMessage: shouldPersistUserMessage,
     formatAgentUserMessageForDisplay: formatAgentUserMessageForDisplay

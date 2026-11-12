@@ -1325,5 +1325,43 @@ class TestBuildCreateRequestUsesFaceMaskedImage(unittest.TestCase):
         self.assertEqual(mock_compress.call_args_list[0].args[0], masked_path)
 
 
+class TestCheckStatusFailureErrorExtraction(unittest.TestCase):
+    """check_status failed 分支：上游 error.code 必须保留（2026-11-11 音频版权错误
+    OutputAudioSensitiveContentDetected.PolicyViolation 依赖错误码做准确分类）"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+        self.driver._cleanup_assets_if_terminal = MagicMock()
+
+    def test_failed_with_code_and_message(self):
+        with patch.object(self.driver, '_request', return_value={
+            'id': 'cgt-xxx',
+            'status': 'failed',
+            'error': {
+                'code': 'OutputAudioSensitiveContentDetected.PolicyViolation',
+                'message': 'The request failed because the output audio may be related to copyright restrictions.',
+            },
+        }):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertIn('OutputAudioSensitiveContentDetected.PolicyViolation', result['error'])
+        self.assertIn('copyright restrictions', result['error'])
+        self.assertEqual(result['error_type'], 'USER')
+
+    def test_failed_error_string_kept_as_is(self):
+        with patch.object(self.driver, '_request', return_value={
+            'id': 'cgt-xxx', 'status': 'failed', 'error': 'boom',
+        }):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error'], 'boom')
+
+    def test_failed_without_error_field(self):
+        with patch.object(self.driver, '_request', return_value={'id': 'cgt-xxx', 'status': 'failed'}):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error'], '任务失败')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -17,7 +17,7 @@ TopenRouter（topenrouter.chinadatapay.com）的视频接口与火山方舟协�
 加白后以 asset:// 引用；素材地址/Token 读 topenrouter.asset_base_url / asset_api_key）。
 """
 import json
-from typing import Dict
+from typing import Any, Dict
 
 from .base_video_driver import BaseVideoDriver
 from .seedance_volcengine_v1_driver import SeedanceVolcengineV1Driver
@@ -27,6 +27,7 @@ from config.constant import (
     SEEDANCE_HUMAN_ASSET_MODE_ASSET_LIBRARY,
     TOPENROUTER_API_BASE_URL,
     TOPENROUTER_SEEDANCE_MODEL_ALIASES,
+    TOPENROUTER_SUBMIT_TIMEOUT_SECONDS,
 )
 from config.unified_config import DriverImplementation
 
@@ -55,6 +56,19 @@ class SeedanceTopenrouterV1Driver(SeedanceVolcengineV1Driver):
 
     # TopenRouter 文档未列出的模型名按惯例推测，可经 topenrouter.model_aliases 热修正
     DEFAULT_MODEL_ALIASES = dict(TOPENROUTER_SEEDANCE_MODEL_ALIASES)
+
+    # 创建任务接口单独超时（秒）：上游网关同步预审慢（实测 9~10s+，见
+    # config/constant.py::TOPENROUTER_SUBMIT_TIMEOUT_SECONDS 注释），仅放宽此一处，
+    # 轮询 GET 等仍走全局 request_timeout。父类 submit_task 经
+    # request_params.get("timeout", self._timeout) 消费该值。
+    _submit_timeout_seconds = TOPENROUTER_SUBMIT_TIMEOUT_SECONDS
+
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        request_params = super().build_create_request(ai_tool)
+        if isinstance(request_params, dict) and request_params.get("success") is not False:
+            # 父类已塞全局 self._timeout，此处覆盖为本网关的提交专用超时
+            request_params["timeout"] = self._submit_timeout_seconds
+        return request_params
 
     def __init__(self, driver_type: int, model_name: str, impl_name: str):
         # 跳过父类 __init__，直接调用 BaseVideoDriver 避免加载火山国内配置

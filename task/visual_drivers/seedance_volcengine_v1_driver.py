@@ -763,11 +763,22 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                     "result_url": video_url
                 }
             elif status == "failed":
-                error_msg = result.get("error", {})
-                if isinstance(error_msg, dict):
-                    error_msg = error_msg.get("message", "任务失败")
-                elif not isinstance(error_msg, str):
+                error_info = result.get("error", {})
+                if isinstance(error_info, dict):
+                    error_code = error_info.get("code", "")
+                    error_msg = error_info.get("message", "任务失败")
+                elif isinstance(error_info, str):
+                    error_code = ""
+                    error_msg = error_info
+                else:
+                    error_code = ""
                     error_msg = "任务失败"
+                # 保留上游错误码（如 OutputAudioSensitiveContentDetected.PolicyViolation）：
+                # 错误码是内容审核分类最可靠信号。与提交阶段 _validate_submit_response
+                # 的 "API 错误 [code]: message" 格式一致，_normalize_failure_reason
+                # 可经 _API_ERROR_CODE_RE 提取后改写为准确的用户文案
+                if error_code:
+                    error_msg = f"API 错误 [{error_code}]: {error_msg}"
                 return {
                     "status": "FAILED",
                     "error": error_msg,

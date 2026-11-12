@@ -240,7 +240,7 @@ policy violation, please modify your prompt and try again (request id: ...)
    - `moderation_blocked` → `general`（可用 safety_violations 补标签）  
    - `InputTextSensitiveContentDetected` → `prompt`  
    - `InputImageSensitiveContentDetected` / `InputVideoSensitiveContentDetected` → `reference_image`  
-   - `OutputImageSensitiveContentDetected` / `OutputVideoSensitiveContentDetected` / `OutputTextSensitiveContentDetected` → `output`  
+   - `OutputImageSensitiveContentDetected` / `OutputVideoSensitiveContentDetected` / `OutputTextSensitiveContentDetected` / `OutputAudioSensitiveContentDetected` → `output`  
    - `SensitiveContentDetected` → `general`  
 2. **Gemini 内嵌原因码**（`image generation blocked [REASON]`）  
    - `IMAGE_SAFETY` → `output`（+ 标签 safety）  
@@ -286,9 +286,26 @@ policy violation, please modify your prompt and try again (request id: ...)
 | 参考图 | `内容审核未通过：参考图片包含敏感内容，请更换参考图后重试` |
 | 生成结果 | `内容审核未通过：生成结果可能包含敏感内容，请调整提示词或参考图后重试` |
 | 版权/商标 | `内容审核未通过（版权/商标）：提示词或参考内容可能涉及受保护形象/标识，请修改后重试` |
+| 音频版权 | `内容审核未通过（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，请更换参考音频/视频或调整配乐描述后重试` |
 | 通用 | `内容审核未通过：请求被安全系统拦截，请检查提示词和参考图后重试` |
 | 通用 + 标签 | `内容审核未通过（暴力）：请检查提示词和参考图后重试` |
 | 输出 + 标签 | `内容审核未通过（安全策略）：生成结果可能包含敏感内容，请调整提示词或参考图后重试` |
+
+**音频版权细分（2026-11-11）：**
+
+Seedance 2.5 等带音频生成模型（`generate_audio=true`，营销视频克隆常见）会把参考素材中的
+版权音乐复刻进输出音频，被上游以 `OutputAudioSensitiveContentDetected.PolicyViolation`
+（message 含 `output audio ... copyright restrictions`）拦截。通用版权文案（"请修改提示词"）
+在该场景是误导——应更换参考音频/视频。因此 `classify_content_moderation` 在 copyright 判定
+前先做 `_is_output_audio_copyright(code, message)` 特判（output audio × copyright 组合），
+命中即返回音频版权专属文案；前端 `web/js/content_violation.js` 的 `describe` 兜底同规则
+（`SOURCE_MESSAGES.audio_copyright`）。`source` 仍为 `copyright`，不新增枚举值。
+
+**驱动层错误码保留约定：** Seedance 系驱动 `check_status` 的 failed 分支必须把上游
+`error.code` 一并透出（格式 `API 错误 [code]: message`，与提交阶段 `_validate_submit_response`
+兜底格式一致），保证 `_normalize_failure_reason` 能经 `_API_ERROR_CODE_RE` 提取错误码做
+准确分类——轮询期失败与提交期失败走同一套识别体系（2026-11-11 前 failed 分支只透传
+message 丢弃 code，导致音频版权错误只能靠关键词碰巧归类）。
 
 **文案约束：**
 
