@@ -32,11 +32,13 @@ const fnWatch = extractSlice('function startSessionMessageWatcher', 'function st
 async function runScenario(historyQueue, script) {
     const calls = { historyFetches: 0, scrolled: 0, intervals: [], cleared: [] };
     const messages = { value: [] };
+    const pendingVerificationId = { value: null };
     const scope = `
         const calls = this.calls;
         const messages = this.messages;
         let currentSessionId = this.currentSessionId;
         let isLoading = this.isLoading;
+        const pendingVerificationId = this.pendingVerificationId;
         const sessionMessageWatchers = new Map();
         const SESSION_WATCH_DURATION_MS = 90000;
         const SESSION_WATCH_INTERVAL_MS = 10000;
@@ -46,13 +48,21 @@ async function runScenario(historyQueue, script) {
             return q.length > 1 ? q.shift() : q[0];
         };
         const filterHistoryMessage = (h) => h.role !== 'system' && h.role !== 'tool' && h.message_type !== 'context_summary';
-        const parseHistoryMessage = (h) => ({
-            // 与真实 parseHistoryMessage 一致：assistant/verification 统一归一为 'ai'
-            role: (h.role === 'assistant' || h.role === 'verification') ? 'ai' : h.role,
-            content: h.content,
-            isVerification: h.role === 'verification',
-            verificationOptions: h.role === 'verification' ? ['去除音轨后重新克隆'] : undefined,
-        });
+        const parseHistoryMessage = (h) => {
+            let vData = null;
+            if (h.role === 'verification' && typeof h.content === 'string') {
+                try { vData = JSON.parse(h.content); } catch (e) { vData = null; }
+            }
+            return {
+                // 与真实 parseHistoryMessage 一致：assistant/verification 统一归一为 'ai'
+                role: (h.role === 'assistant' || h.role === 'verification') ? 'ai' : h.role,
+                content: h.content,
+                isVerification: h.role === 'verification',
+                verificationOptions: h.role === 'verification' ? ['去除音轨后重新克隆'] : undefined,
+                verificationId: vData ? vData.verification_id : null,
+                verificationStatus: vData ? (vData.status || null) : null,
+            };
+        };
         const scrollToBottom = () => { calls.scrolled += 1; };
         const trackedSetInterval = (fn, delay) => { calls.intervals.push({ fn, delay }); return calls.intervals.length; };
         const trackedClearInterval = (id) => { calls.cleared.push(id); };
@@ -60,8 +70,8 @@ async function runScenario(historyQueue, script) {
     `;
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const fn = new AsyncFunction(`${scope}\n${fnKey}\n${fnWatch}\n${script}`);
-    const result = await fn.call({ calls, messages, historyQueue, currentSessionId: { value: 'sess-1' }, isLoading: { value: false } });
-    return { calls, messages, result };
+    const result = await fn.call({ calls, messages, historyQueue, currentSessionId: { value: 'sess-1' }, isLoading: { value: false }, pendingVerificationId });
+    return { calls, messages, pendingVerificationId, result };
 }
 
 const BASE_HISTORY = [
@@ -166,6 +176,35 @@ describe('marketing_agent 会话新消息临时监视（失败通知回复实时
         `);
         expect(result_or_self({ after: calls.historyFetches }));
         expect(calls.historyFetches).toBe(1); // 第二轮被 isLoading 拦截，未拉取
+    });
+
+    it('追加 verification 询问卡片时登记活跃验证（按钮可点）', async () => {
+        const verifMsg = { message_id: 'm4', role: 'verification', content: JSON.stringify({ title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'], verification_id: 'verif-9' }), timestamp: '2026-11-12T10:08:00' };
+        const historyQueue = [BASE_HISTORY, [...BASE_HISTORY, verifMsg]];
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
+            startSessionMessageWatcher('sess-1');
+            await settle(); await settle();
+            const lastInterval = calls.intervals[calls.intervals.length - 1];
+            await lastInterval.fn(); await settle();
+            return { appended: messages.value.length };
+        `);
+        expect(messages.value.length).toBe(1);
+        expect(messages.value[0].isVerification).toBe(true);
+        // 核心断言：登记活跃验证 → isActiveVerificationMessage 为真 → 按钮可点
+        expect(pendingVerificationId.value).toBe('verif-9');
+    });
+
+    it('已回答状态的 verification 不登记为活跃验证', async () => {
+        const verifMsg = { message_id: 'm4', role: 'verification', content: JSON.stringify({ title: 'q', description: 'd', options: ['a'], verification_id: 'verif-old', status: 'answered' }), timestamp: '2026-11-12T10:08:00' };
+        const historyQueue = [BASE_HISTORY, [...BASE_HISTORY, verifMsg]];
+        const { pendingVerificationId } = await runScenario(historyQueue, `
+            startSessionMessageWatcher('sess-1');
+            await settle(); await settle();
+            const lastInterval = calls.intervals[calls.intervals.length - 1];
+            await lastInterval.fn(); await settle();
+            return {};
+        `);
+        expect(pendingVerificationId.value).toBeNull();
     });
 
     it('同会话重复启动只续期不重复建 watcher', async () => {

@@ -236,6 +236,16 @@
                         }
                         if (fresh.length > 0) {
                             for (const msg of fresh) messages.value.push(msg);
+                            // verification 询问卡片（如 PM 的"是否去音轨重试"）：同步登记为
+                            // 活跃验证。SSE 路径（handleVerification）推送时会设置
+                            // pendingVerificationId 使选项按钮可点；watcher 走 history 拉取
+                            // 不经过该路径，不登记则按钮按"历史已回答"渲染为禁用
+                            // （dev3 实测 2026-11-12：卡片显示了但按钮全部禁用）。
+                            // 已回答/过期状态不激活（避免覆盖正常流程的活跃验证）。
+                            const verificationMsg = fresh.find(m => m.isVerification && m.verificationId);
+                            if (verificationMsg && !['answered', 'expired', 'cancelled', 'skipped'].includes(verificationMsg.verificationStatus)) {
+                                pendingVerificationId.value = verificationMsg.verificationId;
+                            }
                             scrollToBottom();
                         }
                     } catch (e) {
