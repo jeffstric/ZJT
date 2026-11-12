@@ -77,7 +77,7 @@
 **统一 token 格式**：`@资产:{asset_library.id}`（常量 `AssetLibraryConstants.MENTION_TOKEN_PREFIX`）。
 
 - **marketing_agent**：@ 下拉合并资产条目（`mentionableItems`），选择插入 token；`handleSend` 提交前 `resolveMentionTokens` 还原为 `![名称](/upload/相对路径)` markdown 图片。
-- **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`，含提示词放大编辑窗口）与图生视频节点独立 @（`image_to_video_node.js`）均含资产条目；提交前还原覆盖四个通道：图片生成（`image_node.js`）、分镜图生成（`shot_frame_generator.js`，放大窗口可插 token 的对应消费点）、分镜视频（`shot_frame_video_generator.js`）、图生视频（`image_to_video_node.js`）。
+- **video_workflow**：图片节点/分镜节点提示词下拉（`nodes.js showCharacterDropdownForImagePrompt`，含提示词放大编辑窗口）采用**单入口两级视图**：一级置顶「📁 资产库」入口，其后为首尾帧（仅视频提示词）与当前世界角色平铺直选；点入口进入分组目录（全部资产/未分组/各分组）→ 组内资产（滚动翻页），点选插 token。图生视频节点独立 @（`image_to_video_node.js`）资产条目仍追加在本地素材之后。提交前还原覆盖四个通道：图片生成（`image_node.js`）、分镜图生成（`shot_frame_generator.js`，放大窗口可插 token 的对应消费点）、分镜视频（`shot_frame_video_generator.js`）、图生视频（`image_to_video_node.js`）。
 - **storyboard**：@ 提及弹窗新增「资产库」tab（`renderMentionPopup`）；胶囊镜像层（`chat_mention_chips.js` + `frame_mention.js scanFrameMentionTokenRanges`）把 token 渲染为「缩略图+名称」胶囊（原子删除、悬停大图，与 @首帧图 同一套机制）；Agent 对话/直连生图/直连视频提交前还原。
 
 还原语义：`resolveMentionTokens(text)` 把 token 替换为 `![name](/upload/相对路径)`（不带 host），使资产图片以 URL 形式进入生成上下文（文生图参考图提取、LLM、VL 均可消费）；**用相对路径**是为了落库（分镜/消息）后不随 host/端口失效，且服务端消费链（`extract_local_path_from_url` 等）域名无关解析、相对/绝对两种格式均认（存量绝对 URL 无需迁移）；alt 中的 markdown 语法字符（`[]()`）会被清洗，资产名含括号不破坏图片语法；无权访问/已清除的 token 保留原文不阻断提交。storyboard 的 agent 消息面板为纯文本渲染，`![..](..)` 由渲染层折叠为 `[图片:名]` 占位（renderAgentMessages），本地会话显示保留原始 token。资产库弹窗内展示（卡片/预览/提及缩略图）同样全部使用相对路径，由浏览器按当前站点解析。
@@ -87,20 +87,22 @@
 | 页面 | 入库按钮 | 资产库入口 | @ 引用 |
 |---|---|---|---|
 | marketing_agent | 生成图片卡 `.generated-result-actions`「入库」（`data-asset-add-src` 委托）；**历史存量消息**回放时由 `marketing_agent.js augmentGeneratedImageCards` 扫描缺按钮的生成图卡自动补齐（MutationObserver 挂聊天容器，template ref 重建后重挂；源地址从卡片 img src 反解：`/api/proxy-image?url=ENC` 还原原始外链，`/upload/...` 原样） | 左侧 nav「资产库」 | @ 下拉**目录两级懒加载**（见下） |
-| video_workflow | 图片节点「上传图片」行「入库」（`image-add-asset-lib-btn`） | 顶栏 `#assetLibraryBtn` + 画布加号菜单「添加素材 → 资产库」（`menuAddAssetLibrary` → `openModal({assetType:'all', onPick})`，选中图片落图片节点 `data.url/preview`，视频资产提示暂不支持；浏览弹窗 `opts.assetType` 支持全类型，视频卡片用 `<video>` 缩略图） | 提示词下拉 + 图生视频节点 @ |
+| video_workflow | 图片节点「上传图片」行「入库」（`image-add-asset-lib-btn`） | 顶栏 `#assetLibraryBtn` + 画布加号菜单「添加素材 → 资产库」（`menuAddAssetLibrary` → `openModal({assetType:'all', onPick})`，选中图片落图片节点 `data.url/preview`，视频资产提示暂不支持；浏览弹窗 `opts.assetType` 支持全类型，视频卡片用 `<video>` 缩略图） | 提示词下拉「资产库」单入口两级懒加载（见 §5/§6 单入口变体段）+ 图生视频节点 @ |
 | storyboard | 主预览 hover 工具条「入库」（`data-action="add-scene-image-to-asset-library"`） | —（顶栏 nav 入口已移除；浏览经由入库弹窗/@ 引用） | @ 弹窗「资产库」tab **目录两级懒加载**（`render.js renderAssetMentionList`：分组目录 → 组内资产滚动翻页，`events.js ensureAssetMentionData`/`loadAssetMentionPage`/`bindMentionListScroll`；浏览条目渐进合并 `state.assetMentionItems` 供胶囊层/提交还原，历史 token 由 `chat_mention_chips.js ensureAssetMentionItemsByIds` 按详情接口兜底入池） + 胶囊 |
 | script_writer | 图片预览弹窗「加入资产库」（`addPreviewImageToAssetLibrary`，角色/道具显示，将当前大图 URL 交给 `AssetLibrary.promptAdd`；主图、多服装图、历史形象图均随缩略图选择变化） | 角色/道具编辑表单参考图行「📚 资产库」（`pickImageFromAssetLibrary`，选择器模式回填 `#char-image`/`#prop-image` + 预览，保存链路复用原有 `reference_image` 字段）；图片预览弹窗「历史形象图」后「资产库」按钮（`pickPreviewImageFromAssetLibrary`，角色/道具显示，选中资产写 `reference_image` 后走各自 `POST /api/{characters\|props}-files/{name}` 保存并 `notifyAgentAssetUpdated` 通知 AI；「重新生成/历史形象图」按钮仍仅角色显示） | —（仅图片参考图引用） |
 | marketing_inspiration | —（无生成能力，不设入库按钮） | 左侧 nav「资产库」（`#sharedAssetLibraryNav`，点击 `AssetLibrary.openModal()`） | — |
 
 **引用权限红线**：所有引用入口（@ 数据源、选择器）共用 `GET /assets` 列表，服务端 `_visible_where` 只返回「自己的 ∪ public ∪ 被指派 view/edit 的」资产——需求要求的三类可见性在数据源层强制，前端拿不到不可见资产。
 
-**@ 下拉目录逐级懒加载（marketing_agent）**：资产多时不再一次性全量拉取——`marketing_agent.js` 的 @ 下拉一级固定两项：**「全部资产」**（点开即所有资产，lite 分页滚动加载）与**「资产目录」**（点开进入分组列表层：未分组/各分组，避免目录多时污染一级菜单）；点分组进入组内资产列表，滚动到近底部自动翻下一页（`AssetLibrary.fetchMentionItemsPaged` → `GET /assets?lite=1&group_id=..&page=..`，每页 30 条）；返回条按 `returnMode` 回到进入前的层级；@ 每次唤起都回到一级（不保留上次浏览层级）；@ 后输入关键字切为跨组搜索（300ms 防抖），清空关键字回一级。模式切换用快照比对丢弃过期分页响应（防竞态）。本地上传媒体条目始终在列表最前，选择资产仍插 `@资产:{id}` token，提交链路（`resolveMentionTokens`）不变。旧 `fetchMentionItems(keyword)`（单次 50 条）保留兼容 video_workflow/storyboard 调用方。storyboard 分镜助手 @ 弹窗的「资产库」tab 同构改造（无搜索模式，仅目录/组内两级），见 §6 前端集成点。
+**@ 下拉目录逐级懒加载（marketing_agent）**：资产多时不再一次性全量拉取——`marketing_agent.js` 的 @ 下拉一级固定两项：**「全部资产」**（点开即所有资产，lite 分页滚动加载）与**「资产目录」**（点开进入分组列表层：未分组/各分组，避免目录多时污染一级菜单）；点分组进入组内资产列表，滚动到近底部自动翻下一页（`AssetLibrary.fetchMentionItemsPaged` → `GET /assets?lite=1&group_id=..&page=..`，每页 30 条）；返回条按 `returnMode` 回到进入前的层级；@ 每次唤起都回到一级（不保留上次浏览层级）；@ 后输入关键字切为跨组搜索（300ms 防抖），清空关键字回一级。模式切换用快照比对丢弃过期分页响应（防竞态）。本地上传媒体条目始终在列表最前，选择资产仍插 `@资产:{id}` token，提交链路（`resolveMentionTokens`）不变。storyboard 分镜助手 @ 弹窗的「资产库」tab 同构改造（无搜索模式，仅目录/组内两级），见 §6 前端集成点。
+
+**@ 下拉目录逐级懒加载（video_workflow 提示词下拉，单入口变体）**：`nodes.js showCharacterDropdownForImagePrompt`（分镜节点画面/视频提示词与图片节点提示词的放大编辑窗口共用）曾把 `fetchMentionItems('')` 单次拉到的 50 条资产直接平铺在世界角色之前，资产多时角色被淹没；现已改为**单入口两级视图**——一级置顶「📁 资产库」入口条目，其后保持首尾帧 + 世界角色平铺；点入口在下拉框内切换到分组目录（`fetchMentionGroups`，页面级缓存）→ 组内资产（`fetchMentionItemsPaged`，每页 30 条，容器滚动距底 60px 自动翻页，`reqSeq` 快照丢弃过期响应）；「← 返回」逐级回退；@ 每次唤起回一级。下拉事件为容器上一次性委托（click 按 `data-asset-entry/back/group`、`data-insert-token`、`data-character-name` 分发；`mousedown` preventDefault 保持 textarea 焦点，避免 blur 延迟关闭误关二级视图）。分组目录加载中/空态与组内翻页状态行复用 i18n `video_workflow.json` 的 `mention_*` 键。旧一次性预加载机制（`assetMentionItems`/`ensureAssetMentionItems`）已删除；`fetchMentionItems(keyword)`（单次 50 条）保留兼容图生视频调用方（`image_to_video_node.js`）。
 
 **lite 列表模式**（`GET /assets?lite=1`，`services.list_assets(lite=True)`）：跳过 `COUNT(*)`（`LIMIT page_size+1` 探测 `has_more`）与属主名/成员映射/权限标志/**文件存在性检查**（后者为每条一次磁盘 stat，是资产多时列表请求的主要额外开销），只返回 id/name/file_url/group_id。分页/浏览弹窗等完整模式不受影响。
 
 **索引**：`asset_library` 现有 `idx_user_create(user_id,create_at)`（本人资产按时间翻页）、`idx_group(group_id)`、`idx_type(asset_type)`，新增 `idx_group_create(group_id,create_at)`（迁移 `no_158_20261027_add_asset_group_create_index`）——分组目录懒加载的组内 `ORDER BY create_at DESC` 分页走索引免 filesort；可见性 `EXISTS` 子查询走 `asset_permission_member.uk_asset_user_perm(asset_id,user_id,perm_type)`。`keyword` 为 `LIKE '%kw%'` 无法用普通 B-tree 索引，靠 lite 模式的小页size控制单次查询成本。
 
-公共模块 `window.AssetLibrary`：`promptAdd`（入库弹窗）、`openModal`（浏览/分组/搜索/分页/权限编辑）、`fetchMentionItems`（单次 50 条兼容入口）、`fetchMentionGroups`/`fetchMentionItemsPaged`（目录两级分页，marketing_agent @ 下拉使用）、`buildMentionToken`、`resolveMentionTokens`、`toast`。所有动态 HTML 经 `window.escapeHtml` 转义（XSS 红线）；历史消息回放的新增 `data-asset-add-src` 已加入 `web/js/security.js` 白名单。
+公共模块 `window.AssetLibrary`：`promptAdd`（入库弹窗）、`openModal`（浏览/分组/搜索/分页/权限编辑）、`fetchMentionItems`（单次 50 条兼容入口，现仅图生视频节点使用）、`fetchMentionGroups`/`fetchMentionItemsPaged`（目录两级分页，marketing_agent @ 下拉与 video_workflow 提示词下拉使用）、`buildMentionToken`、`resolveMentionTokens`、`toast`。所有动态 HTML 经 `window.escapeHtml` 转义（XSS 红线）；历史消息回放的新增 `data-asset-add-src` 已加入 `web/js/security.js` 白名单。
 
 ## 7. 相关常量与文档
 

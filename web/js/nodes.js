@@ -4543,48 +4543,29 @@
       return items;
     }
 
-    // 共享资产库提及条目（@资产:{id} token，提交前由前端还原为 markdown 图片；
-    // 见 web/js/asset_library.js）。首用后台加载，完成后刷新最近打开的下拉。
-    let assetMentionItems = [];
-    let assetMentionLoaded = false;
-    let assetMentionLoading = false;
-    let lastMentionDropdownCtx = null;
+    // ===== 共享资产库提及：单入口两级视图（分镜/图片提示词下拉） =====
+    // 一级只放一个「资产库」入口条目，点击后在下拉框内切换视图：
+    // 分组目录（全部资产/未分组/各分组）→ 组内资产（滚动翻页），
+    // 参考 marketing_agent @ 下拉的目录逐级懒加载（docs/backend/asset_library.md §97）。
+    // @ 每次唤起都回一级；组内条目仍插 @资产:{id} token，提交前由
+    // resolveMentionTokens 还原为 markdown 图片（见 web/js/asset_library.js）。
+    let promptAssetView = { mode: 'root', groupId: null, groupName: '', page: 0, hasMore: false, loading: false, reqSeq: 0 };
+    let promptAssetGroups = null;
+    let promptAssetGroupsLoading = false;
+    let promptAssetRenderCtx = null; // 当前渲染上下文，分组目录异步到位后重渲染用
 
-    function ensureAssetMentionItems() {
-      if (!window.AssetLibrary || assetMentionLoading) return;
-      if (assetMentionLoaded) return;
-      assetMentionLoading = true;
-      window.AssetLibrary.fetchMentionItems('').then(items => {
-        assetMentionItems = (items || []).map(a => ({
-          token: '@资产:' + a.id,
-          label: a.name,
-          url: a.thumb || ''
-        }));
-        assetMentionLoaded = true;
-        // 数据到位后刷新仍在展示的下拉（占位「资产库加载中…」→ 实际条目）
-        const ctx = lastMentionDropdownCtx;
-        if (!ctx || !ctx.textarea || !ctx.textarea.isConnected) return;
-        const dropdown = document.getElementById(`character-dropdown-${ctx.dropdownKey}-${ctx.nodeId}`);
-        if (dropdown && dropdown.style.display !== 'none') {
-          showCharacterDropdownForImagePrompt(ctx.nodeId, ctx.textarea, ctx.cursorPos, ctx.dropdownKey);
-        }
-      }).catch(() => {}).finally(() => { assetMentionLoading = false; });
+    function resetPromptAssetView() {
+      promptAssetView = { mode: 'root', groupId: null, groupName: '', page: 0, hasMore: false, loading: false, reqSeq: 0 };
     }
 
-    function listAssetMentionItems() {
-      ensureAssetMentionItems();
-      return assetMentionItems;
+    // 文案取 i18n，缺失时中文兜底（与 shot_frame_mention_* 同一模式）
+    function promptMentionText(key, fallback) {
+      const v = window.t && window.t(key);
+      return (v && v !== key) ? v : fallback;
     }
 
-    // 显示角色选择下拉框（用于图片提示词，使用 state.worldCharacters）
-    function showCharacterDropdownForImagePrompt(nodeId, textarea, cursorPos, dropdownKey = 'imageprompt') {
-      const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
+    function getPromptMentionDropdown(dropdownId, textarea, nodeId, dropdownKey) {
       let dropdown = document.getElementById(dropdownId);
-
-      // 记录上下文供资产条目异步加载完成后刷新下拉
-      lastMentionDropdownCtx = { nodeId, textarea, cursorPos, dropdownKey };
-
-      // 如果下拉框不存在，创建一个
       if (!dropdown) {
         dropdown = document.createElement('div');
         dropdown.id = dropdownId;
@@ -4592,88 +4573,266 @@
         dropdown.style.cssText = 'display: none; position: absolute; background: white; border: 1px solid #e5e7eb; border-radius: 6px; max-height: 200px; overflow-y: auto; z-index: 1000; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); width: 100%;';
         textarea.parentNode.style.position = 'relative';
         textarea.parentNode.appendChild(dropdown);
+        bindPromptMentionDropdownEvents(dropdown, nodeId, textarea, dropdownKey);
       }
+      return dropdown;
+    }
 
-      const frameItems = dropdownKey === 'videoprompt' ? listVideoPromptFrameMentions(nodeId) : [];
-      const assetItems = listAssetMentionItems();
-      const worldId = state.defaultWorldId;
-      const characters = worldId ? (state.worldCharacters || []) : [];
-      if (frameItems.length === 0 && assetItems.length === 0 && characters.length === 0) {
-        // 无任何条目：区分「资产库加载中」/「未选世界（角色需世界）」/「确实为空」
-        let hintText;
-        if (assetMentionLoading) {
-          hintText = '资产库加载中…';
-        } else if (!worldId) {
-          hintText = '请先选择世界（角色引用需要世界）；也可引用资产库图片';
-        } else {
-          hintText = '暂无可引用内容';
+    // 事件委托只绑一次（翻页 append 条目不重复绑定）。
+    // mousedown 阻止焦点转移：点击条目时 textarea 不失焦，否则 blur 的
+    // 延迟关闭（见 showPromptExpandModal）会把切换后的二级视图关掉。
+    function bindPromptMentionDropdownEvents(dropdown, nodeId, textarea, dropdownKey) {
+      dropdown.addEventListener('mousedown', (e) => e.preventDefault());
+      dropdown.addEventListener('click', (e) => {
+        if (!(e.target instanceof Element)) return;
+        const entryEl = e.target.closest('[data-asset-entry]');
+        if (entryEl) {
+          promptAssetView.mode = 'groups';
+          renderPromptMentionDropdown(nodeId, textarea, dropdownKey);
+          return;
         }
-        dropdown.innerHTML = `<div style="padding: 8px; color: #6b7280; font-size: 12px;">${hintText}</div>`;
-        dropdown.style.display = 'block';
-        return;
-      }
-
-      const frameHtml = frameItems.map(item => `
-        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
-          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
-          <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
-        </div>
-      `).join('');
-      const assetHtml = assetItems.map(item => `
-        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" title="共享资产库" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
-          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
-          <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
-          <span style="font-size: 10px; color: #9ca3af; margin-left: auto;">资产库</span>
-        </div>
-      `).join('');
-      const charHtml = characters.map(char => {
-        const hasImage = !!char.reference_image;
-        const warningStyle = hasImage ? '' : 'background: #fef2f2; border-left: 3px solid #ef4444;';
-        const nameStyle = hasImage ? 'color: #374151;' : 'color: #ef4444;';
-        const warningText = hasImage ? '' : '<span style="font-size: 10px; color: #ef4444; margin-left: 4px;">无参考图</span>';
-        const hoverPreviewAttr = hasImage ? ` data-hover-preview="${escapeHtml(char.reference_image)}"` : '';
-        return `
-          <div class="character-dropdown-item" data-character-name="${escapeHtml(char.name)}"${hoverPreviewAttr} style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; ${warningStyle}">
-            ${hasImage ? `<img src="${escapeHtml(char.reference_image)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #fee2e2; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #ef4444;">!</div>'}
-            <span style="font-size: 12px; ${nameStyle}">${escapeHtml(char.name)}${warningText}</span>
-          </div>
-        `;
-      }).join('');
-      dropdown.innerHTML = frameHtml + assetHtml + charHtml;
-
-      dropdown.querySelectorAll('.shot-frame-mention-item').forEach(item => {
-        item.addEventListener('click', () => {
-          const token = item.getAttribute('data-insert-token') || '';
+        const backEl = e.target.closest('[data-asset-back]');
+        if (backEl) {
+          promptAssetView.mode = backEl.getAttribute('data-asset-back') === 'root' ? 'root' : 'groups';
+          renderPromptMentionDropdown(nodeId, textarea, dropdownKey);
+          return;
+        }
+        const groupEl = e.target.closest('[data-asset-group]');
+        if (groupEl) {
+          const raw = groupEl.getAttribute('data-asset-group');
+          promptAssetView.groupId = raw === '' ? null : raw; // '' = 全部资产
+          promptAssetView.groupName = groupEl.getAttribute('data-asset-group-name') || '';
+          promptAssetView.mode = 'assets';
+          promptAssetView.page = 0;
+          promptAssetView.hasMore = false;
+          promptAssetView.reqSeq++; // 作废在途分页响应
+          renderPromptMentionDropdown(nodeId, textarea, dropdownKey);
+          return;
+        }
+        const tokenEl = e.target.closest('[data-insert-token]');
+        if (tokenEl) {
+          const token = tokenEl.getAttribute('data-insert-token') || '';
           insertTextAtCursorForImagePrompt(textarea, token + ' ');
           hideCharacterDropdownForImagePrompt(nodeId, dropdownKey);
-        });
-        item.addEventListener('mouseenter', () => {
-          item.style.background = '#f8fafc';
-        });
-        item.addEventListener('mouseleave', () => {
-          item.style.background = '';
-        });
-      });
-
-      dropdown.querySelectorAll('.character-dropdown-item:not(.shot-frame-mention-item)').forEach(item => {
-        item.addEventListener('click', () => {
-          const charName = item.dataset.characterName;
-          insertCharacterAtCursorForImagePrompt(textarea, charName);
+          return;
+        }
+        const charEl = e.target.closest('[data-character-name]');
+        if (charEl) {
+          insertCharacterAtCursorForImagePrompt(textarea, charEl.getAttribute('data-character-name'));
           hideCharacterDropdownForImagePrompt(nodeId, dropdownKey);
-        });
-
-        item.addEventListener('mouseenter', () => {
-          item.style.background = item.style.borderLeft ? '#fef2f2' : '#f8fafc';
-        });
-        item.addEventListener('mouseleave', () => {
-          item.style.background = item.style.borderLeft ? '#fef2f2' : '';
-        });
+        }
       });
+      // 组内资产滚动翻页：距底部 60px 内自动加载下一页
+      dropdown.addEventListener('scroll', () => {
+        if (promptAssetView.mode !== 'assets' || promptAssetView.loading || !promptAssetView.hasMore) return;
+        if (dropdown.scrollTop + dropdown.clientHeight >= dropdown.scrollHeight - 60) {
+          loadPromptAssetPage(nodeId, textarea, dropdownKey);
+        }
+      });
+    }
+
+    // 显示提示词引用下拉框（分镜/图片节点的提示词放大窗口；角色用 state.worldCharacters）
+    function showCharacterDropdownForImagePrompt(nodeId, textarea, cursorPos, dropdownKey = 'imageprompt') {
+      const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
+      getPromptMentionDropdown(dropdownId, textarea, nodeId, dropdownKey);
+      resetPromptAssetView(); // 每次 @ 唤起回一级
+      renderPromptMentionDropdown(nodeId, textarea, dropdownKey);
+    }
+
+    function renderPromptMentionDropdown(nodeId, textarea, dropdownKey) {
+      const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
+      const dropdown = document.getElementById(dropdownId);
+      if (!dropdown) return;
+      promptAssetRenderCtx = { nodeId, textarea, dropdownKey };
+
+      if (promptAssetView.mode === 'groups') {
+        renderPromptAssetGroupsView(dropdown, nodeId, textarea, dropdownKey);
+      } else if (promptAssetView.mode === 'assets') {
+        renderPromptAssetItemsView(dropdown, nodeId, textarea, dropdownKey);
+      } else {
+        renderPromptRootView(dropdown, nodeId, dropdownKey);
+      }
 
       dropdown.style.top = (textarea.offsetHeight) + 'px';
       dropdown.style.left = '0';
       dropdown.style.right = '0';
       dropdown.style.display = 'block';
+    }
+
+    function promptMentionBackBar(target, label) {
+      return `
+        <div class="character-dropdown-item prompt-mention-back" data-asset-back="${escapeHtml(target)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; color: #6b7280;">
+          <span style="font-size: 12px;">←</span>
+          <span style="font-size: 12px;">${escapeHtml(label)}</span>
+        </div>
+      `;
+    }
+
+    // 一级视图：「资产库」入口（第一条）+ 首尾帧（仅视频提示词）+ 世界角色
+    function renderPromptRootView(dropdown, nodeId, dropdownKey) {
+      const worldId = state.defaultWorldId;
+      const characters = worldId ? (state.worldCharacters || []) : [];
+      const frameItems = dropdownKey === 'videoprompt' ? listVideoPromptFrameMentions(nodeId) : [];
+      const entryLabel = promptMentionText('asset_library_entry', '资产库');
+
+      let html = `
+        <div class="character-dropdown-item prompt-asset-entry" data-asset-entry="1" title="${escapeHtml(promptMentionText('prompt_asset_entry_title', '浏览共享资产库并插入图片'))}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+          <span style="font-size: 14px; line-height: 1;">📁</span>
+          <span style="font-size: 12px; color: #1f2937; font-weight: 500;">${escapeHtml(entryLabel)}</span>
+          <span style="font-size: 12px; color: #9ca3af; margin-left: auto;">›</span>
+        </div>
+      `;
+      html += frameItems.map(item => `
+        <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(item.token)}" data-hover-preview="${escapeHtml(item.url)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.label)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />
+          <span style="font-size: 12px; color: #374151;">${escapeHtml(item.label)}</span>
+        </div>
+      `).join('');
+      if (!worldId) {
+        html += `<div style="padding: 8px 12px; color: #6b7280; font-size: 12px;">${escapeHtml(promptMentionText('prompt_mention_need_world', '请先选择世界（角色引用需要世界）'))}</div>`;
+      } else if (characters.length === 0) {
+        html += `<div style="padding: 8px 12px; color: #6b7280; font-size: 12px;">${escapeHtml(promptMentionText('prompt_mention_no_characters', '当前世界暂无角色'))}</div>`;
+      } else {
+        html += characters.map(char => {
+          const hasImage = !!char.reference_image;
+          const warningClass = hasImage ? '' : ' char-missing-image';
+          const nameStyle = hasImage ? 'color: #374151;' : 'color: #ef4444;';
+          const warningText = hasImage ? '' : '<span style="font-size: 10px; color: #ef4444; margin-left: 4px;">无参考图</span>';
+          const hoverPreviewAttr = hasImage ? ` data-hover-preview="${escapeHtml(char.reference_image)}"` : '';
+          const itemStyle = hasImage
+            ? 'padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;'
+            : 'padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6; background: #fef2f2; border-left: 3px solid #ef4444;';
+          return `
+            <div class="character-dropdown-item${warningClass}" data-character-name="${escapeHtml(char.name)}"${hoverPreviewAttr} style="${itemStyle}">
+              ${hasImage ? `<img src="${escapeHtml(char.reference_image)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #fee2e2; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #ef4444;">!</div>'}
+              <span style="font-size: 12px; ${nameStyle}">${escapeHtml(char.name)}${warningText}</span>
+            </div>
+          `;
+        }).join('');
+      }
+      dropdown.innerHTML = html;
+    }
+
+    // 分组目录视图：全部资产 / 未分组 / 各分组（一次聚合，页面级缓存）
+    function renderPromptAssetGroupsView(dropdown, nodeId, textarea, dropdownKey) {
+      let html = promptMentionBackBar('root', promptMentionText('mention_back', '返回'));
+      if (!window.AssetLibrary) {
+        html += `<div style="padding: 8px 12px; color: #6b7280; font-size: 12px;">${escapeHtml(promptMentionText('mention_no_assets', '暂无资产'))}</div>`;
+        dropdown.innerHTML = html;
+        return;
+      }
+      if (promptAssetGroups) {
+        const groupsData = promptAssetGroups;
+        html += `
+          <div class="character-dropdown-item prompt-asset-group" data-asset-group="" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+            <span style="font-size: 14px; line-height: 1;">📁</span>
+            <span style="font-size: 12px; color: #374151;">${escapeHtml(promptMentionText('mention_all_assets', '全部资产'))}</span>
+          </div>
+        `;
+        html += `
+          <div class="character-dropdown-item prompt-asset-group" data-asset-group="ungrouped" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+            <span style="font-size: 14px; line-height: 1;">📁</span>
+            <span style="font-size: 12px; color: #374151;">${escapeHtml(promptMentionText('mention_ungrouped', '未分组'))}</span>
+            <span style="font-size: 10px; color: #9ca3af; margin-left: auto;">${groupsData.ungroupedCount || 0}</span>
+          </div>
+        `;
+        html += (groupsData.groups || []).map(g => `
+          <div class="character-dropdown-item prompt-asset-group" data-asset-group="${escapeHtml(String(g.id))}" data-asset-group-name="${escapeHtml(g.name)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+            <span style="font-size: 14px; line-height: 1;">📁</span>
+            <span style="font-size: 12px; color: #374151;">${escapeHtml(g.name)}</span>
+            <span style="font-size: 10px; color: #9ca3af; margin-left: auto;">${g.assetCount || 0}</span>
+          </div>
+        `).join('');
+      } else {
+        html += `<div style="padding: 8px 12px; color: #6b7280; font-size: 12px;">${promptAssetGroupsLoading ? escapeHtml(promptMentionText('mention_loading', '加载中…')) : escapeHtml(promptMentionText('mention_no_groups', '暂无分组'))}</div>`;
+        ensurePromptAssetGroups(nodeId, textarea, dropdownKey);
+      }
+      dropdown.innerHTML = html;
+    }
+
+    // 组内资产视图：返回条 + 分页条目（滚动到底自动翻页）
+    function renderPromptAssetItemsView(dropdown, nodeId, textarea, dropdownKey) {
+      const backLabel = promptMentionText('mention_back_to_groups', '返回资产目录') +
+        (promptAssetView.groupName ? ' · ' + promptAssetView.groupName : '');
+      let html = promptMentionBackBar('groups', backLabel);
+      html += '<div data-asset-list></div>';
+      html += '<div data-asset-footer style="padding: 6px 12px; color: #9ca3af; font-size: 11px; text-align: center; display: none;"></div>';
+      dropdown.innerHTML = html;
+      updatePromptAssetFooter(dropdown);
+      if (promptAssetView.page === 0) {
+        loadPromptAssetPage(nodeId, textarea, dropdownKey); // 首页
+      }
+    }
+
+    function ensurePromptAssetGroups(nodeId, textarea, dropdownKey) {
+      if (!window.AssetLibrary || promptAssetGroups || promptAssetGroupsLoading) return;
+      promptAssetGroupsLoading = true;
+      window.AssetLibrary.fetchMentionGroups().then(res => {
+        promptAssetGroups = res || { groups: [], ungroupedCount: 0 };
+        promptAssetGroupsLoading = false;
+        const ctx = promptAssetRenderCtx;
+        if (!ctx || !ctx.textarea || !ctx.textarea.isConnected) return;
+        const dropdown = document.getElementById(`character-dropdown-${ctx.dropdownKey}-${ctx.nodeId}`);
+        if (dropdown && dropdown.style.display !== 'none' && promptAssetView.mode === 'groups') {
+          renderPromptMentionDropdown(ctx.nodeId, ctx.textarea, ctx.dropdownKey);
+        }
+      });
+    }
+
+    function loadPromptAssetPage(nodeId, textarea, dropdownKey) {
+      const dropdownId = `character-dropdown-${dropdownKey}-${nodeId}`;
+      const dropdown = document.getElementById(dropdownId);
+      if (!dropdown || !window.AssetLibrary || promptAssetView.loading) return;
+      if (promptAssetView.page > 0 && !promptAssetView.hasMore) return;
+      const seq = ++promptAssetView.reqSeq; // 快照比对，视图切换后丢弃过期响应
+      const page = promptAssetView.page + 1;
+      promptAssetView.loading = true;
+      updatePromptAssetFooter(dropdown);
+      window.AssetLibrary.fetchMentionItemsPaged({ groupId: promptAssetView.groupId, page: page, pageSize: 30 }).then(res => {
+        if (seq !== promptAssetView.reqSeq) return;
+        promptAssetView.loading = false;
+        promptAssetView.page = page;
+        promptAssetView.hasMore = !!(res && res.hasMore);
+        appendPromptAssetItems(dropdown, (res && res.items) || []);
+        updatePromptAssetFooter(dropdown);
+      });
+    }
+
+    function appendPromptAssetItems(dropdown, items) {
+      const list = dropdown.querySelector('[data-asset-list]');
+      if (!list) return;
+      const assetLabel = promptMentionText('asset_library_entry', '资产库');
+      const html = items.map(item => {
+        const token = window.AssetLibrary
+          ? window.AssetLibrary.buildMentionToken({ id: item.id })
+          : '@资产:' + item.id;
+        const thumb = item.thumb || '';
+        return `
+          <div class="character-dropdown-item shot-frame-mention-item" data-insert-token="${escapeHtml(token)}"${thumb ? ` data-hover-preview="${escapeHtml(thumb)}"` : ''} title="${escapeHtml(assetLabel)}" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #f3f4f6;">
+            ${thumb ? `<img src="${escapeHtml(thumb)}" alt="${escapeHtml(item.name)}" style="width: 24px; height: 24px; object-fit: cover; border-radius: 3px;" />` : '<div style="width: 24px; height: 24px; background: #f3f4f6; border-radius: 3px;"></div>'}
+            <span style="font-size: 12px; color: #374151;">${escapeHtml(item.name)}</span>
+            <span style="font-size: 10px; color: #9ca3af; margin-left: auto;">${escapeHtml(assetLabel)}</span>
+          </div>
+        `;
+      }).join('');
+      list.insertAdjacentHTML('beforeend', html);
+    }
+
+    function updatePromptAssetFooter(dropdown) {
+      const footer = dropdown.querySelector('[data-asset-footer]');
+      if (!footer) return;
+      const list = dropdown.querySelector('[data-asset-list]');
+      const count = list ? list.children.length : 0;
+      let text = '';
+      if (promptAssetView.loading) {
+        text = promptMentionText('mention_loading', '加载中…');
+      } else if (count === 0) {
+        text = promptMentionText('mention_no_assets', '暂无资产');
+      } else if (!promptAssetView.hasMore) {
+        text = promptMentionText('mention_all_loaded', '已全部加载');
+      }
+      footer.textContent = text;
+      footer.style.display = text ? 'block' : 'none';
     }
 
     // 隐藏角色选择下拉框（图片提示词用）
