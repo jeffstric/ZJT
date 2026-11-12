@@ -183,6 +183,40 @@ describe('marketing_agent 会话新消息临时监视（失败通知回复实时
         expect(calls.historyFetches).toBe(1); // 第二轮被 isLoading 拦截，未拉取
     });
 
+    it('首轮基线含未回答 verification 时补渲染并激活（提交期失败时序竞争场景）', async () => {
+        // 提交期失败：ask_user 落库早于 watcher 启动 → 询问出现在基线里，
+        // 必须补渲染 + 激活，否则用户永远看不到询问
+        const withPendingVer = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'verification', message_type: 'verification_request', verification_id: 'verif-first', content: JSON.stringify({ title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'], verification_id: 'verif-first' }), timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withPendingVer];
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
+            startSessionMessageWatcher('sess-1');
+            await settle(); await settle(); await settle();
+            return { appended: messages.value.length, fetches: calls.historyFetches };
+        `);
+        expect(messages.value.length).toBe(1);
+        expect(messages.value[0].isVerification).toBe(true);
+        expect(pendingVerificationId.value).toBe('verif-first');
+    });
+
+    it('首轮基线含已回答 verification（其后有 answer 行）时不补渲染', async () => {
+        const withAnsweredVer = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'verification', message_type: 'verification_request', verification_id: 'verif-old', content: JSON.stringify({ title: 'q', description: 'd', options: ['a'], verification_id: 'verif-old' }), timestamp: '2026-11-12T10:08:00' },
+            { message_id: 'm5', role: 'user', message_type: 'verification_answer', verification_id: 'verif-old', content: '去除音轨后重新克隆', timestamp: '2026-11-12T10:09:00' },
+        ];
+        const historyQueue = [withAnsweredVer];
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, `
+            startSessionMessageWatcher('sess-1');
+            await settle(); await settle(); await settle();
+            return { appended: messages.value.length };
+        `);
+        expect(messages.value.length).toBe(0);
+        expect(pendingVerificationId.value).toBeNull();
+    });
+
     it('追加 verification 询问卡片时登记活跃验证（按钮可点）', async () => {
         const verifMsg = { message_id: 'm4', role: 'verification', content: JSON.stringify({ title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'], verification_id: 'verif-9' }), timestamp: '2026-11-12T10:08:00' };
         const historyQueue = [BASE_HISTORY, [...BASE_HISTORY, verifMsg]];

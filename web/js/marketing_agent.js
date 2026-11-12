@@ -218,8 +218,42 @@
                         const visible = (history || []).filter(filterHistoryMessage);
                         if (!Array.isArray(visible) || visible.length === 0) return;
                         if (state.knownIds === null) {
-                            // 首轮：只建立基线（已有消息 id 集合），不追加任何历史
+                            // 首轮：建立基线（已有消息 id 集合），不追加普通历史消息。
+                            // ⚠️ 但必须补渲染【最后一个未回答的 verification 询问卡片】：
+                            // 提交期失败场景（2026-11-13 本地实测）时序竞争——调度器提交
+                            // 失败后通知器立即触发，PM 的 ask_user 询问落库（T0+5s）早于
+                            // 前端轮询拿到 FAILED（轮询间隔最长 10s）→ 失败气泡/watcher
+                            // 启动时询问已在 history 里，若只记基线会把它当"已有消息"
+                            // 永久吞掉，用户看不到询问（本 BUG 的根因）。
                             state.knownIds = new Set(visible.map(_historyMessageWatchKey));
+                            // 已回答判定（与 restorePendingVerificationFromHistory 同口径）：
+                            // verification 行之后存在同 id 的 verification_answer 行即已回答
+                            const answeredIds = new Set();
+                            for (const h of visible) {
+                                if (h.message_type === 'verification_answer' && h.verification_id) {
+                                    answeredIds.add(h.verification_id);
+                                }
+                            }
+                            let pendingVerRow = null;
+                            for (let i = visible.length - 1; i >= 0; i--) {
+                                const h = visible[i];
+                                if (h.role !== 'verification' || !h.verification_id) continue;
+                                if (answeredIds.has(h.verification_id)) continue;
+                                pendingVerRow = h; // 倒序第一个未回答的 = 最后一次询问
+                                break;
+                            }
+                            if (pendingVerRow) {
+                                const parsed = parseHistoryMessage(pendingVerRow);
+                                // 本地尚未渲染过（isNearDuplicate 查重），补渲染卡片并激活
+                                const dup = window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, parsed.content || '') || false;
+                                if (!dup) {
+                                    messages.value.push(parsed);
+                                    if (parsed.isVerification && parsed.verificationId && !['answered', 'expired', 'cancelled', 'skipped'].includes(parsed.verificationStatus)) {
+                                        pendingVerificationId.value = parsed.verificationId;
+                                    }
+                                    scrollToBottom();
+                                }
+                            }
                             return;
                         }
                         const fresh = [];
