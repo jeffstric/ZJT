@@ -249,14 +249,14 @@ class TestAgentFailureNotifierService:
         # agent_task 取 model_id 注入 payload（2026-11-13 dev3/本地实测 400）
         class _Entity:
             model_id = 11
+            vendor_id = 7
 
         import model.agent_tasks as at_mod
-        monkeypatch.setattr(at_mod.AgentTasksModel, "get_latest_by_session", staticmethod(lambda sid: _Entity()))
-
-        payload_holder = {}
+        # list_by_session 返回 [entity]（ASC 语义由被测代码 reversed 处理）
+        monkeypatch.setattr(at_mod.AgentTasksModel, "list_by_session", staticmethod(lambda sid, limit=100: [_Entity()]))
 
         class _Sess:
-            id = "sess-1"
+            session_id = "sess-1"
             session_type = 2
             user_id = "7"
             auth_token = "tok"
@@ -267,7 +267,28 @@ class TestAgentFailureNotifierService:
         # 直接测 _resolve_trigger_payload
         payload = notifier._resolve_trigger_payload(_Sess(), "通知消息")
         assert payload["model_id"] == 11
+        assert payload["vendor_id"] == 7
         assert payload["message"] == "通知消息"
+
+    def test_trigger_payload_includes_vendor_id_from_first_task(self, monkeypatch, notifier):
+        # vendor_id 必须取用户实际在用的供应商：不传时端点按 model 反查主 vendor，
+        # 多供应商实例场景会反查到未配 key 的实例（本地实测 vendor 4 无 key →
+        # 通知轮次 LLM 连续失败）。取会话最早任务的实际 model+vendor 组合。
+        class _T1:
+            model_id = 11
+            vendor_id = 7
+
+        import model.agent_tasks as at_mod
+        monkeypatch.setattr(at_mod.AgentTasksModel, "list_by_session",
+                            staticmethod(lambda sid, limit=100: [_T1()]))
+
+        class _Sess:
+            session_id = "sess-1"
+            model_id = None
+
+        payload = notifier._resolve_trigger_payload(_Sess(), "m")
+        assert payload["model_id"] == 11
+        assert payload["vendor_id"] == 7
 
     def test_trigger_payload_falls_back_to_session_model_id(self, monkeypatch, notifier):
         class _Entity:
