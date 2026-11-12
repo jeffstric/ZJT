@@ -164,10 +164,16 @@ class TestAgentFailureNotifierService:
 
         class _Sess:
             session_type = 2  # 营销会话
-            auth_token = "tok-xyz"
+            user_id = "7"
+            auth_token = "tok-stale"  # 历史会话存 token（重新登录后即失效）
 
         import model.chat_sessions as cs_mod
         monkeypatch.setattr(cs_mod.ChatSessionsModel, "get_by_session_id", staticmethod(lambda sid: _Sess()))
+
+        import model.user_tokens as ut_mod
+        monkeypatch.setattr(
+            ut_mod.UserTokensModel, "get_token_by_user_id", staticmethod(lambda uid: "tok-fresh-" + str(uid))
+        )
 
         captured = {}
 
@@ -179,9 +185,64 @@ class TestAgentFailureNotifierService:
         notifier.notify_agent_task_failure(66, "内容审核未通过（音频版权）：请更换参考音频/视频", project_id=66)
 
         assert captured["session_id"] == "s-mkt"
-        assert captured["auth_token"] == "tok-xyz"
+        # token 优先取 user_tokens 当前有效 token，而非会话历史 token
+        assert captured["auth_token"] == "tok-fresh-7"
         assert "内容审核未通过（音频版权）" in captured["message"]
         assert notifier.NOTIFY_MARKER_PREFIX + "66" in captured["message"]  # 幂等标记随消息落库
+
+    def test_notify_falls_back_to_session_token_when_user_tokens_empty(self, monkeypatch, notifier):
+        # user_tokens 查不到（如用户 token 全过期）→ 回退 chat_sessions 存 token
+        self._patch_db(
+            monkeypatch, notifier,
+            key_rows={"idempotency_key": "pending:s-fb:video_task_submitted:67"},
+        )
+
+        class _Sess:
+            session_type = 2
+            user_id = "8"
+            auth_token = "tok-session-stored"
+
+        import model.chat_sessions as cs_mod
+        monkeypatch.setattr(cs_mod.ChatSessionsModel, "get_by_session_id", staticmethod(lambda sid: _Sess()))
+        import model.user_tokens as ut_mod
+        monkeypatch.setattr(ut_mod.UserTokensModel, "get_token_by_user_id", staticmethod(lambda uid: None))
+
+        captured = {}
+        monkeypatch.setattr(
+            notifier, "_trigger_agent_turn",
+            lambda sid, tok, msg: captured.update(token=tok) or True,
+        )
+        notifier.notify_agent_task_failure(67, "原因", project_id=67)
+        assert captured["token"] == "tok-session-stored"
+
+    def test_notify_survives_user_token_query_error(self, monkeypatch, notifier):
+        # user_tokens 查询异常 → 不中断通知，回退会话存 token
+        self._patch_db(
+            monkeypatch, notifier,
+            key_rows={"idempotency_key": "pending:s-err:video_task_submitted:68"},
+        )
+
+        class _Sess:
+            session_type = 2
+            user_id = "9"
+            auth_token = "tok-fallback"
+
+        import model.chat_sessions as cs_mod
+        monkeypatch.setattr(cs_mod.ChatSessionsModel, "get_by_session_id", staticmethod(lambda sid: _Sess()))
+        import model.user_tokens as ut_mod
+
+        def boom(uid):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(ut_mod.UserTokensModel, "get_token_by_user_id", staticmethod(boom))
+
+        captured = {}
+        monkeypatch.setattr(
+            notifier, "_trigger_agent_turn",
+            lambda sid, tok, msg: captured.update(token=tok) or True,
+        )
+        notifier.notify_agent_task_failure(68, "原因", project_id=68)
+        assert captured["token"] == "tok-fallback"
 
     def test_trigger_uses_authorization_header_not_query(self, monkeypatch, notifier):
         """token 走 Authorization 头（X3 红线），URL 不携带 token"""
