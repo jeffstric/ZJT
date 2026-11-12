@@ -487,7 +487,7 @@ def _get_processed_html(file_path: str) -> bytes:
     # 缓存指纹升级：js/css 的 ?v= 参数在版本号后追加文件内容指纹（md5 前 8 位），
     # 部署新前端代码后 URL 自动变化，浏览器拉新文件（不再依赖手动改版本号/强刷）
     content = re.sub(
-        r'(/(?:js|i18n)/[^\s"\']+?\.(?:js))\?v=' + re.escape(STATIC_VERSION),
+        r'(/(?:js|i18n|css)/[^\s"\']+?\.(?:js|css))\?v=' + re.escape(STATIC_VERSION),
         lambda m: f"{m.group(1)}?v={STATIC_VERSION}.{_static_file_fingerprint(m.group(1))}",
         content,
     )
