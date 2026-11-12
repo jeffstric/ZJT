@@ -3383,6 +3383,25 @@ html.theme-dark .camera-slider:hover {
   border-bottom: none;
 }
 
+/* 条目悬停高亮（替代旧版 JS mouseenter/mouseleave 内联切换） */
+.character-dropdown-item:hover {
+  background: #f8fafc;
+}
+
+/* 「资产库」入口条目：常态浅灰底以示区分，悬停加深 */
+.character-dropdown-item.prompt-asset-entry {
+  background: #f8fafc;
+}
+
+.character-dropdown-item.prompt-asset-entry:hover {
+  background: #eef2f7;
+}
+
+/* 无参考图角色条目：保持红色警示底色 */
+.character-dropdown-item.char-missing-image:hover {
+  background: #fef2f2;
+}
+
 /* 分镜引用显示区域 */
 .shot-ref-section {
   padding: 8px;
