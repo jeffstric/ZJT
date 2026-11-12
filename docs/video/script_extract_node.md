@@ -60,7 +60,7 @@ Pipeline 各阶段（全部异步，不阻塞事件循环）：
 | frames | `probe_stream_duration` 时长校验（≤15 分钟）→ 全片场景检测（超过单次解码上限 600s 时**分段检测合并**，长视频不再退化）→ `build_extract_sample_points` 采样计划（场景切换点为主、不足 max_frames 时按时间均匀补点、min_gap 去重、超量抽稀保首尾）→ 逐点 `extract_frame_at` / 尾点走尾帧链；**切换点列表（float 秒）随 frames 一并返回**供 LLM 阶段注入。同阶段内跑**运动信号分析**（`analyze_motion_signals`：ffmpeg rawvideo pipe 抽 128×72 灰度帧（8fps，总帧数 ≤1500 自动降 fps）→ numpy 逐镜头帧间差均值/全片排名/峰值时刻 + 亮度均值/排名/斜率 + 首尾帧投影互相关位移 + 平行镜头标注；切点 ±0.2s 保护带剔除转场尖峰；失败降级为空表） |
 | audio | `voice_replace/ffmpeg_util.extract_audio` 提取 PCM wav；无音轨时跳过 ASR（画面推断继续） |
 | asr | `build_slice_ranges` 按 60s 切段 → `slice_audio` 切片 → `SenseVoiceAsrDriver.transcribe_segments` 并发转写（≤3 并发）→ `merge_asr_slice_results` 段偏移还原全片时间戳 → `[MM:SS.d] 文本` 转写稿（0.1s 精度）；单段失败跳过 |
-| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-pro）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 分镜级提取提示词 + user 文本（任务说明+镜头切换点列表+运动信号表+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护）→ `clean_script_text` 清洗截断 |
+| llm | 模型挑选 `vl_gateway.pick_vl_model`（用户在节点指定的模型优先；未指定时按偏好 volcengine/doubao-seed-2-0-pro）→ 帧图 `compress_local_image_to_base64`（按用户选档位的像素/MB 预算压缩）→ 多模态消息（system 分镜级提取提示词 + user 文本（任务说明+镜头切换点列表+运动信号表+转写稿）+ 逐帧 [text 标签 + image_url]）→ `get_llm_client().call_api`（`asyncio.to_thread` + `wait_for` 超时保护，超时按镜头切换点数动态放宽：`min(LLM_TIMEOUT + 镜数 × LLM_TIMEOUT_PER_SCENE_SECOND, LLM_TIMEOUT_MAX)`，见 `estimate_llm_timeout`）→ `clean_script_text` 清洗截断 |
 
 任务状态落 **`script_extract_task` 表**（跨 gunicorn worker 共享，迁移脚本
 `no_154_20261021_add_script_extract_task`）：POST 创建记录后由创建请求的 worker
@@ -145,7 +145,8 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 | `ASR_SLICE_SECONDS` | 60 | 音频分段转写每段时长（SenseVoice 单次读超时 60s） |
 | `ASR_CONCURRENCY` | 3 | 分段转写并发上限 |
 | `FRAME_COMPRESS_TIMEOUT` | 20 | 单帧压缩外层超时（秒） |
-| `LLM_TIMEOUT` / `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 180 / 8000 / 0.4 | 剧本生成调用参数 |
+| `LLM_TIMEOUT` / `LLM_TIMEOUT_PER_SCENE_SECOND` / `LLM_TIMEOUT_MAX` | 180 / 6.0 / 480 | 剧本生成超时按镜头切换点数动态放宽：`min(180 + 镜数×6, 480)` 秒（`estimate_llm_timeout`；外层 `wait_for` 在此基础上 +15s）。实测依据：84.2s 视频 57 镜 pro 档生成耗时 336s（含模型默认思考），固定 180s 时长视频必然超时失败（2026-11-12 事故复盘） |
+| `LLM_MAX_TOKENS` / `LLM_TEMPERATURE` | 8000 / 0.4 | 剧本生成输出 token 上限与温度 |
 | `MAX_SCRIPT_CHARS` | 30000 | 剧本文本截断上限（与前端 textarea maxlength 一致） |
 | `TASK_TTL_SECONDS` | 1800 | 任务记录保留时长；running 记录超期未更新判执行进程失联（过期 404 / 释放并发占用），历史记录惰性清理 |
 | `PREFERRED_VENDOR` / `PREFERRED_MODEL` | volcengine / doubao-seed-2-0-pro | VL 模型偏好（须已在模型表配置密钥且 supports_vl）。分镜级提取需识别景别/机位/站位等镜头语言并推断说话人，pro 档显著优于 lite 档；节点上仍可手动切换，成本敏感场景可选回 lite |
@@ -189,6 +190,7 @@ LLM 调用带 `auth_token` + `model_id` + `vendor_id`，token 用量经 `BaseLLM
 
 - 单元测试：`tests/services/test_video_script_extract_service.py`（切片计划、ASR 分段
   合并、转写稿格式化、帧抽稀、多模态消息构造（切换点/运动信号注入）、剧本清洗、
+  LLM 动态超时估算（`estimate_llm_timeout`：保底/线性放宽/封顶/负数回退）、
   DB 任务状态表并发限制/TTL 失联判定；DB 层用同接口内存假模型替代，不依赖真实数据库）
 - 单元测试：`tests/services/test_video_motion_analysis_service.py`（合成灰度帧覆盖
   纯函数：采样 fps 降档、静止帧间差排名、峰值时刻定位、相机上摇位移、平行镜头
