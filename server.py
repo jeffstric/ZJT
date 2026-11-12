@@ -462,6 +462,9 @@ def _static_file_fingerprint(url_path: str) -> str:
     except OSError:
         return 'nofile'
     _static_fingerprint_cache[path] = (mtime, digest)
+    # 文件被更新（热部署场景）：清空 HTML 处理缓存，让页面里的指纹 URL 同步刷新
+    # （否则 _PROCESSED_HTML_CACHE 里的旧 URL 会让指纹机制在"只覆盖文件不重启"时失效）
+    _PROCESSED_HTML_CACHE.clear()
     return digest
 
 
