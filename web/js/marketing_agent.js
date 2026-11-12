@@ -173,6 +173,132 @@
                 return next;
             }
 
+            // ============ 会话新消息临时监视（服务端注入回复的实时感知，方案 A） ============
+            // 背景：生成任务失败后，后端通知器会主动触发一轮 PM（询问是否去音轨重试等，
+            // enterprise/services/agent_failure_notifier.py）。该轮次是新的 agent_task，
+            // 前端没有它的 SSE 监听（SSE 按 task 维度建立），PM 回复只落库 chat_messages，
+            // 不刷新页面就看不到。本监视器在任务失败终态后启动：90 秒内每 10 秒拉一次
+            // 会话历史做【幂等对账】——history 是事实源，屏幕是投影，每轮把投影补齐：
+            // 逐条检查 AI 侧消息（assistant 文本 / verification 询问卡片）屏幕上是否
+            // 已存在（消息 id / verification_id / 近似内容三级匹配），不存在即补渲染。
+            // ⚠️ 设计上刻意不设"基线快照"：快照语义是"启动时刻的 history=屏幕"，而
+            // 提交期失败场景（2026-11-13 实测）通知链路落库（T0+6s）早于前端轮询感知
+            // 失败（T0+10s）→ watcher 启动时询问已在 history 但从未渲染——快照会把它
+            // 当"已显示"永久吞掉。对账语义没有这个竞争窗口。
+            const SESSION_WATCH_DURATION_MS = 90000;
+            const SESSION_WATCH_INTERVAL_MS = 10000;
+            const sessionMessageWatchers = new Map(); // sessionId -> { deadline, timer }
+
+            // 对账匹配：history 行在屏幕上是否已存在（三级匹配，任一命中即视为已显示）
+            function _historyMessageOnScreen(h) {
+                // 1) message_id 精确匹配（页面加载 history 恢复路径渲染的消息带 _dbMessageId）
+                if (h.message_id && messages.value.some(m => m._dbMessageId === h.message_id)) return true;
+                // 2) verification_id 匹配（SSE handleVerification 渲染的卡片带 verificationId）。
+                //    ⚠️ content 有两种形态：history 接口对 verification_request 行返回
+                //    还原后的【对象】{verification_id, title, ...}（to_frontend_dict），
+                //    部分路径返回 JSON 字符串——两种都要提取（2026-11-13 实测：只处理
+                //    字符串形态导致 verId=null → 匹配失效 → 对账每轮追加重复卡片）。
+                let verId = h.verification_id || null;
+                if (!verId) {
+                    let parsedContent = h.content;
+                    if (typeof parsedContent === 'string') {
+                        try { parsedContent = JSON.parse(parsedContent); } catch (e) { parsedContent = null; }
+                    }
+                    if (parsedContent && typeof parsedContent === 'object') {
+                        verId = parsedContent.verification_id || null;
+                    }
+                }
+                if (verId && messages.value.some(m => m.verificationId === verId)) return true;
+                // 3) 近似内容兜底（SSE 实时渲染的 assistant 消息无 _dbMessageId）
+                const text = typeof unwrapHistoryText(h.content) === 'string'
+                    ? unwrapHistoryText(h.content) : String(h.content || '');
+                return window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, text) || false;
+            }
+
+            function startSessionMessageWatcher(sessionId) {
+                if (!sessionId) return;
+                const existing = sessionMessageWatchers.get(sessionId);
+                if (existing) {
+                    // 已在监视：刷新存活窗口（连续多单失败时延长观察期）
+                    existing.deadline = Date.now() + SESSION_WATCH_DURATION_MS;
+                    return;
+                }
+                const state = { deadline: Date.now() + SESSION_WATCH_DURATION_MS, timer: null };
+                sessionMessageWatchers.set(sessionId, state);
+
+                const stop = () => {
+                    if (state.timer) trackedClearInterval(state.timer);
+                    sessionMessageWatchers.delete(sessionId);
+                };
+
+                const tick = async () => {
+                    if (currentSessionId.value !== sessionId || Date.now() > state.deadline) {
+                        stop();
+                        return;
+                    }
+                    // 用户正在收发消息（活跃请求/SSE 中）时跳过本轮，避免与本地状态打架
+                    if (isLoading.value) return;
+                    try {
+                        const history = await loadSessionHistory(sessionId);
+                        const visible = (history || []).filter(filterHistoryMessage);
+                        if (!Array.isArray(visible) || visible.length === 0) return;
+                        // 已回答的询问 id 集合（verification 行之后存在同 id 的 answer 行）
+                        const answeredIds = new Set();
+                        for (const h of visible) {
+                            if (h.message_type === 'verification_answer' && h.verification_id) {
+                                answeredIds.add(h.verification_id);
+                            }
+                        }
+                        const fresh = [];
+                        for (const h of visible) {
+                            // pending 任务行（通知触发轮次提交的生成任务）：恢复"生成中"
+                            // 气泡与状态轮询。这类轮次前端没有 SSE（同 watcher 缘由），
+                            // pm_agent 落库的 __PENDING_TASK__ 行是唯一线索——不走恢复
+                            // 入口的话任务永远没有进度展示（2026-11-13 实测：去音轨重试
+                            // 单 555 提交后无生成中卡片，任务完成也无从展示）。
+                            // ⚠️ content 可能是对象（history 接口还原形态），先归一为
+                            // 字符串再正则匹配，否则 .match 抛 TypeError 被整轮 catch 吞掉
+                            const contentStr = typeof h.content === 'string' ? h.content : '';
+                            const pendingMatch = h.message_type === 'pending_task' || h.role === 'assistant'
+                                ? contentStr.match(/__PENDING_TASK__:(image_task_submitted|video_task_submitted):(.+)$/) : null;
+                            if (pendingMatch) {
+                                try {
+                                    const pids = JSON.parse(pendingMatch[2]);
+                                    if (pendingMatch[1] === 'video_task_submitted') {
+                                        handleVideoTaskSubmitted({ project_ids: pids }, sessionId);
+                                    } else {
+                                        handleImageTaskSubmitted({ project_ids: pids }, sessionId);
+                                    }
+                                } catch (e) { /* project_ids 解析失败跳过 */ }
+                                continue; // pending 行本身不作为可见消息追加（恢复入口会插入气泡）
+                            }
+                            // 只补 AI 侧消息（assistant 文本 / verification 询问卡片）；
+                            // user 消息由用户自己产生屏幕必有；tool_call 行被过滤器排除
+                            if (h.role !== 'assistant' && h.role !== 'verification') continue;
+                            // 已回答的询问不补（历史恢复路径会渲染禁用卡片，且不再是活跃验证）
+                            if (h.verification_id && answeredIds.has(h.verification_id)) continue;
+                            if (_historyMessageOnScreen(h)) continue;
+                            fresh.push(parseHistoryMessage(h));
+                        }
+                        if (fresh.length > 0) {
+                            for (const msg of fresh) messages.value.push(msg);
+                            // 追加了未回答的 verification 询问卡片：登记为活跃验证使按钮可点
+                            // （SSE 路径 handleVerification 会登记；watcher 对账路径同样要登记）
+                            const verificationMsg = fresh.find(m => m.isVerification && m.verificationId);
+                            if (verificationMsg && !['answered', 'expired', 'cancelled', 'skipped'].includes(verificationMsg.verificationStatus)) {
+                                pendingVerificationId.value = verificationMsg.verificationId;
+                            }
+                            scrollToBottom();
+                        }
+                    } catch (e) {
+                        // 静默：history 拉取失败不打断监视，下一轮再试
+                    }
+                };
+
+                tick(); // 立即对账
+                state.timer = trackedSetInterval(tick, SESSION_WATCH_INTERVAL_MS);
+            }
+
             // 连续轮询错误达到上限：不判死任务（服务端仍在生成、刷新后 pending 恢复会重新拉取），
             // 气泡显示中性提示并转入低频轮询继续探测，恢复 200 即刷新回进度
             function stopTaskAfterRepeatedErrors(key, interval, msgUid, fallbackContent) {
@@ -3613,6 +3739,8 @@
                                     finalContent = buildGeneratedTaskContent('image', tasks);
                                 } else {
                                     finalContent = describeFailedTasks(tasks, 'image');
+                                    // 失败终态：启动会话新消息监视（同 pollAgentVideoStatus）
+                                    startSessionMessageWatcher(pollSessionId);
                                 }
 
                                 const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
@@ -3743,6 +3871,9 @@
                                     finalContent = buildGeneratedTaskContent('video', tasks);
                                 } else {
                                     finalContent = describeFailedTasks(tasks, 'video');
+                                    // 失败终态：后端通知器会主动触发 PM 询问（去音轨重试等），
+                                    // 该回复走新 task 无 SSE，启动临时监视实时拉取展示
+                                    startSessionMessageWatcher(pollSessionId);
                                 }
                                 // await 后重新查找 msgIdx，防止会话切换导致索引失效
                                 const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
@@ -4419,7 +4550,7 @@
                             if (data.type === 'message') {
                                 hasReceivedData = true;
                                 resetTaskErrorCount(streamErrorKey);
-                                if (window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, data.content, msgUid)) {
+                                if (window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, data.content, msgUid)) {
                                     console.log('[SSE] 跳过历史中已展示的消息:', data.id);
                                     return;
                                 }
