@@ -173,6 +173,80 @@
                 return next;
             }
 
+            // ============ 会话新消息临时监视（服务端注入回复的实时感知，方案 A） ============
+            // 背景：生成任务失败后，后端通知器会主动触发一轮 PM（询问是否去音轨重试等，
+            // enterprise/services/agent_failure_notifier.py）。该轮次是新的 agent_task，
+            // 前端没有它的 SSE 监听（SSE 按 task 维度建立），PM 回复只落库 chat_messages，
+            // 不刷新页面就看不到。本监视器在任务失败终态后启动：90 秒内每 10 秒拉一次
+            // 会话历史，把基线之后新增的 AI 侧消息（PM 询问卡片 / 说明文本）追加到当前
+            // 消息流并滚动展示；用户活跃收发时跳过本轮，避免与主动发送的本地状态冲突。
+            const SESSION_WATCH_DURATION_MS = 90000;
+            const SESSION_WATCH_INTERVAL_MS = 10000;
+            const sessionMessageWatchers = new Map(); // sessionId -> { deadline, knownIds, timer }
+
+            function _historyMessageWatchKey(h) {
+                if (h.message_id) return 'id:' + h.message_id;
+                const content = typeof h.content === 'string' ? h.content.slice(0, 80) : String(h.content || '').slice(0, 80);
+                return 'ts:' + (h.timestamp || '') + '|' + content;
+            }
+
+            function startSessionMessageWatcher(sessionId) {
+                if (!sessionId) return;
+                const existing = sessionMessageWatchers.get(sessionId);
+                if (existing) {
+                    // 已在监视：刷新存活窗口（连续多单失败时延长观察期）
+                    existing.deadline = Date.now() + SESSION_WATCH_DURATION_MS;
+                    return;
+                }
+                const state = { deadline: Date.now() + SESSION_WATCH_DURATION_MS, knownIds: null, timer: null };
+                sessionMessageWatchers.set(sessionId, state);
+
+                const stop = () => {
+                    if (state.timer) trackedClearInterval(state.timer);
+                    sessionMessageWatchers.delete(sessionId);
+                };
+
+                const tick = async () => {
+                    if (currentSessionId.value !== sessionId || Date.now() > state.deadline) {
+                        stop();
+                        return;
+                    }
+                    // 用户正在收发消息（活跃请求/SSE 中）时跳过本轮，避免与本地状态打架
+                    if (isLoading.value) return;
+                    try {
+                        const history = await loadSessionHistory(sessionId);
+                        const visible = (history || []).filter(filterHistoryMessage);
+                        if (!Array.isArray(visible) || visible.length === 0) return;
+                        if (state.knownIds === null) {
+                            // 首轮：只建立基线（已有消息 id 集合），不追加任何历史
+                            state.knownIds = new Set(visible.map(_historyMessageWatchKey));
+                            return;
+                        }
+                        const fresh = [];
+                        for (const h of visible) {
+                            const key = _historyMessageWatchKey(h);
+                            if (state.knownIds.has(key)) continue;
+                            state.knownIds.add(key);
+                            // 只追加 AI 侧新消息（assistant 文本 / verification 询问卡片）
+                            if (h.role !== 'assistant' && h.role !== 'verification') continue;
+                            const parsed = parseHistoryMessage(h);
+                            // 内容查重：SSE/本地状态可能已渲染同内容消息（dual write 防线）
+                            const dup = messages.value.some(m => m.role === parsed.role && (m.content || '') === (parsed.content || ''));
+                            if (!dup) fresh.push(parsed);
+                        }
+                        if (fresh.length > 0) {
+                            for (const msg of fresh) messages.value.push(msg);
+                            scrollToBottom();
+                        }
+                    } catch (e) {
+                        // 静默：history 拉取失败不打断监视，下一轮再试
+                    }
+                };
+
+                tick(); // 立即建立基线
+                state.timer = trackedSetInterval(tick, SESSION_WATCH_INTERVAL_MS);
+            }
+
             // 连续轮询错误达到上限：不判死任务（服务端仍在生成、刷新后 pending 恢复会重新拉取），
             // 气泡显示中性提示并转入低频轮询继续探测，恢复 200 即刷新回进度
             function stopTaskAfterRepeatedErrors(key, interval, msgUid, fallbackContent) {
@@ -3613,6 +3687,8 @@
                                     finalContent = buildGeneratedTaskContent('image', tasks);
                                 } else {
                                     finalContent = describeFailedTasks(tasks, 'image');
+                                    // 失败终态：启动会话新消息监视（同 pollAgentVideoStatus）
+                                    startSessionMessageWatcher(pollSessionId);
                                 }
 
                                 const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
@@ -3743,6 +3819,9 @@
                                     finalContent = buildGeneratedTaskContent('video', tasks);
                                 } else {
                                     finalContent = describeFailedTasks(tasks, 'video');
+                                    // 失败终态：后端通知器会主动触发 PM 询问（去音轨重试等），
+                                    // 该回复走新 task 无 SSE，启动临时监视实时拉取展示
+                                    startSessionMessageWatcher(pollSessionId);
                                 }
                                 // await 后重新查找 msgIdx，防止会话切换导致索引失效
                                 const currentMsgIdx = messages.value.findIndex(m => m._uid === msgUid);
