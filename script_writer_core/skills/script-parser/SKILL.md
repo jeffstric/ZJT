@@ -66,14 +66,22 @@ description: 剧本解析/分镜拆分系统提示词。控制角色出场、空
     - **【模式无关】本条以 characters_present 为准**：列出几个角色就写全几个。若启用了“多人对话拆分”规则，拆分后每个镜头只有一个 `focus_character_ids` 说话主体；但同一空间中仍可见或局部可见的非说话角色必须继续留在 characters_present，并在 spatial_layout 中标为 `secondary_continuity`。完全被裁切到画面外的非说话角色不放入 characters_present，但必须在 spatial_layout 中以 `offscreen_continuity` 保留位置。**严禁为了让多角色同框而拒绝拆分对话镜头，也严禁为了单人近景让角色凭空消失**
     - 错误示例：characters_present 含某角色，但 opening_frame_description/description/action 中完全没有提到该角色 ✗
 18.1 **【视频提示词必须含完整对白·硬性规则】**：
-    - 当 shot 的 `dialogue[]` 存在非空 `text` 时，必须在视频提示词字段（`description` 和/或 `action`，可选 `scene_detail`）中**逐字**写出完整台词原文
+    - 当 shot 的 `dialogue[]` 存在非空 `text` 时，必须在视频提示词字段（`description` 或 `action` **二选一**）中**逐字**写出完整台词原文；**严禁**在 description、action、scene_detail 中重复出现同一句台词
     - **禁止**只用「大声呵斥」「说着话」「训斥」「回应」等动作概括代替原文台词
     - 推荐格式：`【【角色名】】说："完整台词原文"`；旁白可用「旁白：…」
     - `dialogue[].text` 仍须保留完整台词，且与视频提示词中引用的台词一致
     - 首帧 `opening_frame_description` 不强制写台词；台词属于视频侧
     - 多人对话拆分后，每个单人镜头只写入本镜头那一句完整台词
-    - 正确示例：description 含 `【【赵志高】】怒声说道："你也没好到哪去！去，把仓库那堆杂物搬了！"` ✓
+    - 正确示例：description 含 `【【赵志高】】怒声说道："你也没好到哪去！去，把仓库那堆杂物搬了！"`，action 只写动作节拍不重复台词 ✓
     - 错误示例：只写「【【赵志高】】嘴巴大张大声呵斥」，台词仅在 dialogue[] 中 ✗
+    - 错误示例：description 和 action 都逐字写出同一句台词 ✗（重复）
+18.2 **【description/action/scene_detail 三字段各司其职·硬性规则】**拆分"画面内容"时三份信息各写各的，严禁同一内容在多个字段复述：
+    - `description`：本镜核心事件一两句（谁+做了什么+说了什么台词），台词首选载体
+    - `action`：角色动作节拍表——按发生顺序写每个在场角色的动作、反应、位置变化，是动作最细的一层；台词若未写在 description 则在此逐字写出
+    - `scene_detail`：只写环境、氛围与镜头过程中的画面变化（光线、背景元素、情绪转折、场景元素的状态变化），**严禁复述 description/action 已有的角色动作节拍与台词**
+    - 自检：把三字段并排读一遍，若删掉任何一个字段后其余两个字段仍完整覆盖"谁做了什么+说了什么"，说明存在复述，必须重写
+    - 正确示例：description="【【赵志高】】指着【【李卫国】】厉声训斥，嫌他扫地磨蹭"；action="【【赵志高】】手臂向前下方指去，下颌微抬；【【王小胖】】肩膀内缩不敢接话；【【李卫国】】擦地的手顿住半拍"；scene_detail="顶灯昏黄，灰尘在光柱里浮动，远处货架阴影渐深" ✓
+    - 错误示例：description、action、scene_detail 都写"【【赵志高】】指着李卫国训话，【【王小胖】】缩着肩膀听" ✗（同一节拍三处重复，视频模型收到三份冗余文本）
 19. **【分镜呈现类型 presentation】** 每个 shot 必须输出 presentation 字段，取值仅限：
     - `"digital_human"`：对口型/数字人镜头——必须同时满足：`characters_present` **恰好只有 1 个画内人物**、`dialogue` **恰好只有 1 个说话角色**、且说话角色就是该画内人物；内容以对白表演为主，适合近景/特写固定镜头下的口型视频。
     - `"video"`：普通 AI 视频镜头——无对白、旁白/画外音、没有人物、多人同框、多人交替说话，或虽有单人对白但核心是动作/追逐/打斗/复杂调度。
