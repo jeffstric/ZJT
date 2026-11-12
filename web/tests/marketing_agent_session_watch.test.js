@@ -76,8 +76,9 @@ async function runScenario(historyQueue, screenMessages, script) {
         };
         const parseHistoryMessage = (h) => {
             let vData = null;
-            if (h.role === 'verification' && typeof h.content === 'string') {
-                try { vData = JSON.parse(h.content); } catch (e) { vData = null; }
+            if (h.role === 'verification') {
+                if (typeof h.content === 'string') { try { vData = JSON.parse(h.content); } catch (e) { vData = null; } }
+                else if (h.content && typeof h.content === 'object') { vData = h.content; }
             }
             return {
                 _dbMessageId: h.message_id || null,
@@ -148,6 +149,48 @@ describe('marketing_agent 会话消息临时监视——幂等对账语义（方
         const card = messages.value.find(m => m.isVerification);
         expect(card).toBeTruthy();
         expect(pendingVerificationId.value).toBe('verif-first');
+    });
+
+    it('content 对象形态（真实接口 to_frontend_dict 还原后）→ verification_id 匹配跳过', async () => {
+        // 真实 history 接口对 verification_request 行返回还原后的对象 content
+        // （to_frontend_dict：{verification_id, title, ...}，非 JSON 字符串）——
+        // 2026-11-13 实测：verId 提取只处理字符串形态导致匹配失效、对账每轮
+        // 追加重复卡片（屏幕增殖到 10 条）
+        const sseRendered = [...SCREEN_RESTORED, {
+            role: 'ai',
+            content: { verification_id: 'verif-pw', title: '算力确认', description: '即将提交', options: ['确认生成'] },
+            isVerification: true,
+            verificationId: 'verif-pw',
+        }];
+        const withObjVer = [
+            ...BASE_HISTORY,
+            // 真实接口形态：content 是对象、无 verification_id 顶层键
+            { message_id: 'm4', role: 'verification', message_type: 'verification_request', content: { verification_id: 'verif-pw', title: '算力确认', description: '即将提交', options: ['确认生成'] }, timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withObjVer];
+        const { messages } = await runScenario(historyQueue, sseRendered, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'const lastInterval = calls.intervals[calls.intervals.length - 1];',
+            'await lastInterval.fn(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(sseRendered.length); // 无追加
+    });
+
+    it('content 对象形态且屏幕没有 → 正常补渲染并激活', async () => {
+        const withObjVer = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'verification', message_type: 'verification_request', content: { verification_id: 'verif-new', title: '营销智能体 向您提问', description: '请选择处理方式', options: ['去除音轨后重新克隆'] }, timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withObjVer];
+        const { messages, pendingVerificationId } = await runScenario(historyQueue, SCREEN_RESTORED, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(SCREEN_RESTORED.length + 1);
+        expect(pendingVerificationId.value).toBe('verif-new');
     });
 
     it('SSE 已渲染的近似内容（无 _dbMessageId）→ 近似匹配跳过不重复追加', async () => {

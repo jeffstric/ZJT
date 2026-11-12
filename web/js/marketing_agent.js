@@ -193,10 +193,20 @@
             function _historyMessageOnScreen(h) {
                 // 1) message_id 精确匹配（页面加载 history 恢复路径渲染的消息带 _dbMessageId）
                 if (h.message_id && messages.value.some(m => m._dbMessageId === h.message_id)) return true;
-                // 2) verification_id 匹配（SSE handleVerification 渲染的卡片带 verificationId）
+                // 2) verification_id 匹配（SSE handleVerification 渲染的卡片带 verificationId）。
+                //    ⚠️ content 有两种形态：history 接口对 verification_request 行返回
+                //    还原后的【对象】{verification_id, title, ...}（to_frontend_dict），
+                //    部分路径返回 JSON 字符串——两种都要提取（2026-11-13 实测：只处理
+                //    字符串形态导致 verId=null → 匹配失效 → 对账每轮追加重复卡片）。
                 let verId = h.verification_id || null;
-                if (!verId && typeof h.content === 'string' && h.content.trim().startsWith('{')) {
-                    try { verId = JSON.parse(h.content).verification_id || null; } catch (e) { verId = null; }
+                if (!verId) {
+                    let parsedContent = h.content;
+                    if (typeof parsedContent === 'string') {
+                        try { parsedContent = JSON.parse(parsedContent); } catch (e) { parsedContent = null; }
+                    }
+                    if (parsedContent && typeof parsedContent === 'object') {
+                        verId = parsedContent.verification_id || null;
+                    }
                 }
                 if (verId && messages.value.some(m => m.verificationId === verId)) return true;
                 // 3) 近似内容兜底（SSE 实时渲染的 assistant 消息无 _dbMessageId）
