@@ -842,6 +842,10 @@
             const videoModelConfigs = ref({});
             const availableRatios = ref([]);
             const availableResolutions = ref([]);
+            // 驱动可用状态（/api/computing-power-config 的 driver_status）：
+            // 模型列表按此过滤未配置/不可用驱动（如无火山引擎时隐藏 Seedream/Seedance），
+            // 与 workflow/nodes/image_to_video 页面口径一致；拉取失败时保持 {}（视为全部可用）
+            const driverStatus = ref({});
 
             // LLM 模型数据（用于 Agent 模式对话）
             const allLLMModels = ref([]);
@@ -6026,8 +6030,28 @@
                         return;
                     }
 
+                    // 拉取驱动可用状态（失败时保持 {}，filterAvailableModelOptions 视为全部可用）
+                    try {
+                        const statusResp = await fetch('/api/computing-power-config', {
+                            headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
+                        });
+                        if (statusResp.ok) {
+                            const statusData = await statusResp.json();
+                            if (statusData.success && statusData.data && statusData.data.driver_status) {
+                                driverStatus.value = statusData.data.driver_status;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[驱动状态] 加载失败，模型列表不过滤:', e);
+                    }
+
+                    // 按驱动可用状态过滤（无火山引擎驱动时隐藏 Seedream/Seedance 等模型）
+                    const availableOpts = (opts) => (window.TaskConfig.filterAvailableModelOptions
+                        ? window.TaskConfig.filterAvailableModelOptions(opts, driverStatus.value)
+                        : opts);
+
                     // 获取文生图模型
-                    const imgOpts = window.TaskConfig.getModelOptionsForCategory('text_to_image');
+                    const imgOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('text_to_image'));
                     allImageModels.value = imgOpts.map((opt, idx) => ({
                         icon: '🖼️',
                         name: opt.label.split(' (')[0],
@@ -6036,7 +6060,7 @@
                         value: opt.value
                     }));
 
-                    const editOpts = window.TaskConfig.getModelOptionsForCategory('image_edit');
+                    const editOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('image_edit'));
                     allImageEditModels.value = editOpts.map(opt => ({
                         icon: '🖼️',
                         name: opt.label.split(' (')[0],
@@ -6046,7 +6070,7 @@
                     }));
 
                     // 获取文生视频模型
-                    const txtVidOpts = window.TaskConfig.getModelOptionsForCategory('text_to_video');
+                    const txtVidOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('text_to_video'));
                     allTextToVideoModels.value = txtVidOpts.map((opt, idx) => ({
                         icon: '📹',
                         name: opt.label.split(' (')[0],
@@ -6058,7 +6082,7 @@
                     }));
 
                     // 获取图生视频模型
-                    const imgVidOpts = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+                    const imgVidOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('image_to_video'));
                     allImageToVideoModels.value = imgVidOpts.map((opt, idx) => ({
                         icon: '📹',
                         name: opt.label.split(' (')[0],
@@ -7983,6 +8007,19 @@
                 ) || null;
             }
 
+            // 同家族文生视频模型：minimax_h3_image_to_video / minimax_h3_reference_to_video → minimax_h3_text_to_video。
+            // 媒体清空切文生视频模型时优先保留厂商家族，避免直接落到 text_to_video 槽位偏好而跨厂商跳模型
+            // （事故：用户选 MiniMax H3 首尾帧，发送成功后 clearAllMedia 触发切换，界面被换成槽位偏好的 Seedance 2.5）。
+            function findSameFamilyTextToVideoModel(list, currentKey) {
+                if (!currentKey || !Array.isArray(list) || !list.length) return null;
+                const base = String(currentKey).replace(/_(image|text|reference)_to_video$/, '');
+                if (!base) return null;
+                return list.find(item => item.key === base + '_text_to_video')
+                    || list.find(item => item.short_key === base + '_t2v')
+                    || list.find(item => item.key && item.key.startsWith(base + '_'))
+                    || null;
+            }
+
             function modelSupportsReferenceSlot(model) {
                 if (!model) return false;
                 const task = window.TaskConfig?.getTaskByKey
@@ -8339,14 +8376,24 @@
                         selectedVideoModelKey.value = m.key || '';
                     }
                 } else {
-                    // 没有图片了，切回文生视频模型偏好
-                    const saved = localStorage.getItem('marketing_selected_t2v_model');
+                    // 没有图片了，需要切到文生视频模型：
+                    // 1) 当前模型本身支持文生视频（双分类，如 Seedance 2.5）→ 保留用户选择；
+                    // 2) 否则优先同家族文生模型（MiniMax H3 首尾帧 → MiniMax H3 (文生)），
+                    //    避免直接落到 text_to_video 槽位偏好而跨厂商跳模型；
+                    // 3) 最后回退：槽位偏好 → localStorage → 列表第一项。
                     const list = allTextToVideoModels.value;
-                    const m = modelForMediaSlot('video.text_to_video', list)
-                        || (saved && list.find(item => item.name === saved)) || list[0];
-                    if (m) {
-                        selectedVideoModelName.value = m.name;
-                        selectedVideoModelKey.value = m.key || '';
+                    const current = findVideoModelInList(list, selectedVideoModelKey.value)
+                        || findVideoModelInList(list, selectedVideoModelName.value);
+                    if (!current) {
+                        const family = findSameFamilyTextToVideoModel(list, selectedVideoModelKey.value);
+                        const saved = localStorage.getItem('marketing_selected_t2v_model');
+                        const m = family
+                            || modelForMediaSlot('video.text_to_video', list)
+                            || (saved && list.find(item => item.name === saved)) || list[0];
+                        if (m) {
+                            selectedVideoModelName.value = m.name;
+                            selectedVideoModelKey.value = m.key || '';
+                        }
                     }
                 }
                 refreshModelSettings();

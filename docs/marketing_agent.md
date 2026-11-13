@@ -340,6 +340,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - **文生视频**：`TaskConfig.getModelOptionsForCategory('text_to_video')`
 - **图生视频**：`TaskConfig.getModelOptionsForCategory('image_to_video')`，根据 `videoImageMode` 过滤支持的模型
 - 模型偏好从后端 `GET /api/video-model` 获取，回退到 `localStorage`
+- **驱动可用性过滤**：`initTaskConfig()` 先拉取 `GET /api/computing-power-config` 的 `driver_status`，文生图 / 图片编辑 / 文生视频 / 图生视频四个模型列表统一经 `TaskConfig.filterAvailableModelOptions` 过滤——某厂商驱动未配置（如未配置火山引擎 API Key）时，其模型（Seedream / Seedance 等）不在营销页显示，与 workflow / nodes / image_to_video 页面口径一致；接口失败时 `driver_status` 保持 `{}`，视为全部可用（不过滤）。若过滤后某分类为空，对应初始化恢复逻辑有空列表保护，不会选中不可用模型。
 - 用户在 Agent 模式下切换视频模型时，前端 `syncVideoModelToBackend()` 会调用 `POST /api/video-model` 并携带完整 `video_preferences`（含 `model_name`、`ratio`、`duration`、`resolution`、`image_mode`、`enable_face_mask`），后端合并更新 `_video_preferences_cache`，确保 MCP 视频工具执行时读取到最新偏好
 - **性价比 / 效果双轨切换**：视频模型列表（Agent 模式「其他设置」内联列表与非 Agent 模式底部弹窗两处）顶部提供与 LLM 模型一致的 `model-track-toggle` 按钮。Agent 模式下视频模型列表内联展开于模型选择按钮正下方、对话模型（LLM）选择之上。场景推导口径与模型列表过滤一致：无参考图 → `video.text_to_video`，首尾帧模式 → `video.image_to_video`，多参考模式 → `video.reference_to_video`（复用 `ModelCatalog.sceneForVideoImageMode`）。当前选中模型所处轨道由 `currentVideoTrack` 计算（优先读 `task_config` 下发的 `track` 字段，回退 `ModelCatalog.inferTrack`），点击按钮时 `selectVideoTrack()` 通过 `ModelCatalog.findTaskByTrack` 在当前列表中选中该轨道推荐模型（文生/图生视频：性价比 `minimax_h3`、效果 `seedance_2_0`；多参考：性价比 `minimax_h3_r2v`），并复用 `selectModel()` 完成偏好同步与持久化。选中 Grok、Happy Horse 等非推荐模型时两按钮均不高亮（custom）；若某轨道推荐模型不在当前过滤后的列表中，点击无动作。图片模式不显示该切换。
 
@@ -865,3 +866,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 营销页使用 `marketing_ui` 下五个独立槽位：文生图、图片编辑、文生视频、图生视频、参考视频。当前模型下拉框会按真实输入切换槽位；选择结果通过 `GET/PUT /api/marketing/media-preferences` 持久化，不再让文生/编辑或普通/参考视频共享一个运行时模型值。
 
 每次创建 Agent 任务时，五个槽位全部写入 `agent_tasks.execution_context_json.generation_snapshots`。工具按真实输入选槽位并强制覆盖 `task_type`，最终快照同时写入 `ai_tools.extra_config.generation_snapshot`。任务提交后再修改界面偏好不会影响运行中任务。
+
+视频模式下 `hasUploadedImage` 由 true→false（用户删图，或发送成功后 `clearAllMedia` 清空媒体）时，选中模型按以下顺序落定，避免界面被"自动换模型"：
+
+1. 当前模型本身在文生视频列表（双分类，如 Seedance 2.5）→ 保留用户选择；
+2. 否则优先同家族文生模型（`findSameFamilyTextToVideoModel`：如 MiniMax H3 首尾帧 `minimax_h3_image_to_video` → MiniMax H3 (文生) `minimax_h3_text_to_video`），避免直接落到 `video.text_to_video` 槽位偏好而跨厂商跳模型（事故：用户选 MiniMax H3 点生成后界面被换成槽位偏好的 Seedance 2.5，实际生成仍是 MiniMax H3）；
+3. 无家族匹配才回退：槽位偏好 → `localStorage marketing_selected_t2v_model` → 列表第一项。
