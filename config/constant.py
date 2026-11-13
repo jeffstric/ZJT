@@ -2855,7 +2855,16 @@ class VideoScriptExtractConstants:
     # 单帧压缩外层超时（秒）。
     FRAME_COMPRESS_TIMEOUT = 20
     # 剧本生成 LLM 超时（秒）与输出 token 上限（多场景长剧本）。
+    # LLM_TIMEOUT 为保底超时（短视频/少镜头场景）；长视频分镜数多，剧本输出
+    # 规模随镜头数线性增长，超时按镜头切换点数动态放宽（见
+    # estimate_llm_timeout：每镜追加 LLM_TIMEOUT_PER_SCENE_SECOND 秒，
+    # 上限 LLM_TIMEOUT_MAX）。实测依据：84.2s 视频 57 镜 pro 档生成耗时
+    # 336s（含模型默认思考），固定 180s 时该场景必然超时失败。
     LLM_TIMEOUT = 180
+    # 动态超时：每镜头切换点追加的超时秒数（57 镜实测 336s ≈ 5.9s/镜，取整留波动余量）。
+    LLM_TIMEOUT_PER_SCENE_SECOND = 6.0
+    # 动态超时上限（秒）：LLM_MAX_TOKENS=8000 在最坏生成速率（约 20 token/s）+ 思考余量。
+    LLM_TIMEOUT_MAX = 480
     LLM_MAX_TOKENS = 8000
     LLM_TEMPERATURE = 0.4
     # 剧本文本长度上限（字符），超出截断，防止异常输出撑爆 workflow JSON。
