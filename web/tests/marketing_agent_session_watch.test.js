@@ -219,11 +219,11 @@ describe('marketing_agent 会话消息临时监视——幂等对账语义（方
         expect(messages.value.filter(m => m._isPendingTask).length).toBe(0);
     });
 
-    it('SSE 已渲染的近似内容（无 _dbMessageId）→ 近似匹配跳过不重复追加', async () => {
-        const sseRendered = [...SCREEN_RESTORED, { role: 'ai', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？' }];
+    it('SSE 已渲染的同内容消息（无 _dbMessageId）→ 全等匹配跳过不重复追加', async () => {
+        const sseRendered = [...SCREEN_RESTORED, { role: 'ai', content: '两次确认都已超时，请直接回复选择方案。' }];
         const withNew = [
             ...BASE_HISTORY,
-            { message_id: 'm4', role: 'assistant', content: '是否需要我先去除参考视频的音轨，再重新提交克隆？', timestamp: '2026-11-12T10:08:00' },
+            { message_id: 'm4', role: 'assistant', content: '两次确认都已超时，请直接回复选择方案。', timestamp: '2026-11-12T10:08:00' },
         ];
         const historyQueue = [withNew];
         const { messages } = await runScenario(historyQueue, sseRendered, [
@@ -232,6 +232,22 @@ describe('marketing_agent 会话消息临时监视——幂等对账语义（方
             'return { appended: messages.value.length };',
         ].join('\n'));
         expect(messages.value.length).toBe(sseRendered.length);
+    });
+
+    it('增量消息（前缀+新增内容）不因近似判定被吞——全等比对放行', async () => {
+        // AI 审查指出的误判场景回归：追问增量消息必须正常显示
+        const sseRendered = [...SCREEN_RESTORED, { role: 'ai', content: '请提供产品图片' }];
+        const withNew = [
+            ...BASE_HISTORY,
+            { message_id: 'm4', role: 'assistant', content: '请提供产品图片，并补充品牌名称', timestamp: '2026-11-12T10:08:00' },
+        ];
+        const historyQueue = [withNew];
+        const { messages } = await runScenario(historyQueue, sseRendered, [
+            "startSessionMessageWatcher('sess-1');",
+            'await settle(); await settle();',
+            'return { appended: messages.value.length };',
+        ].join('\n'));
+        expect(messages.value.length).toBe(sseRendered.length + 1);
     });
 
     it('已回答的询问（history 有 answer 行）不补渲染不激活', async () => {
