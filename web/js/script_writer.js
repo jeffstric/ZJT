@@ -259,12 +259,17 @@
                 handleTokenExpired();
                 return true;
             }
+            // user_mismatch 有两种载体，都按「账号不一致」处理而不是「登录过期」：
+            // - X-User-Id 头与 token 属主不一致 → 401
+            // - query/body 里的 user_id 与登录身份不一致 → 403（check_claimed_user_id）。
+            //   只判 401 时 403 分支会漏掉：URL 带他人 user_id 的链接打开后页面
+            //   一直停在无权状态，不跳转不自愈。
+            if (data && data.error_code === 'user_mismatch') {
+                handleUserMismatch();
+                return true;
+            }
             if (response && response.status === 401) {
-                if (data && data.error_code === 'user_mismatch') {
-                    handleUserMismatch();
-                } else {
-                    handleTokenExpired();
-                }
+                handleTokenExpired();
                 return true;
             }
             return false;
@@ -4078,6 +4083,11 @@
                 ]);
                 const llmData = await llmResp.json().catch(() => ({}));
                 const imageData = await imageResp.json().catch(() => ({}));
+                // URL 带他人 user_id 时（reconcile 未生效的兜底路径），这两个请求
+                // 返回 403 user_mismatch。不处理会静默失败，用户停在无权页面。
+                if (checkTokenExpired(llmData, llmResp) || checkTokenExpired(imageData, imageResp)) {
+                    return;
+                }
                 if (llmData.success && llmData.default) {
                     worldDefaultModels.llm = {
                         model: llmData.default.model,
@@ -8368,6 +8378,13 @@
                     }
                 );
                 const data = await response.json();
+
+                // URL 带他人 user_id 时 X-User-Id 头与登录身份不一致 → 401/403
+                // user_mismatch。不接 checkTokenExpired 会只显示「加载失败」，
+                // 用户停在无权页面无法自愈。
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
 
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
                 const worlds = data.data?.data || data.worlds || [];
