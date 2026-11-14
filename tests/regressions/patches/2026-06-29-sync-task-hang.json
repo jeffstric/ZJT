@@ -1,0 +1,19 @@
+{
+  "replaces": [
+    {
+      "path": "task/sync_task_executor.py",
+      "old": "                if not future.done():\n                    if not stale_detection_enabled:\n                        continue",
+      "new": "                if not future.done():\n                    continue"
+    },
+    {
+      "path": "utils/image_upload_utils.py",
+      "old": "            return asyncio.run(asyncio.wait_for(coro, timeout=timeout))",
+      "new": "            return asyncio.run(coro)"
+    },
+    {
+      "path": "utils/image_upload_utils.py",
+      "old": "            upload_result = await asyncio.wait_for(\n                storage.upload_file(key, file_to_upload),\n                timeout=IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT,\n            )",
+      "new": "            upload_result = await storage.upload_file(key, file_to_upload)"
+    }
+  ]
+}

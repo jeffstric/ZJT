@@ -1,8 +1,10 @@
 ---
 id: 2026-09-13-sync-worker-fork-qiniu-executor
-patch:
+patch: patches/2026-09-13-sync-worker-fork-qiniu-executor.json
 tests:
+  - tests/task/test_sync_task_worker_init.py
 replay_tests:
+  - tests/task/test_sync_task_worker_init.py::test_worker_init_resets_inherited_storage_singleton
 feature_ids:
 ---
 
@@ -17,8 +19,10 @@ Linux 上同步 worker 用 fork 继承了父进程用过的七牛线程池。子
 
 ## 怎么操作、怎样算没修好
 
-还没有单独的永久测试。事故记录里的验证只跑了阻塞调用 lint，没有锁住「fork 之后必须丢掉继承来的线程池」。带参考图的同步生图若再次卡满 120 秒且七牛没有开始上传，就是这个 bug。
+改坏补丁把 `task/sync_task_executor.py` `_enterprise_sync_worker_init()` 里的 `reset_file_storage()` 调用整行删掉——worker 不再清空继承来的存储工厂单例缓存，回到当年「fork 继承的七牛线程池假 token 导致上传任务入队无人消费、120 秒假超时」的行为。
+
+怎样算没修好：`tests/task/test_sync_task_worker_init.py::test_worker_init_resets_inherited_storage_singleton` 没红，即改坏没被抓住，测试防线是空的。该测试 monkeypatch 拦截 `reset_file_storage`，断言 worker 初始化（含社区版路径）恰好调用它一次，不做真 fork。
 
 ## 永久测试
 
-还没有。
+- `tests/task/test_sync_task_worker_init.py::test_worker_init_resets_inherited_storage_singleton`

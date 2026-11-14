@@ -86,6 +86,51 @@ def test_worker_init_sets_done_event_on_community_shortcut(monkeypatch):
     assert ste._sync_worker_init_done.is_set()
 
 
+def test_worker_init_resets_inherited_storage_singleton(monkeypatch):
+    """worker 初始化必须清掉 fork 继承来的存储单例（事故 2026-09-13 任务 47603）。
+
+    Linux fork 模式下，父进程用过的 QiniuFileStorage 单例连着 ThreadPoolExecutor，
+    其空闲信号量假 token 与 _threads 死对象一并被 fork 快照进子进程：子进程首个
+    上传 submit 消费假 token 后跳过建线程，任务入队无人消费，精确 120 秒报
+    "图片上传到CDN超时"且七牛日志连"开始上传文件"都没有。`_enterprise_sync_worker_init`
+    必须调用 `reset_file_storage()` 清空工厂单例缓存（放在社区版 early-return
+    之前），子进程首次 get_file_storage() 才会新建干净线程池。进程池默认已切
+    spawn，本重置是动态配置回退 fork 时的防线。
+    """
+    _fresh_event()
+    monkeypatch.setattr(ste, "SYNC_WORKER_INIT_WATCHDOG_TIMEOUT", 30)
+    resets = []
+    monkeypatch.setattr(ste, "reset_file_storage", lambda: resets.append(True))
+
+    ste._enterprise_sync_worker_init()
+
+    assert resets == [True]
+    assert ste._sync_worker_init_done.is_set()
+
+
+def test_worker_init_registers_video_drivers(monkeypatch):
+    """worker 初始化必须自行注册视频驱动（事故 2026-09-20 任务 230）。
+
+    spawn 子进程是全新解释器、不继承父进程内存，VideoDriverFactory._registered_drivers
+    在 worker 里是空字典，sync_mode 任务必然报 "Driver implementation not
+    registered"（误导文案"不支持的任务类型: 16"）。主进程只在 server.py 启动时
+    register_all_drivers()，`_enterprise_sync_worker_init` 必须自行注册，且放在
+    社区版 early-return 之前两版通吃。
+    """
+    _fresh_event()
+    monkeypatch.setattr(ste, "SYNC_WORKER_INIT_WATCHDOG_TIMEOUT", 30)
+    registered = []
+    monkeypatch.setattr(
+        "task.visual_drivers.register_all_drivers",
+        lambda: registered.append(True),
+    )
+
+    ste._enterprise_sync_worker_init()
+
+    assert registered == [True]
+    assert ste._sync_worker_init_done.is_set()
+
+
 def test_start_init_watchdog_exits_when_init_never_completes(monkeypatch):
     _fresh_event()
     exited = []
