@@ -318,6 +318,8 @@
                             </div>
                             <!-- 输入框 + @ 引用下拉框 -->
                             <div style="position: relative;">
+                                <!-- @ 资产 token 胶囊镜像层（web/js/marketing_mention_chips.js 渲染） -->
+                                <div class="marketing-textarea-mirror" ref="mentionMirror" aria-hidden="true"></div>
                                 <textarea
                                     class="marketing-textarea"
                                     v-model="inputText"
@@ -1112,6 +1114,7 @@
     <script src="/js/auth_self_heal.js?v=__VERSION__"></script>
     <script src="/js/marketing_article_card.js?v=__VERSION__"></script>
     <script src="/js/download_attachment.js?v=__VERSION__"></script>
+    <script src="/js/marketing_mention_chips.js?v=__VERSION__"></script>
     <script src="/js/marketing_agent.js?v=__VERSION__"></script>
     <script src="/js/aigc_label.js?v=__VERSION__"></script>
     <script src="/js/announcement_popup.js?v=__VERSION__"></script>

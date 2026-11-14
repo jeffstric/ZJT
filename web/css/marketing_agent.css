@@ -1232,6 +1232,94 @@ body {
   color: #aaa;
 }
 
+/* 输入框内 @资产:{id} token 的胶囊镜像层（web/js/marketing_mention_chips.js）：
+   与 textarea 同字距（padding/字号/行高由 JS 按 computedStyle 同步），标记文本
+   隐藏仅保留占位，胶囊绝对定位盖在标记上方；底层文本仍是 token 本身，
+   提交链路（resolveMentionTokens）不变。padding/字号为 JS 同步前的兜底值。 */
+.marketing-textarea-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 4px 0;
+  font-size: 15px;
+  line-height: 1.6;
+  color: transparent;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+.marketing-textarea-mirror .ma-chip-anchor {
+  position: relative;
+  visibility: hidden;
+}
+.ma-mention-chip {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  visibility: visible;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 6px 0 2px;
+  border-radius: 10px;
+  background: #f0f9ff;
+  border: 1px solid #bae0ff;
+  color: #475569;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: text;
+}
+.ma-mention-chip img {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+.ma-mention-chip-noimg {
+  width: 14px;
+  height: 14px;
+  font-size: 11px;
+  line-height: 14px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.ma-mention-chip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 胶囊悬停大图预览浮层（浅色主题） */
+.ma-hover-preview {
+  position: fixed;
+  z-index: 10001;
+  display: none;
+  pointer-events: none;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+.ma-hover-preview img {
+  display: block;
+  max-width: 280px;
+  max-height: 220px;
+  border-radius: 4px;
+}
+
 .marketing-input-bar {
   display: flex;
   justify-content: space-between;

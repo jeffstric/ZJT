@@ -32,6 +32,7 @@
             const showContinue = ref(false);
             const chatMessages = ref(null);
             const inputTextarea = ref(null);
+            const mentionMirror = ref(null);  // @ 资产 token 胶囊镜像层（marketing_mention_chips.js）
             const maxImageSizeMB = ref(10);  // 从服务器配置获取
             const isEnterprise = ref(false);  // 是否为商业版
             const assetItems = ref([]);
@@ -5734,6 +5735,12 @@
                 // 剪贴板粘贴图片：全局监听（含输入框聚焦时），纯文本粘贴不受影响
                 document.addEventListener('paste', handleDocumentPaste);
 
+                // @ 资产胶囊：悬停大图委托（一次性）+ 初始渲染（URL 参数带 token 恢复场景）
+                if (window.MAMentionChips) {
+                    window.MAMentionChips.setupHoverPreview();
+                }
+                syncMentionChips();
+
                 // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
                 bindGeneratedMediaDelegation();
 
@@ -7464,9 +7471,14 @@
                 const after = inputText.value.substring(end);
                 // 资产库条目插入 `@资产:{id}` token，提交时还原为 markdown 图片；
                 // 本地媒体沿用 @名称 文本
-                const insertText = item.isAsset && window.AssetLibrary
-                    ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
-                    : `@${item.displayName}`;
+                let insertText = `@${item.displayName}`;
+                if (item.isAsset && window.AssetLibrary) {
+                    // 注册缩略图/名称，胶囊镜像层（MAMentionChips）免请求直接渲染
+                    if (window.MAMentionChips) {
+                        window.MAMentionChips.register(item.assetId, item.displayName, item.thumbnailUrl);
+                    }
+                    insertText = window.AssetLibrary.buildMentionToken({ id: item.assetId });
+                }
 
                 inputText.value = before + insertText + ' ' + after;
                 mentionDropdown.value.visible = false;
@@ -7477,6 +7489,19 @@
                     textarea.focus();
                 });
             }
+
+            // @ 资产 token 胶囊镜像层同步（web/js/marketing_mention_chips.js）
+            // 挂 inputText watcher：覆盖插入、发送清空、URL 参数/meta.prompt 恢复等全部赋值路径
+            function syncMentionChips() {
+                nextTick(() => {
+                    if (window.MAMentionChips) {
+                        window.MAMentionChips.sync(inputTextarea.value, mentionMirror.value);
+                    }
+                });
+            }
+            Vue.watch(inputText, syncMentionChips);
+            // 输入框区域随模板重建时 ref 重新绑定，补一次渲染
+            Vue.watch(mentionMirror, syncMentionChips);
 
             // 点击 @添加主体 按钮，在输入框中插入 @ 并唤起下拉框
             function triggerMention() {
@@ -8681,6 +8706,7 @@
                 mediaCounters,
                 mentionDropdown,
                 mentionAssetView,
+                mentionMirror,
                 filteredMentionItems,
                 enterMentionGroup,
                 backToMentionGroups,
