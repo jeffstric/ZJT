@@ -15,23 +15,55 @@
     python test_navigator.py --skip-processed   # 跳过已处理(is_processed=true)的测试
 """
 
+import importlib.util
 import json
 import sys
 import argparse
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Set
+
+
+def _load_regression_catalog():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "testing" / "regression_catalog.py"
+    spec = importlib.util.spec_from_file_location("regression_catalog", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"无法加载回归清单解析: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_REGRESSION_CATALOG = _load_regression_catalog()
 
 
 class TestNavigator:
     """测试导航器类"""
 
-    def __init__(self, base_dir: Optional[str] = None):
+    def __init__(self, base_dir: Optional[str] = None, regressions_dir: Optional[str] = None):
         if base_dir is None:
             base_dir = Path(__file__).parent
         self.base_dir = Path(base_dir)
         self.sessions_dir = self.base_dir / "test_sessions"
         self.config_path = self.base_dir / "test_config.json"
+        if regressions_dir is None:
+            regressions_dir = self.base_dir.parent / "tests" / "regressions"
+        self.regressions_dir = Path(regressions_dir)
+
+    def permanent_feature_ids(self) -> Set[str]:
+        """已经写进回归清单的功能，导航不再交给 AI 重测。"""
+        cached = getattr(self, "_permanent_feature_ids", None)
+        if cached is None:
+            cached = _REGRESSION_CATALOG.feature_ids(self.regressions_dir)
+            self._permanent_feature_ids = cached
+        return cached
+
+    def _settled(self, feature: Dict[str, Any]) -> bool:
+        if feature.get("id") in self.permanent_feature_ids():
+            return True
+        return all(
+            step.get("is_processed", False) for step in feature.get("test_steps", [])
+        )
 
     def load_test_data(self) -> Dict[str, Any]:
         """加载测试数据（仅从会话文件加载）"""
@@ -63,8 +95,8 @@ class TestNavigator:
             features = module.get("features", [])
 
             total_features = len(features)
-            # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
-            completed_features = sum(1 for f in features if all(s.get("is_processed", False) for s in f.get("test_steps", [])))
+            # 已有永久测试的功能视为完成，避免导航一直停在同一条上
+            completed_features = sum(1 for f in features if self._settled(f))
 
             total_steps = 0
             processed_steps = 0
@@ -101,6 +133,8 @@ class TestNavigator:
                 continue
 
             for feature in module.get("features", []):
+                if feature.get("id") in self.permanent_feature_ids():
+                    continue
                 if feature.get("pass", False):
                     continue
                 # 如果启用skip_processed，跳过已处理的feature
@@ -401,21 +435,20 @@ class TestNavigator:
         passed_steps = 0
 
         priority_stats = {"P0": {"total": 0, "passed": 0}, "P1": {"total": 0, "passed": 0}, "P2": {"total": 0, "passed": 0}}
+        permanent_features = 0
 
         for module in data.get("modules", []):
             features = module.get("features", [])
-            # 模块完成条件：所有功能都已处理完毕（无论通过与否）
-            module_completed = all(
-                all(s.get("is_processed", False) for s in f.get("test_steps", []))
-                for f in features
-            )
+            # 模块完成条件：所有功能都已处理完毕，或已经有永久测试
+            module_completed = all(self._settled(f) for f in features)
             if module_completed:
                 passed_modules += 1
 
             for feature in features:
                 total_features += 1
-                # 功能完成条件：所有步骤都已处理完毕（无论通过与否）
-                feature_completed = all(s.get("is_processed", False) for s in feature.get("test_steps", []))
+                if feature.get("id") in self.permanent_feature_ids():
+                    permanent_features += 1
+                feature_completed = self._settled(feature)
                 if feature_completed:
                     passed_features += 1
 
@@ -437,6 +470,7 @@ class TestNavigator:
             "features": {"total": total_features, "passed": passed_features},
             "steps": {"total": total_steps, "passed": passed_steps},
             "priority_stats": priority_stats,
+            "permanent_features": permanent_features,
             "completion_rate": f"{passed_features / total_features * 100:.1f}%" if total_features > 0 else "0%"
         }
 
@@ -578,6 +612,8 @@ def print_status(navigator: TestNavigator):
     print("=" * 60)
 
     print(f"\n[FILE] 会话文件: {status['session_file']}")
+    if status.get("permanent_features"):
+        print(f"[SKIP] 已有永久测试、导航跳过: {status['permanent_features']}")
 
     print(f"\n[MODULE] 模块进度: {status['modules']['passed']}/{status['modules']['total']}")
     print(f"[FEATURE] 功能进度: {status['features']['passed']}/{status['features']['total']}")

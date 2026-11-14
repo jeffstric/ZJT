@@ -193,6 +193,10 @@ POWER_MODIFIER_MAX = 100.0
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
 IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
 
+# 历史缺陷回放：临时副本里跑一条永久测试的上限（秒）。
+# 补丁把缺陷改回去之后，测试应当失败；到点仍不结束视为没有通过。
+BUG_REPLAY_PYTEST_TIMEOUT_SECONDS = 180
+
 # Agent 对话模式上传视频/音频总时长的平台级上限（秒）兜底默认值。
 # 实际生效上限由前端按 min(该配置, 所选视频模型最大生成时长) 计算；
 # /api/system/server-config（前端取值）与 /api/upload-agent-video（服务端校验）

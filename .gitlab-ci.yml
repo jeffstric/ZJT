@@ -238,6 +238,15 @@ unit_tests:
         echo "注意：无法获取 test-results.xml，查看上方日志了解测试情况"
       fi
 
+    # 定时流水线：单元测试通过后，把历史缺陷改回去，对应测试必须失败。
+    # 每次 push 不跑，避免把回放加进提交门禁的时长。
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "schedule" ] && [ "$exit_code" = "0" ]; then
+        echo "定时流水线：回放历史缺陷补丁"
+        docker compose -f docker-compose-test.yml run --rm --no-deps test \
+          python3 scripts/testing/run_bug_replay.py
+      fi
+
     # 停止测试环境
     - docker compose -f docker-compose-test.yml down -v || true
 
