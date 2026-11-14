@@ -481,6 +481,10 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 输入框支持 `@` 触发媒体引用下拉框，列出已上传的媒体文件。选中后插入引用标签到文本中，支持模糊搜索过滤。`mentionDropdown` 状态管理下拉框的显示、查询和选中索引。
 
+**资产胶囊镜像层**：@ 选择共享资产库图片后，输入框中以「缩略图 + 名称」胶囊直观呈现引用（纯文本 textarea 无法内嵌图片，由 `web/js/marketing_mention_chips.js` 在 textarea 上方盖同字距透明镜像层，把 `@资产:{id}` token 文本位置盖成胶囊，机制同 storyboard 的 `chat_mention_chips.js`）。选中下拉条目时 `insertMention` 先经 `MAMentionChips.register` 注入资产池（零请求），`inputText` watcher（`syncMentionChips`）幂等重渲染镜像层——发送清空、URL 参数/meta.prompt 恢复等所有赋值路径都经 watcher 覆盖。胶囊支持悬停大图预览（`data-hover-preview`）、点击定位光标到 token 之后、原子删除（退格整枚删除、token 中间插入被阻止）、折行截断自动独占一行；历史恢复等池外 token 走 `AssetLibrary.api('/assets/{id}')` 详情兜底，每 id 只尝试一次，失败退化纯文本。底层文本仍是 token 本身，提交链路（`handleSend` → `resolveMentionTokens`）不变。
+
+**LLM 图片工具仅接受本站相对路径**：@ 引用还原出的 `/upload/...` 相对路径进入对话后，`edit_image` / `validate_image_url`（角色/场景/道具 reference_image）等图片工具只接受本站 `/upload/` 资源并统一归一化为相对路径（`normalize_site_upload_image_url`），不再要求 http/https 绝对 URL——绝对 URL 形态会诱发 LLM 被拒后拼造域名前缀（13572 事故），`/api/image-edit` 落库前同样归一化防止绝对 URL 随「重新编辑/重新生成」回灌扩散。详见 docs/backend/asset_library.md §5。
+
 ### 算力显示
 
 #### 余额显示

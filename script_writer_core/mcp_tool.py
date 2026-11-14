@@ -1224,12 +1224,21 @@ def edit_image(user_id: str, world_id: str, auth_token: str, prompt: str,
         parsed_urls = [u.strip() for u in image_url.split(',') if u.strip()]
         if not parsed_urls:
             return {'success': False, 'error': '解析后没有有效的图片URL'}
-        # 验证 URL 格式：仅允许 http/https 协议，防止 SSRF
-        from urllib.parse import urlparse
+        # 只允许本站 /upload/ 图片资源，统一归一化为相对路径。
+        # 对话里图片标签给出的就是 /upload/... 相对路径；若要求绝对 URL，LLM 会在
+        # 被拒后自行拼造域名前缀（13572 事故），且外部图片链接本无消费需求——
+        # 消费链（visual_drivers）按 /upload/ 前缀做域名无关本地映射，相对路径即完备形态。
+        from utils.media_mapping_util import normalize_site_upload_image_url
+        normalized_urls = []
         for u in parsed_urls:
-            parsed = urlparse(u)
-            if parsed.scheme not in ('http', 'https'):
-                return {'success': False, 'error': f'图片URL仅支持 http/https 协议: {u[:100]}'}
+            normalized = normalize_site_upload_image_url(u)
+            if not normalized:
+                return {
+                    'success': False,
+                    'error': f'图片参数仅支持本站 /upload/ 图片路径（对话中 [图片N] 标签内的相对路径即可，无需拼接域名），不支持外部图片链接: {u[:100]}'
+                }
+            normalized_urls.append(normalized)
+        parsed_urls = normalized_urls
         logger.info(f"[edit_image] 解析到 {len(parsed_urls)} 张图片: {parsed_urls}")
 
         # 绑定 item 时做冲突与已有图像检查（与 generate_text_to_image 对齐）
@@ -1589,14 +1598,21 @@ def validate_name_for_filename(name: str, field_name: str = "名称", language: 
 
 def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[str, Any]:
     """
-    验证图片URL是否为合法的HTTP/HTTPS地址
+    验证图片URL并归一化为本站 /upload/ 相对路径。
+
+    LLM 工具链的图片参数只允许本站 /upload/ 资源：消费链按 /upload/ 前缀做
+    域名无关本地映射，外部图片链接无下载需求。历史上仅校验 http/https 导致
+    LLM 拿着对话里的相对路径被拒后自行拼造域名前缀（13572 事故），绝对 URL
+    随落库字段扩散。归一化规则见 utils.media_mapping_util.normalize_site_upload_image_url。
 
     Args:
-        url: 要验证的URL
-        field_name: 字段名称，用于错误提示
+        url: 要验证的URL（/upload/ 相对路径或本站资源的任意 host 绝对 URL）
+        field_name: 字段名称（用于错误提示）
 
     Returns:
-        dict: 包含验证结果
+        dict: {'valid': bool, 'error': str|None}；valid=True 时额外携带
+        'url'——归一化后的 /upload/... 相对路径，调用方应以该值替换原参数
+        继续链路（落库回归 host 无关存储）。
     """
     if not url or not isinstance(url, str):
         return {
@@ -1606,34 +1622,18 @@ def validate_image_url(url: str, field_name: str = "reference_image") -> Dict[st
 
     url = url.strip()
 
-    # 使用标准库 urllib.parse 解析URL，判断协议与主机是否合法。
-    # 不使用严格正则，以兼容主机名含下划线的内部域名（如 zjt_dev.xxx.cn）。
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url)
-    except Exception:
+    from utils.media_mapping_util import normalize_site_upload_image_url
+    normalized = normalize_site_upload_image_url(url)
+    if not normalized:
         return {
             'valid': False,
-            'error': f'{field_name}的URL格式不正确。请提供合法的HTTP图片地址，不要传入非URL内容。'
-        }
-
-    # 检查是否以http://或https://开头
-    if parsed.scheme not in ('http', 'https'):
-        return {
-            'valid': False,
-            'error': f'{field_name}必须是合法的HTTP图片地址（以http://或https://开头）。请不要传入非URL内容，该字段只能传入图片URL地址。'
-        }
-
-    # 检查主机部分(netloc)是否存在
-    if not parsed.netloc:
-        return {
-            'valid': False,
-            'error': f'{field_name}的URL格式不正确。请提供合法的HTTP图片地址，不要传入非URL内容。'
+            'error': f'{field_name}仅支持本站 /upload/ 图片路径（相对路径即可，无需拼接域名），不支持外部图片链接: {url[:100]}'
         }
 
     return {
         'valid': True,
-        'error': None
+        'error': None,
+        'url': normalized
     }
 
 
@@ -1692,6 +1692,8 @@ def create_character_json(user_id: str, world_id: str, auth_token: str, name: st
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 创建角色数据
         character_data = {
@@ -2295,6 +2297,8 @@ def create_location_json(user_id: str, world_id: str, auth_token: str, name: str
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 创建地点数据
         location_data = {
@@ -2401,6 +2405,8 @@ def create_prop_json(user_id: str, world_id: str, auth_token: str, name: str, pr
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 创建道具数据
         prop_data = {
@@ -2867,6 +2873,8 @@ def update_character_json(user_id: str, world_id: str, auth_token: str, name: st
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 更新字段（只更新提供的非None字段）
         if age is not None:
@@ -2989,6 +2997,8 @@ def update_location_json(user_id: str, world_id: str, auth_token: str, name: str
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 更新字段（只更新提供的非None字段）
         if parent_name is not None or additional_fields.get('parent_name') is not None:
@@ -3101,6 +3111,8 @@ def update_prop_json(user_id: str, world_id: str, auth_token: str, name: str, pr
                     'success': False,
                     'error': url_validation['error']
                 }
+            # 归一化为本站 /upload/ 相对路径后再落库（host 无关存储，asset_library §5）
+            reference_image = url_validation['url']
 
         # 更新字段（只更新提供的非None字段）
         if prop_type is not None:
@@ -3444,7 +3456,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 }
             },
             "required": ["name"]
@@ -3496,7 +3508,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 },
                 "description": {
                     "type": "string",
@@ -3526,7 +3538,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 }
             },
             "required": ["name"]
@@ -3667,7 +3679,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 }
             },
             "required": ["name"]
@@ -3693,7 +3705,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 },
                 "description": {
                     "type": "string",
@@ -3723,7 +3735,7 @@ MCP_TOOLS = [
                 },
                 "reference_image": {
                     "type": "string",
-                    "description": "参考图片（可选）"
+                    "description": "参考图片（可选），仅支持本站 /upload/... 相对路径（对话中 [图片N] 标签内的路径）。不要拼接域名，不支持外部图片链接。"
                 }
             },
             "required": ["name"]
@@ -4092,7 +4104,7 @@ MCP_TOOLS = [
                 },
                 "image_url": {
                     "type": "string",
-                    "description": "原始图片URL（必填），仅支持 http/https URL；支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有需要编辑的图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'。不要传入 /upload/...、upload/... 或本地文件路径。"
+                    "description": "图片路径（必填），仅支持本站 /upload/... 相对路径；支持多张图片用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，直接使用其中的 /upload/... 路径即可，例如：'/upload/asset_library/1/a.png,/upload/character/pic/b.png'。不要拼接域名（无需完整 http URL），不支持外部图片链接。"
                 },
                 "aspect_ratio": {
                     "type": "string",
@@ -4148,7 +4160,7 @@ MCP_TOOLS = [
                 },
                 "image_urls": {
                     "type": "string",
-                    "description": "参考图片URL（可选），多张用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，请将所有图片 URL 用逗号拼接后传入。例如：'http://xxx/a.jpg,http://xxx/b.jpg'。视频克隆场景中可只传 video_urls 不传此参数。"
+                    "description": "参考图片路径（可选），仅支持本站 /upload/... 相对路径，多张用英文逗号分隔。对话中每张图片都有 [图片N]（URL: ...） 标签，直接使用其中的 /upload/... 路径，例如：'/upload/asset_library/1/a.png,/upload/character/pic/b.png'。不要拼接域名，不支持外部图片链接。视频克隆场景中可只传 video_urls 不传此参数。"
                 },
                 "ratio": {
                     "type": "string",
@@ -5671,9 +5683,10 @@ def _resolve_image_edit_task_id(
 
 def _to_public_http_url(url: str, comfyui_base_url: str) -> Optional[str]:
     """
-    将本地 /upload/... 路径转为可被 /api/image-edit 接受的公开 http(s) URL。
+    将本地 /upload/... 路径转为公开 http(s) URL。
 
-    edit_image() 仅接受 http/https 协议（防 SSRF），本地相对路径必须先转换。
+    历史兼容：/api/image-edit 落库前会把本站 /upload/ 绝对 URL 归一化回相对
+    路径（host 无关存储），此处转换仅为保持请求形态与存量链路一致。
     已是 http/https 的原样返回；无法识别的返回 None。
     """
     if not url or not isinstance(url, str):
