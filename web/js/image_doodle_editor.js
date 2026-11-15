@@ -31,7 +31,7 @@
   const HANDLE_HIT_CSS = 12;   // 控制点命中半径（css px）
   const HIT_TOL_CSS = 6;       // 元素命中容差（css px）
   const MIN_RECT_CSS = 3;      // 矩形最小显示尺寸，小于视为误触
-  const UPLOAD_ACCEPT = '.jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif,.gif,.heic,.heif,image/*';
+  const UPLOAD_ACCEPT = '.jpg,.jpeg,.jfif,.png,.webp,.bmp,.tiff,.tif,.gif,.heic,.heif,image/*';
 
   function tr(key, fallback) {
     if (typeof window !== 'undefined' && typeof window.t === 'function') {

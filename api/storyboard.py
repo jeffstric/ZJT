@@ -6324,10 +6324,13 @@ async def upload_scene_asset(
             if not content_type.startswith("image/"):
                 return JSONResponse(
                     status_code=400,
-                    content={'success': False, 'error': '仅支持 JPG、PNG、GIF、WebP 图片'},
+                    content={'success': False, 'error': '仅支持 JPG、PNG、GIF、WebP、JFIF 图片'},
                 )
             # 兼容浏览器上传 image/* 但文件名没有有效扩展名的 Blob。
             ext = ".png"
+        # jfif 内容即标准 JPEG，保存前归一化为 .jpg（/upload/ 目录不残留 .jfif 文件）
+        if ext == ".jfif":
+            ext = ".jpg"
         size_config_key = 'max_image_size_mb'
         max_size_default = MediaConstants.STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT
 

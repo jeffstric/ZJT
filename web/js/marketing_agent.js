@@ -6445,12 +6445,12 @@
                     if (imageFiles.length > 0 && remainingImageSlots <= 0) {
                         showError(window.t('max_images', {max: AGENT_IMAGE_MAX_COUNT}));
                     }
-                    const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                    const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                     const validImageFiles = imageFiles.slice(0, Math.max(0, remainingImageSlots)).filter(file => {
                         // 格式校验
                         const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
                         if (!ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
-                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                             return false;
                         }
                         if (file.size > maxImageSizeMB.value * 1024 * 1024) {
@@ -6640,10 +6640,10 @@
                 }
                 // 以下为图片处理逻辑
                 // 前端预检查文件格式
-                const ALLOWED_IMAGE_EXTENSIONS_SINGLE = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                const ALLOWED_IMAGE_EXTENSIONS_SINGLE = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                 const imgExt = '.' + (file.name.split('.').pop() || '').toLowerCase();
                 if (!ALLOWED_IMAGE_EXTENSIONS_SINGLE.includes(imgExt)) {
-                    showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                    showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                     return;
                 }
                 // 前端预检查文件大小
@@ -7204,12 +7204,12 @@
                     if (referenceInputRef.value) referenceInputRef.value.value = '';
                     return;
                 }
-                const ALLOWED_IMAGE_EXTENSIONS_REF = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                const ALLOWED_IMAGE_EXTENSIONS_REF = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                 const toAdd = files.slice(0, remaining).filter(f => {
                     if (!f.type.startsWith('image/')) return false;
                     const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
                     if (!ALLOWED_IMAGE_EXTENSIONS_REF.includes(ext)) {
-                        showError(window.t('unsupported_image_format', { name: f.name, formats: 'JPG, PNG, GIF, WebP' }));
+                        showError(window.t('unsupported_image_format', { name: f.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                         return false;
                     }
                     return true;
@@ -7537,12 +7537,12 @@
                     if (imageFiles.length > 0 && remainingImageSlots <= 0) {
                         showError(window.t('max_images', { max: AGENT_IMAGE_MAX_COUNT }));
                     }
-                    const ALLOWED_IMAGE_EXTENSIONS_DND = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                    const ALLOWED_IMAGE_EXTENSIONS_DND = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                     const validImageFiles = imageFiles.slice(0, Math.max(0, remainingImageSlots)).filter(file => {
                         // 格式校验
                         const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
                         if (!ALLOWED_IMAGE_EXTENSIONS_DND.includes(ext)) {
-                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                             return false;
                         }
                         if (file.size > maxImageSizeMB.value * 1024 * 1024) {

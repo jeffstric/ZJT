@@ -2769,7 +2769,8 @@ class MediaConstants:
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
     # 分镜候选区手工上传：首版采用浏览器兼容性稳定的图片与视频格式。
-    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    # jfif 即 JPEG 容器（同魔数），入口放行、落盘前归一化为 .jpg
+    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.jfif'}
     STORYBOARD_VIDEO_UPLOAD_EXTENSIONS = {'.mp4', '.webm'}
     STORYBOARD_ASSET_UPLOAD_CHUNK_BYTES = 1024 * 1024
     STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT = 20
@@ -3644,6 +3645,8 @@ class MediaUploadSafetyConstants:
         'MAGIC_SCAN_BYTES': '魔数校验读取的头部字节数',
         'TIFF_EXTS': '允许上传但落盘前必须转码的 TIFF 扩展名',
         'TIFF_CONVERT_TARGET_EXT': 'TIFF 转码目标扩展名（浏览器可解码）',
+        'JFIF_EXTS': '允许上传但落盘前必须重命名的 JFIF 扩展名',
+        'JFIF_CONVERT_TARGET_EXT': 'JFIF 归一化目标扩展名（内容同为 JPEG，仅重命名）',
     }
 
     # 显式拒绝：命中时返回针对性错误信息（白名单本身已排除，这里用于精确提示）
@@ -3652,7 +3655,9 @@ class MediaUploadSafetyConstants:
     # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）。
     # tif/tiff 浏览器 <img> 无法解码、CDN 扩展名表也不认，放行仅用于上传入口，
     # 落盘前由 utils/media_upload.convert_tiff_file_to_png 统一转 PNG 后再对外服务
-    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff')
+    # jfif 内容即标准 JPEG（同 FF D8 FF 魔数），放行仅用于上传入口，
+    # 落盘前由 utils/media_upload.normalize_uploaded_image_file 重命名为 .jpg
+    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.jfif')
     VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
     AUDIO_EXTS = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac')
 
@@ -3670,6 +3675,13 @@ class MediaUploadSafetyConstants:
     # 转码取第一帧；16bit 降为 8bit；CMYK 转 RGB；转码产物体积不设上限（限制的是上传原文件）
     TIFF_EXTS = ('.tif', '.tiff')
     TIFF_CONVERT_TARGET_EXT = '.png'
+
+    # JFIF 专用：.jfif 内容即标准 JPEG（JPEG/JFIF 是同一文件格式的正式名称），
+    # 浏览器 <img> 可正常解码，但部分 CDN/proxy 的 MIME 表不含 jfif，
+    # 与 TIFF 同策略：上传入口放行、落盘后归一化为 .jpg（无损，仅重命名），
+    # upload 目录不得残留 .jfif 文件。
+    JFIF_EXTS = ('.jfif',)
+    JFIF_CONVERT_TARGET_EXT = '.jpg'
 
 
 # ============ 智能插入分镜 ============
