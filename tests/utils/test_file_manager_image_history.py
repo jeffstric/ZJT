@@ -234,10 +234,12 @@ class TestUpdateCharacterJsonArchive(unittest.TestCase):
         mcp_tool_module.set_file_manager(self.fm)
         self.user_id = "1"
         self.world_id = "1"
-        # 先用 create_character_json 建角色（跳过 URL 校验，便于测试任意值）
+        # 先用 create_character_json 建角色。reference_image 用本站 /upload/ 相对路径：
+        # 13572 后 validate_image_url 仅接受 /upload/ 资源，生图回调链路传入的
+        # 本就是本站生成图，外部 http://img/... 假 URL 已不再合法。
         create_character_json(self.user_id, self.world_id, "token",
                               "alice", appearance="a",
-                              reference_image="http://img/old.png",
+                              reference_image="/upload/old.png",
                               _skip_image_validation=True)
 
     def tearDown(self):
@@ -253,22 +255,22 @@ class TestUpdateCharacterJsonArchive(unittest.TestCase):
         """生图完成回调场景：update_character_json 替换主图 → 旧图进历史"""
         result = mcp_tool_module.update_character_json(
             self.user_id, self.world_id, "token", "alice",
-            reference_image="http://img/new.png")
+            reference_image="/upload/new.png")
         self.assertTrue(result['success'])
         data = self._read_char()
-        self.assertEqual(data["reference_image"], "http://img/new.png")
-        self.assertEqual(data.get(CHARACTER_IMAGE_HISTORY_FIELD), ["http://img/old.png"])
+        self.assertEqual(data["reference_image"], "/upload/new.png")
+        self.assertEqual(data.get(CHARACTER_IMAGE_HISTORY_FIELD), ["/upload/old.png"])
 
     def test_repeated_regen_keeps_full_history(self):
         """连续两次重生成：历史按最新在前累计"""
         mcp_tool_module.update_character_json(self.user_id, self.world_id, "token",
-                                              "alice", reference_image="http://img/2.png")
+                                              "alice", reference_image="/upload/2.png")
         mcp_tool_module.update_character_json(self.user_id, self.world_id, "token",
-                                              "alice", reference_image="http://img/3.png")
+                                              "alice", reference_image="/upload/3.png")
         data = self._read_char()
-        self.assertEqual(data["reference_image"], "http://img/3.png")
+        self.assertEqual(data["reference_image"], "/upload/3.png")
         self.assertEqual(data.get(CHARACTER_IMAGE_HISTORY_FIELD),
-                         ["http://img/2.png", "http://img/old.png"])
+                         ["/upload/2.png", "/upload/old.png"])
 
 
 if __name__ == "__main__":

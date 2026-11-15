@@ -133,7 +133,7 @@ from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
-from utils.media_mapping_util import register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
+from utils.media_mapping_util import normalize_site_upload_image_url, register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -2136,9 +2136,17 @@ async def image_edit(
         if ref_image_urls:
             urls = [url.strip() for url in ref_image_urls.split(',') if url.strip()]
             image_urls.extend(urls[:10 - len(image_urls)])  # Limit total to 10
-        
+
         if not image_urls:
             raise HTTPException(status_code=400, detail="At least one image is required (via file upload or URL)")
+
+        # 参考图统一归一化为本站 /upload/ 相对路径后落库（host 无关存储）。
+        # 13572 事故：存量绝对 URL（历史 meta 回灌 / 上传接口返回值 / LLM 拼造域名）
+        # 若原样写入 ai_tools.image_path，会随重新编辑/重新生成链路继续扩散；
+        # 消费链按 /upload/ 前缀做域名无关本地映射，相对路径即完备形态。
+        # 归一化失败的项（真正的外部图片链接）保持原样——该接口也服务非 LLM
+        # 直调方，不在接口层拒绝。
+        image_urls = [normalize_site_upload_image_url(u) or u for u in image_urls]
 
         logger.info(f"[image_edit] 提示词: {prompt} 参考图片列表 ({len(image_urls)}张): {image_urls}")
         
