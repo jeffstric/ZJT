@@ -15,6 +15,11 @@ _save_uploaded_image / image-to-video upload-media 等）统一走本模块。
 tif/tiff 仅作为上传入口格式放行：浏览器 <img> 不解码 TIFF、CDN/proxy 的
 MIME 表也不含 tif，落盘后必须经 convert_tiff_file_to_png 归一化为 PNG，
 /upload/ 目录不得残留 .tif 文件。
+
+jfif 内容即标准 JPEG（同一文件格式的正式名称，魔数同为 FF D8 FF），仅作
+上传入口格式放行：落盘后由 normalize_jfif_file_to_jpg 无损重命名为 .jpg
+（不转码，避免重编码画质损失），/upload/ 目录不得残留 .jfif 文件。
+各落盘点统一调用 normalize_uploaded_image_file 完成上述归一化。
 """
 import os
 from typing import Optional
@@ -41,6 +46,7 @@ class UploadValidationError(ValueError):
 _MAGIC_CHECKS = {
     '.jpg':  lambda b: b[:3] == b'\xff\xd8\xff',
     '.jpeg': lambda b: b[:3] == b'\xff\xd8\xff',
+    '.jfif': lambda b: b[:3] == b'\xff\xd8\xff',
     '.png':  lambda b: b[:8] == b'\x89PNG\r\n\x1a\n',
     '.gif':  lambda b: b[:6] in (b'GIF87a', b'GIF89a'),
     '.webp': lambda b: len(b) >= 12 and b[:4] == b'RIFF' and b[8:12] == b'WEBP',
@@ -88,7 +94,7 @@ def resolve_media_extension(filename: Optional[str]) -> str:
         raise UploadValidationError(f"不允许上传 {ext} 文件（可执行/可渲染文档存在安全风险）")
     if ext not in _ALLOWED_EXTS:
         raise UploadValidationError(
-            "不支持的文件格式，仅支持图片（jpg/png/webp/gif/bmp/tif/tiff）、"
+            "不支持的文件格式，仅支持图片（jpg/png/webp/gif/bmp/tif/tiff/jfif）、"
             "视频（mp4/mov/webm/avi/mkv）、音频（mp3/wav/m4a/aac/ogg/flac）"
         )
     return ext
@@ -209,3 +215,50 @@ def convert_tiff_file_to_png(file_path: str) -> str:
     except OSError:
         logger.warning(f"TIFF 转码后删除原文件失败: {file_path}")
     return png_path
+
+
+def normalize_jfif_file_to_jpg(file_path: str) -> str:
+    """把已落盘的 .jfif 文件无损重命名为 .jpg 并返回新文件路径。
+
+    JFIF 即 JPEG 文件交换格式，.jfif 与 .jpg 内容完全相同（魔数 FF D8 FF），
+    仅部分 CDN/proxy 的 MIME 表不认 jfif 扩展名，故与 TIFF 同策略：
+    上传入口放行、落盘后重命名归一化，/upload/ 目录不得残留 .jfif 文件。
+    不转码、不重新编码，重命名失败（目标已存在/跨盘等极端场景）时清理
+    原文件并抛错，与 convert_tiff_file_to_png 的失败语义保持一致。
+
+    与本模块其余函数一致为纯同步实现，供 asyncio.to_thread 在工作线程调用。
+
+    Raises:
+        UploadValidationError: 重命名失败，此时原 .jfif 文件已被清理
+    """
+    jpg_path = os.path.splitext(file_path)[0] + MediaUploadSafetyConstants.JFIF_CONVERT_TARGET_EXT
+    try:
+        os.replace(file_path, jpg_path)
+    except OSError as e:
+        for stale in (jpg_path, file_path):
+            try:
+                if os.path.exists(stale):
+                    os.remove(stale)
+            except OSError:
+                logger.warning(f"清理 JFIF 重命名残留文件失败: {stale}")
+        raise UploadValidationError(
+            f"JFIF 图片归一化为 .jpg 失败（{type(e).__name__}），请重新上传"
+        ) from e
+    return jpg_path
+
+
+def normalize_uploaded_image_file(file_path: str) -> str:
+    """上传图片落盘后的统一归一化入口，返回最终对外服务的文件路径。
+
+    - TIFF（.tif/.tiff）：浏览器不可解码，转码为 PNG；
+    - JFIF（.jfif）：内容即 JPEG，无损重命名为 .jpg；
+    - 其余扩展名原样返回。
+
+    与本模块其余函数一致为纯同步实现，供 asyncio.to_thread 在工作线程调用。
+    """
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+        return convert_tiff_file_to_png(file_path)
+    if ext in MediaUploadSafetyConstants.JFIF_EXTS:
+        return normalize_jfif_file_to_jpg(file_path)
+    return file_path

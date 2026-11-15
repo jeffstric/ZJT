@@ -180,7 +180,7 @@
   "video_image_mode_max_n": "当前视频模式最多允许 {max} 张图片",
   "upload_failed_retry": "图片上传失败，请重新上传",
   "upload_error_retry": "图片上传异常，请重新上传",
-  "unsupported_image_format": "{{name}} 格式不支持，请上传 JPG、PNG、GIF 或 WebP 格式的图片",
+  "unsupported_image_format": "{{name}} 格式不支持，请上传 JPG、PNG、GIF 或 WebP 格式的图片（支持 JFIF 扩展名）",
   "create_session_failed": "创建会话失败",
   "task_config_not_found_image_edit": "未找到图片编辑模型对应的任务配置",
   "task_config_not_found_text_to_image": "未找到文生图模型对应的任务配置",

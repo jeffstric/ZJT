@@ -5815,10 +5815,12 @@ async def upload_reference_image(
         图片访问URL
     """
     try:
-        # 验证文件类型
-        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        # 验证文件类型（jfif 内容即标准 JPEG，入口放行、保存前归一化为 .jpg）
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.jfif'}
         file_extension = os.path.splitext(file.filename or '')[1].lower()
-        
+        if file_extension == '.jfif':
+            file_extension = '.jpg'
+
         if file_extension not in allowed_extensions:
             return JSONResponse({
                 'success': False,
@@ -5936,9 +5938,11 @@ async def upload_agent_image(
                 'error': '无效的会话ID'
             }, status_code=400)
 
-        # 验证文件类型
-        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+        # 验证文件类型（jfif 内容即标准 JPEG，入口放行、保存前归一化为 .jpg）
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.jfif'}
         file_extension = os.path.splitext(file.filename or '')[1].lower()
+        if file_extension == '.jfif':
+            file_extension = '.jpg'
 
         if file_extension not in allowed_extensions:
             return JSONResponse({

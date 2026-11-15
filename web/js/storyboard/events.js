@@ -485,10 +485,10 @@ export function validateCandidateUploadFile(file, assetType) {
             ? ''
             : t('msg_video_format_unsupported', '视频仅支持 MP4、WebM 格式');
     }
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const imageExtensions = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
     return imageExtensions.includes(extension) || String(file?.type || '').startsWith('image/')
         ? ''
-        : t('msg_image_format_unsupported', '仅支持 JPG、PNG、GIF、WebP 图片');
+        : t('msg_image_format_unsupported', '仅支持 JPG、PNG、GIF、WebP、JFIF 图片');
 }
 
 function isSceneCandidateTaskRunning(status) {

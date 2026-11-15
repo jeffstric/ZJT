@@ -276,7 +276,7 @@
                         @drop.prevent="handleDrop"
                     >
                         <div class="marketing-input-upload">
-                            <input type="file" ref="fileInputRef" style="display: none;" accept=".jpg,.jpeg,.png,.gif,.webp,video/*,audio/*" @change="handleFileChange">
+                            <input type="file" ref="fileInputRef" style="display: none;" accept=".jpg,.jpeg,.jfif,.png,.gif,.webp,video/*,audio/*" @change="handleFileChange">
                             <button class="marketing-upload-btn" :title="hasUploadedImage ? $t('replace_image') : $t('upload_reference')" @click="triggerUpload">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                     <path d="M12 5v14M5 12h14"/>
@@ -857,7 +857,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <input type="file" ref="referenceInputRef" style="display: none;" accept=".jpg,.jpeg,.png,.gif,.webp" multiple @change="handleReferenceFileChange">
+                            <input type="file" ref="referenceInputRef" style="display: none;" accept=".jpg,.jpeg,.jfif,.png,.gif,.webp" multiple @change="handleReferenceFileChange">
                             <!-- @主体按钮（全能参考模式下可用） -->
                             <button class="marketing-bar-btn mobile-foldable" :style="showAddSubject ? '' : 'color: #ccc; cursor: not-allowed;'" :title="showAddSubject ? $t('add_subject_tip') : $t('mode_not_supported')" @mousedown.prevent @click="showAddSubject && triggerMention()">
                                 <span :style="showAddSubject ? 'color: #00a8e6; font-weight: 600;' : 'color: #ccc; font-weight: 600;'">@</span>
