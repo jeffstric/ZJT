@@ -1,0 +1,19 @@
+{
+  "replaces": [
+    {
+      "path": "api/user.py",
+      "old": "@router.get(\"/power-budget\")\nasync def get_power_budget(auth_token: str = Header(None, alias=\"Authorization\")):",
+      "new": "async def get_power_budget(auth_token: str = Header(None, alias=\"Authorization\")):"
+    },
+    {
+      "path": "api/user.py",
+      "old": "@router.put(\"/power-budget\")\nasync def set_power_budget(",
+      "new": "async def set_power_budget("
+    },
+    {
+      "path": "api/user.py",
+      "old": "@router.delete(\"/power-budget\")\nasync def delete_power_budget(auth_token: str = Header(None, alias=\"Authorization\")):",
+      "new": "async def delete_power_budget(auth_token: str = Header(None, alias=\"Authorization\")):"
+    }
+  ]
+}

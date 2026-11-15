@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "task/sync_task_executor.py",
+      "old": "    reset_file_storage()\n    try:\n        from config.constant import Edition",
+      "new": "    try:\n        from config.constant import Edition"
+    }
+  ]
+}

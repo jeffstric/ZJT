@@ -1,0 +1,8 @@
+{
+  "creates": [
+    {
+      "path": "task/bug_replay_status_cas.py",
+      "content": "def replay_bad_status_write(tool_id):\n    AIToolsModel.update_only_fields(tool_id, status=-2)\n"
+    }
+  ]
+}

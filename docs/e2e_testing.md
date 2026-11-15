@@ -2,6 +2,8 @@
 
 本项目提供两种端到端测试方案：AI 智能体驱动（JSON 测试用例）和编程式自动化（pytest + Playwright）。
 
+历史缺陷清单，以及怎样把 AI 测过的检查收成永久测试、再故意改坏代码验收，见 [历史缺陷清单和改坏回放](testing/regression_catalog.md)。
+
 ## 目录结构
 
 ```

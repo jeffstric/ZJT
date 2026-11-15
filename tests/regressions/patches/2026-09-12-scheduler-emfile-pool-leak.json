@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "task/sync_task_executor.py",
+      "old": "            # 必须先快照 _processes：CPython 的 shutdown() 无论 wait 与否都会\n            # 把 _processes 置 None，shutdown 后再取就是 None，回收会变空操作\n            processes = list((getattr(old_executor, \"_processes\", None) or {}).items())\n            try:\n                old_executor.shutdown(wait=False, cancel_futures=True)\n            except TypeError:\n                old_executor.shutdown(wait=False)",
+      "new": "            try:\n                old_executor.shutdown(wait=False, cancel_futures=True)\n            except TypeError:\n                old_executor.shutdown(wait=False)\n            processes = list((getattr(old_executor, \"_processes\", None) or {}).items())"
+    }
+  ]
+}
