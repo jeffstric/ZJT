@@ -847,10 +847,12 @@ def register_all_drivers():
 
     try:
         from .minimax_h3_autodl_v1_driver import (
+            MinimaxH3CharReplaceAutodlV1Driver,
             MinimaxH3FirstLastAutodlV1Driver,
             MinimaxH3ReferenceAutodlV1Driver,
         )
-        # 注册 MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
+        # 注册 MiniMax H3 AutoDL.Art ComfyUI 工作流
+        # （参考生 zm_u24 / 首尾帧 lightx2v / 人物替换 zm_titim）
         VideoDriverFactory.register_driver(
             DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,
             MinimaxH3ReferenceAutodlV1Driver,
@@ -858,6 +860,10 @@ def register_all_drivers():
         VideoDriverFactory.register_driver(
             DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
             MinimaxH3FirstLastAutodlV1Driver,
+        )
+        VideoDriverFactory.register_driver(
+            DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
+            MinimaxH3CharReplaceAutodlV1Driver,
         )
     except ImportError as e:
         logger.warning(f"Failed to import MinimaxH3 Autodl drivers: {e}")

@@ -1360,6 +1360,17 @@ VIDEO_ENHANCE_MAX_DURATION_SECONDS = 15
 # ffprobe 探测视频时长的超时（秒），本地文件与远程 URL 共用
 VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS = 15
 
+# ==================== 视频编辑（AutoDL.Art H3 人物替换等） ====================
+# 视频人物替换（minimax_h3_zm_titim）：duration 为输出时长（截取参考视频前 N 秒），
+# 工作流合法区间 5-25 秒；参考视频超出 25s 时仅取前 N 秒，短于输出时长时
+# 无参考段由模型自由发挥（上游文档口径）。分辨率仅 768p，竖/横跟随视频方向。
+VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS = 5
+VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS = 25
+# 替换主体检测类型默认值（必须英文，上游对照表见工作流页；一次只填一种）
+VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT = 'person'
+# 参考图槽位上限（ref_image_0 ~ ref_image_8）
+VIDEO_CHAR_REPLACE_MAX_REF_IMAGES = 9
+
 # RunningHub 上游拥堵自动重试的默认延迟（秒）
 # 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
 RUNNINGHUB_UPSTREAM_CONGEST_RETRY_DELAY_DEFAULT = 30

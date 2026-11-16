@@ -221,6 +221,16 @@ MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
 VIDEO_ENHANCE_COMPUTING_POWER = {
     seconds: power * 2 for seconds, power in MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER.items()
 }
+# 视频人物替换（AutoDL.Art minimax_h3_zm_titim）按时长算力（5-25 档）。
+# 2026-11-16 贴本定价：autodl 高峰价 768p 0.11 元/秒 → ceil(秒×0.11/0.04)
+# = ceil(秒×2.75)，毛利 0~4%；空闲时段（00:00-08:00）0.10 元/秒为利润冗余。
+# 输出仅 768p 一档（竖/横跟随参考视频方向），无 480p 档。
+VIDEO_CHARACTER_REPLACE_COMPUTING_POWER = {
+    5: 14, 6: 17, 7: 20, 8: 22, 9: 25, 10: 28,
+    11: 31, 12: 33, 13: 36, 14: 39, 15: 42,
+    16: 44, 17: 47, 18: 50, 19: 53, 20: 55,
+    21: 58, 22: 61, 23: 64, 24: 66, 25: 69,
+}
 
 # AI 视频高清修复「用户可选参数」schema（配置驱动，前端按此渲染参数表单）。
 # 这是参数的唯一事实来源：
@@ -308,6 +318,7 @@ class TaskCategory:
         'IMAGE_TO_VIDEO': '图生视频',
         'TEXT_TO_IMAGE': '文生图',
         'VISUAL_ENHANCE': '视觉增强',
+        'VIDEO_EDIT': '视频编辑',
         'AUDIO': '音频',
         'DIGITAL_HUMAN': '数字人',
         'OTHER': '其他',
@@ -317,6 +328,7 @@ class TaskCategory:
     IMAGE_TO_VIDEO = 'image_to_video'
     TEXT_TO_IMAGE = 'text_to_image'
     VISUAL_ENHANCE = 'visual_enhance'
+    VIDEO_EDIT = 'video_edit'
     AUDIO = 'audio'
     DIGITAL_HUMAN = 'digital_human'
     OTHER = 'other'
@@ -1491,6 +1503,8 @@ class DriverImplementation:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
+    # 视频人物替换（minimax_h3_zm_titim，参考视频必填 + 最多 9 参考图，5-25s）
+    MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 'minimax_h3_character_replace_autodl_v1'
     MINIMAX_H3_CHENYU_V1 = 'minimax_h3_chenyu_v1'                          # 图生视频仅首帧（晨羽智云工作流 API v2）
 
     # MiniMax H3 数字人
@@ -1761,6 +1775,7 @@ class DriverImplementationId:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 108
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
+    MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 111
     MINIMAX_H3_CHENYU_V1 = 110
 
 
@@ -1845,6 +1860,7 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
     'minimax_h3_reference_autodl_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_AUTODL_V1,
     'minimax_h3_first_last_autodl_v1': DriverImplementationId.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
+    'minimax_h3_character_replace_autodl_v1': DriverImplementationId.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
     'minimax_h3_chenyu_v1': DriverImplementationId.MINIMAX_H3_CHENYU_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
@@ -2015,6 +2031,9 @@ class DriverKey:
 
     # 视频高清修复
     VIDEO_ENHANCE = 'video_enhance'
+
+    # 视频编辑（人物替换等，视频进视频出）
+    VIDEO_CHARACTER_REPLACE = 'video_character_replace'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
@@ -2235,6 +2254,7 @@ class TaskTypeId:
         'VIDU_Q3_IMAGE_TO_VIDEO': 'Vidu Q3 图生视频',
         'VIDU_Q3_REFERENCE_TO_VIDEO': 'Vidu Q3 参考生视频',
         'VIDU_Q3_TEXT_TO_VIDEO': 'Vidu Q3 文生视频',
+        'VIDEO_CHARACTER_REPLACE': '视频人物替换',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -2285,6 +2305,9 @@ class TaskTypeId:
     VIDU_Q3_REFERENCE_TO_VIDEO = 44
     MINIMAX_H3_TEXT_TO_VIDEO = 45
     MINIMAX_H3_KEYFRAME_REF_TO_VIDEO = 50
+
+    # 视频编辑
+    VIDEO_CHARACTER_REPLACE = 54
 
 
     # 图片/视频 增强
@@ -3665,6 +3688,26 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         hidden=True,
         sort_order=52,
     ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDEO_CHARACTER_REPLACE,
+        key='video_character_replace',
+        short_key='video_char_replace',
+        name='视频人物替换',
+        model_name='视频人物替换',
+        variant_label='MiniMax H3',
+        category=TaskCategory.VIDEO_EDIT,
+        provider=TaskProvider.AUTODL,
+        driver_name=DriverKey.VIDEO_CHARACTER_REPLACE,
+        implementation=DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
+        implementations=[DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1],
+        # 按输出秒数计费（5-25 档），表见 VIDEO_CHARACTER_REPLACE_COMPUTING_POWER
+        computing_power=VIDEO_CHARACTER_REPLACE_COMPUTING_POWER,
+        supported_durations=sorted(VIDEO_CHARACTER_REPLACE_COMPUTING_POWER),
+        default_duration=5,
+        # 视频编辑类：参考视频必填（成片动作/运镜/原声跟随视频）+ 最多 9 张角色参考图
+        supported_ratios=[],
+        sort_order=53,
+    ),
 
     # ==================== 音频 ====================
     UnifiedTaskConfig(
@@ -4477,6 +4520,24 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
                 default=1.0
             )
         ]
+    ),
+    ImplementationConfig(
+        name='minimax_h3_character_replace_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3CharReplaceAutodlV1Driver',
+        default_computing_power=VIDEO_CHARACTER_REPLACE_COMPUTING_POWER,
+        enabled=True,
+        description='AutoDL.Art MiniMax H3 视频人物替换（工作流 minimax_h3_zm_titim，参考视频必填 + 最多 9 参考图，5-25s，768p 竖/横跟随视频方向，原声保留）',
+        sort_order=5210.0,
+        # 任务类型 54 原生供应商即 AutoDL，仍显式标注（口径同上，防密钥池误伤）
+        provider=TaskProvider.AUTODL,
+        required_config_keys=['autodl.api_key'],
+        # 输出仅 768p 一档（竖/横跟随参考视频方向，端点 ffprobe 探测后写入 extra_config）
+        supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        supported_durations=list(range(5, 26)),
     ),
     # MiniMax H3 图生视频 晨羽智云工作流（两步异步：submit + run/info 轮询，媒体直接传公网 URL）
     ImplementationConfig(

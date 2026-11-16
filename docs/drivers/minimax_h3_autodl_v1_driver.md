@@ -1,13 +1,14 @@
-# MiniMax H3 AutoDL.Art 驱动（参考生 zm_u24 + 首尾帧 lightx2v）
+# MiniMax H3 AutoDL.Art 驱动（参考生 zm_u24 + 首尾帧 lightx2v + 人物替换 zm_titim）
 
 ## 概述
 
-通过 AutoDL.Art ComfyUI 工作流 API 调用 **MiniMax H3** 生成视频，一个驱动文件覆盖两个工作流（同一套两步异步协议，差异只在素材槽位）：
+通过 AutoDL.Art ComfyUI 工作流 API 调用 **MiniMax H3** 生成/编辑视频，一个驱动文件覆盖三个工作流（同一套两步异步协议，差异只在素材槽位）：
 
 | 工作流 | workflow_id | 实现方 | 挂载任务 |
 |--------|-------------|--------|----------|
 | H3多图多音频生视频(升级画质) | `minimax_h3_zm_u24` | `minimax_h3_reference_autodl_v1`（ID 108） | `minimax_h3_reference_to_video`（参考生，type 37） |
 | H3首尾帧生视频 | `minimax_h3_lightx2v` | `minimax_h3_first_last_autodl_v1`（ID 109，**代码级默认关闭**） | `minimax_h3_image_to_video`（首尾帧，type 34） |
+| H3全自动多角色动迁替换 | `minimax_h3_zm_titim` | `minimax_h3_character_replace_autodl_v1`（ID 111） | `video_character_replace`（视频编辑·人物替换，type 54） |
 
 `minimax_h3_first_last_autodl_v1` 的 `ImplementationConfig.enabled=False`。上游要求 `first_frame` 和 `last_frame` 都必填，只有首帧会失败。这是代码级硬禁用，数据库 `implementation_power_config.enabled` 不能把它重新打开。首尾帧任务继续用 RunningHub 实现方。参考生 `minimax_h3_reference_autodl_v1` 不受影响。
 
@@ -52,6 +53,25 @@
 | `last_frame` | `ai_tool.image_path` 次图 | **必填**（上游强校验）。2026-11-08 三重实测证实：仅首帧提交报"缺少必填参数：last_frame"（事故 13442）；直接探测 `first_frame` 单独同报错、`ref_image_0` 报"未定义的参数"——曾据 zm_u24（参考生，槽位 `ref_image_0`、无尾帧概念）单图测试误判"尾帧可选"并短暂放开，已回滚。上游放开后可再支持；单首帧任务经兼容钩子自动落回 RunningHub 实现 |
 | （音频） | `ai_tool.audio_path` | 工作流无音频槽，忽略 |
 
+### 人物替换（zm_titim，2026-11-16 新增）
+
+| 参数 | 来源 | 说明 |
+|------|------|------|
+| `ref_video` | `ai_tool.video_path` | **必填**。动作/运镜/原声跟随视频；经 `upload_media_to_cdn_sync` 转公网 URL。成片=视频前 duration 秒，视频短于 duration 的尾段由模型自由发挥（上游口径） |
+| `ref_image_0`~`ref_image_8` | `ai_tool.reference_images`（JSON 数组，1-9 张） | 图 N 替换视频里第 N 个角色（从左到右）；经 `compress_and_upload_image_sync` 转公网 URL |
+| `prompt` | `ai_tool.prompt` | 选填（≤2048 字符）：指定谁换谁/保留什么/替换后走向。**不走 H3 提示词优化 pipeline**（上游内置替换提示词，不支持完全自定义；无音频槽无对白概念） |
+| `duration` | `ai_tool.duration` | 钳制 5-25（覆盖基类 1-15）；端点缺省=ffprobe 探测视频时长向上取整 |
+| `resolution` | `extra_config.char_replace_resolution` | 仅 `768p竖`/`768p横` 两档（跟随参考视频方向，端点 ffprobe 探测宽高后写入），非法值/缺省回落 `768p竖` |
+| `video_subject_to_replace` | `extra_config.params.subject` | 选填，必须英文（默认 person，一次只填一种）；空/缺省不上传 |
+
+`validate_input_compatibility`：无参考视频或无参考图判不兼容（任务类型 54 仅此一个实现方，钩子防管理员误挂载/重试兜底）。
+
+**计费**：`VIDEO_CHARACTER_REPLACE_COMPUTING_POWER`（5-25 档），按 autodl 高峰价 0.11 元/秒贴本定价 `ceil(秒×0.11/0.04)`；输出仅 768p 无 480p 档。
+
+**提交端点**：`POST /api/video-character-replace`（`video:character_replace` 权限，模式同 `/api/video-enhance`：ffprobe 探测时长/方向 → 预扣费 → 落库入队）；前端页面 `/video-edit`（`web/js/pages/video_edit.js`，首页工具卡「视频编辑 🎭」）。
+
+**2026-11-16 实测（效果验收 ✅）**：15s 竖版带货视频（紫裙女性）+ 写实男性三视图 → 5s 成片：身份/服装/手套完美跟随参考图，动作/走位/字幕/道具保留，AAC 原声保留；耗时 329s，扣费 0.55 元；仅首帧轻微时间混叠伪影。上游文档建议单次替换 3-4 人以内。
+
 ### 输入契约能力校验（validate_input_compatibility）
 
 同一任务的实现方素材槽位能力不同，`select_before_finish_retry_candidate` 选备用实现时会调用驱动钩子过滤不兼容候选（见 `BaseVideoDriver.validate_input_compatibility`）：
@@ -60,6 +80,7 @@
 |------|----------------|
 | 首尾帧 lightx2v | 任务有首帧但无尾帧（单首帧 RunningHub 可跑、lightx2v 上游报缺参） |
 | 参考生 zm_u24 | 任务带参考视频（RunningHub 可传视频、AutoDL 无视频槽会静默丢） |
+| 人物替换 zm_titim | 任务无参考视频或无参考图（zm_titim 上游两者必填） |
 
 `extra_config` 为非法 JSON、数组或 `null` 时，`parse_image_mode` 回退默认首尾帧模式，钩子仍按 `image_path` 判断尾帧，提交不再因 `list.get` 抛 `AttributeError`。钩子自身的其它异常不当成兼容：候选选择会跳过该实现。空白 `video_path` 视为无参考视频。
 
