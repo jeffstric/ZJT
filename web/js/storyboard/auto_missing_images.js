@@ -1,11 +1,14 @@
-import state, { getSelectedImageTaskId } from './state.js';
+import state, { getSelectedImageTaskId, refreshSceneFirstFrameSlot } from './state.js';
 import * as api from './api.js';
 import {
     patchHeaderPower,
     updateAutoCompleteHeader,
     updateCurrentSceneDetail,
     updateSceneThumb,
+    refresh,
+    Region,
 } from './render.js';
+import { loadSceneCandidates } from './scene_candidates.js';
 import { pollImageBatchStatus, pollSceneTaskStatus } from './polling.js';
 import {
     applyLocationReferencePreflight,
@@ -16,6 +19,7 @@ import {
     isAutoImageBatchActive,
     isAutoImageBatchTerminal,
     persistAutoImageBatchSession,
+    pickNewlyCompletedSceneIds,
     readAutoImageBatchSession,
     resetAutoImageBatchState,
     setAutoImageBatchSubmitting,
@@ -90,9 +94,55 @@ function refreshBatchAffectedScenes(batchStatus) {
     updateAutoCompleteHeader();
 }
 
+/**
+ * 批量补图单项完成后的候选区同步。
+ * 场景轮询的收尾候选刷新（finishScenePolling → loadSceneCandidates）只在场景轮询
+ * 恰好覆盖到「生成中→完成」迁移时执行；批量轮询先于场景轮询看到完成时，右侧
+ * 候选面板会停留在旧的失败占位卡，新图不会显示为选中候选（首帧/参考生两种模式
+ * 同链路，参考生模式手动补图最易触发）。这里在 item 迁移到 completed 时补一次：
+ * 先调 task-status 触发服务端延迟选中绑定（resolve_scene_generation_bindings），
+ * 再拉最新候选并局部重绘缩略图 / 候选区 / 助手面板媒体槽。
+ */
+async function refreshSceneCandidatesAfterBatchComplete(sceneId) {
+    try {
+        await api.getSceneTaskStatus(sceneId);
+    } catch { /* 服务端绑定失败不阻塞候选刷新 */ }
+    let candidates = null;
+    try {
+        await loadSceneCandidates(sceneId);
+        candidates = state.sceneCandidates?.[sceneId];
+    } catch {
+        return;
+    }
+    const scene = state.scenes.find(item => String(item.id) === String(sceneId));
+    if (!scene) return;
+    const selImage = (candidates?.images || []).find(item => item.selected);
+    if (selImage?.url && selImage.id) {
+        scene.selectedFirstFrameId = selImage.id;
+    }
+    if (String(state.currentSceneId) === String(sceneId)) {
+        if (state.chatMode === 'video' || state.chatMode === 'aivideo') {
+            refreshSceneFirstFrameSlot(scene);
+            refresh([Region.AGENT_PANEL]);
+        }
+        updateCurrentSceneDetail(scene);
+    }
+    updateSceneThumb(scene);
+}
+
 function handleBatchUpdate(batchStatus) {
+    const prevItemsBySceneId = { ...(state.autoImageBatch?.itemsBySceneId || {}) };
     applyImageBatchStatus(batchStatus);
+    // 本轮新完成的分镜（prev 未完成 → now completed）：立即同步候选区与选中展示，
+    // 不等场景轮询收尾（其可能早已停止，见 refreshSceneCandidatesAfterBatchComplete 注释）
+    const newlyCompletedSceneIds = pickNewlyCompletedSceneIds(
+        prevItemsBySceneId,
+        state.autoImageBatch?.itemsBySceneId || {},
+    );
     refreshBatchAffectedScenes(batchStatus);
+    newlyCompletedSceneIds.forEach(sceneId => {
+        refreshSceneCandidatesAfterBatchComplete(sceneId);
+    });
     const batchId = batchStatus?.batch_id || batchStatus?.batchId;
     if (batchId && !isAutoImageBatchTerminal(batchStatus.status)) {
         persistAutoImageBatchSession(batchId, state.autoImageBatch?.itemsBySceneId

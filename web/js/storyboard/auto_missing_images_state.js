@@ -237,6 +237,29 @@ export function applyImageBatchStatus(batchStatus = {}) {
     return state.autoImageBatch;
 }
 
+const BATCH_ITEM_COMPLETED_STATUSES = new Set(['completed', 'already_ready']);
+
+/** batch item 是否处于「已完成」口径（与 applyImageBatchStatus 的写回条件一致） */
+export function isBatchItemCompleted(item) {
+    return Boolean(item) && BATCH_ITEM_COMPLETED_STATUSES.has(String(item.status || ''));
+}
+
+/**
+ * 批量轮询 diff：找出本轮新完成的分镜（prev 未完成 → now completed）。
+ * 场景轮询的收尾候选刷新只在轮询恰好覆盖「生成中→完成」迁移时执行；批量轮询
+ * 先于场景轮询看到完成时，右侧候选面板会停留在旧的失败占位卡，新图不显示为
+ * 选中候选。调用方据此对每个新完成分镜补一次候选同步（含服务端延迟选中绑定）。
+ */
+export function pickNewlyCompletedSceneIds(prevItemsBySceneId = {}, nextItemsBySceneId = {}) {
+    const newlyCompleted = [];
+    for (const item of Object.values(nextItemsBySceneId || {})) {
+        if (!item?.sceneId || !isBatchItemCompleted(item)) continue;
+        if (isBatchItemCompleted(prevItemsBySceneId[item.sceneId])) continue;
+        newlyCompleted.push(item.sceneId);
+    }
+    return newlyCompleted;
+}
+
 export function getFirstFrameDisplayStatus(scene) {
     const item = state.autoImageBatch?.itemsBySceneId?.[scene?.id];
     if (item?.planStatus === 'regenerate_pending') {
