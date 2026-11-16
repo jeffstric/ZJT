@@ -310,7 +310,7 @@ strict_json: bool = False
 
 规则质检中的角色首帧检查以 `characters_present` 的全局 ID 为输入，但不直接在描述文本中搜索 `char_NNN`。执行时先合并任务级 `accepted_registry.characters` 与当前候选段的 `characters`，建立 ID 到角色名称的映射，再严格检查 `opening_frame_description` 是否包含 `【【角色名】】`。这样既保持镜头引用使用稳定 ID，也支持后续分段引用此前已经接受、当前段不再重复声明的角色。
 
-`presentation=digital_human` 采用严格的单人画内门禁：`characters_present` 必须恰好包含一个人物，`dialogue` 必须恰好只有一个说话角色，且两者 ID 必须一致。无人画面（例如蚊子微距特写叠加人物画外音）、多人同框但仅一人发言、多人轮流对话都强制归类为 `video`。提示词负责在拆分阶段给出正确分类，规则 QC 会拒绝违规结果；发布场景时 `services/storyboard_scene_type.py` 再执行同样的确定性兜底，避免错误结果进入对口型生成链路。
+拆分不再自动产出对口型（develop_f1212 起）：提示词要求 `presentation` 固定为 `video`，规则 QC 对任何 `presentation=digital_human` 输出直接报 `DH_AUTO_SPLIT_DISABLED` 打回；发布场景时 `services/storyboard_scene_type.py` 一律推断为 `video`（单人画内对白近景也不再启发式归为对口型）。保留两条边界：硬规则（多说话人/无人出镜/说话者不在画内/强动作）仍强制 `video`；显式存储的 `video_type`（用户在分镜详情手动切换后经反向转换往返携带）经 `_explicit_video_type` 优先采信，手动选择在往返中保真。对口型分镜的唯一入口是用户手动切换（`services/storyboard_video_type_service.py`）。
 
 无对白镜头占比只保留为 QC 诊断统计，不作为质检失败条件，也不再推断原剧本是否含对白。这样不会误伤压抑氛围、默剧或纯视觉叙事。质检问题进入重拆提示时必须保留原始 `severity`、`shot_ref` 和 `field`，便于模型只修复准确镜头与字段。
 

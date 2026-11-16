@@ -61,3 +61,16 @@ def test_qc_rejects_digital_human_when_speaker_is_offscreen():
     report = run_rule_qc(parsed)
 
     assert "DH_SPEAKER_NOT_VISIBLE" in _issue_codes(report)
+
+
+def test_qc_rejects_digital_human_even_when_conditions_met():
+    """拆分已关闭自动对口型：即使满足单人画内条件也必须报错打回 video。"""
+    parsed = _parsed_shot(
+        presentation="digital_human",
+        characters_present=["char_001"],
+        dialogue=[{"character_id": "char_001", "text": "听我说"}],
+    )
+
+    report = run_rule_qc(parsed)
+
+    assert "DH_AUTO_SPLIT_DISABLED" in _issue_codes(report)

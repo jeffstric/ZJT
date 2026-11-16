@@ -90,7 +90,7 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
 | `prompt_json.location` | `location_name` / `db_location_id` |
 | `prompt_json.props` | `props_present` + `scriptData.props` |
 | `video_prompt` | `description`（分镜节点视频提示词由此派生） |
-| `video_type`（含手动切换的数字人/视频选择） | `shotJson.video_type`（反向 `resolve_scene_video_type` 经 `_llm_presentation` 优先采信，往返保留手动选择） |
+| `video_type`（含手动切换的数字人/视频选择） | `shotJson.video_type`（反向 `resolve_scene_video_type` 经 `_explicit_video_type` 优先采信，往返保留手动选择） |
 | `dialogues[]` | `dialogue[{character_name, text}]` |
 | `act_name` | `shot_group` 分组（分组名） |
 | `first_frame` 资产全量（选中标记 `selected_first_frame_id`） | 每候选一个独立 `image` 节点（普通连线）；选中排连线首位并写 `shot_frame.data.previewImageUrl` + `firstFrameConnections`（`image` → 分镜「视频首帧」端口，只连选中）。`imageUrl` 留空 |

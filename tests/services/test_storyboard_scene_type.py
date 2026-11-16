@@ -1,4 +1,9 @@
-"""Unit tests for storyboard scene video_type resolution."""
+"""Unit tests for storyboard scene video_type resolution.
+
+拆分策略（develop_f1212 起）：拆分不再自动产出对口型（digital_human），
+所有推断路径一律 video；仅显式存储的 video_type（用户手动切换后经反向
+转换往返携带）被采信保留。
+"""
 from config.unified_config import SceneVideoType
 from services.storyboard_scene_type import (
     count_speaking_characters,
@@ -34,7 +39,8 @@ def test_multi_speaker_forced_video():
     assert meta["presentation_reason"] == "multi_speaker"
 
 
-def test_single_speaker_llm_digital_human():
+def test_llm_presentation_digital_human_is_ignored():
+    """LLM 拆分输出的 presentation=digital_human 不再被采信 → video。"""
     shot = {
         "presentation": "digital_human",
         "shot_type": "中景",
@@ -44,12 +50,13 @@ def test_single_speaker_llm_digital_human():
     }
     dialogues = [{"character_id": 9, "text": "你好"}]
     video_type, meta = resolve_scene_video_type(shot, dialogues)
-    assert video_type == SceneVideoType.DIGITAL_HUMAN
-    assert meta["presentation_source"] == "llm"
+    assert video_type == SceneVideoType.VIDEO
+    assert meta["presentation_reason"] == "single_speaker_non_close"
     assert meta["speaker_character_id"] == 9
 
 
-def test_single_speaker_close_shot_heuristic():
+def test_single_speaker_close_shot_heuristic_is_video():
+    """单说话人近景对白也不再自动对口型 → video。"""
     shot = {
         "shot_type": "特写",
         "action": "微笑开口",
@@ -58,8 +65,55 @@ def test_single_speaker_close_shot_heuristic():
     }
     dialogues = [{"character_id": 3, "text": "台词"}]
     video_type, meta = resolve_scene_video_type(shot, dialogues)
+    assert video_type == SceneVideoType.VIDEO
+    assert meta["presentation_reason"] == "single_speaker_close_video"
+
+
+def test_explicit_video_type_digital_human_is_honored():
+    """显式存储 video_type（用户手动切换）被采信，往返保真。"""
+    shot = {
+        "video_type": "digital_human",
+        "shot_type": "中景",
+        "action": "角色说话",
+        "characters_present": ["char_009"],
+        "dialogue": [{"character_id": "char_009", "text": "你好"}],
+    }
+    dialogues = [{"character_id": 9, "text": "你好"}]
+    video_type, meta = resolve_scene_video_type(shot, dialogues)
     assert video_type == SceneVideoType.DIGITAL_HUMAN
-    assert meta["presentation_source"] == "heuristic"
+    assert meta["presentation_source"] == "explicit"
+    assert meta["presentation_reason"] == "explicit_digital_human"
+
+
+def test_explicit_video_type_video_is_honored():
+    shot = {
+        "video_type": "video",
+        "shot_type": "特写",
+        "characters_present": ["char_003"],
+        "dialogue": [{"character_id": "char_003", "text": "台词"}],
+    }
+    dialogues = [{"character_id": 3, "text": "台词"}]
+    video_type, meta = resolve_scene_video_type(shot, dialogues)
+    assert video_type == SceneVideoType.VIDEO
+    assert meta["presentation_source"] == "explicit"
+    assert meta["presentation_reason"] == "explicit_video"
+
+
+def test_explicit_digital_human_multi_speaker_still_video():
+    """硬规则优先：显式 digital_human 遇多说话人仍回退 video。"""
+    shot = {
+        "video_type": "digital_human",
+        "shot_type": "近景",
+        "action": "两人对话",
+        "characters_present": ["char_001", "char_002"],
+    }
+    dialogues = [
+        {"character_id": 1, "text": "A"},
+        {"character_id": 2, "text": "B"},
+    ]
+    video_type, meta = resolve_scene_video_type(shot, dialogues)
+    assert video_type == SceneVideoType.VIDEO
+    assert meta["presentation_reason"] == "multi_speaker"
 
 
 def test_single_speaker_strong_action_stays_video():
