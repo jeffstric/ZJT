@@ -334,6 +334,10 @@
             selectPlan(el.getAttribute('data-plan-id'));
             return;
         }
+        if (action === 'goto-sub-pay') {
+            scrollToSubPayPanel();
+            return;
+        }
         if (action === 'create-sub-order') {
             createSubscriptionOrder();
             return;
@@ -407,6 +411,38 @@
         state.subPaymentError = '';
         state.subOrderId = '';
         render();
+    }
+
+    // 平滑滚动弹出层内部滚动容器，完整露出支付面板（优先露出底部协议勾选行）。
+    // 手动计算 scrollTop 而不用 scrollIntoView：后者会连带滚动遮罩背后的页面。
+    // 仅供「付款码在下方」浮条点击触发，不自动滚动。
+    function scrollToSubPayPanel() {
+        var overlay = document.getElementById(OVERLAY_ID);
+        if (!overlay) return;
+        var panel = overlay.querySelector('.sub-payment-panel');
+        var scroller = overlay.querySelector('.recharge-center-root');
+        if (!panel || !scroller) return;
+        var reduced = false;
+        try {
+            reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch (e) { /* 匹配失败按支持动画处理 */ }
+        var panelTop = panel.offsetTop; // offsetParent 即 scroller（recharge-center-root 为 position:relative）
+        var panelBottom = panelTop + panel.offsetHeight;
+        var viewTop = scroller.scrollTop;
+        var viewBottom = viewTop + scroller.clientHeight;
+        var target = viewTop;
+        if (panelTop < viewTop) target = Math.max(panelTop - 12, 0);
+        else if (panelBottom > viewBottom) target = Math.max(panelBottom - scroller.clientHeight + 16, 0);
+        if (target === viewTop) return; // 面板已完整可见，不触发滚动
+        var before = scroller.scrollTop;
+        scroller.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' });
+        // 兜底：部分内嵌 WebView 会整体忽略 smooth 滚动（调用即丢弃），
+        // 300ms 后位置纹丝未动才补一次即时滚动；真实浏览器动画已起步，不会触发
+        setTimeout(function () {
+            if (scroller.scrollTop === before && Math.abs(target - before) > 2) {
+                scroller.scrollTo({ top: target, behavior: 'auto' });
+            }
+        }, 300);
     }
 
     function notifyPaid() {
@@ -869,7 +905,7 @@
         else if (show) suffix = '/月 · 首月优惠，之后 ¥' + money(plan.price) + '/月 · 首期到账 ' + esc(headlinePower(plan, true)) + ' 算力，之后每期 ' + esc(plan.computing_power) + ' 算力';
         else if (plan.first_period_bonus && eligible) suffix = '/月 · 首期到账 ' + esc(headlinePower(plan, true)) + ' 算力，之后每期 ' + esc(plan.computing_power) + ' 算力';
         else suffix = '/月 · 每期 ' + esc(plan.computing_power) + ' 算力';
-        var agreeClass = 'sub-agreement' + (state.subAgreementError ? ' sub-agreement-error' : '');
+        var agreeClass = 'sub-agreement' + (state.subAgreementError ? ' sub-agreement-error' : '') + (!state.subAgreed ? ' sub-agreement-pending' : '');
         var agreeText = upgrade
             ? '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除'
             : '同意 <a href="/auto_renewal_agreement.html" target="_blank" rel="noopener">《自动续费服务协议》</a>，到期自动扣费，可随时取消';
@@ -956,7 +992,18 @@
         } else {
             html += renderPlanGrid();
         }
-        return html + '</div>';
+        return html + renderSubPayHint() + '</div>';
+    }
+
+    // 「付款码在下方」浮条：支付面板在弹窗首屏之下，且须勾选《自动续费服务协议》才出码。
+    // sticky 悬浮在滚动容器底部保证任何滚动位置可见，点击滚动到面板；勾选后自动消失。
+    function renderSubPayHint() {
+        if (!state.selectedPlan || state.subAgreed) return '';
+        return ''
+            + '<button type="button" class="sub-pay-hint" data-rc-action="goto-sub-pay">'
+            + '<span class="sub-pay-hint-arrow">👇</span>'
+            + '<span>付款码在下方，勾选《自动续费服务协议》后自动生成</span>'
+            + '</button>';
     }
 
     function renderPackageList() {

@@ -3470,6 +3470,37 @@
         this.subOrderId = '';
       },
 
+      // 「付款码在下方」浮条点击：平滑滚动充值弹窗内部滚动容器，完整露出支付面板
+      // （优先露出底部协议勾选行）。手动算 scrollTop 而不用 scrollIntoView：
+      // 后者会连带滚动弹窗背后的页面。仅点击触发，不自动滚动。
+      scrollToSubPayPanel() {
+        const scroller = document.getElementById('rechargeModal');
+        if (!scroller) return;
+        const panel = scroller.querySelector('.sub-payment-panel');
+        if (!panel) return;
+        let reduced = false;
+        try {
+          reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch (e) { /* 匹配失败按支持动画处理 */ }
+        const panelTop = panel.offsetTop; // offsetParent 即 #rechargeModal（position:relative）
+        const panelBottom = panelTop + panel.offsetHeight;
+        const viewTop = scroller.scrollTop;
+        const viewBottom = viewTop + scroller.clientHeight;
+        let target = viewTop;
+        if (panelTop < viewTop) target = Math.max(panelTop - 12, 0);
+        else if (panelBottom > viewBottom) target = Math.max(panelBottom - scroller.clientHeight + 16, 0);
+        if (target === viewTop) return; // 面板已完整可见，不触发滚动
+        const before = scroller.scrollTop;
+        scroller.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' });
+        // 兜底：部分内嵌 WebView 会整体忽略 smooth 滚动（调用即丢弃），
+        // 300ms 后位置纹丝未动才补一次即时滚动；真实浏览器动画已起步，不会触发
+        setTimeout(() => {
+          if (scroller.scrollTop === before && Math.abs(target - before) > 2) {
+            scroller.scrollTo({ top: target, behavior: 'auto' });
+          }
+        }, 300);
+      },
+
       // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
       startSubPayPolling() {
         this.stopSubPayPolling();

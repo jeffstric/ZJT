@@ -1224,7 +1224,7 @@
     
     <!-- Recharge Computing Power Modal -->
     <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
-      <div class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;">
+      <div id="rechargeModal" class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;">
         <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">充值中心</div>
 
@@ -1348,7 +1348,7 @@
                     <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力</span>
                   </div>
 
-                  <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
+                  <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError, 'sub-agreement-pending': !subAgreed }">
                     <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                     <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除</span>
                   </label>
@@ -1453,7 +1453,7 @@
                   <span class="per-month">/月<span v-if="planShowsIntroPrice(selectedSubPlan)"> · 首月优惠，之后 ¥{{ selectedSubPlan.price }}/月 · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible"> · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else> · 每期 {{ selectedSubPlan.computing_power }} 算力</span></span>
                 </div>
 
-                <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
+                <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError, 'sub-agreement-pending': !subAgreed }">
                   <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                   <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，到期自动扣费，可随时取消</span>
                 </label>
@@ -1469,6 +1469,13 @@
               </div>
             </div>
           </template>
+
+          <!-- 支付引导浮条：付款码面板在弹窗首屏之下，且须勾选《自动续费服务协议》才出码；
+               sticky 悬浮弹窗底部，点击平滑滚动到支付面板，勾选后自动消失 -->
+          <button v-if="selectedSubPlan && !subAgreed" type="button" class="sub-pay-hint" @click="scrollToSubPayPanel">
+            <span class="sub-pay-hint-arrow">👇</span>
+            <span>付款码在下方，勾选《自动续费服务协议》后自动生成</span>
+          </button>
         </div>
 
         <!-- ==================== 算力充值 Tab ==================== -->

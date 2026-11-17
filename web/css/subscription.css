@@ -319,6 +319,76 @@
   word-break: break-all;
 }
 
+/* ===== 支付引导：浮条 + 协议勾选行呼吸高亮 ===== */
+/* 「付款码在下方」浮条：支付面板在弹窗首屏之下，未勾选协议时 sticky 悬浮
+   滚动容器底部保证可见；点击滚动到面板，勾选后随 v-if/class 条件消失。
+   颜色走主题变量：index.html 深色 :root 与 .recharge-center-root 浅色覆盖自适应 */
+.sub-pay-hint {
+  position: sticky;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 14px;
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.22);
+}
+
+.sub-pay-hint:hover {
+  border-color: var(--primary);
+}
+
+.sub-pay-hint-arrow {
+  display: inline-block;
+  font-size: 14px;
+  animation: sub-pay-hint-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes sub-pay-hint-bounce {
+  0%, 100% { transform: translateY(-2px); }
+  50% { transform: translateY(3px); }
+}
+
+/* 未勾选协议时的勾选行呼吸高亮：padding+负 margin 扩一圈光晕且不挤压布局 */
+.sub-agreement.sub-agreement-pending {
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: 8px;
+  animation: sub-agree-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes sub-agree-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    background: transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.16);
+    background: rgba(34, 197, 94, 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sub-pay-hint-arrow {
+    animation: none;
+  }
+
+  .sub-agreement.sub-agreement-pending {
+    animation: none;
+  }
+}
+
 .sub-error-text {
   color: var(--danger, #ef4444);
   font-size: 13px;
