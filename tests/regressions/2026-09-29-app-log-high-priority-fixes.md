@@ -2,9 +2,6 @@
 id: 2026-09-29-app-log-high-priority-fixes
 patch:
 tests:
-  - tests/task/test_pipeline_stuck_step_recovery.py
-  - tests/task/test_grid_image_auth_failure.py
-  - tests/drivers/test_gpt_image_expired_reference.py
 replay_tests:
 feature_ids:
 ---
@@ -21,7 +18,11 @@ feature_ids:
 
 ## 怎么操作、怎样算没修好
 
-还没有改坏补丁。卡死步骤要能回收且不抢跑终态；401/403 不能无限重试；参考图 404/410 不能当成服务挂了。
+本条是索引，不直接回放。三件事各拆一条，见：
+
+- `2026-09-29-pipeline-stuck-step`（卡死步骤回收，且不得抢跑终态化）
+- `2026-09-29-grid-image-auth-retry`（401/403 连续达阈值必须终止）
+- `2026-09-29-expired-reference-404`（参考图 404/410 转用户错误，不算 5xx）
 
 ## 永久测试
 

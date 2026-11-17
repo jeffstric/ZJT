@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "script_writer_core/agents/ask_user_mixin.py",
+      "old": "        options = _normalize_ask_options(options)\n        if not options:",
+      "new": "        options = options if isinstance(options, list) else []\n        if not options:"
+    }
+  ]
+}

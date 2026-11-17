@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "llm/llm_client_factory.py",
+      "old": "                    if local_prefix and local_prefix != vendor:\n                        logger.warning(\n                            f\"模型 {model} 的本地前缀 {local_prefix} 与 vendor_id={vendor_id} \"\n                            f\"解析的供应商 {vendor} 冲突，按前缀路由到本地服务\"\n                        )\n                    else:\n                        getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)\n                        client = getter()\n                        logger.debug(f\"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}\")\n                        return client",
+      "new": "                    getter = cls._VENDOR_CLIENT_MAP.get(vendor, get_gemini_client)\n                    client = getter()\n                    logger.debug(f\"模型 {model} (vendor_id={vendor_id}, vendor={vendor}) -> {type(client).__name__}\")\n                    return client"
+    }
+  ]
+}
