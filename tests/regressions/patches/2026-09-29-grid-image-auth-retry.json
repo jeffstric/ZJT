@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "task/grid_image_task.py",
+      "old": "            except requests.RequestException as e:\n                if _is_auth_failure(e):\n                    # 认证失败（401/403）：token 快照已失效，重试无意义，连续达阈值即终止\n                    streak = _auth_failure_streaks.get(task.task_key, 0) + 1\n                    _auth_failure_streaks[task.task_key] = streak\n                    if streak >= GridConfig.AUTH_FAILURE_TERMINATION_LIMIT:\n                        _terminate_task_for_auth_failure(task)\n                    else:\n                        logger.warning(\n                            f\"轮询ComfyUI认证失败({streak}/{GridConfig.AUTH_FAILURE_TERMINATION_LIMIT}): \"\n                            f\"{task.task_key}, 错误: {str(e)}\"\n                        )\n                    continue",
+      "new": "            except requests.RequestException as e:\n                logger.warning(f\"轮询ComfyUI失败: {task.task_key}, 错误: {str(e)}\")\n                continue"
+    }
+  ]
+}

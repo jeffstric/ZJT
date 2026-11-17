@@ -17,6 +17,13 @@ import os
 from concurrent.futures import ProcessPoolExecutor
 from unittest import TestCase
 
+# 本文件必须在 import 业务模块链之前自设环境：spawn 子进程不继承父进程的
+# conftest 配置缓存 stub，initializer unpickle 时会真实重走
+# model/database -> config_util 的模块级配置加载；env 未设时默认找
+# config_dev.yml（本仓库禁建该文件），worker 秒死 BrokenProcessPool。
+# 显式指向真实存在的 config_unit.yml，使本文件单跑/回放单节点均可自足。
+os.environ.setdefault("comfyui_env", "unit")
+
 from task.sync_task_executor import _enterprise_sync_worker_init
 
 # spawn 拉起 + 子进程全量导入（config/驱动模块链）可能较慢；

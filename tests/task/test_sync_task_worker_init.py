@@ -93,18 +93,23 @@ def test_worker_init_resets_inherited_storage_singleton(monkeypatch):
     其空闲信号量假 token 与 _threads 死对象一并被 fork 快照进子进程：子进程首个
     上传 submit 消费假 token 后跳过建线程，任务入队无人消费，精确 120 秒报
     "图片上传到CDN超时"且七牛日志连"开始上传文件"都没有。`_enterprise_sync_worker_init`
-    必须调用 `reset_file_storage()` 清空工厂单例缓存（放在社区版 early-return
-    之前），子进程首次 get_file_storage() 才会新建干净线程池。进程池默认已切
-    spawn，本重置是动态配置回退 fork 时的防线。
+    必须清空工厂单例缓存（放在社区版 early-return 之前），子进程首次
+    get_file_storage() 才会新建干净线程池。进程池默认已切 spawn，本重置是动态
+    配置回退 fork 时的防线。
+
+    断言方式为效果而非调用：预塞哨兵实例模拟 fork 继承的毒化单例，
+    init 之后缓存必须为空——删除调用、把 reset_file_storage 改成空函数
+    都会被抓住。
     """
+    from utils.file_storage import factory as storage_factory
+
     _fresh_event()
     monkeypatch.setattr(ste, "SYNC_WORKER_INIT_WATCHDOG_TIMEOUT", 30)
-    resets = []
-    monkeypatch.setattr(ste, "reset_file_storage", lambda: resets.append(True))
+    storage_factory._storage_instances["inherited-poison"] = object()
 
     ste._enterprise_sync_worker_init()
 
-    assert resets == [True]
+    assert "inherited-poison" not in storage_factory._storage_instances
     assert ste._sync_worker_init_done.is_set()
 
 
@@ -116,18 +121,24 @@ def test_worker_init_registers_video_drivers(monkeypatch):
     registered"（误导文案"不支持的任务类型: 16"）。主进程只在 server.py 启动时
     register_all_drivers()，`_enterprise_sync_worker_init` 必须自行注册，且放在
     社区版 early-return 之前两版通吃。
+
+    断言方式为效果而非调用：清空注册表模拟 spawn 空表起点，init 之后必须
+    非空——删除调用、把 register_all_drivers 改成空函数都会被抓住。
+    真实 spawn 进程级验证另见 test_sync_worker_driver_registry.py。
     """
+    from task.visual_drivers import VideoDriverFactory, register_all_drivers
+
     _fresh_event()
     monkeypatch.setattr(ste, "SYNC_WORKER_INIT_WATCHDOG_TIMEOUT", 30)
-    registered = []
-    monkeypatch.setattr(
-        "task.visual_drivers.register_all_drivers",
-        lambda: registered.append(True),
-    )
-
-    ste._enterprise_sync_worker_init()
-
-    assert registered == [True]
+    VideoDriverFactory._registered_drivers.clear()
+    try:
+        ste._enterprise_sync_worker_init()
+        assert VideoDriverFactory._registered_drivers, (
+            "worker init 后驱动注册表为空，sync_mode 任务将复现 2026-09-20 必败"
+        )
+    finally:
+        # 幂等重建注册表，不把空表/半表留给同进程后续测试
+        register_all_drivers()
     assert ste._sync_worker_init_done.is_set()
 
 

@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "api/script_writer.py",
+      "old": "        if user_id:\n            # 身份一致性校验：查询参数 user_id 与登录身份不一致时 403。\n            # 背景（2026-10-12 课堂事故）：学生打开带他人 user_id 的链接，本接口曾把\n            # 该他人的最新会话原样返回，前端复用后每次发消息都被属主断言 404，\n            # 页面始终报「发送消息失败」且无法自愈。\n            claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))\n            if claimed_error:\n                return claimed_error\n\n            # 从数据库查询用户的会话\n",
+      "new": "        if user_id:\n            # 从数据库查询用户的会话\n"
+    }
+  ]
+}

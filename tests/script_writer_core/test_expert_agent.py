@@ -346,6 +346,41 @@ class TestPowerConfirmSwitch(TestExpertAgent):
         self.assertNotIn("算力确认上限", agent.system_prompt)
         self.assertNotIn("把确认交给系统", agent.system_prompt)
 
+    def test_disabled_gate_passes_through_with_task_manager(self):
+        """剧本链路真实形态（task_manager/task_id 齐备）：门关闭仍必须放行。
+
+        事故 2026-09-01：确认门曾把剧本创作链路也拦下，用户答完问题离开后
+        「弹确认 → 300s 超时 → 重试 → 再弹」死循环连续扣费约 40 分钟
+        （117 笔 / 297 算力）。修复是在 `_gate_computing_power` 入口加开关
+        短路；若该短路被删除，本用例红：task_manager 存在时门会继续走
+        估算 + 确认拦截路径，返回弹窗结果而非 None。
+        """
+        from types import SimpleNamespace
+        from script_writer_core.agents.power_confirm import PowerEstimate
+
+        agent = self._create_agent(
+            power_confirm_enabled=False,
+            task_manager=MagicMock(),
+            task_id="task-1",
+        )
+        estimate = PowerEstimate(cost=2, label="文生图", count=1)
+
+        with patch("script_writer_core.agents.power_confirm.estimate_tool_computing_power",
+                   return_value=estimate), \
+             patch("script_writer_core.agents.power_confirm.query_user_balance",
+                   return_value=1000), \
+             patch("script_writer_core.agents.power_confirm.get_effective_thresholds",
+                   return_value=(35, 200, False)), \
+             patch("script_writer_core.agents.power_confirm.should_confirm",
+                   return_value=SimpleNamespace(need_confirm=True, reason="over_soft")):
+            gate_result = agent._gate_computing_power("generate_text_to_image", {"prompt": "x"})
+
+        self.assertIsNone(
+            gate_result,
+            "power_confirm_enabled=False 且有交互通道时门仍拦截了生成——"
+            "剧本链路将复现 2026-09-01 的超时-重试-扣费死循环",
+        )
+
     def test_enabled_gate_prompt_note_present(self):
         with patch('script_writer_core.agents.power_confirm.resolve_user_soft_threshold',
                    return_value=(35, False)):
