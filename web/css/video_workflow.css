@@ -3904,9 +3904,19 @@ html.theme-dark .camera-slider:hover {
 }
 
 /* ============ 剧本节点分区样式 - 横向排列 ============ */
+/* 剧本 / 分镜组仍按内容收缩。分镜帧另外写死，见下方更具体的规则。 */
 .node:has(.script-node-body) {
   width: auto;
   min-width: 340px;
+  max-width: 960px;
+}
+
+/* 分镜帧是绝对定位。width:auto 会 shrink-to-fit，三列又是 flex:1（flex-basis:0%）+ min-width:0。
+   父级宽度不确定时，Edge 把 0% 当成 0，卡片落到 min-width:340px。
+   Chrome 常被 file input 撑到 960px，所以只有 Edge 里的分镜特别窄。
+   选择器比上面的通用规则更具体。画布不跟视口收缩，直接用设计宽度。 */
+.node:has(.script-node-body):has(.shot-frame-generate-btn) {
+  width: 960px;
   max-width: 960px;
 }
 

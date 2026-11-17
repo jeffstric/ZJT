@@ -169,7 +169,7 @@
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
       el._cleanupHandlers = [];
-      // 不设固定宽度，由CSS .node:has(.script-node-body) 控制
+      // 宽度由 CSS .node:has(.script-node-body):has(.shot-frame-generate-btn) 固定为 960px，不要在这里写 width:auto
 
       el.innerHTML = `
         <div class="port input" data-i18n="shot_frame_input_port:title"></div>
