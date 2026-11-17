@@ -75,6 +75,7 @@ Body：`{ "workflow_id": int }`。返回 `{success, storyboard_id, created}`（�
    - 选中尾帧 → `data.lastFrameUrl`（只在故事板确实有尾帧时写入，不用首帧顶替）；
    - **全量视频**（选中排首位）逐个创建独立 `video` 节点（`data.url/name`，多数命名 `分镜N视频1/2...`）+ 普通连线 `shot_frame → video`。首帧连线指向分镜节点，不指向视频节点（视频节点没有 `.first-frame-port`，线画不出来）；
    - `script → group → frame → image/video` 连线、计数器（含 `nextFirstFrameConnId`）、timeline（含每分镜一格的时间轴柱子，见下节）、默认视口齐备，前端 `restoreNode` 原样可恢复；
+   - **节点卡片宽度不写入 workflow_data**。分镜帧走 `.node:has(.script-node-body):has(.shot-frame-generate-btn)`，固定 `960px`。不能只用通用的 `width: auto`：分镜三列是 `flex: 1`（`flex-basis: 0%`）加 `min-width: 0`，Edge 在绝对定位的 shrink-to-fit 里会把列宽算成 0，分镜卡片落到约 340px。剧本 / 分镜组仍是 `.node:has(.script-node-body)` 的 `width: auto`（340–960px），图生视频节点仍是 `.node:has(.video-node-body)` 的 `width: auto`（280–720px）。图片 / 视频素材节点仍是全局 `.node` 的 `300px`；
    - **资产 URL 相对化**：本机绝对地址（`http://127.0.0.1:{port}` / `http://localhost:{port}`，生成链路会写死当时的 host:port）统一剥掉 origin 转为 `/upload/...` 相对路径——前端按当前页面 origin 补全，画布换端口打开不裂图（相对路径的视频上传产物本就是此形态）；**布局游标累进**：帧间距取固定 960px 与产物列高（纵向 280/个）的较大者、组间额外间隔，多候选图/视频时节点不叠压（叠压会导致拖动图片节点整理布局时误触邻近分镜帧的首帧/尾帧端口，把图片误设为尾帧）。
 4. `VideoWorkflowModel.create`（名称 `{故事板标题}画布`，世界/比例/画风继承）+ `StoryboardModel.update(workflow_id)` 回写关联。
 
