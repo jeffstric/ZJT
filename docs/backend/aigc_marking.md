@@ -35,14 +35,17 @@
 | 挂点 | 文件 | 覆盖范围 |
 |------|------|---------|
 | **落盘主挂点** | `utils/media_cache.py download_and_cache` | 全部生成驱动产物（45+ 驱动经 download_queue 汇聚到此处下载落盘） |
-| **裁剪后兜底** | `task/download_queue_task.py _process_one` | 宫格人脸网格裁剪重写文件后重新补标（trim 会丢 XMP） |
+| **data URL 落盘挂点** | `utils/media_cache.py save_data_url_to_cache` | 同步驱动直接返回 base64 的产物（gpt_image / gemini_image 等，sync worker 子进程内同步落盘）。2026-11-18 修复前漏挂：该链路产物全部缺隐式标识，opt-out 用户（跳过显式烧录）更是隐式/显式双无 |
+| **裁剪后兜底** | `task/download_queue_task.py _process_one` | 宫格人脸网格裁剪重写文件后重新补标（trim 会丢 XMP）。同日修复：路径拼接曾误用 `get_project_root() / url`（str/str TypeError）导致兜底 100% 失效，现统一走 `get_project_path` |
 | **下载出口兜底** | `server.py /api/download` 本地 FileResponse 分支 | 漏标文件下载时补标（幂等，已标识毫秒级返回） |
 | **数字人拼接** | `task/compose_task.py` 拼接完成后、`_attach_cdn_mapping` 前 | 分段拼接成片（同步主循环上下文） |
 | **TTS 合成** | `services/volcengine_tts_service.py _write_file` | 正式合成音频（to_thread 同步上下文） |
 | **TTS 克隆/配音** | `task/audio_task.py _submit_new_task` 落盘后、CDN 注册前 | /audio-generate 页面与 storyboard 配音（IndexTTS 克隆+情感控制，async worker 内 asyncio.to_thread 同步执行） |
 | **TTS 试听缓存** | `api/tts.py preview_voice._write_preview` | 试听缓存首次生成（仅隐式标识，按设计不烧显式） |
 
-**时序链**：download_and_cache（标记）→ 宫格 trim（重写→重新兜底）→ transition_with_cdn_sync（建 mapping + 触发 CDN 上传）——标记先于 CDN，保证云端对象与本地文件一致带标。
+**时序链**：download_and_cache / save_data_url_to_cache（标记）→ 宫格 trim（重写→重新兜底）→ transition_with_cdn_sync（建 mapping + 触发 CDN 上传）——标记先于 CDN，保证云端对象与本地文件一致带标。
+
+**回归测试**：`tests/task/test_media_cache_data_url_marking.py`（data URL 落盘挂点：PNG/JPEG 写标、非媒体格式不阻断、写入异常不阻断交付）；`tests/task/test_download_queue_task.py::test_process_one_ensure_marked_receives_absolute_path`（裁剪后兜底路径拼接回归）。
 
 ## 五、可靠性设计
 

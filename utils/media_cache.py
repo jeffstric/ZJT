@@ -422,6 +422,20 @@ class MediaCacheManager:
             with open(file_path, 'wb') as f:
                 f.write(file_bytes)
 
+            # AIGC 隐式标识写入（深度合成合规，《标识办法》第5条）：
+            # 与 download_and_cache 的 HTTP 下载路径对齐——data URL 落盘同样是生成产物
+            # 汇聚点（gpt_image / gemini_image 等同步驱动经此落盘），此前缺挂点导致
+            # 该链路产物（尤其 opt-out 用户跳过显式烧录后）完全无隐式标识。
+            # 本方法为同步函数，调用方均为 sync worker 子进程内的同步驱动方法，
+            # 直接调用不涉事件循环；图片格式走 Pillow/字节级写入（无 ffmpeg），
+            # mark_file_for_task 内部全容错 + 幂等，失败不阻断交付。
+            media_hint = 'image' if mime_part.startswith('image/') else (
+                'video' if mime_part.startswith('video/') else 'auto')
+            try:
+                mark_file_for_task(str(file_path), task_id, media_hint)
+            except Exception as mark_err:  # noqa: BLE001
+                logger.warning(f"data URL 落盘 AIGC 标识写入异常(不阻断交付): {file_path}: {mark_err}")
+
             # 生成本地URL（相对于项目根目录）
             relative_path = file_path.relative_to(self.root_dir)
             local_url = f"/{relative_path.as_posix()}"
