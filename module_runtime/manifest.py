@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -109,9 +110,17 @@ class ModuleManifest(StrictManifestModel):
         min_length=1,
         max_length=128,
     )
-    # 兜底默认值；草稿发布前会被 GenerationWorkspace._normalize_manifest_for_generation
-    # 按当前解释器版本覆写（见 docs/backend/user_modules_review.md M7），不应依赖此默认值。
-    python_compat: str = Field(default=">=3.10,<3.11", min_length=1, max_length=128)
+    # 兜底默认值：按当前解释器动态生成（与 GenerationWorkspace._normalize_manifest_for_generation
+    # 的覆写语义一致，见 docs/backend/user_modules.md）。此前写死 ">=3.10,<3.11" 会让
+    # 不经工具链归一化的手写 manifest 在 Python 3.11+ 环境 ABI 校验必挂。
+    python_compat: str = Field(
+        default_factory=lambda: (
+            f">={sys.version_info.major}.{sys.version_info.minor},"
+            f"<{sys.version_info.major}.{sys.version_info.minor + 1}"
+        ),
+        min_length=1,
+        max_length=128,
+    )
     execution_model: ExecutionModel = ExecutionModel.NATIVE_ASYNC
     capabilities: List[CapabilityManifest] = Field(min_length=1, max_length=64)
     permissions: PermissionManifest = Field(default_factory=PermissionManifest)
