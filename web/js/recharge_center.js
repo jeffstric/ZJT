@@ -299,6 +299,10 @@
         var root = overlay.querySelector('.recharge-center-root');
         root.addEventListener('click', onRootClick);
         root.addEventListener('change', onRootChange);
+        // 滚动露出/遮住支付面板、窗口尺寸变化（拖拽/旋转屏幕）都会改变浮条显隐；
+        // ensureDom 幂等（只建一次），监听不会重复挂
+        root.addEventListener('scroll', updateSubPayHint, { passive: true });
+        window.addEventListener('resize', updateSubPayHint);
         document.body.appendChild(overlay);
         return overlay;
     }
@@ -443,6 +447,24 @@
                 scroller.scrollTo({ top: target, behavior: 'auto' });
             }
         }, 300);
+    }
+
+    // 浮条只在支付面板底部被滚动容器视口遮住时才有意义：屏幕够高面板已完整露出时，
+    // 「付款码在下方」的提醒与所见矛盾，反而引人下滚。渲染后与滚动/resize 时调用，
+    // 直接切换浮条 display，不重渲染。4px 容差：贴边即视为完整露出。
+    function updateSubPayHint() {
+        var overlay = document.getElementById(OVERLAY_ID);
+        if (!overlay) return;
+        var hint = overlay.querySelector('.sub-pay-hint');
+        if (!hint) return;
+        var panel = overlay.querySelector('.sub-payment-panel');
+        var scroller = overlay.querySelector('.recharge-center-root');
+        if (!panel || !scroller || !state.selectedPlan || state.subAgreed) {
+            hint.style.display = 'none';
+            return;
+        }
+        var panelBottom = panel.offsetTop + panel.offsetHeight;
+        hint.style.display = panelBottom > scroller.scrollTop + scroller.clientHeight + 4 ? '' : 'none';
     }
 
     function notifyPaid() {
@@ -995,8 +1017,10 @@
         return html + renderSubPayHint() + '</div>';
     }
 
-    // 「付款码在下方」浮条：支付面板在弹窗首屏之下，且须勾选《自动续费服务协议》才出码。
-    // sticky 悬浮在滚动容器底部保证任何滚动位置可见，点击滚动到面板；勾选后自动消失。
+    // 「付款码在下方」浮条：已选套餐且未勾选协议时渲染（勾选后随条件消失）；
+    // 是否真的显示由 updateSubPayHint 测量——仅支付面板底部被滚动视口遮住时露出，
+    // 面板已完整可见（屏幕够高）则隐藏，避免「在下方」提醒与所见矛盾。
+    // sticky 悬浮滚动容器底部保证可见，点击滚动到面板。
     function renderSubPayHint() {
         if (!state.selectedPlan || state.subAgreed) return '';
         return ''
@@ -1071,6 +1095,8 @@
         var body = overlay.querySelector('[data-rc-body]');
         if (!body) return;
         body.innerHTML = renderTabs() + (state.tab === 'subscription' ? renderSubscription() : renderPower());
+        // 浮条显隐取决于支付面板与滚动视口的实际位置，须在 innerHTML 挂载后测量
+        updateSubPayHint();
     }
 
     async function open(options) {

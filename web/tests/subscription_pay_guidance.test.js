@@ -2,11 +2,14 @@
  * 订阅支付引导浮条（付款码面板在弹窗首屏之下，须勾选《自动续费服务协议》才出码）。
  *
  * 契约（index.html/index_app.js 与 recharge_center.js 两套实现一致）：
- * - 已选套餐且未勾选协议 → 浮条出现（sticky 悬浮滚动容器底部，任何滚动位置可见）
+ * - 已选套餐且未勾选协议 → 浮条渲染（sticky 悬浮滚动容器底部，任何滚动位置可见），
+ *   但仅当支付面板底部超出滚动容器可视下缘（屏幕不够高被遮挡）才真正显示；
+ *   面板已完整露出时隐藏——「在下方」的提醒与所见矛盾，反而引人下滚
  * - 浮条点击 → 平滑滚动弹窗内部滚动容器露出支付面板（优先露出底部协议行），
  *   手动算 scrollTop 而非 scrollIntoView（后者会连带滚动弹窗背后的页面）
  * - 面板已完整可见时不触发滚动；prefers-reduced-motion 时退化为 auto
- * - 勾选协议后浮条消失；未勾选期间协议行带 sub-agreement-pending 呼吸高亮
+ * - 滚动/窗口尺寸变化/选中套餐/勾选协议都重测显隐；勾选后浮条消失；
+ *   未勾选期间协议行带 sub-agreement-pending 呼吸高亮
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,6 +25,30 @@ const cssSource = fs.readFileSync(path.join(root, 'web/css/subscription.css'), '
 const scrollStart = rechargeSource.indexOf('function scrollToSubPayPanel()');
 const scrollEnd = rechargeSource.indexOf('function notifyPaid()');
 const scrollFnSrc = rechargeSource.slice(scrollStart, scrollEnd);
+
+// 切出 recharge_center.updateSubPayHint 函数体（同样位于 notifyPaid 之前）
+const hintFnStart = rechargeSource.indexOf('function updateSubPayHint()');
+const hintFnEnd = rechargeSource.indexOf('function notifyPaid()');
+const hintFnSrc = rechargeSource.slice(hintFnStart, hintFnEnd);
+
+function makeHintEnv({ panelTop = 500, panelHeight = 300, scrollTop = 0, clientHeight = 400, hasPanel = true, hasHint = true, selected = true, agreed = false } = {}) {
+    const hint = { style: {} };
+    const panel = { offsetTop: panelTop, offsetHeight: panelHeight };
+    const scroller = { scrollTop, clientHeight };
+    const overlay = {
+        querySelector(sel) {
+            if (sel === '.sub-pay-hint') return hasHint ? hint : null;
+            if (sel === '.sub-payment-panel') return hasPanel ? panel : null;
+            if (sel === '.recharge-center-root') return scroller;
+            return null;
+        },
+    };
+    const fakeDocument = { getElementById: () => overlay };
+    // 提取的函数体引用模块级 OVERLAY_ID 与 state，注入同值
+    const factory = new Function('document', 'window', 'OVERLAY_ID', 'state', hintFnSrc + '\nreturn updateSubPayHint;');
+    const fn = factory(fakeDocument, {}, 'rechargeCenterOverlay', { selectedPlan: selected ? {} : null, subAgreed: agreed });
+    return { fn, hint };
+}
 
 function makeScrollEnv({ panelTop = 500, panelHeight = 300, scrollTop = 0, clientHeight = 400, reduced = false } = {}) {
     const panel = { offsetTop: panelTop, offsetHeight: panelHeight };
@@ -89,6 +116,51 @@ describe('recharge_center.scrollToSubPayPanel 滚动行为', () => {
     });
 });
 
+describe('recharge_center.updateSubPayHint 可见性测量', () => {
+    it('源码提取成功（函数位于 notifyPaid 之前）', () => {
+        expect(hintFnStart).toBeGreaterThan(0);
+        expect(hintFnEnd).toBeGreaterThan(hintFnStart);
+    });
+
+    it.each([
+        ['面板底部超出可视下缘 → 显示浮条', { panelTop: 500, panelHeight: 300, scrollTop: 0, clientHeight: 400, expected: '' }],
+        ['面板完整可见（屏幕够高）→ 隐藏浮条', { panelTop: 50, panelHeight: 200, scrollTop: 0, clientHeight: 400, expected: 'none' }],
+        ['贴边视为完整露出（4px 容差内）→ 隐藏浮条', { panelTop: 200, panelHeight: 200, scrollTop: 0, clientHeight: 401, expected: 'none' }],
+        ['滚回顶部面板重新被遮 → 显示浮条', { panelTop: 500, panelHeight: 300, scrollTop: 100, clientHeight: 400, expected: '' }],
+    ])('%s', (_name, { panelTop, panelHeight, scrollTop, clientHeight, expected }) => {
+        const { fn, hint } = makeHintEnv({ panelTop, panelHeight, scrollTop, clientHeight });
+        fn();
+        expect(hint.style.display).toBe(expected);
+    });
+
+    it('未选套餐/已勾选协议 → 一律隐藏', () => {
+        const selectedOff = makeHintEnv({ selected: false });
+        selectedOff.fn();
+        expect(selectedOff.hint.style.display).toBe('none');
+        const agreed = makeHintEnv({ agreed: true });
+        agreed.fn();
+        expect(agreed.hint.style.display).toBe('none');
+    });
+
+    it('浮条或面板缺失 → 安全跳过不抛错', () => {
+        expect(() => makeHintEnv({ hasHint: false }).fn()).not.toThrow();
+        const noPanel = makeHintEnv({ hasPanel: false });
+        expect(() => noPanel.fn()).not.toThrow();
+        expect(noPanel.hint.style.display).toBe('none');
+    });
+
+    it('接线：render() 末尾测量，scroll/resize 事件直接重测', () => {
+        const renderStart = rechargeSource.indexOf('function render()');
+        const renderEnd = rechargeSource.indexOf('async function open(');
+        expect(rechargeSource.slice(renderStart, renderEnd)).toContain('updateSubPayHint()');
+        const ensureDomStart = rechargeSource.indexOf('function ensureDom()');
+        const ensureDomEnd = rechargeSource.indexOf('function onRootChange(');
+        const ensureDomSrc = rechargeSource.slice(ensureDomStart, ensureDomEnd);
+        expect(ensureDomSrc).toContain("addEventListener('scroll', updateSubPayHint");
+        expect(ensureDomSrc).toContain("window.addEventListener('resize', updateSubPayHint)");
+    });
+});
+
 describe('recharge_center 浮条渲染与协议行高亮', () => {
     it('renderSubPayHint：已选套餐且未勾选协议才渲染浮条', () => {
         const hintStart = rechargeSource.indexOf('function renderSubPayHint()');
@@ -112,11 +184,29 @@ describe('recharge_center 浮条渲染与协议行高亮', () => {
 });
 
 describe('index.html / index_app.js（Vue 版）同款行为', () => {
-    it('浮条：订阅 Tab 级渲染，条件为已选套餐且未勾选，点击滚动到面板', () => {
+    it('浮条：订阅 Tab 级渲染，仅面板被遮时显示，点击滚动到面板', () => {
         expect(htmlSource).toContain('class="sub-pay-hint"');
-        expect(htmlSource).toContain('v-if="selectedSubPlan && !subAgreed"');
+        expect(htmlSource).toContain('v-if="selectedSubPlan && !subAgreed && subPayPanelHidden"');
         expect((htmlSource.match(/sub-pay-hint/g) || []).length).toBe(2); // class="sub-pay-hint" + class="sub-pay-hint-arrow"，仅 Tab 级一个浮条
         expect(htmlSource).toContain('@click="scrollToSubPayPanel"');
+    });
+
+    it('弹窗滚动重测浮条显隐（滚到露出面板后浮条消失）', () => {
+        expect(htmlSource).toContain('@scroll="updateSubPayHint"');
+    });
+
+    it('index_app.updateSubPayHint：测量面板底边超出 #rechargeModal 可视区，watcher 跟随选中/勾选重测', () => {
+        expect(appSource).toContain('subPayPanelHidden: false');
+        expect(appSource).toContain('selectedSubPlan() { this.updateSubPayHint(); }');
+        expect(appSource).toContain('subAgreed() { this.updateSubPayHint(); }');
+        expect(appSource).toContain("const scroller = document.getElementById('rechargeModal')");
+        expect(appSource).toContain("scroller.querySelector('.sub-payment-panel')");
+        expect(appSource).toContain('panelBottom > scroller.scrollTop + scroller.clientHeight + 4');
+    });
+
+    it('窗口尺寸变化重测 + 组件卸载清理监听', () => {
+        expect(appSource).toContain("window.addEventListener('resize', this._subPayHintResizeHandler)");
+        expect(appSource).toContain("window.removeEventListener('resize', this._subPayHintResizeHandler)");
     });
 
     it('滚动容器带 id（scrollToSubPayPanel 的定位锚点）', () => {

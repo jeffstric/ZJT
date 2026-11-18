@@ -1224,7 +1224,7 @@
     
     <!-- Recharge Computing Power Modal -->
     <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
-      <div id="rechargeModal" class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;">
+      <div id="rechargeModal" class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;" @scroll="updateSubPayHint">
         <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">充值中心</div>
 
@@ -1470,9 +1470,10 @@
             </div>
           </template>
 
-          <!-- 支付引导浮条：付款码面板在弹窗首屏之下，且须勾选《自动续费服务协议》才出码；
-               sticky 悬浮弹窗底部，点击平滑滚动到支付面板，勾选后自动消失 -->
-          <button v-if="selectedSubPlan && !subAgreed" type="button" class="sub-pay-hint" @click="scrollToSubPayPanel">
+          <!-- 支付引导浮条：仅当支付面板底部被弹窗可视区遮住（屏幕不够高）时才值得出现——
+               面板已完整露出时提醒「在下方」与所见矛盾。须勾选《自动续费服务协议》才出码；
+               sticky 悬浮弹窗底部，点击平滑滚动到支付面板，露出面板/勾选后自动消失 -->
+          <button v-if="selectedSubPlan && !subAgreed && subPayPanelHidden" type="button" class="sub-pay-hint" @click="scrollToSubPayPanel">
             <span class="sub-pay-hint-arrow">👇</span>
             <span>付款码在下方，勾选《自动续费服务协议》后自动生成</span>
           </button>

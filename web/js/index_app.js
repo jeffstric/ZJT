@@ -124,6 +124,9 @@
       selectedSubPlan: null,
       lastOrderIsUpgrade: false,       // 最近一笔订阅订单是否为套餐升级单（支付成功提示用）
       subAgreed: false,
+      // 支付面板底部超出 #rechargeModal 可视区（屏幕不够高被遮挡）才值得显示引导浮条；
+      // 面板已完整露出时提醒反而碍事。由 updateSubPayHint 在选中套餐/滚动/勾选后测量
+      subPayPanelHidden: false,
       subAgreementError: false,
       subPaymentLoading: false,
       subPaymentError: '',
@@ -439,11 +442,15 @@
       
       // 检查是否处于管理员模式
       this.isAdminMode = localStorage.getItem('admin_mode') === 'true';
-      
+
       // 已登录用户检查创作模式
       if (this.authToken && (this.userPhone || this.userEmail)) {
         this.checkCreationMode();
       }
+
+      // 窗口尺寸/屏幕旋转改变充值弹窗可视高度，浮条显隐需重测
+      this._subPayHintResizeHandler = () => { this.updateSubPayHint(); };
+      window.addEventListener('resize', this._subPayHintResizeHandler);
     },
     computed: {
       route(){ return this.$route },
@@ -560,7 +567,11 @@
         if (newVal && this.captchaEnabled && this.captchaPrefix) {
           this.$nextTick(() => { this.loadCaptchaSdk(); });
         }
-      }
+      },
+      // 选套餐（支付面板出现）与勾选/取消勾选（浮条条件、面板高度）都影响浮条显隐；
+      // 测量在 updateSubPayHint 内部 $nextTick 等 DOM 更新后进行
+      selectedSubPlan() { this.updateSubPayHint(); },
+      subAgreed() { this.updateSubPayHint(); },
     },
     methods: {
       goHome(){ this.$router.push({name:'list'}); },
@@ -3501,6 +3512,27 @@
         }, 300);
       },
 
+      // 浮条只在支付面板底部被弹窗视口遮住时才有意义：屏幕够高面板已完整露出时，
+      // 「付款码在下方」的提醒与所见矛盾，反而引人下滚。测量面板底边是否超出
+      // #rechargeModal 可视下缘（4px 容差，贴边即视为完整露出）。选中套餐/勾选后经
+      // watcher 调用（内部等 DOM 更新），滚动与窗口尺寸变化经事件直接调用
+      updateSubPayHint() {
+        if (!this.selectedSubPlan || this.subAgreed) {
+          this.subPayPanelHidden = false;
+          return;
+        }
+        this.$nextTick(() => {
+          const scroller = document.getElementById('rechargeModal');
+          const panel = scroller && scroller.querySelector('.sub-payment-panel');
+          if (!scroller || !panel) {
+            this.subPayPanelHidden = false;
+            return;
+          }
+          const panelBottom = panel.offsetTop + panel.offsetHeight;
+          this.subPayPanelHidden = panelBottom > scroller.scrollTop + scroller.clientHeight + 4;
+        });
+      },
+
       // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
       startSubPayPolling() {
         this.stopSubPayPolling();
@@ -3887,6 +3919,10 @@
       // 移除管理员快捷键监听
       if (this._adminKeyHandler) {
         document.removeEventListener('keydown', this._adminKeyHandler);
+      }
+      // 移除支付引导浮条的窗口尺寸监听
+      if (this._subPayHintResizeHandler) {
+        window.removeEventListener('resize', this._subPayHintResizeHandler);
       }
     }
   };
