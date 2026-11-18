@@ -537,6 +537,11 @@ function bindInputPortEvents(el, node, portCfg) {
       from: state.connecting.fromId,
       to: id
     };
+    // portCfg.portType：连接创建即带上类型标记（渲染先于 onConnect，portType
+    // 必须在渲染前就位——CONNECTION_TYPES.image.toPortSelector 按
+    // '.{portType}-image-port' 模板找落点端口，缺失则首次渲染画不出线，
+    // 要等下一次鼠标操作触发重渲染才出现，产生"连线延迟出现"的顿挫感）
+    if (portCfg.portType) conn.portType = portCfg.portType;
     connArray.push(conn);
 
     // 渲染连接线

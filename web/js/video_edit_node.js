@@ -373,11 +373,13 @@
         // bindInputPortEvents 先 push 连接再回调，超限时回调内自行移除刚建的连接
         bindInputPortEvents(el, node, {
           cssClass: 'video-edit-image-port',
+          // portType 在连接创建时即写入（node_base 通用增强，渲染先于 onConnect），
+          // 缺失时首次渲染找不到落点端口，连线要等下一次鼠标操作才出现
+          portType: 'video-edit',
           acceptType: 'image',
           connectionType: 'imageConnections',
           onConnect: function(fromNode, conn) {
-            // 补 portType：CONNECTION_TYPES.image.toPortSelector 按它解析落点端口，
-            // 缺失时连线渲染找不到端口（首版不显示连线的根因）
+            // 兜底：portType 缺失时补上（正常路径已由 portCfg.portType 写入）
             if (conn && !conn.portType) conn.portType = 'video-edit';
             var count = state.imageConnections.filter(function(c) { return c.to === node.id; }).length;
             if (count > MAX_REF_IMAGES) {
