@@ -44,7 +44,7 @@ from services.generated_video_face_grid_service import maybe_trim_generated_face
 from utils.aigc_marking import ensure_marked
 from utils.aigc_explicit_marker import await_explicit_burn
 from utils.media_cache import get_cache_manager
-from utils.project_path import get_project_root
+from utils.project_path import get_project_path
 from utils.sentry_util import SentryUtil
 
 logger = logging.getLogger(__name__)
@@ -142,7 +142,9 @@ async def _process_one(row: dict) -> None:
                     await asyncio.wait_for(
                         asyncio.to_thread(
                             ensure_marked,
-                            str(get_project_root() / final_url.lstrip('/')),
+                            # get_project_root 返回 str，禁止用 / 拼路径（str/str TypeError，
+                            # 兜底会 100% 失效）；统一走 get_project_path
+                            get_project_path(final_url.lstrip('/')),
                             ai_tool_id,
                         ),
                         timeout=AIGC_MARK_TIMEOUT_SECONDS,

@@ -272,3 +272,35 @@ def test_process_one_license_error_not_classified_without_enterprise_provider(mo
     # 社区门面判定为非瞬态错误=False → 走旧路径（仅记录，留待租约回收）
     assert captured["reschedule"] == []
     assert any("success-but-update-failed" in msg for msg in logger_stub.errors)
+
+
+def test_process_one_ensure_marked_receives_absolute_path(monkeypatch):
+    """AIGC 标识兜底：ensure_marked 必须收到正确的本地绝对路径。
+
+    回归：曾写成 str(get_project_root() / url)——get_project_root 返回 str，
+    str/str TypeError 让兜底 100% 失效（被 except 吞成 WARNING，测试不报错），
+    宫格裁剪重写丢标后无人补标。
+    """
+    import os
+    from utils.project_path import get_project_path
+
+    received = {}
+
+    def fake_ensure_marked(file_path, produce_id):
+        received["path"] = file_path
+        received["pid"] = produce_id
+        return True
+
+    monkeypatch.setattr(download_worker, "ensure_marked", fake_ensure_marked)
+    captured = _patch_common(monkeypatch, download_result="/upload/cache/ok.mp4")
+
+    asyncio.run(download_worker._process_one(_row(ai_tool_id=501)))
+
+    assert received["path"] == get_project_path("upload/cache/ok.mp4")
+    # 路径规范化后必须能唯一定位到 upload 下的文件（os.path.join 不改写
+    # final_url 内部的 /，Windows 下混合斜杠对 open/isfile 完全兼容）
+    assert os.path.normpath(received["path"]).endswith(
+        os.path.join("upload", "cache", "ok.mp4"))
+    assert received["pid"] == 501
+    assert received["path"].startswith(str(get_project_path()))
+    assert captured["success"] == [(11, "/upload/cache/ok.mp4")]
