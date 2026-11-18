@@ -2,6 +2,8 @@
 
 本项目提供两种端到端测试方案：AI 智能体驱动（JSON 测试用例）和编程式自动化（pytest + Playwright）。
 
+历史缺陷清单，以及怎样把 AI 测过的检查收成永久测试、再故意改坏代码验收，见 [历史缺陷清单和改坏回放](testing/regression_catalog.md)。
+
 ## 目录结构
 
 ```
@@ -461,6 +463,27 @@ test_workflow_list 3 等），统一表现为 token 401 / 前端跳登录页，�
 | `_LiveAuth` 重登熔断 | 60 秒内重登 >=3 次判定为"被并发登录持续顶号"，放弃自愈并打印排查提示，让后续用例如实 401 暴露问题，而不是制造更多登录互相顶号 |
 
 经验：**同一时刻只允许一个 e2e 全量运行**；复跑前先确认上一轮已退出（查锁文件 `auto_test/e2e/.e2e_run.lock` 或进程列表）。"大面积 401 但单模块全过"是并发顶号的典型特征。
+
+## 副账号 token 用例被 X-User-Id 一致性中间件 401 拦截（2026-11-11）
+
+develop 全站 X-User-Id 一致性中间件（`perseids_server/utils/auth_identity.py`，语义见
+[backend/auth_unification.md](backend/auth_unification.md)）：请求头 `X-User-Id` 与 token
+属主不一致时直接 **401 user_mismatch**（"user_id 与当前登录用户不一致"），到不了业务层的
+403 权限判断。
+
+e2e 影响：`api_client` fixture 的默认头是**主账号** `X-User-Id`。副账号（非管理员）用例
+只覆盖 `Authorization` 时，请求仍带着主账号 `X-User-Id` + 副账号 token → 401，断言
+`== 403` 失败。曾一次全量中 5 个用例因此失败（test_admin_api ×2、test_announcements ×1、
+test_script_writer_api ×2）。
+
+**写法约定**：用副账号 token 发请求时，`X-User-Id` 必须同步覆盖为副账号 user_id
+（如 `headers = {"Authorization": f"Bearer {secondary_auth_token}", "X-User-Id": str(secondary_user_id)}`）。
+覆盖后中间件放行，业务层按原语义返回（非管理员 403 / 200+code=1；跨用户导出仍 403
+"user_id 与登录用户不一致"——该 403 来自 `export-world-doc` 端点自身属主断言，与中间件 401 不同源）。
+
+另：会话列表端点现为 **`/api/sessions`**（`api/script_writer.py`，2026-10-12 跨用户会话
+事故后挂 `require_permission("script_session:view")` + `check_claimed_user_id`，带他人
+`user_id` 查询返回 403），不存在 `/api/script-writer/sessions`。
 
 ## 两种测试方案对比
 

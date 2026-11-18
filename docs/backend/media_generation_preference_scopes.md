@@ -120,7 +120,7 @@ Marketing UI / 剧本智能体（`script_writer.html` 与 marketing agent 共用
 - **回显一致性**：`GET /api/text-to-image-model` 支持可选 `session_id` 参数，传入时优先读会话草稿（响应 `scope=session`），未传或草稿为空则回退世界默认（`scope=world_default`）。前端恢复会话时传入 `session_id` 回显，避免刷新后本对话选择被世界默认覆盖；`autoSetTextToImageModel` 检测到草稿已存在时跳过覆盖。2026-09 起前端恢复优先级为 **会话草稿 → localStorage 上次选择（`lastSelectedImageModel`，`changeTextToImageModel` 切换时即写入，无会话也生效）→ 世界默认**，跨会话也能记住用户上次选择。
 - 下拉底部 **「设为默认生图模型」**：`scope=world_default` 写入 legacy `text_to_image_model` + `media_pref.marketing_ui.image.*`（世界默认，供新会话种子；不改当前会话草稿）。
 - 下拉底部 **「设为默认对话模型」**：`PUT /api/world-defaults/llm` 写入 `user_preferences.pref_type=default_llm_model`。
-- 首页 **用户设置 → 创作默认偏好**：查看/修改同一套世界默认（对话模型 + 生图模型）；与「智能体连接 → 智能体模型偏好」（`storyboard_cli`）隔离。
+- 首页 **用户设置 → 创作偏好**：查看/修改同一套世界默认（对话模型 + 生图模型）；与「智能体连接 → 智能体模型偏好」（`storyboard_cli`）隔离。
 - **当前已运行任务不变**；**下一条消息**新建 task 时：
   1. 前端应携带 `image_preferences.task_id`（以 UI 当前值为准）；
   2. 若未携带，后端回退读取 `chat_sessions.text_to_image_model_id`；

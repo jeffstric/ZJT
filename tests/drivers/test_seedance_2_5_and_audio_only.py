@@ -227,6 +227,85 @@ class TestSeedance25BuildRequest(unittest.TestCase):
         )
         self.assertEqual(payload['omni_reference_task_type'], 'edit')
 
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(False, None, 'ffmpeg 转码失败: EBML header parsing failed', []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_reference_video_prepare_fail_returns_user_error(
+        self, mock_compress, mock_upload_cdn, mock_prepare
+    ):
+        """2.5 + 参考视频规范化失败（如 0 字节 webm）：fail-fast 返回 USER 错误，
+        不得静默跳过后仍以 edit 类型提交（事故：火山 400 TaskTypeConstraint）"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频1的内容进行视频复刻',
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/product.jpg']),
+            video_path='http://example.com/ref.webm',
+            ratio='9:16',
+            duration=5,
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+        self.assertIn('重新上传', result['error'])
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(True, 'http://example.com/video.mp4', None, []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync',
+           return_value=(False, None, '上传超时'))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_reference_video_cdn_upload_fail_returns_user_error(
+        self, mock_compress, mock_upload_cdn, mock_prepare
+    ):
+        """2.5 + 参考视频上传 CDN 失败：fail-fast 返回 USER 错误，不静默降级为图生视频"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考视频1的内容进行视频复刻',
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/product.jpg']),
+            video_path='http://example.com/ref.mp4',
+            ratio='9:16',
+            duration=5,
+        )
+
+        result = self.driver.build_create_request(ai_tool)
+
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
+
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.prepare_seedance_reference_video_sync',
+           return_value=(True, 'http://example.com/video.mp4', None, []))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync',
+           return_value=(True, 'https://cdn.example.com/video.mp4', None))
+    @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
+    def test_multi_reference_videos_do_not_set_edit(
+        self, mock_compress, mock_upload_cdn, mock_prepare
+    ):
+        """2.5 + 多个参考视频：火山 edit 要求恰好 1 个参考视频，多视频不得下发
+        edit（走 auto 判定），ratio/duration 用用户值（计价层吸附的视频总时长）"""
+        mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
+        ai_tool = _make_ai_tool(
+            prompt='参考两个视频生成',
+            extra_config={'image_mode': 'multi_reference'},
+            reference_images=json.dumps(['http://example.com/product.jpg']),
+            video_path='http://example.com/ref1.mp4,http://example.com/ref2.mp4',
+            ratio='9:16',
+            duration=10,
+        )
+
+        payload = self.driver.build_create_request(ai_tool)['json']
+
+        video_items = [c for c in payload['content'] if c['type'] == 'video_url']
+        self.assertEqual(len(video_items), 2)
+        self.assertNotIn('omni_reference_task_type', payload)
+        self.assertEqual(payload['ratio'], '9:16')
+        self.assertEqual(payload['duration'], 10)
+
     def test_text_to_video_keeps_user_ratio_and_duration(self):
         """2.5 文生视频仍下发用户比例和时长，且不下发 omni_reference_task_type"""
         ai_tool = _make_ai_tool(

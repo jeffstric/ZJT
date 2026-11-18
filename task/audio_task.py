@@ -30,6 +30,9 @@ from utils.index_tts_util import generate_audio, validate_emotion_vector
 from utils.audio_duration_util import probe_audio_duration
 from utils.media_mapping_util import extract_local_path_from_url, register_uploaded_file_mapping
 from utils.project_path import resolve_upload_url_to_local_path
+from utils.aigc_marking import mark_file_for_task
+from utils.aigc_explicit_marker import burn_explicit_label
+from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 import os
 from config.config_util import get_dynamic_config_value
 
@@ -331,6 +334,20 @@ async def _submit_new_task(ai_audio):
         audio_file_path = audio_path_or_error or result_path
 
         logger.info(f"Task {task_id}: Audio saved to {audio_file_path}")
+
+        # AIGC 标识（深度合成合规）：隐式元数据 + L1 显式开头节奏提示（第4条），
+        # 与 volcengine_tts_service._write_file 同口径；须在下方 CDN 注册/上传前
+        # 完成，保证云端对象与本地文件一致带标。用户 opt-out（第9条留痕）跳过显式。
+        # 同步子进程/DB 调用放工作线程防阻塞事件循环；全容错不阻断交付。
+        try:
+            tts_uid = getattr(ai_audio, 'user_id', None)
+            await asyncio.to_thread(mark_file_for_task, audio_file_path, audio_filename, 'audio')
+            if tts_uid and not await asyncio.to_thread(AigcExplicitOptOutModel.has_opt_out_user, tts_uid):
+                await asyncio.to_thread(
+                    burn_explicit_label, audio_file_path, audio_filename, 'audio', tts_uid)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Task {task_id}: AIGC 标识写入异常(不阻断交付): {e}")
+
         upload_url = get_dynamic_config_value("tts", "upload_url")
         result_url = f"{upload_url}{audio_filename}"
 

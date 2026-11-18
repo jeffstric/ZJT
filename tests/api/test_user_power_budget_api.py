@@ -119,6 +119,16 @@ def test_power_budget_requires_auth(monkeypatch):
     assert exc_info.value.status_code == 401
 
 
+def test_power_budget_routes_are_registered():
+    """商业版曾经漏挂这三条路由：处理函数还在，请求进来却是 404。"""
+    methods = set()
+    for route in user_api.router.routes:
+        path = getattr(route, "path", "") or ""
+        if path.rstrip("/").endswith("/power-budget"):
+            methods.update(getattr(route, "methods", None) or ())
+    assert {"GET", "PUT", "DELETE"} <= methods
+
+
 class _BudgetRequest:
     """与 api.user.PowerBudgetRequest 同形状的最小请求对象。"""
 

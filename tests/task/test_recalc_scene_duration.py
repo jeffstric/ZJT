@@ -72,6 +72,20 @@ with stub_modules({
     ),
     'utils.index_tts_util': MagicMock(),
     'config.config_util': MagicMock(),
+    # AIGC 标识挂点（audio_task 落盘后写隐式标识+烧录开头节奏提示）：真实模块依赖
+    # config 常量全量清单/DB/ffmpeg，mock 掉避免触发真实加载
+    'utils.aigc_marking': module_stub(
+        'utils.aigc_marking',
+        mark_file_for_task=MagicMock(),
+    ),
+    'utils.aigc_explicit_marker': module_stub(
+        'utils.aigc_explicit_marker',
+        burn_explicit_label=MagicMock(),
+    ),
+    'model.aigc_explicit_opt_out': module_stub(
+        'model.aigc_explicit_opt_out',
+        AigcExplicitOptOutModel=MagicMock(),
+    ),
 }):
     from task.audio_task import recalc_scene_duration_if_all_completed  # noqa: E402
 

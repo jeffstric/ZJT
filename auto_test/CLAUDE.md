@@ -31,6 +31,7 @@ auto_test/
 2. `test_todo_list.json` 是模板，**永远不要修改**
 3. 所有测试进度保存在 `test_sessions/session_*.json`
 4. 每个步骤通过后**立即**更新会话文件
+5. `tests/regressions/` 里 `feature_ids` 点名的功能已经有永久测试，导航会跳过，不要再点
 
 ## 配置文件说明
 

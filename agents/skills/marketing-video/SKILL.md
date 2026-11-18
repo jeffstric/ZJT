@@ -32,8 +32,8 @@ allowed-tools: ["generate_text_to_video", "image_to_video", "get_user_computing_
 - `world_id`（必填）：世界ID
 - `auth_token`（必填）：认证令牌
 - `prompt`（必填）：视频描述/运动指令
-- `image_urls`（必填）：参考图片URL，多张用英文逗号分隔
-- **⚠️ 严禁捏造图片URL**：`image_urls` 必须是对话中真实存在的图片地址，绝对不允许编造示例URL（如 `https://example.com/xxx.jpg`）。如果对话中没有图片，应使用 `generate_text_to_video` 而非 `image_to_video`。
+- `image_urls`（必填）：参考图片路径，仅支持本站 `/upload/...` 相对路径，多张用英文逗号分隔
+- **⚠️ 严禁拼接域名、严禁捏造图片路径**：`image_urls` 必须是对话中真实存在的 `/upload/...` 相对路径（对话中每张图片都有 `[图片N]（URL: ...）` 标签），不要拼接 `http://` 或域名前缀，绝对不允许编造示例路径，也不支持外部图片链接。如果对话中没有图片，应使用 `generate_text_to_video` 而非 `image_to_video`。
 - `ratio`（可选，默认 16:9）：视频宽高比
 - `duration_seconds`（可选，默认 5）：视频时长（秒）
 - `count`（可选，默认 1）：生成数量
@@ -174,8 +174,8 @@ cinematic motion, professional camera work.
 3. **提示词用英文**：确保生成效果最佳。但若任务带有 `[输出语言要求]`，素材文字与口播必须使用用户指定的输出语言（优先级更高）
 4. **判断文生视频还是图生视频**：
    - 用户**没有提供原始图片** → 使用 `generate_text_to_video`
-   - 用户**提供了原始图片并要求生成视频** → 使用 `image_to_video`，将图片URL传入 `image_urls` 参数
-5. **严禁捏造图片URL**：调用 `image_to_video` 时，`image_urls` 参数必须使用对话中真实出现的图片地址。绝对不允许编造任何示例URL。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_video` 生成视频。
+   - 用户**提供了原始图片并要求生成视频** → 使用 `image_to_video`，将对话中 `[图片N]` 标签内的 `/upload/...` 相对路径传入 `image_urls` 参数
+5. **严禁拼接域名、严禁捏造图片路径**：调用 `image_to_video` 时，`image_urls` 参数必须是对话中真实存在的 `/upload/...` 相对路径，不要拼接 `http://` 或域名前缀，绝对不允许编造任何示例路径。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_video` 生成视频。
 6. **时长和比例**：根据营销场景选择合适的视频时长和比例（如社交媒体推荐 9:16，广告推荐 16:9）
 7. **版权意识**：不生成侵犯他人版权的内容
 8. **运动描述要清晰**：提示词中要明确描述镜头运动、物体运动、动作节奏等，避免模糊描述

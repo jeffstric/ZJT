@@ -88,6 +88,7 @@
 - **图片生成视频** - `video:image_to_video`
 - **视频高清修复** - `video:enhance`
 - **视频去水印** - `video:watermark_remove`
+- **视频人物替换** - `video:character_replace`
 - **查看视频状态** - `video:view_status`
 - **查看视频历史** - `video:view_history`
 

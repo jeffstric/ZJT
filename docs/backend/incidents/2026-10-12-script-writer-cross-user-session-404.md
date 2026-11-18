@@ -53,8 +53,32 @@
 同时去掉配套的 `world_id`（那是对方的世界）。本人链接不刷新。`/api/user/role`
 的 `data.id` 即当前用户 id。
 
+## 后续（2026-11-14）：403 user_mismatch 前端不跳转
+
+10-20 的入口 reconcile 依赖 `/api/user/role` 成功（失败则回退 `localStorage.user_id`，
+两者都拿不到时放行原 URL）。这条缝没堵死：URL 带他人 user_id 且登录身份解析失败时，
+页面继续以他人身份发请求，后端 `check_claimed_user_id` 返回 **403 + `error_code:
+user_mismatch`**（query/body 参数语义），而 `checkTokenExpired` 的 user_mismatch
+判断只写在 `response.status === 401` 分支内（X-User-Id 头语义），403 响应被完全
+忽略——页面停在无权状态，不 alert、不跳转、不自愈。
+
+修复（`web/js/script_writer.js`）：
+
+- `checkTokenExpired` 把 `error_code === 'user_mismatch'` 提为独立分支，置于 401
+  判断之前：401（X-User-Id 头不一致）与 403（query user_id 不一致）一律
+  `handleUserMismatch()`（提示账号不一致 + 回首页），25+ 个已接入调用点全部生效。
+- 初始化链路补接 `checkTokenExpired`：`loadUserWorlds`（此前 403/401 只显示「加载
+  失败」）、`loadWorldDefaultModels`（此前静默失败）。`initOrReuseSession` 原本已接，
+  修复后其 `/api/sessions` 403 也能正确跳转。
+
+回归测试：`web/tests/script_writer_user_mismatch_403.test.js`（含提取真实源码的
+行为级验证：403 user_mismatch → 弹窗 + `location.href = origin + '/'`）。
+
 ## 预防
 
 - 前端页面身份参数（user_id）凡可与登录身份比对的，一律在入口处校验或直接不信任 URL。
+- 错误码分支不要绑死在单一 HTTP 状态码上：同一 error_code（user_mismatch）在
+  401（Header 语义）与 403（query/body 语义）两种响应里都会出现，前端按 error_code
+  分流、状态码只作兜底。
 - 同族待办：`PUT /session/{id}/title`、`DELETE /api/session/{id}`、`export-world` 等
   遗留弱鉴权端点见 `docs/backend/auth_unification.md` 遗留清单。

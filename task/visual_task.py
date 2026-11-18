@@ -64,6 +64,7 @@ from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from config.constant import AI_TOOL_CANCELLABLE_STATUSES, AI_TOOL_ACTIVE_STATUSES
 from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.aigc_explicit_marker import await_explicit_burn
 from utils.content_moderation_error import classify_content_moderation
 
 logging.basicConfig(level=logging.INFO)
@@ -390,13 +391,44 @@ async def _submit_new_task(ai_tool):
                 implementation_name = existing_impl_name
                 logger.info(f"Using recorded implementation {existing_impl_name} (id: {ai_tool.implementation}) for task {task_id}")
 
+        if implementation_name:
+            compatible, incompat_reason = VideoDriverFactory.probe_input_compatibility(
+                implementation_name, ai_tool,
+            )
+            if not compatible:
+                if VideoDriverFactory.tool_has_implementation_lock(ai_tool):
+                    logger.warning(
+                        f"Task {task_id} locked implementation {implementation_name} "
+                        f"rejects this input: {incompat_reason}"
+                    )
+                    return _handle_task_failure(
+                        task_id=task_id, ai_tool_type=ai_tool_type,
+                        reason=incompat_reason or "当前固定的实现方不支持该输入",
+                        user_id=ai_tool.user_id,
+                    )
+                logger.info(
+                    f"Task {task_id} recorded implementation {implementation_name} "
+                    f"is input-incompatible ({incompat_reason}), re-selecting"
+                )
+                implementation_name = None
+
         if not implementation_name:
-            implementation_name = VideoDriverFactory.get_implementation_for_user(ai_tool_type, ai_tool.user_id)
+            implementation_name, select_error = VideoDriverFactory.resolve_implementation_for_user(
+                ai_tool_type, ai_tool.user_id, compatibility_tool=ai_tool,
+            )
+            if not implementation_name:
+                select_error = select_error or {}
+                return _handle_task_failure(
+                    task_id=task_id, ai_tool_type=ai_tool_type,
+                    reason=select_error.get("message") or f"不支持的任务类型: {ai_tool_type}",
+                    user_id=ai_tool.user_id,
+                )
 
         if implementation_name:
             implementation_id = get_implementation_id(implementation_name)
             if implementation_id > 0:
                 AIToolsModel.update_only_fields(task_id, implementation=implementation_id)
+                ai_tool.implementation = implementation_id
                 logger.info(f"Recorded implementation {implementation_name} (id: {implementation_id}) for task {task_id}")
                 AIToolsLogModel.log(task_id, AIToolsLogEvent.IMPLEMENTATION_SELECTED,
                                    user_id=ai_tool.user_id,
@@ -479,17 +511,19 @@ async def _submit_new_task(ai_tool):
 
         # 1. 优先使用记录的 implementation 创建驱动，确保重试时使用正确的实现方
         driver = None
+        create_error = None
         if ai_tool.implementation:
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
 
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
 
         if not driver:
-            # 获取详细的错误原因
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 使用同一次创建调用返回的原因，不在返回后再读类变量
             if create_error:
                 error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
                 logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
@@ -831,17 +865,18 @@ async def _check_task_status(ai_tool):
             from config.unified_config import get_implementation_name
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
                 if driver:
                     logger.info(f"Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for status check, task {task_id}")
 
         # 如果没有记录的 implementation 或创建失败，回退到根据任务类型创建
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
 
         if not driver:
-            # 获取详细的错误原因
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 使用同一次创建调用返回的原因，不在返回后再读类变量
             if create_error:
                 error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
                 logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
@@ -1213,7 +1248,17 @@ async def _handle_task_success(project_id, task_id, media_url):
                            message="下载/缓存完成",
                            duration_ms=download_ms,
                            detail={'source_url': media_url, 'final_url': final_url})
-        
+
+        # L1 显式标识（明水印）：入队失败走本同步下载兜底的漏斗补挂——与 download_queue
+        # worker 同层：裁剪之后、transition_with_cdn_sync 之前。超时先取消烧录线程并
+        # 等到退出，再上传 CDN。失败不阻断交付。
+        if final_url and final_url.startswith('/upload/'):
+            try:
+                await await_explicit_burn(final_url, task_id, media_type)
+            except Exception as be:  # noqa: BLE001
+                logger.warning(
+                    f"AIGC 显式标识烧录异常(不阻断交付): ai_tool={task_id} {final_url}: {be}")
+
         completed = AIToolsModel.transition_with_cdn_sync(
             task_id,
             [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],

@@ -7,7 +7,7 @@
 - **webapp_id**：`2086470155902734337`（自有账号复制版应用，复制自公共应用 `2084224746308325377`，并在其基础上新增了 4 个参考音视频 API 节点）
 - **任务类型**：TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO = 37
 - **DriverKey**：`minimax_h3_reference_to_video`
-- **实现方**：`minimax_h3_reference_runninghub_v1`（id=67）
+- **实现方**：`minimax_h3_reference_runninghub_v1`（id=67，sort 5205）。任务 37 的 `implementations` 另含首帧参考混合实现方 `minimax_h3_keyframe_ref_runninghub_v1`（id=100，sort 5204，点名首尾帧才兼容，见其驱动文档）与 AutoDL 参考生 `minimax_h3_reference_autodl_v1`（id=108，sort 5208）；没点名且无偏好时默认选中本实现方
 - **驱动类**：`MinimaxH3ReferenceRunninghubV1Driver`
 - **图片模式**：多参考图模式（`multi_reference`），最多 9 张
 - **参考音频/视频**：各最多 2 个（`ai_tool.audio_path` / `ai_tool.video_path`，逗号分隔 URL；`supports_ref_audio_video=True`）

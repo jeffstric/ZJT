@@ -257,3 +257,104 @@ async function compressImageFile(file, maxBytes) {
     URL.revokeObjectURL(objectUrl);
   }
 }
+
+/**
+ * 台词匹配归一化：剔除角色/道具标记、各类引号、标点、空白与大小写差异，
+ * 只保留 CJK/字母/数字，用于判断两段台词是否为同一句。
+ * @param {string} text
+ * @returns {string}
+ */
+function normalizeDialogueTextForMatch(text) {
+  return String(text || '')
+    .replace(/[^0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 台词是否已经逐字出现在其余正文里。
+ * 只认引号里的整句；onlyQuoted 为 false 时，也认单独占一整行的同一句。
+ * 动作里夹着同样几个字不算。短于 4 个匹配字符返回 false（调用方保留该条）。
+ * @param {string} speech
+ * @param {string} restText 不含当前对话行的原文
+ * @param {boolean} onlyQuoted 分号拆开的半句只认引号，不认整行动作
+ * @returns {boolean}
+ */
+function dialogueUtteranceAlreadyVerbatim(speech, restText, onlyQuoted) {
+  const norm = normalizeDialogueTextForMatch(speech);
+  if (!norm || norm.length < 4) return false;
+  const rest = String(restText || '');
+  const quoteRe = /[「『“"]([^」』”"]{1,200})[」』”"]/g;
+  let match;
+  while ((match = quoteRe.exec(rest)) !== null) {
+    if (normalizeDialogueTextForMatch(match[1]) === norm) return true;
+  }
+  if (onlyQuoted) return false;
+  const lines = rest.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (normalizeDialogueTextForMatch(lines[i]) === norm) return true;
+  }
+  return false;
+}
+
+/**
+ * 视频提示词「对话：」行去重。
+ *
+ * LLM 按「视频提示词必须含完整对白」硬性规则把台词逐字写进 描述/场景细节/动作，
+ * 而 dialogue[] 结构化字段又被整份渲染为「对话：」行 → 同一句台词在提示词里
+ * 出现两次，视频模型收到重复文本（线上案例：video_workflow id=13 分镜9）。
+ *
+ * 只在台词整句已经出现在引号里，或（未按分号拆开时）单独占一整行时剔除。
+ * 分号拆开的半句只在等于某一处完整引号台词时剔除，不等于某一行动作。
+ * 短于 4 个匹配字符的台词保留。兼容中（对话：）/英（Dialogue:）两种标签。
+ * @param {string} text
+ * @returns {string}
+ */
+function dedupeVideoPromptDialogue(text) {
+  const raw = String(text || '');
+  if (!raw) return raw;
+  if (raw.indexOf('对话') === -1 && raw.toLowerCase().indexOf('dialogue') === -1) return raw;
+  const lines = raw.split('\n');
+  const dialogueLineRe = /^(\s*(?:对话|Dialogue)\s*[：:]\s*)(.*)$/;
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const m = dialogueLineRe.exec(lines[i]);
+    if (!m || !m[2].trim()) { out.push(lines[i]); continue; }
+    const entries = m[2].split(/\s*[;；]\s*/).filter(function(e) { return e.trim(); });
+    if (entries.length === 0) { out.push(lines[i]); continue; }
+    const restRaw = lines.slice(0, i).concat(lines.slice(i + 1)).join('\n');
+    const onlyQuoted = entries.length > 1;
+    const kept = entries.filter(function(entry) {
+      const colonIdx = entry.search(/[：:]/);
+      const speech = colonIdx >= 0 ? entry.slice(colonIdx + 1) : entry;
+      return !dialogueUtteranceAlreadyVerbatim(speech, restRaw, onlyQuoted);
+    });
+    if (kept.length === entries.length) { out.push(lines[i]); continue; }
+    if (kept.length === 0) continue; // 全部重复：整行移除
+    out.push(m[1] + kept.join('; '));
+  }
+  return out.join('\n');
+}
+
+/**
+ * @ 资产列表的请求序号。只增不归零，避免后返回的上一组响应复用同一个序号写进下一组。
+ * @param {number} current
+ * @returns {number}
+ */
+function bumpPromptAssetReqSeq(current) {
+  const n = Number(current);
+  if (!Number.isFinite(n) || n < 0) return 1;
+  return n + 1;
+}
+
+if (typeof window !== 'undefined') {
+  window.normalizeDialogueTextForMatch = normalizeDialogueTextForMatch;
+  window.dialogueUtteranceAlreadyVerbatim = dialogueUtteranceAlreadyVerbatim;
+  window.dedupeVideoPromptDialogue = dedupeVideoPromptDialogue;
+  window.bumpPromptAssetReqSeq = bumpPromptAssetReqSeq;
+}
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports.normalizeDialogueTextForMatch = normalizeDialogueTextForMatch;
+  module.exports.dialogueUtteranceAlreadyVerbatim = dialogueUtteranceAlreadyVerbatim;
+  module.exports.dedupeVideoPromptDialogue = dedupeVideoPromptDialogue;
+  module.exports.bumpPromptAssetReqSeq = bumpPromptAssetReqSeq;
+}

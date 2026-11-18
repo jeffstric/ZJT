@@ -2,31 +2,30 @@
 
 与画布分镜节点 placeShotFrameMentionImages 同一套规则。只改本次提交的
 提示词和图片顺序，不回写 scene.video_prompt。image_mode 保持 multi_reference。
+
+排图产出的「图N是首帧/尾帧」锚点句是优化变体分派（resolve_h3_prompt_variant）
+与驱动槽位分配（assign_h3_keyframe_ref_pictures）的统一数据源；参考图不再裁剪，
+首帧参考混合实现方（类型 37 默认）的混合 webapp 六槽全容量接收
+（见 docs/video/h3_keyframe_ref_as_reference_impl_design.md），不改交隐藏任务 50。
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
-from config.unified_config import DriverKey, TaskTypeId
+from task.pipeline_drivers.h3_prompt_optimize_util import (
+    _H3_FIRST_FRAME_MENTION_RE,
+    _H3_LAST_FRAME_MENTION_RE,
+)
 
-# 「@首帧图片」不能命中「@首帧图」。与前端正则一致。
+# 「@首帧图片」不能命中「@首帧图」。与前端正则一致（正则统一维护在
+# h3_prompt_optimize_util，排图与驱动槽位分配同口径消费）。
 # 前端插入的标记带唯一短 id 后缀（@首帧图:1c88f7a9），id 仅用于前端
 # 胶囊与图片对位，服务端只按首帧/尾帧语义解析；消费时整体替换不留残渣。
-_MENTION_ID_SUFFIX = r"(?::[0-9a-f]{8})?"
-_FIRST_MENTION_RE = re.compile(r"@首帧图" + _MENTION_ID_SUFFIX + r"(?![0-9a-f:\u4e00-\u9fff])")
-_LAST_MENTION_RE = re.compile(r"@尾帧图" + _MENTION_ID_SUFFIX + r"(?![0-9a-f:\u4e00-\u9fff])")
-
-H3_REFERENCE_MODEL_KEYS = frozenset({
-    "minimax_h3_r2v",
-    DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
-})
-H3_KEYFRAME_REF_MAX_IMAGES = 3
+_FIRST_MENTION_RE = _H3_FIRST_FRAME_MENTION_RE
+_LAST_MENTION_RE = _H3_LAST_FRAME_MENTION_RE
 
 _MISSING_FIRST = "视频提示词使用了 @首帧图，请先设置视频首帧"
 _MISSING_LAST = "视频提示词使用了 @尾帧图，请先设置视频尾帧"
-_OVER_CAPACITY = "当前模型的参考图数量不够同时放入首帧和尾帧"
 
 
 class FrameMentionError(Exception):
@@ -44,31 +43,6 @@ def prompt_has_frame_mention(prompt: Any) -> bool:
 def frame_mention_flags(prompt: Any) -> Tuple[bool, bool]:
     text = "" if prompt is None else str(prompt)
     return bool(_FIRST_MENTION_RE.search(text)), bool(_LAST_MENTION_RE.search(text))
-
-
-def is_h3_reference_model(*keys: Any) -> bool:
-    for key in keys:
-        if str(key or "") in H3_REFERENCE_MODEL_KEYS:
-            return True
-    return False
-
-
-def should_use_h3_keyframe_ref(image_mode: Any, prompt: Any, *model_keys: Any) -> bool:
-    """只有全能参考、当前是 H3 参考模型、并且点名了首帧或尾帧，才改交混合模型。
-
-    H3_KEYFRAME_REF_ROUTE_ENABLED 为 False 时一律不改交。排图仍由 prepare_frame_mentions 完成。
-    """
-    if not H3_KEYFRAME_REF_ROUTE_ENABLED:
-        return False
-    return (
-        str(image_mode or "") == "multi_reference"
-        and is_h3_reference_model(*model_keys)
-        and prompt_has_frame_mention(prompt)
-    )
-
-
-def h3_keyframe_ref_task_id() -> int:
-    return int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO)
 
 
 def url_key(url: Any) -> str:
@@ -125,13 +99,14 @@ def prepare_frame_mentions(
     image_mode: Any,
     first_url: Any = "",
     last_url: Any = "",
-    max_images: Optional[int] = None,
 ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
-    """把点名的首尾帧放到参考图两端，并改写本次提交的提示词。
+    """排图：把点名的首尾帧放到参考图两端，并改写本次提交的提示词。
+
+    不做上限裁剪——混合实现方（类型 37 默认）P1~P6 六槽全容量接收，
+    超出槽位的参考由驱动按 unused_urls 丢弃并打 warning。
 
     没有 @ 标记时原样返回（调用方收集到的「分镜图」仍留在列表里）。
     点名首帧时，同一张图不再作为中间的「分镜图」。没被点名的帧不会新增成首帧或尾帧。
-    超出 max_images 时保留两端的帧，从中间参考的尾部裁掉。
     """
     text = "" if prompt is None else str(prompt)
     urls_in = [str(url) for url in (urls or []) if str(url or "").strip()]
@@ -161,20 +136,11 @@ def prepare_frame_mentions(
     if wants_last and not last:
         raise FrameMentionError("frame_mention_missing_last", _MISSING_LAST)
 
-    reserved = (1 if wants_first else 0) + (1 if wants_last else 0)
-    limit = int(max_images) if max_images else 0
-    if limit > 0 and reserved > limit:
-        raise FrameMentionError("frame_mention_over_capacity", _OVER_CAPACITY)
-
     middle_urls, middle_items = urls_in, items_in
     if wants_first:
         middle_urls, middle_items = _drop_url(middle_urls, middle_items, first)
     if wants_last:
         middle_urls, middle_items = _drop_url(middle_urls, middle_items, last)
-    if limit > 0:
-        middle_budget = max(0, limit - reserved)
-        middle_urls = middle_urls[:middle_budget]
-        middle_items = middle_items[:len(middle_urls)]
 
     out_urls: List[str] = []
     out_items: List[Dict[str, Any]] = []

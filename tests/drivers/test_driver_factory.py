@@ -434,7 +434,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_ok_alt", MockDriver, 200),  # sort_order=200, 可用
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=None, config=config
         )
 
@@ -452,7 +452,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_all_missing_b", MockConfigMissingDriver, 200),
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=None, config=config
         )
 
@@ -471,7 +471,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_ok_alt", MockDriver, 200),
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=None, config=config
         )
 
@@ -492,7 +492,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_ok_fallback", MockDriver, 200),
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=1, config=config
         )
 
@@ -509,7 +509,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_ok_other", MockDriver, 100),
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=1, config=config
         )
         self.assertEqual(impl_name, "test_ok_locked")
@@ -526,7 +526,7 @@ class TestGetImplementationForUserSkipsUnavailable(unittest.TestCase):
             ("test_ok_fallback", MockDriver, 200),
         ])
 
-        impl_name, _ = VideoDriverFactory._get_implementation_for_user(
+        impl_name, _, _err = VideoDriverFactory._get_implementation_for_user(
             self.TASK_TYPE_ID, user_id=1, config=config
         )
         self.assertIsNone(impl_name)

@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "task/pipeline_processor.py",
+      "old": "        if fail_ids:\n            PipelineStepModel.fail_processing_steps_by_ids(fail_ids, error_message=stuck_message)\n        for ai_tool_id in sorted(set(cancel_tool_ids)):\n            commit_deferred_cancel(ai_tool_id)\n        return len(stuck_steps)",
+      "new": "        if fail_ids:\n            PipelineStepModel.fail_processing_steps_by_ids(fail_ids, error_message=stuck_message)\n        for ai_tool_id in sorted(set(cancel_tool_ids)):\n            commit_deferred_cancel(ai_tool_id)\n        for ai_tool_id in sorted({s.ai_tool_id for s in stuck_steps}):\n            PipelineProcessor._check_ai_tool_stage_completion(ai_tool_id)\n        return len(stuck_steps)"
+    }
+  ]
+}

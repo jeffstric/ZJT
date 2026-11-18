@@ -193,7 +193,7 @@ Seedance API 使用 content 数组传递输入：
 
 > `ratio` 只在文生视频、多参考（multi_reference）模式下下发。首帧/首尾帧模式（含未知模式降级为首尾帧）输出比例跟随首帧图片，火山会拒绝显式 `ratio`（400 `InvalidParameter.TaskTypeConstraint`），驱动构建 payload 时自动省略该字段。
 >
-> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动命中视频编辑判定时显式下发 `omni_reference_task_type: "edit"`（常量 `config/constant.py::OMNI_REFERENCE_TASK_TYPE_EDIT`）并自动改写 `ratio`/`duration`，接口提交时即提前校验参数限制，消除 auto 自动判定错型导致的异步报错（`InvalidParameter.TaskTypeConstraint` / `TaskTypeMismatch`）；普通文生/图生仍下发用户选择的比例和时长，且不下发 `omni_reference_task_type`。
+> **Seedance 2.5 参考视频（视频克隆/编辑）**：火山会按提示词把任务判成 video editing，此时 `ratio` 必须为 `adaptive`、`duration` 必须为 `-1`，输出画幅和时长跟随参考视频（参考视频须 4–30 秒）。驱动命中视频编辑判定时显式下发 `omni_reference_task_type: "edit"`（常量 `config/constant.py::OMNI_REFERENCE_TASK_TYPE_EDIT`）并自动改写 `ratio`/`duration`，接口提交时即提前校验参数限制，消除 auto 自动判定错型导致的异步报错（`InvalidParameter.TaskTypeConstraint` / `TaskTypeMismatch`）；普通文生/图生仍下发用户选择的比例和时长，且不下发 `omni_reference_task_type`。edit 判定以「实际进入 content 的参考视频**恰好 1 个**」为准（火山 edit 要求 exactly one）：多视频走 auto 判定、下发用户时长（此时 `ai_tool.duration` 已是计价层吸附的视频总时长）；参考视频规范化/上传 CDN 失败直接 fail-fast 返回 USER 错误（"参考视频处理失败，请重新上传视频"），不再 warning 跳过——跳过会产生「标 edit 却无视频」的必死请求（火山 400），个别网关放行时更糟（按编辑计费、实际按图生视频出片，事故任务 78）。
 >
 > **计费口径（视频编辑）**：视频编辑任务的输出时长由参考视频决定，算力按**参考视频总时长**计，不再按用户输入时长。判定与解析的唯一入口为 `utils/computing_power.py::resolve_video_edit_billing_duration`（内部先调共享谓词 `is_video_edit_billing_task`，命中任务集合见 `config/constant.py::VIDEO_EDIT_BILLING_TASK_TYPES`，驱动层下发 edit 与计价层共用，禁止调用方自写条件）：ffprobe 探测参考视频总时长 → 向上取整到整数秒（不足 1 秒的零头按 1 秒计，含 1µs 浮点容差防整数秒误加）→ clamp 到任务 `supported_durations` 区间（2.5 为 5–30）；探测失败回退用户输入时长。扣费（`/api/ai-app-run-image`，探测经 `asyncio.to_thread` 包装）、`ai_tools.duration` 落库、企业工具估算（`enterprise/tools/video_tools.py`）、Agent 算力确认估算（`power_confirm.py`）均调用同一函数；`extra_config` 落库 `user_duration_seconds` 与 `billing_duration_source`（`reference_video`/`user_input`）供审计。WebM/MKV 缺容器 duration 元数据时（浏览器 MediaRecorder 录制产物）自动转码 MP4 后重探，避免计费静默回退用户输入时长（曾致 10s 视频只扣 5s 档算力）。退费不受影响：第一优先级按扣费流水原额退还（免疫供应商切换/价格热更新），兜底重算用 `ai_tools.duration`（与扣费同源）。
 
@@ -246,6 +246,7 @@ Seedance 2.0 系列与 2.5 支持「无图片、无视频、仅参考音频」�
 - `.webm` / `.mkv`：下载或映射到本地后，用 ffmpeg 转为 `.mp4`（H.264 + AAC，`+faststart`），再上传 CDN。
 - `.mp4` / `.mov` 等其他格式：保持原逻辑，直接上传或透传。
 - 转码产生的临时文件会在 CDN 上传后清理。
+- **失败即失败**：规范化或上传 CDN 失败时直接返回 USER 错误（"参考视频处理失败，请重新上传视频"），不静默跳过（0 字节 webm 曾致 edit 任务缺参考视频被火山 400，见上文 edit 判定说明）。
 
 这个步骤用于规避 Chrome `MediaRecorder` 生成的 WebM 常见问题：文件可播放，但容器 `format.duration` 和 `stream.duration` 为空，Seedance v2 输入适配器会报 `parse media duration: strconv.ParseFloat: parsing "": invalid syntax`。
 

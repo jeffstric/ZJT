@@ -22,6 +22,7 @@ import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
@@ -99,6 +100,7 @@ from config.constant import (
     ASSET_LIST_DB_QUERY_TIMEOUT,
     ASSET_MUTATION_DB_TIMEOUT,
     ASSET_STAGING_IO_TIMEOUT,
+    AIGC_MARK_TIMEOUT_SECONDS,
     BrandingConstants,
     MediaUploadSafetyConstants,
     SMART_INSERT_SHOT_TIMEOUT,
@@ -111,6 +113,10 @@ from config.constant import (
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
     VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
+    VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
+    VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS,
+    VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT,
+    VIDEO_CHAR_REPLACE_MAX_REF_IMAGES,
     WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
     WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT,
     QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
@@ -132,7 +138,7 @@ from model.media_file_mapping import MediaFileEntity
 from script_writer_core.image_grid_splitter import ImageGridSplitter
 from script_writer_core.digital_human_tts_tools import H3_LOCKED_PROMPT_MAX_CHARS
 from utils.image_grid_merger import ImageGridMerger
-from utils.media_mapping_util import register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
+from utils.media_mapping_util import normalize_site_upload_image_url, register_direct_uploaded_mapping, register_uploaded_file_mapping, upload_local_path
 from utils.sentry_util import SentryUtil
 from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
@@ -143,6 +149,7 @@ from utils.computing_power import (
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
 )
 from utils.video_resolution import validate_video_resolution
+from utils.aigc_marking import ensure_marked
 from utils.content_moderation_error import is_content_moderation_user_message
 from utils.resource_access import (
     get_user_id_from_header,
@@ -159,8 +166,8 @@ from utils.resource_access import (
 from utils.media_upload import (
     UploadValidationError,
     check_media_magic,
-    convert_tiff_file_to_png,
     max_upload_size_for_ext,
+    normalize_uploaded_image_file,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -658,6 +665,10 @@ from api.script_split import (
     ScriptSplitPreconditionError,
 )
 app.include_router(script_split_router)
+
+# AIGC 显式标识管理（深度合成合规，见 docs/backend/aigc_marking.md）
+from api.aigc import router as aigc_router
+app.include_router(aigc_router)
 
 # 导入并注册测试路由（临时测试，完成后移除）
 from api.agent_auth import router as agent_auth_router
@@ -1166,6 +1177,24 @@ async def download_image(
         file_path = _resolve_local_upload_path(url, '/upload/cache/')
         if file_path is not None:
             if file_path.is_file():
+                # AIGC 标识出口兜底（《标识办法》第4条：下载时确保文件含有标识）。
+                # 主链路已在落盘时标记，此处仅补漏标文件；幂等（已标识毫秒级返回），
+                # 失败不阻断下载。ProduceID 从缓存文件名 {task_id}_{ts}_{hash} 首段解析。
+                _pid = file_path.name.split('_')[0]
+                try:
+                    int(_pid)
+                except ValueError:
+                    _pid = file_path.stem
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(ensure_marked, str(file_path), _pid),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[download] AIGC 标识兜底超时(不阻断下载): {file_path}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[download] AIGC 标识兜底异常(不阻断下载): {file_path}: {e}")
+
                 # 确定文件名
                 if not filename:
                     filename = file_path.name
@@ -1468,10 +1497,10 @@ def _save_uploaded_image(upload_file: UploadFile) -> str:
     file_path = os.path.join(temp_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
+    # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg
     saved_name = info.filename
-    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
-        file_path = convert_tiff_file_to_png(file_path)
-        saved_name = os.path.basename(file_path)
+    file_path = normalize_uploaded_image_file(file_path)
+    saved_name = os.path.basename(file_path)
 
     return build_upload_url(UploadPathConstants.TEMP_DIR, date_str, saved_name, host=SERVER_HOST)
 
@@ -1520,12 +1549,11 @@ def _save_user_asset(
     file_path = os.path.join(asset_dir, info.filename)
     save_upload_chunked(upload_file, file_path, file_extension)
 
-    # TIFF 归一化：转 PNG 后再注册 CDN mapping / 构建对外 URL，
-    # /upload/ 目录不得残留 tif 文件
+    # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg 后再注册
+    # CDN mapping / 构建对外 URL，/upload/ 目录不得残留 tif/jfif 文件
     saved_name = info.filename
-    if file_extension in MediaUploadSafetyConstants.TIFF_EXTS:
-        file_path = convert_tiff_file_to_png(file_path)
-        saved_name = os.path.basename(file_path)
+    file_path = normalize_uploaded_image_file(file_path)
+    saved_name = os.path.basename(file_path)
 
     # 素材落盘即注册 CDN mapping 并触发异步上传七牛：
     # 此前 workflow 素材从不建 mapping，所有 /upload/workflow/ 访问都从本机经
@@ -2112,9 +2140,17 @@ async def image_edit(
         if ref_image_urls:
             urls = [url.strip() for url in ref_image_urls.split(',') if url.strip()]
             image_urls.extend(urls[:10 - len(image_urls)])  # Limit total to 10
-        
+
         if not image_urls:
             raise HTTPException(status_code=400, detail="At least one image is required (via file upload or URL)")
+
+        # 参考图统一归一化为本站 /upload/ 相对路径后落库（host 无关存储）。
+        # 13572 事故：存量绝对 URL（历史 meta 回灌 / 上传接口返回值 / LLM 拼造域名）
+        # 若原样写入 ai_tools.image_path，会随重新编辑/重新生成链路继续扩散；
+        # 消费链按 /upload/ 前缀做域名无关本地映射，相对路径即完备形态。
+        # 归一化失败的项（真正的外部图片链接）保持原样——该接口也服务非 LLM
+        # 直调方，不在接口层拒绝。
+        image_urls = [normalize_site_upload_image_url(u) or u for u in image_urls]
 
         logger.info(f"[image_edit] 提示词: {prompt} 参考图片列表 ({len(image_urls)}张): {image_urls}")
         
@@ -3114,6 +3150,20 @@ async def ai_app_run_image(
         # cookie 会话（阶段 3c）下前端 form 传不到 token 本体，为空时从 Authorization
         # 头取（cookie 翻译中间件已注入），保证算力检查/扣费正常执行
         auth_token = auth_token or extract_bearer_token(request.headers.get("authorization")) or ''
+        # 旧路线兼容：类型 50（minimax_h3_kfr，首帧参考混合）已硬禁用，不再创建。
+        # 旧页面仍提交 50 时翻译成类型 37（参考生）即可——首帧参考混合实现方是 37
+        # 的排序首位默认实现方，正常解析结果与旧 force 等价（用户固定其他实现方时
+        # 尊重固定），并打警告日志。
+        from task.visual_drivers.driver_factory import VideoDriverFactory
+        try:
+            if int(task_id) == int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO):
+                logger.warning(
+                    "Legacy minimax_h3_kfr (type=50) submit by user %s: re-recording as type=37",
+                    user_id,
+                )
+                task_id = int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
+        except (TypeError, ValueError):
+            pass
         # 通过 task_id 获取任务配置
         task_config = UnifiedConfigRegistry.get_by_id(task_id)
         if not task_config:
@@ -3121,26 +3171,13 @@ async def ai_app_run_image(
         # 验证任务分类是否正确（支持图生视频和数字人）
         if task_config.category not in [TaskCategory.IMAGE_TO_VIDEO, TaskCategory.DIGITAL_HUMAN]:
             raise HTTPException(status_code=400, detail=f"task_id {task_id} 不是图生视频或数字人任务")
-        
+
         image_to_video_type = task_id
 
         # 验证 image_mode 参数
         valid_image_modes = ['first_last_frame', 'multi_reference', 'first_last_with_ref']
         if image_mode not in valid_image_modes:
             raise HTTPException(status_code=400, detail=f"无效的 image_mode: {image_mode}，合法值: {valid_image_modes}")
-
-        from task.visual_drivers.driver_factory import VideoDriverFactory
-        actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
-        resolution = validate_video_resolution(resolution, actual_impl)
-
-        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
-        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
-        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
-        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
-            task_config, duration_seconds, actual_impl,
-        )
-        if not duration_ok:
-            raise HTTPException(status_code=400, detail=duration_reject_reason)
 
         # 记录输入的图片信息
         logger.info(f"AI app run image request - prompt: {prompt}, task_id: {task_id}, ratio: {ratio}, duration: {duration_seconds}, count: {count}, user_id: {user_id}, image_mode: {image_mode}, resolution: {resolution}")
@@ -3255,6 +3292,45 @@ async def ai_app_run_image(
         elif video:
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
+
+        # 实现方解析（偏好 → 排序 → 默认）。带参考视频时跳过没有视频槽的实现方
+        # （首帧参考混合、AutoDL 参考生），改选能用上视频的实现方。
+        # 解析失败（含固定了不支持该输入的供应商）在扣费和建任务之前返回中文原因。
+        # 失败原因必须跟这次调用一起返回：to_thread 回来后再读类变量会被别的请求覆盖。
+        compat_tool = SimpleNamespace(
+            prompt=prompt,
+            image_path=image_path,
+            video_path=video_path,
+            audio_path=audio_path,
+            reference_images=reference_images_json,
+            extra_config=None,
+            duration=duration_seconds,
+            ratio=ratio,
+            user_id=user_id,
+        )
+
+        def _resolve_video_impl():
+            return VideoDriverFactory.resolve_implementation_for_user(
+                task_id, user_id, compatibility_tool=compat_tool,
+            )
+
+        actual_impl, create_error = await asyncio.to_thread(_resolve_video_impl)
+        if not actual_impl:
+            create_error = create_error or {}
+            raise HTTPException(
+                status_code=400,
+                detail=str(create_error.get("message") or "没有可用的实现方"),
+            )
+        resolution = validate_video_resolution(resolution, actual_impl)
+
+        # 时长档位校验：超出任务级基线档位的时长，仅实际将使用的实现方也支持时才放行
+        # （如 H3 的 11-15s 仅 AutoDL 支持——实测可出片；RunningHub webapp 该段有显存
+        # OOM 风险且算力表无档，不放行，避免提交后随机失败或算力计错档）
+        duration_ok, duration_reject_reason = UnifiedConfigRegistry.is_duration_supported_for_implementation(
+            task_config, duration_seconds, actual_impl,
+        )
+        if not duration_ok:
+            raise HTTPException(status_code=400, detail=duration_reject_reason)
 
         # 数字人（DIGITAL_HUMAN）与图生视频/参考生视频是不同品类：
         # 其 audio 是「对口型说话音频」必选输入，不是 reference_to_video 的参考素材。
@@ -5212,6 +5288,265 @@ async def video_enhance(
         logger.error(f"Video enhancement failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
+
+
+async def _probe_video_dimensions(source: str) -> Optional[tuple]:
+    """ffprobe 探测视频宽高（本地路径或远程 URL），失败/超时返回 None。
+
+    人物替换成片方向跟随参考视频：宽高决定 768p竖 / 768p横（仅此两档）。
+    """
+    ffprobe_path = resolve_bin_path(
+        get_config_value("bin", "ffprobe", default="ffprobe"), APP_DIR
+    )
+    cmd = [
+        ffprobe_path, '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=s=x:p=0',
+        source,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.warning(f"ffprobe timeout when probing video dimensions: {source}")
+            return None
+        if proc.returncode != 0:
+            logger.warning(f"ffprobe failed to probe video dimensions: {source}")
+            return None
+        parts = stdout.decode('utf-8', errors='ignore').strip().split('x')
+        if len(parts) != 2:
+            return None
+        return int(parts[0]), int(parts[1])
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Error probing video dimensions for {source}: {exc}")
+        return None
+
+
+@app.post("/api/video-character-replace")
+@require_permission("video:character_replace")
+async def video_character_replace(
+    request: Request,
+    video: UploadFile = File(None, description="参考视频文件（动作/运镜/原声来源，必填，或 video_url 二选一）"),
+    video_url: str = Form(None, description="参考视频URL（与 video 二选一）"),
+    images: List[UploadFile] = File(None, description="角色参考图 1-9 张（图 N 替换视频里第 N 个角色，从左到右对应）"),
+    image_urls: str = Form(None, description='角色参考图 URL 列表（JSON 数组字符串，与 images 可混用）'),
+    duration_seconds: Optional[int] = Form(None, description="输出时长（秒）5-25；缺省取 min(参考视频时长向上取整, 25)"),
+    prompt: str = Form("", description="替换说明（选填，2048 字符内）：指定谁换谁/保留什么/替换后走向"),
+    subject: str = Form("", description="检测主体类型（选填，必须英文，默认 person，一次只填一种）"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token"),
+):
+    """
+    提交视频人物替换任务（AutoDL.Art H3 工作流 minimax_h3_zm_titim）。
+
+    只落库并入队，视频/图片转公网 URL 与工作流提交由调度进程的
+    minimax_h3_character_replace_autodl_v1 驱动完成。计费按输出时长档位
+    （5-25，0.11 元/秒贴本），提交前预扣，任务失败由后台幂等退费；
+    前端轮询 /api/get-status/{project_id}。
+    """
+    try:
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_CHARACTER_REPLACE)
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频人物替换任务未配置")
+
+        # ===== 1. 解析参考视频来源（必填）=====
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            try:
+                probe_source = resolve_upload_url_to_local_path(saved_video)
+            except ValueError:
+                probe_source = saved_video
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+            local_file_path = _resolve_local_upload_path(saved_video, '/upload/')
+            probe_source = str(local_file_path) if local_file_path is not None else saved_video
+        else:
+            raise HTTPException(status_code=400, detail="必须提供参考视频文件或视频URL")
+
+        # ===== 2. 解析角色参考图（1-9 张，上传文件与本站/外网 URL 可混用）=====
+        ref_images: List[str] = []
+        if images:
+            for img in images[:VIDEO_CHAR_REPLACE_MAX_REF_IMAGES]:
+                if not (img.filename or ""):
+                    continue
+                try:
+                    ref_images.append(await asyncio.to_thread(_save_uploaded_image, img))
+                except UploadValidationError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if image_urls and str(image_urls).strip():
+            try:
+                url_list = json.loads(image_urls)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=400, detail=f"image_urls 必须是 JSON 数组字符串: {exc}") from exc
+            if not isinstance(url_list, list):
+                raise HTTPException(status_code=400, detail="image_urls 必须是 JSON 数组")
+            ref_images.extend(str(u).strip() for u in url_list if str(u).strip())
+        # 去重保序（同一张图既上传又传 URL 的边界）
+        seen = set()
+        ref_images = [u for u in ref_images if not (u in seen or seen.add(u))]
+        if not ref_images:
+            raise HTTPException(status_code=400, detail="至少需要 1 张角色参考图")
+        if len(ref_images) > VIDEO_CHAR_REPLACE_MAX_REF_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"角色参考图最多 {VIDEO_CHAR_REPLACE_MAX_REF_IMAGES} 张（图 1~9 从左到右对应视频中的角色）",
+            )
+
+        # ===== 3. ffprobe 探测视频时长/方向：输出时长档位 + 768p竖/横 =====
+        probed_duration = await _probe_video_duration_seconds(probe_source)
+        if duration_seconds and int(duration_seconds) > 0:
+            # 用户显式指定输出时长（语义=想要成片多久），探测值仅作缺省
+            duration_tier = int(duration_seconds)
+        elif probed_duration is not None and probed_duration > 0:
+            duration_tier = int(math.ceil(probed_duration))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="无法识别参考视频时长，请显式传入输出时长 duration_seconds（5-25）",
+            )
+        duration_tier = max(
+            VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
+            min(VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS, duration_tier),
+        )
+        if probed_duration is not None and 0 < probed_duration < duration_tier:
+            logger.info(
+                f"参考视频 {probed_duration:.2f}s 短于输出时长 {duration_tier}s，"
+                f"超出段将由模型自由发挥（上游工作流口径）"
+            )
+
+        dimensions = await _probe_video_dimensions(probe_source)
+        if dimensions:
+            width, height = dimensions
+            orientation = '768p横' if width > height else '768p竖'
+        else:
+            orientation = '768p竖'
+            logger.warning(f"ffprobe 探测视频方向失败，回落 768p竖: {probe_source}")
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_CHARACTER_REPLACE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_tier,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        # ===== 4. 算力检查 + 预扣费（失败由后台调度器幂等退费）=====
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，人物替换 {duration_tier} 秒需 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id,
+                },
+            )
+            if not success:
+                # 扣费失败必须阻断落库入队，否则用户免费出片（账实不符）。
+                # 口径同 image_edit / upscale 端点的 deduct 阻断派：
+                # check_computing_power 前置校验已挡住余额不足主场景，
+                # 此处失败多为 check 与 deduct 间的并发消耗或 perseids 瞬时故障；
+                # transaction_id 幂等保证用户重新提交不会重复扣费。
+                logger.error(f"Character replace computing power deduction failed: {message}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"算力扣费失败，请稍后重试: {message}",
+                )
+
+        # ===== 5. 落库并入队（素材转公网 URL 与工作流提交由驱动在调度进程完成）=====
+        prompt_text = (prompt or "").strip()[:2048]
+        subject_text = (subject or "").strip()
+        extra_config = {
+            "source": "direct",
+            "char_replace_resolution": orientation,
+        }
+        if subject_text and subject_text != VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT:
+            extra_config["params"] = {"subject": subject_text}
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt=prompt_text or "视频人物替换",
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_CHARACTER_REPLACE,
+            video_path=saved_video,
+            image_path=ref_images[0],  # 兼容历史列表按 image_path 渲染
+            reference_images=json.dumps(ref_images, ensure_ascii=False),
+            transaction_id=transaction_id,
+            duration=duration_tier,
+            status=AI_TOOL_STATUS_PENDING,
+            implementation=impl_id,
+            extra_config=json.dumps(extra_config, ensure_ascii=False),
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": ai_tool_id,
+            "status": "submitted",
+            "duration": duration_tier,
+            "resolution": orientation,
+            "computing_power": computing_power,
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Video character replace failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"视频人物替换失败: {str(e)}")
 
 
 @app.post("/api/video-watermark-remove")
@@ -7418,10 +7753,10 @@ async def upload_workflow_asset_direct_token(
             content={"code": -1, "message": f"文件大小超过限制（{max_bytes // (1024 * 1024)}MB）"}
         )
 
-    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+    if ext in (MediaUploadSafetyConstants.TIFF_EXTS + MediaUploadSafetyConstants.JFIF_EXTS):
         return JSONResponse({
             "code": 0,
-            "message": "TIFF 需服务端转码，走服务器上传",
+            "message": "TIFF/JFIF 需服务端归一化，走服务器上传",
             "data": {"direct_upload": False, "reason": "tiff_unsupported"}
         })
 
@@ -7517,10 +7852,10 @@ async def confirm_workflow_asset_direct_upload(
         ext = resolve_media_extension(filename)
     except UploadValidationError as e:
         return JSONResponse(status_code=400, content={"code": -1, "message": str(e)})
-    if ext in MediaUploadSafetyConstants.TIFF_EXTS:
+    if ext in (MediaUploadSafetyConstants.TIFF_EXTS + MediaUploadSafetyConstants.JFIF_EXTS):
         return JSONResponse(
             status_code=400,
-            content={"code": -1, "message": "TIFF 素材不支持直传，请走服务器上传"}
+            content={"code": -1, "message": "TIFF/JFIF 素材不支持直传，请走服务器上传"}
         )
 
     max_bytes = max_upload_size_for_ext(ext)
@@ -8128,11 +8463,9 @@ async def upload_image_to_video_media(
         # 安全校验（魔数）+ 分块限流保存（工作线程中执行，避免阻塞事件循环）
         await asyncio.to_thread(save_upload_chunked, file, file_path, original_ext)
 
-        # TIFF 归一化：转 PNG（浏览器 <img> 不解码 TIFF），缩略图与 URL 均基于转码后文件
-        saved_name = info.filename
-        if original_ext in MediaUploadSafetyConstants.TIFF_EXTS:
-            file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-            saved_name = os.path.basename(file_path)
+        # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg，缩略图与 URL 均基于归一化后文件
+        file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+        saved_name = os.path.basename(file_path)
 
         # 生成缩略图
         thumb_filename = f"thumb_{info.timestamp}_{info.unique_id}.jpg"
@@ -10181,10 +10514,9 @@ async def create_character(
                 content = await reference_image.read()
                 f.write(content)
 
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
 
         # 处理多参考图上传
@@ -10215,10 +10547,9 @@ async def create_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
-                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                    filename = os.path.basename(file_path)
+                # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+                file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+                filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -10346,10 +10677,9 @@ async def update_character(
                 content = await reference_image.read()
                 f.write(content)
             
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/character/pic/{filename}"
         
         # 处理音频上传
@@ -10417,10 +10747,9 @@ async def update_character(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
-                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                    filename = os.path.basename(file_path)
+                # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+                file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+                filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/character/pic/{filename}"
                 reference_images_list.append({
                     'id': str(uuid.uuid4()),
@@ -10837,10 +11166,9 @@ async def create_location(
                 content = await reference_image.read()
                 f.write(content)
 
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -10879,10 +11207,9 @@ async def create_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
-                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                    filename = os.path.basename(file_path)
+                # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+                file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+                filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -10997,10 +11324,9 @@ async def update_location(
                 content = await reference_image.read()
                 f.write(content)
 
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             update_data['reference_image'] = f"{SERVER_HOST}/upload/location/pic/{filename}"
 
         # 处理多角度参考图上传
@@ -11038,10 +11364,9 @@ async def update_location(
                 with open(file_path, "wb") as f:
                     content = await img_file.read()
                     f.write(content)
-                # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-                if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                    file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                    filename = os.path.basename(file_path)
+                # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+                file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+                filename = os.path.basename(file_path)
                 url = f"{SERVER_HOST}/upload/location/pic/{filename}"
                 angle = angles[idx] if idx < len(angles) else 'front'
                 reference_images_list.append({
@@ -11220,10 +11545,9 @@ async def add_character_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/character/pic/{filename}"
             reference_images_list.append({
                 'id': str(uuid.uuid4()),
@@ -11382,10 +11706,9 @@ async def add_location_reference_images(
             with open(file_path, "wb") as f:
                 content = await img_file.read()
                 f.write(content)
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             url = f"{SERVER_HOST}/upload/location/pic/{filename}"
             angle = angles[idx] if idx < len(angles) else 'front'
             reference_images_list.append({
@@ -11713,10 +12036,9 @@ async def create_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
 
         props_id = PropsModel.create(
@@ -11815,10 +12137,9 @@ async def update_props(
                 content_data = await reference_image.read()
                 f.write(content_data)
             
-            # TIFF 归一化：tif/tiff 转 PNG 后再构建对外 URL（浏览器 <img> 不解码 TIFF，upload 目录不留 tif）
-            if file_ext.lower() in MediaUploadSafetyConstants.TIFF_EXTS:
-                file_path = await asyncio.to_thread(convert_tiff_file_to_png, file_path)
-                filename = os.path.basename(file_path)
+            # 图片落盘归一化（统一入口）：tif/tiff 转 PNG、jfif 重命名为 jpg（浏览器/CDN 均不认非常见扩展名）
+            file_path = await asyncio.to_thread(normalize_uploaded_image_file, file_path)
+            filename = os.path.basename(file_path)
             image_path = f"{SERVER_HOST}/upload/props/{filename}"
         
         # 更新道具

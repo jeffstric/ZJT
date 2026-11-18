@@ -169,7 +169,7 @@
       el.style.left = node.x + 'px';
       el.style.top = node.y + 'px';
       el._cleanupHandlers = [];
-      // 不设固定宽度，由CSS .node:has(.script-node-body) 控制
+      // 宽度由 CSS .node:has(.script-node-body):has(.shot-frame-generate-btn) 固定为 960px，不要在这里写 width:auto
 
       el.innerHTML = `
         <div class="port input" data-i18n="shot_frame_input_port:title"></div>
@@ -1306,7 +1306,12 @@
       // 渲染角色图片（更新提示词显示）
       function renderCharImages() {
         renderPromptWithInlineChars(imagePromptDisplay, node.data.imagePrompt || '');
-        renderPromptWithInlineChars(videoPromptDisplay, node.data.videoPromptText || node.data.videoPrompt || '');
+        // 存量节点的提示词可能仍含「动作内逐字台词 + 对话行」重复，展示前去重
+        // （videoPromptText 为用户可编辑字段，落库后不会自愈，展示与提交前都要兜底）
+        const videoPromptForDisplay = (typeof dedupeVideoPromptDialogue === 'function')
+          ? dedupeVideoPromptDialogue(node.data.videoPromptText || node.data.videoPrompt || '')
+          : (node.data.videoPromptText || node.data.videoPrompt || '');
+        renderPromptWithInlineChars(videoPromptDisplay, videoPromptForDisplay);
       }
 
       // 显示角色参考图选择下拉
@@ -2096,7 +2101,12 @@
         if(e.target.closest('.shot-inline-char-chip')) return;
         e.stopPropagation();
         // 创建一个模拟textarea的对象，提供value属性
-        const mockTextarea = { value: node.data.videoPromptText || node.data.videoPrompt || '' };
+        // 打开编辑器前去重：存量节点的重复台词在这里被清理，用户保存后落库自愈
+        const mockTextarea = {
+          value: (typeof dedupeVideoPromptDialogue === 'function')
+            ? dedupeVideoPromptDialogue(node.data.videoPromptText || node.data.videoPrompt || '')
+            : (node.data.videoPromptText || node.data.videoPrompt || ''),
+        };
         showPromptExpandModal(mockTextarea, '视频提示词', (newValue) => {
           node.data.videoPromptText = newValue;
           updateShotReferences();
@@ -2144,7 +2154,9 @@
         reduceViolationBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
 
-          const currentPrompt = (node.data.videoPromptText || node.data.videoPrompt || '').trim();
+          const currentPrompt = (typeof dedupeVideoPromptDialogue === 'function')
+            ? dedupeVideoPromptDialogue(node.data.videoPromptText || node.data.videoPrompt || '').trim()
+            : (node.data.videoPromptText || node.data.videoPrompt || '').trim();
           if(!currentPrompt){
             showToast('视频提示词为空', 'warning');
             return;

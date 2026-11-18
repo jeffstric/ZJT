@@ -1,0 +1,14 @@
+{
+  "replaces": [
+    {
+      "path": "llm/volcengine_openai_client.py",
+      "old": "        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260428',",
+      "new": "        'doubao-seed-2-0-lite': 'doubao-seed-2-0-lite-260215',"
+    },
+    {
+      "path": "llm/volcengine_openai_client.py",
+      "old": "        if 'InvalidEndpoint.ClosedEndpoint' in str(e):\n            target = model or '未知模型'\n            return (\n                f\"火山方舟模型「{target}」的版本快照已被官方下线停服\"\n                f\"（InvalidEndpoint.ClosedEndpoint），请更新\"\n                f\" llm/volcengine_openai_client.py 的 _MODEL_NAME_MAP 映射\"\n                f\"或改用其他供应商；原始错误: {e}\"\n            )\n        if 'InvalidEndpointOrModel.NotFound' not in str(e):",
+      "new": "        if 'InvalidEndpointOrModel.NotFound' not in str(e):"
+    }
+  ]
+}

@@ -8,8 +8,6 @@ import {
     isH3ReferenceVideoModel,
     promptHasFrameMention,
     resolveSubmitFrameUrls,
-    shouldUseH3KeyframeRef,
-    H3_KEYFRAME_REF_ROUTE_ENABLED,
     stripMentionTrigger,
 } from '../js/storyboard/frame_mention.js';
 
@@ -31,11 +29,9 @@ describe('storyboard frame mention tokens', () => {
         ]);
     });
 
-    it('routes only H3 reference mode with a token to the mixed model', () => {
+    it('H3 reference recognition stays (impl selection is server-side now)', () => {
         const h3 = { short_key: 'minimax_h3_r2v', key: 'minimax_h3_reference_to_video' };
-        expect(shouldUseH3KeyframeRef('multi_reference', h3, '@首帧图')).toBe(H3_KEYFRAME_REF_ROUTE_ENABLED === true);
-        expect(shouldUseH3KeyframeRef('first_last_frame', h3, '@首帧图')).toBe(false);
-        expect(shouldUseH3KeyframeRef('multi_reference', h3, '没有标记')).toBe(false);
+        expect(isH3ReferenceVideoModel(h3)).toBe(true);
         expect(isH3ReferenceVideoModel({ key: 'minimax_h3' })).toBe(false);
         expect(isH3ReferenceVideoModel({ short_key: 'minimax_h3_t2v' })).toBe(false);
         expect(findFrameMentionError({
@@ -51,6 +47,14 @@ describe('storyboard frame mention tokens', () => {
             firstUrl: 'https://cdn.test/first.png',
             lastUrl: 'https://cdn.test/last.png',
             model: { key: 'seedance_2_0_image_to_video', max_multi_ref_images: 9 },
+        })).toBe(null);
+        // 张数按模型上限校验（服务端按实现方裁 3），前端不再预裁
+        expect(findFrameMentionError({
+            imageMode: 'multi_reference',
+            prompt: '@首帧图 @尾帧图',
+            firstUrl: 'https://cdn.test/first.png',
+            lastUrl: 'https://cdn.test/last.png',
+            model: { key: 'minimax_h3_reference_to_video', max_multi_ref_images: 9 },
         })).toBe(null);
     });
 

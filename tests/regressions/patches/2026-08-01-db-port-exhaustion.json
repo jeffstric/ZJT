@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "model/database.py",
+      "old": "    connection = None\n    try:\n        connection = _get_pool().connection()\n        yield connection",
+      "new": "    connection = None\n    try:\n        connection = pymysql.connect(\n            host=DB_CONFIG['host'],\n            port=DB_CONFIG['port'],\n            user=DB_CONFIG['user'],\n            password=DB_CONFIG['password'],\n            database=DB_CONFIG['database'],\n            charset=DB_CONFIG['charset'],\n            cursorclass=DictCursor,\n        )\n        yield connection"
+    }
+  ]
+}

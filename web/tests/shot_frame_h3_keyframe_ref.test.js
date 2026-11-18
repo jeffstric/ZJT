@@ -1,31 +1,45 @@
 const {
   promptHasShotFrameMention,
-  shouldUseH3KeyframeRefModel,
-  resolveShotFrameReferenceSubmitModel,
-  shotFrameMentionImageLimit,
-  H3_KEYFRAME_REF_ROUTE_ENABLED,
+  isH3ReferenceVideoModel,
+  shotFrameMultiRefLimit,
+  placeShotFrameMentionImages,
 } = require('../js/shot_frame_video_generator.js');
 
-describe('H3 首帧参考混合模型路由', () => {
-  test('参考模式的 H3 参考模型点名首帧或尾帧时改走混合模型，图片上限 3', () => {
-    // 开关关闭时留在参考生视频，图片上限回到参考模型默认（测试环境无 TaskConfig 时为 5）。
-    const routed = H3_KEYFRAME_REF_ROUTE_ENABLED === true;
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_r2v', '从 @首帧图 开始')).toBe(routed);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_reference_to_video', '停在 @尾帧图')).toBe(routed);
-    expect(resolveShotFrameReferenceSubmitModel('multi_reference', 'minimax_h3_r2v', '@首帧图 @尾帧图')).toBe(
-      routed ? 'minimax_h3_kfr' : 'minimax_h3_r2v'
-    );
-    expect(shotFrameMentionImageLimit('multi_reference', 'minimax_h3_r2v', '@首帧图')).toBe(routed ? 3 : 5);
+describe('H3 首帧参考混合实现方（类型 37 默认实现方，前端不换绑不预裁）', () => {
+  test('前端不再换绑 task_id：导出面不包含换绑函数与常量', () => {
+    const module = require('../js/shot_frame_video_generator.js');
+    expect(module.shouldUseH3KeyframeRefModel).toBeUndefined();
+    expect(module.resolveShotFrameReferenceSubmitModel).toBeUndefined();
+    expect(module.H3_KEYFRAME_REF_ROUTE_ENABLED).toBeUndefined();
+    expect(module.H3_KEYFRAME_REF_SHORT_KEY).toBeUndefined();
   });
 
-  test('首帧模式、没有标记、以及其他模型都不换', () => {
-    expect(shouldUseH3KeyframeRefModel('first_last_frame', 'minimax_h3_r2v', '@首帧图')).toBe(false);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_r2v', '普通提示词')).toBe(false);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3', '@首帧图')).toBe(false);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'minimax_h3_t2v', '@尾帧图')).toBe(false);
-    expect(shouldUseH3KeyframeRefModel('multi_reference', 'seedance_2_0', '@首帧图')).toBe(false);
-    expect(resolveShotFrameReferenceSubmitModel('multi_reference', 'seedance_2_0', '@首帧图')).toBe('seedance_2_0');
-    expect(shotFrameMentionImageLimit('multi_reference', 'seedance_2_0', '@首帧图')).toBe(5);
+  test('H3 参考模型识别保持不变（排图与自动带入仍按模型判断）', () => {
+    expect(isH3ReferenceVideoModel('minimax_h3_r2v')).toBe(true);
+    expect(isH3ReferenceVideoModel('minimax_h3_reference_to_video')).toBe(true);
+    expect(isH3ReferenceVideoModel('minimax_h3')).toBe(false);
+    expect(isH3ReferenceVideoModel('minimax_h3_t2v')).toBe(false);
+  });
+
+  test('张数上限回到模型默认（测试环境无 TaskConfig 时为 5），前端不预裁', () => {
+    expect(shotFrameMultiRefLimit('minimax_h3_r2v')).toBe(5);
+    expect(shotFrameMultiRefLimit('seedance_2_0')).toBe(5);
+  });
+
+  test('点名排图仍把首尾帧放到两端并改写提示词（参考图全容量提交，服务端六槽接收）', () => {
+    const placed = placeShotFrameMentionImages(
+      '从 @首帧图 走到 @尾帧图',
+      ['m1.png', 'm2.png', 'm3.png'],
+      ['图1是角色A', '图2是场景B', '图3是画风C'],
+      'first.png',
+      'last.png',
+      5,
+    );
+    expect(placed.error).toBe('');
+    expect(placed.referenceImageUrls[0]).toBe('first.png');
+    expect(placed.referenceImageUrls[placed.referenceImageUrls.length - 1]).toBe('last.png');
+    expect(placed.prompt).toContain('图1');
+    expect(placed.prompt).not.toContain('@首帧图');
   });
 
   test('@首帧图片 和 @尾帧图片 不是槽位标记', () => {

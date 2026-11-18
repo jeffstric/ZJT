@@ -58,6 +58,53 @@ def extract_local_path_from_url(url: str) -> Optional[str]:
     return path.lstrip("/")
 
 
+def normalize_site_upload_image_url(url: str) -> Optional[str]:
+    """
+    LLM 图片工具参数归一化：只接受本站 ``/upload/`` 图片资源，统一返回
+    ``/upload/...`` 相对路径（host 无关形态，即落库/存储的标准形态）。
+
+    背景（2026-11-14 任务 13572）：edit_image 等图片工具曾仅接受 http/https
+    绝对 URL 且在 schema 中明文禁止 /upload/ 相对路径，而对话里图片标签给出的
+    恰是 /upload/ 相对路径——专家 LLM 被拒后自行拼造生产域名前缀
+    （"https://api.ai-arts.com/upload/..."）绕过校验，绝对 URL 随
+    ai_tools.image_path 扩散到「参考素材」元数据与任务时间线。消费链
+    （visual_drivers）本就按 /upload/ 前缀做域名无关的本地文件映射（见
+    extract_local_path_from_url），因此相对路径即完备形态，也回归
+    asset_library §5「落库后不随 host/端口失效」的设计。
+
+    规则：
+    - ``/upload/...`` 相对路径 → 原样返回；
+    - 任意 host 的绝对 URL（含协议相对 ``//host/...``、``file://``），URL path
+      以 ``/upload/`` 开头 → 剥掉 scheme/host 返回相对路径（容忍 LLM 从会话
+      历史或上传接口返回值里抄来的本站绝对 URL，与消费链域名无关语义一致）；
+    - 缺前导斜杠的裸 ``upload/...`` → 补齐为 ``/upload/...``；
+    - 其他（外部图片链接、裸磁盘路径等）→ 返回 None，调用方拒绝。
+
+    路径穿越拒绝复用 extract_local_path_from_url 的同源实现（含解码后形态）。
+
+    Returns:
+        归一化后的 ``/upload/...`` 相对路径；不属于本站 /upload/ 资源时 None。
+    """
+    if not url or not isinstance(url, str):
+        return None
+    value = url.strip()
+    if not value:
+        return None
+
+    local_rel = extract_local_path_from_url(value)
+    if local_rel:
+        return "/" + local_rel
+
+    # 缺前导斜杠的裸相对形式（upload/...）：补齐前缀后再走同源校验
+    # （绝对 URL/其他形态 extract 已覆盖；此处只兜 LLM 少写一个斜杠的情形）
+    parsed = urlparse(value)
+    if not parsed.scheme and not parsed.netloc:
+        candidate = "/" + parsed.path.lstrip("/")
+        if candidate.startswith("/upload/") and extract_local_path_from_url(candidate):
+            return candidate
+    return None
+
+
 def upload_local_path(file_path: str) -> str:
     """
     计算上传目录内文件的规范 local_path（注册 CDN mapping 与中间件查询的统一格式）。

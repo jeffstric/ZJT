@@ -28,7 +28,8 @@
 | 扩展名白名单 | `utils/media_upload.py` `resolve_media_extension()` | 白名单见 `config/constant.py` `MediaUploadSafetyConstants`；`.html/.htm/.svg/.xhtml/.xml/.js/.mjs/.css` 显式拒绝并返回针对性提示 |
 | 魔数校验 | `utils/media_upload.py` `save_upload_chunked()` / `check_media_magic()` | 按扩展名校验文件头前 32 字节（PNG/JPEG/RIFF 容器/ftyp/EBML/ID3/TIFF 双字节序 `II*\x00`/`MM\x00*` 等），伪造扩展名的 HTML 一律拒绝；`check_media_magic` 供已持有文件内容的调用方（`_validate_image_size`）复用 |
 | TIFF 归一化 | `utils/media_upload.py` `convert_tiff_file_to_png()` | tif/tiff 落盘后立即转 PNG 并删除原文件（见下节），`/upload/` 目录不得残留 `.tif` |
-| 大小上限 | 同上 | 分块（1MB）读取累计字节数，超限立即中断并清理半成品：图片 10MB（tif/tiff 同档）、视频 200MB、音频 50MB |
+| JFIF 归一化 | `utils/media_upload.py` `normalize_jfif_file_to_jpg()` | `.jfif` 内容即标准 JPEG（同 `FF D8 FF` 魔数），落盘后无损重命名为 `.jpg` 并删除原文件（见下节），`/upload/` 目录不得残留 `.jfif` |
+| 大小上限 | 同上 | 分块（1MB）读取累计字节数，超限立即中断并清理半成品：图片 10MB（tif/tiff/jfif 同档）、视频 200MB、音频 50MB |
 | nosniff 兜底 | `server.py` `cdn_redirect_middleware` | `/upload/` 静态响应统一带 `X-Content-Type-Options: nosniff`，禁止浏览器 MIME 嗅探（nginx 侧可再叠加同款头） |
 
 ## TIFF 归一化（tif/tiff 仅作为上传入口格式）
@@ -57,6 +58,29 @@
   `server.py` `_validate_image_size` 做白名单 + 魔数校验，写盘后追加
   TIFF 转码），常量见
   `MediaUploadSafetyConstants.TIFF_EXTS / TIFF_CONVERT_TARGET_EXT`。
+
+## JFIF 归一化（.jfif 仅作为上传入口格式）
+
+`.jfif` 是 JPEG 文件交换格式（JFIF）的扩展名，内容与 `.jpg` 完全相同
+（魔数同为 `FF D8 FF`），浏览器 `<img>` 可正常解码。归一化的动机是
+部分 CDN/proxy 的 MIME 表与第三方 API 不认 jfif 扩展名。与 TIFF 同策略：
+
+- **后端**：白名单放行 + JPEG 魔数校验后，`normalize_jfif_file_to_jpg()`
+  （纯同步，经 `asyncio.to_thread` 调用）做**无损重命名** `.jfif → .jpg`
+  （不转码，避免重编码画质损失）。重命名失败时清理原文件并抛
+  `UploadValidationError`（端点映射 400）。
+- **统一入口**：各落盘点一律调用 `normalize_uploaded_image_file()`——
+  内部按扩展名分派 TIFF→PNG 转码、JFIF→JPG 重命名、其余原样返回；
+  直传（预签名/客户端直传）路径对 jfif 与 TIFF 同样拒绝，引导走服务器
+  上传归一化。
+- **老接口**：`api/script_writer.py` 参考图上传 / `upload-agent-image`、
+  `api/storyboard.py` 分镜资产上传在保存前直接把 `.jfif` 扩展名归一为
+  `.jpg`（内容即 JPEG，无需后处理）。
+- **前端**：marketing_agent（2 处 accept + 4 处 `ALLOWED_IMAGE_EXTENSIONS*`）、
+  storyboard（`events.js` `validateCandidateUploadFile` + `render.js`
+  candidate accept）、涂鸦编辑器（`image_doodle_editor.js` `UPLOAD_ACCEPT`）
+  白名单均含 `.jfif`；video_workflow 的 accept 为 `image/*` 天然覆盖。
+  常量见 `MediaUploadSafetyConstants.JFIF_EXTS / JFIF_CONVERT_TARGET_EXT`。
 
 ## 接入方式
 
@@ -98,12 +122,14 @@ HTTP 400，message 可直接透出给用户。
 `tests/utils/test_media_upload.py`：覆盖白名单/黑名单/双扩展名、伪造魔数
 （`poc.png` 实为 HTML）、超限清理半成品、多块完整写入，以及 TIFF 双字节序
 魔数、伪造 tif 拒绝、RGB/CMYK/多帧 tif 转 PNG、损坏 tif 转码失败清理、
+jfif 魔数、伪造 jfif 拒绝、jfif→jpg 无损重命名与统一入口分派 no-op、
 `check_media_magic` 复用函数，以及 `_validate_image_size` 收口点（AST
-守卫，防白名单/魔数校验被重构移除）等共 72 例。
+守卫，防白名单/魔数校验被重构移除）等共 83 例。
 
 ## 运维建议
 
 - nginx 对 `/upload/` 叠加 `X-Content-Type-Options: nosniff`（应用层已带，双保险）。
 - 新增允许的媒体格式时，同步更新 `MediaUploadSafetyConstants` 白名单与
   `utils/media_upload.py` 的 `_MAGIC_CHECKS` 魔数表（两者键需保持一致），
-  并补充测试用例。
+  并补充测试用例；若浏览器/CDN 不能直接解码该格式，参照 TIFF/JFIF 在
+  `normalize_uploaded_image_file()` 追加落盘归一化。

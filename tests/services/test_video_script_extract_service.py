@@ -28,6 +28,7 @@ from services.video_script_extract_service import (  # noqa: E402
     build_slice_ranges,
     clean_script_text,
     create_extract_task,
+    estimate_llm_timeout,
     format_asr_transcript,
     format_time_label,
     format_time_label_precise,
@@ -323,6 +324,31 @@ class TestFrameBudget(unittest.TestCase):
         self.assertEqual(frame_budget(1080), default)
         self.assertEqual(frame_budget(0), default)
         self.assertEqual(frame_budget(-1), default)
+
+
+class TestEstimateLlmTimeout(unittest.TestCase):
+    """剧本生成 LLM 超时按镜头切换点数动态放宽（长视频实测 57 镜生成 336s）。"""
+
+    def test_zero_scenes_keeps_base_timeout(self):
+        self.assertEqual(estimate_llm_timeout(0), C.LLM_TIMEOUT)
+
+    def test_scales_linearly_with_scene_count(self):
+        expected = C.LLM_TIMEOUT + 20 * C.LLM_TIMEOUT_PER_SCENE_SECOND
+        self.assertEqual(estimate_llm_timeout(20), expected)
+
+    def test_capped_at_max(self):
+        # 57 镜按线性算超过上限，应封顶（实测 84.2s 视频 57 镜生成 336s，
+        # 上限 480s 留有波动余量）
+        self.assertGreater(C.LLM_TIMEOUT + 57 * C.LLM_TIMEOUT_PER_SCENE_SECOND, C.LLM_TIMEOUT_MAX)
+        self.assertEqual(estimate_llm_timeout(57), C.LLM_TIMEOUT_MAX)
+        self.assertEqual(estimate_llm_timeout(10_000), C.LLM_TIMEOUT_MAX)
+
+    def test_negative_count_clamped_to_base(self):
+        self.assertEqual(estimate_llm_timeout(-5), C.LLM_TIMEOUT)
+
+    def test_outage_window_above_observed_generation_time(self):
+        # 复盘 2026-11-12 事故：57 镜实测生成 336s，动态上限必须大于实测耗时
+        self.assertGreater(estimate_llm_timeout(57), 336)
 
 
 class TestTaskRegistry(unittest.TestCase):

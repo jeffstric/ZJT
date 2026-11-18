@@ -489,6 +489,10 @@ function deleteSelectedConnection() {
     // 图生视频节点的首尾帧/参考图连接：清除 URL 并更新算力
     if (conn && conn.to) {
       var targetNode = state.nodes.find(function(n) { return n.id === conn.to; });
+      // 视频编辑节点：删除参考图连接后回补缩略条/算力（portType='video-edit'）
+      if (targetNode && targetNode.type === 'video_edit' && typeof targetNode.refreshPower === 'function') {
+        targetNode.refreshPower();
+      }
       if (targetNode && targetNode.type === 'image_to_video') {
         if (conn.portType === 'start') {
           targetNode.data.startUrl = '';

@@ -31,6 +31,7 @@ from config.constant import (
     DOWNLOAD_BACKOFF_SECONDS,
     DOWNLOAD_COMPLETION_MARGIN_SECONDS,
     LICENSE_DENIED_RESCHEDULE_SECONDS,
+    AIGC_MARK_TIMEOUT_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_DOWNLOADING,
     GeneratedVideoFaceGridTrimConstants,
@@ -40,7 +41,10 @@ from model.download_queue import DownloadQueueModel
 from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.aigc_marking import ensure_marked
+from utils.aigc_explicit_marker import await_explicit_burn
 from utils.media_cache import get_cache_manager
+from utils.project_path import get_project_path
 from utils.sentry_util import SentryUtil
 
 logger = logging.getLogger(__name__)
@@ -131,6 +135,37 @@ async def _process_one(row: dict) -> None:
                 media_type=media_type,
             )
             final_url = postprocess.result_url
+            # 宫格裁剪若触发会重写文件（ffmpeg 转码丢失原有 XMP），重新兜底 AIGC 隐式标识；
+            # 幂等（未裁剪的文件已带标识毫秒级返回）。失败不阻断交付。
+            if final_url and final_url.startswith('/upload/'):
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            ensure_marked,
+                            # get_project_root 返回 str，禁止用 / 拼路径（str/str TypeError，
+                            # 兜底会 100% 失效）；统一走 get_project_path
+                            get_project_path(final_url.lstrip('/')),
+                            ai_tool_id,
+                        ),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"AIGC 标识兜底超时(>{AIGC_MARK_TIMEOUT_SECONDS}s，不阻断交付): "
+                        f"ai_tool={ai_tool_id} {final_url}")
+                except Exception as me:  # noqa: BLE001
+                    logger.warning(
+                        f"AIGC 标识兜底异常(不阻断交付): ai_tool={ai_tool_id} {final_url}: {me}")
+            # L1 显式标识（明水印）：图片/视频默认烧录。必须在宫格裁剪之后、
+            # transition_with_cdn_sync 之前。超时由 await_explicit_burn 先取消烧录线程
+            # 并等到它退出，再上传 CDN，避免线程晚一步替换本地文件。失败不阻断交付。
+            # 勿在本函数内再 import asyncio，否则会遮蔽模块导入。
+            if final_url and final_url.startswith('/upload/'):
+                try:
+                    await await_explicit_burn(final_url, ai_tool_id, media_type)
+                except Exception as be:  # noqa: BLE001
+                    logger.warning(
+                        f"AIGC 显式标识烧录异常(不阻断交付): ai_tool={ai_tool_id} {final_url}: {be}")
             completed = AIToolsModel.transition_with_cdn_sync(
                 ai_tool_id,
                 [AI_TOOL_STATUS_DOWNLOADING],

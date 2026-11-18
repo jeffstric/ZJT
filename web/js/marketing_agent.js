@@ -32,6 +32,7 @@
             const showContinue = ref(false);
             const chatMessages = ref(null);
             const inputTextarea = ref(null);
+            const mentionMirror = ref(null);  // @ 资产 token 胶囊镜像层（marketing_mention_chips.js）
             const maxImageSizeMB = ref(10);  // 从服务器配置获取
             const isEnterprise = ref(false);  // 是否为商业版
             const assetItems = ref([]);
@@ -212,7 +213,11 @@
                 // 3) 近似内容兜底（SSE 实时渲染的 assistant 消息无 _dbMessageId）
                 const text = typeof unwrapHistoryText(h.content) === 'string'
                     ? unwrapHistoryText(h.content) : String(h.content || '');
-                return window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, text) || false;
+                // 全等比对（保守，不误杀增量消息）：近似子串判定曾审查出吞增量
+                // 追问的误判风险（2026-11-13 AI 审查确认）且真实双份总结结构差异
+                // 大（互不包含）收益未兑现，故回退全等。双份总结观感待单一事实
+                // 来源重构根治。
+                return window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, text) || false;
             }
 
             function startSessionMessageWatcher(sessionId) {
@@ -838,6 +843,10 @@
             const videoModelConfigs = ref({});
             const availableRatios = ref([]);
             const availableResolutions = ref([]);
+            // 驱动可用状态（/api/computing-power-config 的 driver_status）：
+            // 模型列表按此过滤未配置/不可用驱动（如无火山引擎时隐藏 Seedream/Seedance），
+            // 与 workflow/nodes/image_to_video 页面口径一致；拉取失败时保持 {}（视为全部可用）
+            const driverStatus = ref({});
 
             // LLM 模型数据（用于 Agent 模式对话）
             const allLLMModels = ref([]);
@@ -1705,13 +1714,15 @@
                 const videoUrls = [];
                 const audioUrls = [];
 
+                // isReusableMediaUrl：http(s) 或站内 /upload/ 相对路径均可提交
+                // （后端 13572 修复后参考图落库标准形态即相对路径），排除 blob:/data:
                 currentMessageMedia.forEach(media => {
-                    if (media.type === 'image' && isHttpUrl(media.url) && !imageUrls.includes(media.url)) {
+                    if (media.type === 'image' && isReusableMediaUrl(media.url) && !imageUrls.includes(media.url)) {
                         imageUrls.push(media.url);
-                        thumbnailUrls.push(isHttpUrl(media.thumbnailUrl) ? media.thumbnailUrl : media.url);
-                    } else if (media.type === 'video' && isHttpUrl(media.url) && !videoUrls.includes(media.url)) {
+                        thumbnailUrls.push(isReusableMediaUrl(media.thumbnailUrl) ? media.thumbnailUrl : media.url);
+                    } else if (media.type === 'video' && isReusableMediaUrl(media.url) && !videoUrls.includes(media.url)) {
                         videoUrls.push(media.url);
-                    } else if (media.type === 'audio' && isHttpUrl(media.url) && !audioUrls.includes(media.url)) {
+                    } else if (media.type === 'audio' && isReusableMediaUrl(media.url) && !audioUrls.includes(media.url)) {
                         audioUrls.push(media.url);
                     }
                 });
@@ -1734,6 +1745,11 @@
             function renderMediaPreview(media, counters) {
                 counters[media.type] = (counters[media.type] || 0) + 1;
                 const label = getMediaPreviewLabel(media.type, counters[media.type]);
+                // 持久化守卫：消息内容会原样入库，blob:/data: 刷新后失效（丢图）。
+                // 未上传完成（仅有本地预览地址）的媒体以占位文本落库，不输出媒体标签。
+                if (!isReusableMediaUrl(media.url)) {
+                    return `${label} ${window.t('media_not_persisted_hint')}`;
+                }
                 if (media.type === 'image') {
                     const displayUrl = proxyImageUrl(media.thumbnailUrl || media.url);  // 显示用缩略图
                     const fullUrl = proxyImageUrl(media.url);  // 点击查看原图
@@ -2362,6 +2378,7 @@
 
             function augmentGeneratedImageCards(root) {
                 if (!root || !window.AssetLibrary) return;
+                maybeShowAigcNotice(root);
                 root.querySelectorAll('.generated-image-wrapper').forEach(wrapper => {
                     if (wrapper.querySelector('[data-asset-add-src]')) return;
                     const img = wrapper.querySelector('img.generated-image') || wrapper.querySelector('img');
@@ -2483,6 +2500,32 @@
                 _showNoticeTimer = setTimeout(() => { noticeMessage.value = ''; }, 5000);
             }
 
+            // ========== AIGC 内容标识一次性引导条（深度合成合规，docs/backend/aigc_marking.md） ==========
+            const aigcNoticeVisible = ref(false);
+            const AIGC_NOTICE_DISMISS_KEY = 'marketing_aigc_notice_dismissed';
+
+            function dismissAigcNotice() {
+                aigcNoticeVisible.value = false;
+                try { localStorage.setItem(AIGC_NOTICE_DISMISS_KEY, '1'); } catch (e) { /* 隐私模式忽略 */ }
+            }
+
+            function openAigcSettings() {
+                // 新标签页打开首页并直达"设置→内容标识"（index_app.js 处理 ?aigc_tab=1）
+                window.open('/index.html?aigc_tab=1', '_blank');
+            }
+
+            // 首次出现生成结果卡时展示（flag 在展示时写入，确保全程仅提示一次）
+            function maybeShowAigcNotice(root) {
+                if (!root || aigcNoticeVisible.value) return;
+                let dismissed = false;
+                try { dismissed = localStorage.getItem(AIGC_NOTICE_DISMISS_KEY) === '1'; } catch (e) { /* 忽略 */ }
+                if (dismissed) return;
+                if (root.querySelector('.generated-result-card')) {
+                    aigcNoticeVisible.value = true;
+                    try { localStorage.setItem(AIGC_NOTICE_DISMISS_KEY, '1'); } catch (e) { /* 忽略 */ }
+                }
+            }
+
             // 重新编辑：落库分辨率档位 → 输入栏选项文案。
             // 2K/4K 在界面上是 i18n 文案（高清 2K / 超清 4K），3K 等其余档位保持原样
             // （Seedream 5.0 / 5.0 Pro 的 3K 没有单独文案）。
@@ -2596,7 +2639,9 @@
             function metaImageUrls(meta) {
                 const images = [];
                 const push = (url) => {
-                    if (isHttpUrl(url) && !images.includes(url)) images.push(url);
+                    // isReusableMediaUrl：meta.frame_images/reference_images 已是 /upload/
+                    // 相对路径标准形态（13572 修复后落库口径），isHttpUrl 会全部滤掉
+                    if (isReusableMediaUrl(url) && !images.includes(url)) images.push(url);
                 };
                 (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).forEach(push);
                 (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).forEach(push);
@@ -2604,11 +2649,12 @@
             }
 
             function inferVideoImageModeFromMeta(meta) {
-                const frames = (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
-                const refs = (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                // isReusableMediaUrl：兼容 /upload/ 相对路径（参考图落库标准形态）
+                const frames = (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).filter(isReusableMediaUrl);
+                const refs = (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).filter(isReusableMediaUrl);
                 if (refs.length > 0 || frames.length > 2) return 'multi_reference';
                 if (frames.length > 0) return 'first_last_frame';
-                if (isHttpUrl(meta && meta.reference_video) || isHttpUrl(meta && meta.reference_audio)) return 'multi_reference';
+                if (isReusableMediaUrl(meta && meta.reference_video) || isReusableMediaUrl(meta && meta.reference_audio)) return 'multi_reference';
                 return '';
             }
 
@@ -2627,10 +2673,10 @@
                     addMediaItem(null, 'image', url, { serverUrl: url, thumbnailUrl: url });
                 });
                 if (genType === 'video') {
-                    if (isHttpUrl(meta.reference_video)) {
+                    if (isReusableMediaUrl(meta.reference_video)) {
                         addMediaItem(null, 'video', meta.reference_video, { serverUrl: meta.reference_video });
                     }
-                    if (isHttpUrl(meta.reference_audio)) {
+                    if (isReusableMediaUrl(meta.reference_audio)) {
                         addMediaItem(null, 'audio', meta.reference_audio, { serverUrl: meta.reference_audio });
                     }
                 }
@@ -2640,7 +2686,7 @@
             function applyRestoredGenerationModel(genType, meta) {
                 const task = resolveTaskFromMeta(meta);
                 const hasRefs = metaImageUrls(meta).length > 0
-                    || (genType === 'video' && (isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio)));
+                    || (genType === 'video' && (isReusableMediaUrl(meta.reference_video) || isReusableMediaUrl(meta.reference_audio)));
                 const pools = genType === 'image'
                     ? (hasRefs
                         ? [allImageEditModels.value, allImageModels.value]
@@ -2784,11 +2830,14 @@
                         : null;
                     const categories = [task && task.category, ...((task && Array.isArray(task.categories)) ? task.categories : [])]
                         .filter(Boolean);
-                    // 首尾帧/图片编辑参考图存 image_path（frame_images），多参考图存 reference_images
-                    const frameImages = (Array.isArray(meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
-                    const multiRefs = (Array.isArray(meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                    // 首尾帧/图片编辑参考图存 image_path（frame_images），多参考图存 reference_images。
+                    // 用 isReusableMediaUrl 而非 isHttpUrl：参考图落库标准形态是本站 /upload/
+                    // 相对路径（13572 修复后 host 无关存储），isHttpUrl 会全部滤掉，导致
+                    // 重新生成退化成纯文生图（事故：da844815 水杯会话生成的海报与参考杯无关）
+                    const frameImages = (Array.isArray(meta.frame_images) ? meta.frame_images : []).filter(isReusableMediaUrl);
+                    const multiRefs = (Array.isArray(meta.reference_images) ? meta.reference_images : []).filter(isReusableMediaUrl);
                     const hasRefMedia = frameImages.length > 0 || multiRefs.length > 0 ||
-                        isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio);
+                        isReusableMediaUrl(meta.reference_video) || isReusableMediaUrl(meta.reference_audio);
 
                     const form = new FormData();
                     form.append('prompt', String(meta.prompt || ''));
@@ -2826,8 +2875,8 @@
                             } else if (multiRefs.length > 0) {
                                 form.append('image_urls', multiRefs.join(','));
                             }
-                            if (isHttpUrl(meta.reference_audio)) form.append('audio_urls', String(meta.reference_audio));
-                            if (isHttpUrl(meta.reference_video)) form.append('video_urls', String(meta.reference_video));
+                            if (isReusableMediaUrl(meta.reference_audio)) form.append('audio_urls', String(meta.reference_audio));
+                            if (isReusableMediaUrl(meta.reference_video)) form.append('video_urls', String(meta.reference_video));
                             if (meta.enable_face_mask === true) form.append('enable_face_mask', 'true');
                             apiUrl = '/api/ai-app-run-image';
                         } else {
@@ -3327,6 +3376,14 @@
                 const isImageMode = selectedType.value === 'image';
                 const isVideoMode = selectedType.value === 'video';
                 const isAgentMode = selectedType.value === 'agent';
+
+                // image/video 模式：发送前限时等待图片上传完成，尽量让入库消息带上
+                // 服务器 URL（agent 模式已在上方守卫中等待）。超时不阻断发送——生成
+                // 请求走文件直传不依赖 serverUrl，未就绪图片由 renderMediaPreview
+                // 以占位文本落库，避免 blob: 预览地址入库后刷新丢图。
+                if (!isAgentMode && mediaItems.value.some(m => m.type === 'image' && m.uploading)) {
+                    await waitForAgentImagesUploaded(10000);
+                }
 
                 if (isImageMode) {
                     // 构建用户消息内容（含缩略图）
@@ -4262,11 +4319,12 @@
                 const currentMessageMedia = isAgentMode ? collectCurrentMessageMedia() : [];
 
                 try {
-                    // 收集图片 URL（统一使用 HTTP URL）
+                    // 收集图片 URL（http(s) 绝对 URL 或本站 /upload/ 相对路径均可，
+                    // 后者重新编辑恢复参考图后的标准形态，后端 13572 修复后可直接消费）
                     const imageUrls = [];
                     const thumbnailUrls = [];
                     const addImageUrl = (url) => {
-                        if (isHttpUrl(url) && !imageUrls.includes(url)) imageUrls.push(url);
+                        if (isReusableMediaUrl(url) && !imageUrls.includes(url)) imageUrls.push(url);
                     };
                     if (isAgentMode) {
                         const invalidImages = agentImageFiles.value.filter(img => !isHttpUrl(img.serverUrl));
@@ -4328,9 +4386,9 @@
                             }
                         }
                         currentMessageMedia.forEach(media => {
-                            if (media.type === 'video' && isHttpUrl(media.url) && !videoUrls.includes(media.url)) {
+                            if (media.type === 'video' && isReusableMediaUrl(media.url) && !videoUrls.includes(media.url)) {
                                 videoUrls.push(media.url);
-                            } else if (media.type === 'audio' && isHttpUrl(media.url) && !audioUrls.includes(media.url)) {
+                            } else if (media.type === 'audio' && isReusableMediaUrl(media.url) && !audioUrls.includes(media.url)) {
                                 audioUrls.push(media.url);
                             }
                         });
@@ -4342,13 +4400,14 @@
                         }
                     }
 
-                    // 安全校验：只允许 HTTP URL，过滤 blob: / 空 / 非字符串
-                    const validImageUrls = imageUrls.filter(isHttpUrl);
+                    // 安全校验：只允许 http(s) 绝对 URL 或本站 /upload/ 相对路径，
+                    // 过滤 blob:/data: / 空 / 非字符串（与 isReusableMediaUrl 持久化守卫同口径）
+                    const validImageUrls = imageUrls.filter(isReusableMediaUrl);
                     if (imageUrls.length > 0 && validImageUrls.length < imageUrls.length) {
-                        console.warn('[安全] 过滤掉非 HTTP 图片 URL:', imageUrls.filter(u => !isHttpUrl(u)));
+                        console.warn('[安全] 过滤掉不可复用的媒体 URL:', imageUrls.filter(u => !isReusableMediaUrl(u)));
                     }
-                    const validVideoUrls = videoUrls.filter(isHttpUrl);
-                    const validAudioUrls = audioUrls.filter(isHttpUrl);
+                    const validVideoUrls = videoUrls.filter(isReusableMediaUrl);
+                    const validAudioUrls = audioUrls.filter(isReusableMediaUrl);
 
                     // 1. 创建任务
                     // 构建图片偏好（auto 分辨率不传）
@@ -4550,7 +4609,7 @@
                             if (data.type === 'message') {
                                 hasReceivedData = true;
                                 resetTaskErrorCount(streamErrorKey);
-                                if (window.AgentMessageDedupe?.isNearDuplicateAssistantMessage(messages.value, data.content, msgUid)) {
+                                if (window.AgentMessageDedupe?.hasDisplayedAssistantMessage(messages.value, data.content, msgUid)) {
                                     console.log('[SSE] 跳过历史中已展示的消息:', data.id);
                                     return;
                                 }
@@ -4971,6 +5030,12 @@
             // 提交验证回答
             async function submitVerificationAnswer(verificationId, userInput) {
                 try {
+                    // 加固：验证回答不经 handleSend 的媒体守卫，这里限时等待图片上传，
+                    // 减少 collectAgentMediaPayload 静默过滤未上传图（模型少收图）的概率。
+                    // 超时继续提交，不阻断回答。
+                    if (selectedType.value === 'agent' && mediaItems.value.some(m => m.type === 'image' && m.uploading)) {
+                        await waitForAgentImagesUploaded(10000);
+                    }
                     const currentMessageMedia = selectedType.value === 'agent' ? collectCurrentMessageMedia() : [];
                     const mediaPayload = collectAgentMediaPayload(currentMessageMedia);
                     const userContent = buildUserMessageContent(userInput);
@@ -5255,8 +5320,30 @@
             }
 
             // 追加消息到后端
+            /**
+             * 入库内容兜底清洗：将 src 为 blob:/data: 的媒体标签替换为占位文本。
+             * blob:/data: 是浏览器内存地址，刷新后失效；任何绕过上游守卫的路径
+             * （如 verification 直发、历史遗留调用点）都会在此被拦截，确保落库
+             * 内容不携带不可持久化的媒体地址。
+             */
+            function stripNonPersistentMediaTags(content) {
+                if (typeof content !== 'string' || content.indexOf('blob:') < 0 && content.indexOf('data:') < 0) {
+                    return content;
+                }
+                const placeholder = window.t('media_not_persisted_hint');
+                const cleaned = content.replace(
+                    /<(img|video|audio)\b[^>]*\bsrc=["'](?:blob|data):[^"']*["'][^>]*>/gi,
+                    placeholder
+                );
+                if (cleaned !== content) {
+                    console.warn('[安全] 已清洗入库内容中的非持久化媒体地址（blob:/data:）');
+                }
+                return cleaned;
+            }
+
             async function appendMessageToBackend(role, content, sessionId = currentSessionId.value) {
                 if (!sessionId) return;
+                content = stripNonPersistentMediaTags(content);
 
                 try {
                     const response = await fetch(`/api/session/${sessionId}/message`, {
@@ -5658,6 +5745,12 @@
                 // 剪贴板粘贴图片：全局监听（含输入框聚焦时），纯文本粘贴不受影响
                 document.addEventListener('paste', handleDocumentPaste);
 
+                // @ 资产胶囊：悬停大图委托（一次性）+ 初始渲染（URL 参数带 token 恢复场景）
+                if (window.MAMentionChips) {
+                    window.MAMentionChips.setupHoverPreview();
+                }
+                syncMentionChips();
+
                 // 生成结果点击放大/发布按钮的事件委托（内联 onclick 已被净化剥离）
                 bindGeneratedMediaDelegation();
 
@@ -5954,8 +6047,28 @@
                         return;
                     }
 
+                    // 拉取驱动可用状态（失败时保持 {}，filterAvailableModelOptions 视为全部可用）
+                    try {
+                        const statusResp = await fetch('/api/computing-power-config', {
+                            headers: authToken.value ? { 'Authorization': 'Bearer ' + authToken.value } : {}
+                        });
+                        if (statusResp.ok) {
+                            const statusData = await statusResp.json();
+                            if (statusData.success && statusData.data && statusData.data.driver_status) {
+                                driverStatus.value = statusData.data.driver_status;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[驱动状态] 加载失败，模型列表不过滤:', e);
+                    }
+
+                    // 按驱动可用状态过滤（无火山引擎驱动时隐藏 Seedream/Seedance 等模型）
+                    const availableOpts = (opts) => (window.TaskConfig.filterAvailableModelOptions
+                        ? window.TaskConfig.filterAvailableModelOptions(opts, driverStatus.value)
+                        : opts);
+
                     // 获取文生图模型
-                    const imgOpts = window.TaskConfig.getModelOptionsForCategory('text_to_image');
+                    const imgOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('text_to_image'));
                     allImageModels.value = imgOpts.map((opt, idx) => ({
                         icon: '🖼️',
                         name: opt.label.split(' (')[0],
@@ -5964,7 +6077,7 @@
                         value: opt.value
                     }));
 
-                    const editOpts = window.TaskConfig.getModelOptionsForCategory('image_edit');
+                    const editOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('image_edit'));
                     allImageEditModels.value = editOpts.map(opt => ({
                         icon: '🖼️',
                         name: opt.label.split(' (')[0],
@@ -5974,7 +6087,7 @@
                     }));
 
                     // 获取文生视频模型
-                    const txtVidOpts = window.TaskConfig.getModelOptionsForCategory('text_to_video');
+                    const txtVidOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('text_to_video'));
                     allTextToVideoModels.value = txtVidOpts.map((opt, idx) => ({
                         icon: '📹',
                         name: opt.label.split(' (')[0],
@@ -5986,7 +6099,7 @@
                     }));
 
                     // 获取图生视频模型
-                    const imgVidOpts = window.TaskConfig.getModelOptionsForCategory('image_to_video');
+                    const imgVidOpts = availableOpts(window.TaskConfig.getModelOptionsForCategory('image_to_video'));
                     allImageToVideoModels.value = imgVidOpts.map((opt, idx) => ({
                         icon: '📹',
                         name: opt.label.split(' (')[0],
@@ -6349,12 +6462,12 @@
                     if (imageFiles.length > 0 && remainingImageSlots <= 0) {
                         showError(window.t('max_images', {max: AGENT_IMAGE_MAX_COUNT}));
                     }
-                    const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                    const ALLOWED_IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                     const validImageFiles = imageFiles.slice(0, Math.max(0, remainingImageSlots)).filter(file => {
                         // 格式校验
                         const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
                         if (!ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
-                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                             return false;
                         }
                         if (file.size > maxImageSizeMB.value * 1024 * 1024) {
@@ -6544,10 +6657,10 @@
                 }
                 // 以下为图片处理逻辑
                 // 前端预检查文件格式
-                const ALLOWED_IMAGE_EXTENSIONS_SINGLE = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                const ALLOWED_IMAGE_EXTENSIONS_SINGLE = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                 const imgExt = '.' + (file.name.split('.').pop() || '').toLowerCase();
                 if (!ALLOWED_IMAGE_EXTENSIONS_SINGLE.includes(imgExt)) {
-                    showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                    showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                     return;
                 }
                 // 前端预检查文件大小
@@ -7108,12 +7221,12 @@
                     if (referenceInputRef.value) referenceInputRef.value.value = '';
                     return;
                 }
-                const ALLOWED_IMAGE_EXTENSIONS_REF = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                const ALLOWED_IMAGE_EXTENSIONS_REF = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                 const toAdd = files.slice(0, remaining).filter(f => {
                     if (!f.type.startsWith('image/')) return false;
                     const ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
                     if (!ALLOWED_IMAGE_EXTENSIONS_REF.includes(ext)) {
-                        showError(window.t('unsupported_image_format', { name: f.name, formats: 'JPG, PNG, GIF, WebP' }));
+                        showError(window.t('unsupported_image_format', { name: f.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                         return false;
                     }
                     return true;
@@ -7368,9 +7481,14 @@
                 const after = inputText.value.substring(end);
                 // 资产库条目插入 `@资产:{id}` token，提交时还原为 markdown 图片；
                 // 本地媒体沿用 @名称 文本
-                const insertText = item.isAsset && window.AssetLibrary
-                    ? window.AssetLibrary.buildMentionToken({ id: item.assetId })
-                    : `@${item.displayName}`;
+                let insertText = `@${item.displayName}`;
+                if (item.isAsset && window.AssetLibrary) {
+                    // 注册缩略图/名称，胶囊镜像层（MAMentionChips）免请求直接渲染
+                    if (window.MAMentionChips) {
+                        window.MAMentionChips.register(item.assetId, item.displayName, item.thumbnailUrl);
+                    }
+                    insertText = window.AssetLibrary.buildMentionToken({ id: item.assetId });
+                }
 
                 inputText.value = before + insertText + ' ' + after;
                 mentionDropdown.value.visible = false;
@@ -7381,6 +7499,19 @@
                     textarea.focus();
                 });
             }
+
+            // @ 资产 token 胶囊镜像层同步（web/js/marketing_mention_chips.js）
+            // 挂 inputText watcher：覆盖插入、发送清空、URL 参数/meta.prompt 恢复等全部赋值路径
+            function syncMentionChips() {
+                nextTick(() => {
+                    if (window.MAMentionChips) {
+                        window.MAMentionChips.sync(inputTextarea.value, mentionMirror.value);
+                    }
+                });
+            }
+            Vue.watch(inputText, syncMentionChips);
+            // 输入框区域随模板重建时 ref 重新绑定，补一次渲染
+            Vue.watch(mentionMirror, syncMentionChips);
 
             // 点击 @添加主体 按钮，在输入框中插入 @ 并唤起下拉框
             function triggerMention() {
@@ -7441,12 +7572,12 @@
                     if (imageFiles.length > 0 && remainingImageSlots <= 0) {
                         showError(window.t('max_images', { max: AGENT_IMAGE_MAX_COUNT }));
                     }
-                    const ALLOWED_IMAGE_EXTENSIONS_DND = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+                    const ALLOWED_IMAGE_EXTENSIONS_DND = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
                     const validImageFiles = imageFiles.slice(0, Math.max(0, remainingImageSlots)).filter(file => {
                         // 格式校验
                         const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
                         if (!ALLOWED_IMAGE_EXTENSIONS_DND.includes(ext)) {
-                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, PNG, GIF, WebP' }));
+                            showError(window.t('unsupported_image_format', { name: file.name, formats: 'JPG, JPEG, JFIF, PNG, GIF, WebP' }));
                             return false;
                         }
                         if (file.size > maxImageSizeMB.value * 1024 * 1024) {
@@ -7911,6 +8042,19 @@
                 ) || null;
             }
 
+            // 同家族文生视频模型：minimax_h3_image_to_video / minimax_h3_reference_to_video → minimax_h3_text_to_video。
+            // 媒体清空切文生视频模型时优先保留厂商家族，避免直接落到 text_to_video 槽位偏好而跨厂商跳模型
+            // （事故：用户选 MiniMax H3 首尾帧，发送成功后 clearAllMedia 触发切换，界面被换成槽位偏好的 Seedance 2.5）。
+            function findSameFamilyTextToVideoModel(list, currentKey) {
+                if (!currentKey || !Array.isArray(list) || !list.length) return null;
+                const base = String(currentKey).replace(/_(image|text|reference)_to_video$/, '');
+                if (!base) return null;
+                return list.find(item => item.key === base + '_text_to_video')
+                    || list.find(item => item.short_key === base + '_t2v')
+                    || list.find(item => item.key && item.key.startsWith(base + '_'))
+                    || null;
+            }
+
             function modelSupportsReferenceSlot(model) {
                 if (!model) return false;
                 const task = window.TaskConfig?.getTaskByKey
@@ -8267,14 +8411,24 @@
                         selectedVideoModelKey.value = m.key || '';
                     }
                 } else {
-                    // 没有图片了，切回文生视频模型偏好
-                    const saved = localStorage.getItem('marketing_selected_t2v_model');
+                    // 没有图片了，需要切到文生视频模型：
+                    // 1) 当前模型本身支持文生视频（双分类，如 Seedance 2.5）→ 保留用户选择；
+                    // 2) 否则优先同家族文生模型（MiniMax H3 首尾帧 → MiniMax H3 (文生)），
+                    //    避免直接落到 text_to_video 槽位偏好而跨厂商跳模型；
+                    // 3) 最后回退：槽位偏好 → localStorage → 列表第一项。
                     const list = allTextToVideoModels.value;
-                    const m = modelForMediaSlot('video.text_to_video', list)
-                        || (saved && list.find(item => item.name === saved)) || list[0];
-                    if (m) {
-                        selectedVideoModelName.value = m.name;
-                        selectedVideoModelKey.value = m.key || '';
+                    const current = findVideoModelInList(list, selectedVideoModelKey.value)
+                        || findVideoModelInList(list, selectedVideoModelName.value);
+                    if (!current) {
+                        const family = findSameFamilyTextToVideoModel(list, selectedVideoModelKey.value);
+                        const saved = localStorage.getItem('marketing_selected_t2v_model');
+                        const m = family
+                            || modelForMediaSlot('video.text_to_video', list)
+                            || (saved && list.find(item => item.name === saved)) || list[0];
+                        if (m) {
+                            selectedVideoModelName.value = m.name;
+                            selectedVideoModelKey.value = m.key || '';
+                        }
                     }
                 }
                 refreshModelSettings();
@@ -8359,6 +8513,9 @@
                 isInitializing,
                 errorMessage,
                 noticeMessage,
+                aigcNoticeVisible,
+                dismissAigcNotice,
+                openAigcSettings,
                 searchQuery,
                 activeView,
                 switchView,
@@ -8559,6 +8716,7 @@
                 mediaCounters,
                 mentionDropdown,
                 mentionAssetView,
+                mentionMirror,
                 filteredMentionItems,
                 enterMentionGroup,
                 backToMentionGroups,

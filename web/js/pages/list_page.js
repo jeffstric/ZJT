@@ -142,6 +142,13 @@
                     <div class="tool-card-desc">{{ $t('video_enhance_desc') }}</div>
                   </div>
                 </div>
+                <div class="tool-card" @click="$router.push({name:'video-edit'})">
+                  <div class="tool-card-icon cyan">🎭</div>
+                  <div class="tool-card-info">
+                    <div class="tool-card-title">{{ $t('video_edit') }}</div>
+                    <div class="tool-card-desc">{{ $t('video_edit_desc') }}</div>
+                  </div>
+                </div>
                 <div class="tool-card" @click="$router.push({name:'audio-generate'})">
                   <div class="tool-card-icon purple">🎵</div>
                   <div class="tool-card-info">

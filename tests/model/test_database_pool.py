@@ -226,3 +226,42 @@ def test_transaction_calls_begin_then_rollback_on_error(db_module, monkeypatch):
             raise ValueError('boom')
 
     assert conn.calls == ['begin', 'rollback', 'close']
+
+
+# ===========================================================================
+# 测试 7：get_db_connection 必须借池，不得回归短连接（8·1 端口耗尽事故）
+# ===========================================================================
+def test_get_db_connection_borrows_from_pool_not_short_connection(db_module, monkeypatch):
+    """每次 DB 操作必须从连接池借连接，不得新建短连接（事故 2026-08-01）。
+
+    原实现每次查询 pymysql.connect() + close()（短连接），高并发下客户端
+    临时端口被 TIME_WAIT 占满（Errno 99 Cannot assign requested address），
+    全站 DB 访问雪崩、15 个模块共约 97 万次报错。改坏回短连接的形态是
+    get_db_connection() 里直接 pymysql.connect() 绕过池。本测试用哨兵拦截
+    pymysql.connect：只要它被调用即说明短连接回归。
+    """
+    borrowed = []
+    direct_connects = []
+    conn = _FakeConn()
+
+    class _FakeBorrowPool:
+        def connection(self):
+            borrowed.append(True)
+            return conn
+
+    monkeypatch.setattr(db_module, '_get_pool', lambda: _FakeBorrowPool())
+    monkeypatch.setattr(
+        db_module.pymysql, 'connect',
+        lambda *args, **kwargs: direct_connects.append(True),
+    )
+
+    with db_module.get_db_connection() as c:
+        assert c is conn
+
+    assert borrowed == [True], "连接必须来自连接池"
+    assert direct_connects == [], (
+        "get_db_connection 绕过连接池直接 pymysql.connect()——"
+        "8·1 事故的短连接写法已回归"
+    )
+    # with 结束后必须归还（池化语义的 close）
+    assert conn.calls == ['close']

@@ -20,6 +20,7 @@ class ImageMode:
     MULTI_REFERENCE = 'multi_reference'         # 多参考图模式
     FIRST_LAST_WITH_REF = 'first_last_with_ref' # 首尾帧+参考图模式
 
+
 logger = logging.getLogger(__name__)
 
 

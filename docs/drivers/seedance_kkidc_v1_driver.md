@@ -169,3 +169,11 @@ WebM 实际帧率可达 120fps，触发上述上限报错。系统通过三道�
    读取 `avg_frame_rate`，帧率超限直接拒绝上传。
 
 目标帧率统一为 **30fps**（`MediaConstants.VIDEO_REFERENCE_MAX_FPS`），相对模型 60fps 上限留足安全余量。
+
+## 参考视频处理失败即失败
+
+驱动 MULTI_REFERENCE 分支中，参考视频规范化（`prepare_seedance_reference_video_sync`）或上传 CDN
+失败时**直接返回 USER 错误**（"参考视频处理失败，请重新上传视频"），不静默 warning 跳过：
+用户上传的参考视频是明确输入意图，跳过会改变任务语义（视频编辑任务被降级为纯图生视频，
+产物与预期不符且计费错位）。配套防线：`/api/upload-agent-video` 对空文件（前端个别浏览器
+MediaRecorder 产出 0 字节 Blob）与 ffprobe 无法解析的损坏视频一律 400 拒绝并删除落盘文件。

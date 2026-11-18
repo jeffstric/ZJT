@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "api/script_writer.py",
+      "old": "        except asyncio.TimeoutError:\n            logger.warning(\n                f\"[SSE-STREAM] 事件发送被背压卡住超过 {SSE_STREAM_SEND_TIMEOUT_SECONDS}s，\"\n                f\"判定连接假死，关闭流并回收协程（task={task_id}）\"\n            )\n            try:\n                await iterator.aclose()\n            finally:\n                return",
+      "new": "        except asyncio.TimeoutError:\n            raise"
+    }
+  ]
+}

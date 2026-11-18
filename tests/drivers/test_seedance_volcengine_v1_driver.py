@@ -607,8 +607,9 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
-    def test_video_upload_failure_skipped(self, mock_compress, mock_upload_cdn):
-        """参考视频上传 CDN 失败：跳过，不阻断流程"""
+    def test_video_upload_failure_fails_fast(self, mock_compress, mock_upload_cdn):
+        """参考视频上传 CDN 失败：fail-fast 返回 USER 错误，不静默跳过
+        （旧行为跳过后视频编辑任务仍以 edit 类型提交，被火山 400 拒绝）"""
         mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
         mock_upload_cdn.return_value = (False, None, '上传失败')
         ai_tool = _make_ai_tool(
@@ -619,9 +620,9 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
         )
 
         result = self.driver.build_create_request(ai_tool)
-        # 不应包含视频，但请求应成功构建
-        video_items = [c for c in result['json']['content'] if c['type'] == 'video_url']
-        self.assertEqual(len(video_items), 0)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')

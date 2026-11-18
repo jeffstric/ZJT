@@ -2190,8 +2190,15 @@
                             </select>
                         </div>
                         <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <input type="checkbox" v-model="announcementForm.popup">
+                                {{ t('ann_form_popup') }}
+                            </label>
+                            <p class="form-hint">{{ t('ann_form_popup_hint') }}</p>
+                        </div>
+                        <div class="form-group">
                             <label>{{ t('ann_form_link_url') }}</label>
-                            <input type="url" v-model="announcementForm.link_url" placeholder="https://...">
+                            <input type="text" v-model="announcementForm.link_url" placeholder="https://... 或站内路径 /index.html?aigc_tab=1">
                             <input type="text" v-model="announcementForm.link_text" :placeholder="t('ann_form_link_text_placeholder')" maxlength="100" style="margin-top: 6px;">
                         </div>
                         <div class="form-group">

@@ -415,6 +415,9 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                 })
 
             # 参考视频（仅多参考图模式下添加，需上传到 CDN）
+            # 处理失败（规范化/上传 CDN）直接 fail-fast 返回 USER 错误，不静默跳过：
+            # 视频编辑任务的编辑对象不可丢，跳过后会以 edit 类型提交却无参考视频，
+            # 被火山 400 拒绝；个别网关放行时更糟——按编辑计费、实际按图生视频出片
             reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
             if reference_video_raw:
                 video_paths = [v.strip() for v in reference_video_raw.split(",") if v.strip()]
@@ -426,18 +429,28 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
                     )
                     try:
                         if not prep_success or not prepared_path:
-                            self.logger.warning(f"参考视频规范化失败，跳过: {prep_error}")
-                            continue
+                            self.logger.error(f"参考视频规范化失败: {prep_error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
 
                         success, cdn_url, error = upload_media_to_cdn_sync(prepared_path, self._config)
-                        if success and cdn_url:
-                            content.append({
-                                "type": "video_url",
-                                "video_url": {"url": cdn_url},
-                                "role": "reference_video"
-                            })
-                        else:
-                            self.logger.warning(f"参考视频上传 CDN 失败，跳过: {error}")
+                        if not (success and cdn_url):
+                            self.logger.error(f"参考视频上传 CDN 失败: {error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
+                        content.append({
+                            "type": "video_url",
+                            "video_url": {"url": cdn_url},
+                            "role": "reference_video"
+                        })
                     finally:
                         _cleanup_seedance_reference_video_temps(cleanup_paths)
 
@@ -524,7 +537,15 @@ class SeedanceVolcengineV1Driver(SeedanceHumanAssetMixin, BaseVideoDriver):
         # Seedance 2.5 带参考视频为视频编辑任务：显式 omni_reference_task_type=edit
         # 使接口提交时提前校验参数限制（ratio 必须 adaptive、duration 必须 -1），
         # 消除 auto 自动判定错型导致的异步报错。判定入口与计价层共用同一函数。
-        is_25_video_edit = is_video_edit_billing_task(self.driver_type, reference_video_raw)
+        # edit 以「实际进入 content 的参考视频恰好 1 个」为准（火山 edit 要求
+        # exactly one）：处理失败已在 MULTI_REFERENCE 分支 fail-fast，此处计数
+        # 兜底 reference_video_raw 为纯分隔符等极端输入；多视频走 auto 判定，
+        # 此时 ai_tool.duration 已是计价层吸附的视频总时长，计费一致。
+        video_url_count = sum(1 for c in content if c.get("type") == "video_url")
+        is_25_video_edit = (
+            is_video_edit_billing_task(self.driver_type, reference_video_raw)
+            and video_url_count == 1
+        )
         if is_25_video_edit:
             payload["omni_reference_task_type"] = OMNI_REFERENCE_TASK_TYPE_EDIT
             payload["ratio"] = "adaptive"

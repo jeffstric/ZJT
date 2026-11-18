@@ -455,6 +455,9 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                 metadata["reference_images"] = processed_reference_images
 
             # 参考视频（需上传到 CDN）
+            # 处理失败（规范化/上传 CDN）直接 fail-fast 返回 USER 错误，不静默跳过：
+            # 用户上传的参考视频是明确输入意图，跳过会改变任务语义（如视频编辑
+            # 任务被降级为纯图生视频，产物与用户预期不符且计费错位）
             reference_video_raw = self.get_video_path(ai_tool) or extra_config.get('reference_video')
             if reference_video_raw:
                 video_paths = [v.strip() for v in reference_video_raw.split(",") if v.strip()]
@@ -466,14 +469,24 @@ class SeedanceKkidcV1Driver(BaseVideoDriver):
                     )
                     try:
                         if not prep_success or not prepared_path:
-                            self.logger.warning(f"参考视频规范化失败，跳过: {prep_error}")
-                            continue
+                            self.logger.error(f"参考视频规范化失败: {prep_error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
 
                         success, cdn_url, error = upload_media_to_cdn_sync(prepared_path, self._config)
-                        if success and cdn_url:
-                            processed_video_urls.append(cdn_url)
-                        else:
-                            self.logger.warning(f"参考视频上传 CDN 失败，跳过: {error}")
+                        if not (success and cdn_url):
+                            self.logger.error(f"参考视频上传 CDN 失败: {error}")
+                            return {
+                                "success": False,
+                                "error": "参考视频处理失败，请重新上传视频",
+                                "error_type": "USER",
+                                "retry": False
+                            }
+                        processed_video_urls.append(cdn_url)
                     finally:
                         _cleanup_seedance_reference_video_temps(cleanup_paths)
                 if processed_video_urls:

@@ -24,6 +24,8 @@ from utils.media_upload import (
     check_media_magic,
     convert_tiff_file_to_png,
     max_upload_size_for_ext,
+    normalize_jfif_file_to_jpg,
+    normalize_uploaded_image_file,
     resolve_media_extension,
     save_upload_chunked,
 )
@@ -35,6 +37,8 @@ def _upload(content: bytes, filename: str) -> UploadFile:
 
 PNG_BYTES = b'\x89PNG\r\n\x1a\n' + b'\x00' * 64
 JPEG_BYTES = b'\xff\xd8\xff\xe0' + b'\x00' * 64
+# jfif 内容即 JPEG：标准 JFIF 头（APP0 段含 "JFIF\0" 标识）
+JFIF_BYTES = b'\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01' + b'\x00' * 56
 MP4_BYTES = b'\x00\x00\x00\x20ftypisom' + b'\x00' * 64
 WEBP_BYTES = b'RIFF\x24\x00\x00\x00WEBPVP8 ' + b'\x00' * 64
 WAV_BYTES = b'RIFF\x24\x08\x00\x00WAVEfmt ' + b'\x00' * 64
@@ -53,6 +57,7 @@ class TestResolveMediaExtension:
         ("photo.PNG", ".png"),
         ("a.Jpg", ".jpg"),
         ("b.jpeg", ".jpeg"),
+        ("photo.JFIF", ".jfif"),
         ("c.webp", ".webp"),
         ("d.gif", ".gif"),
         ("e.bmp", ".bmp"),
@@ -107,6 +112,7 @@ class TestResolveMediaExtension:
 class TestMaxUploadSizeForExt:
     def test_size_tiers(self):
         assert max_upload_size_for_ext(".png") == MediaUploadSafetyConstants.MAX_IMAGE_SIZE
+        assert max_upload_size_for_ext(".jfif") == MediaUploadSafetyConstants.MAX_IMAGE_SIZE
         assert max_upload_size_for_ext(".mp4") == MediaUploadSafetyConstants.MAX_VIDEO_SIZE
         assert max_upload_size_for_ext(".mp3") == MediaUploadSafetyConstants.MAX_AUDIO_SIZE
 
@@ -123,6 +129,7 @@ class TestSaveUploadChunked:
     @pytest.mark.parametrize("filename,content", [
         ("a.png", PNG_BYTES),
         ("a.jpg", JPEG_BYTES),
+        ("a.jfif", JFIF_BYTES),
         ("a.mp4", MP4_BYTES),
         ("a.webp", WEBP_BYTES),
         ("a.wav", WAV_BYTES),
@@ -255,6 +262,69 @@ class TestConvertTiffToPng:
         assert os.path.exists(dst) and not os.path.exists(target)
 
 
+# ============ jfif（内容即 JPEG，仅作上传入口格式，落盘重命名为 .jpg）============
+
+class TestJfifUpload:
+    def test_valid_jfif_magic_saved(self, tmp_path):
+        target = os.path.join(tmp_path, "out.jfif")
+        size = save_upload_chunked(_upload(JFIF_BYTES, "photo.jfif"), target, ".jfif")
+        assert os.path.exists(target)
+        assert size == len(JFIF_BYTES)
+
+    def test_forged_jfif_rejected(self, tmp_path):
+        # poc.html 改名 poc.jfif：魔数校验拒绝且不留半成品
+        target = os.path.join(tmp_path, "out.jfif")
+        with pytest.raises(UploadValidationError, match="魔数校验失败"):
+            save_upload_chunked(_upload(HTML_BYTES, "poc.jfif"), target, ".jfif")
+        assert not os.path.exists(target)
+
+    def test_jfif_image_size_tier(self):
+        # jfif 沿用图片档 10MB 上限（未单独放宽）
+        assert max_upload_size_for_ext(".jfif") == MediaUploadSafetyConstants.MAX_IMAGE_SIZE
+
+
+class TestNormalizeJfifToJpg:
+    def test_jfif_renamed_lossless(self, tmp_path):
+        # 无损归一化：仅重命名 .jfif → .jpg，字节内容不变，原文件删除
+        src = os.path.join(tmp_path, "abc123.jfif")
+        with open(src, "wb") as f:
+            f.write(JFIF_BYTES)
+        dst = normalize_jfif_file_to_jpg(src)
+        assert dst.endswith(".jpg") and dst != src
+        assert not os.path.exists(src), "重命名后原 .jfif 必须删除，upload 目录不得残留 jfif"
+        with open(dst, "rb") as f:
+            assert f.read() == JFIF_BYTES, "重命名不得改变文件内容（不转码）"
+
+    def test_normalize_entry_dispatches_by_ext(self, tmp_path):
+        # 统一入口：jfif 走重命名、png 原样返回（no-op）
+        jfif = os.path.join(tmp_path, "a.jfif")
+        with open(jfif, "wb") as f:
+            f.write(JFIF_BYTES)
+        assert normalize_uploaded_image_file(jfif).endswith(".jpg")
+
+        png = os.path.join(tmp_path, "b.png")
+        with open(png, "wb") as f:
+            f.write(PNG_BYTES)
+        assert normalize_uploaded_image_file(png) == png, "常规扩展名归一化必须是 no-op"
+        assert os.path.exists(png)
+
+    def test_normalize_entry_jpg_jpeg_noop(self, tmp_path):
+        for name in ("c.jpg", "d.jpeg"):
+            p = os.path.join(tmp_path, name)
+            with open(p, "wb") as f:
+                f.write(JPEG_BYTES)
+            assert normalize_uploaded_image_file(p) == p
+            assert os.path.exists(p)
+
+    def test_save_then_normalize_full_flow(self, tmp_path):
+        # 端点真实链路：save_upload_chunked 落盘 → 统一入口归一化 → .jfif 消失
+        target = os.path.join(tmp_path, "upload_x.jfif")
+        save_upload_chunked(_upload(JFIF_BYTES, "x.jfif"), target, ".jfif")
+        dst = normalize_uploaded_image_file(target)
+        assert os.path.exists(dst) and dst.endswith(".jpg")
+        assert not os.path.exists(target)
+
+
 # ============ check_media_magic ============
 
 class TestCheckMediaMagic:
@@ -263,6 +333,7 @@ class TestCheckMediaMagic:
     @pytest.mark.parametrize("ext,head", [
         (".png", PNG_BYTES[:32]),
         (".jpg", JPEG_BYTES[:32]),
+        (".jfif", JFIF_BYTES[:32]),
         (".webp", WEBP_BYTES[:32]),
         (".mp4", MP4_BYTES[:32]),
         (".mp3", MP3_ID3_BYTES[:32]),
@@ -272,7 +343,7 @@ class TestCheckMediaMagic:
     def test_matching_magic_accepted(self, ext, head):
         assert check_media_magic(ext, head) is True
 
-    @pytest.mark.parametrize("ext", [".png", ".jpg", ".gif", ".webp"])
+    @pytest.mark.parametrize("ext", [".png", ".jpg", ".jfif", ".gif", ".webp"])
     def test_html_bytes_rejected(self, ext):
         # 伪造扩展名的 HTML 载荷（存储型 XSS）：魔数不符一律拒绝
         assert check_media_magic(ext, HTML_BYTES[:32]) is False

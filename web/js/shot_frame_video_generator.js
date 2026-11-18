@@ -157,14 +157,6 @@ function shotFrameMultiRefLimit(videoModel) {
   return maxRefImages;
 }
 
-// 混合模型固定 3 个图片槽。不能用下拉里 H3 参考模型的 9 张上限，否则提示词序号会对不上。
-const H3_KEYFRAME_REF_MAX_IMAGES = 3;
-const H3_KEYFRAME_REF_SHORT_KEY = 'minimax_h3_kfr';
-// 与 config/constant.py 的 H3_KEYFRAME_REF_ROUTE_ENABLED、
-// web/js/storyboard/frame_mention.js 保持一致。true 时，参考模式点名首帧或尾帧
-// 改交 RunningHub 混合模型 minimax_h3_kfr。AutoDL 参考生锁不住首帧。
-const H3_KEYFRAME_REF_ROUTE_ENABLED = true;
-
 function promptHasShotFrameMention(prompt) {
   const text = prompt == null ? '' : String(prompt);
   return /@首帧图(?![\u4e00-\u9fff])/.test(text) || /@尾帧图(?![\u4e00-\u9fff])/.test(text);
@@ -241,25 +233,6 @@ function isH3ReferenceVideoModel(videoModel) {
   return key === 'minimax_h3_r2v' || key === 'minimax_h3_reference_to_video';
 }
 
-// 只有参考模式、当前是 H3 参考模型、并且提示词点名了首帧或尾帧，才改提交混合模型。
-// 首帧模式、其他参考模型、以及没有 @ 标记的 H3 参考提交都不改。
-function shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt) {
-  if (!H3_KEYFRAME_REF_ROUTE_ENABLED) return false;
-  return videoMode === 'multi_reference'
-    && isH3ReferenceVideoModel(videoModel)
-    && promptHasShotFrameMention(prompt);
-}
-
-function resolveShotFrameReferenceSubmitModel(videoMode, videoModel, prompt) {
-  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_SHORT_KEY;
-  return videoModel;
-}
-
-function shotFrameMentionImageLimit(videoMode, videoModel, prompt) {
-  if (shouldUseH3KeyframeRefModel(videoMode, videoModel, prompt)) return H3_KEYFRAME_REF_MAX_IMAGES;
-  return shotFrameMultiRefLimit(videoModel);
-}
-
 // 分镜节点生成视频功能
 async function generateShotFrameVideo(nodeId, node){
   const mode = node.data.videoMode || 'first_last_frame';
@@ -327,6 +300,11 @@ async function generateShotFrameVideo(nodeId, node){
 
     // 使用节点中用户编辑的视频提示词文本，而不是JSON格式
     let videoPrompt = node.data.videoPromptText || node.data.videoPrompt || '';
+    // 存量节点的提示词可能仍含「动作内逐字台词 + 对话行」重复，提交前兜底去重
+    // （新节点已在 convertVideoPromptToText 生成时去重）
+    if(typeof dedupeVideoPromptDialogue === 'function'){
+      videoPrompt = dedupeVideoPromptDialogue(videoPrompt);
+    }
     const duration = node.data.videoDuration || 15;
     const count = node.data.videoDrawCount || 1;
     const videoModel = node.data.videoModel || (mode === 'multi_reference' ? 'veo3' : 'sora2');
@@ -384,16 +362,16 @@ async function generateShotFrameVideo(nodeId, node){
       const autoLastUrl = autoFlags.wantsLast ? mentionLastUrl : '';
       videoPrompt = ensureShotFrameMentionTokens(videoPrompt, autoFirstUrl, autoLastUrl);
 
-      // 必须在改写前提取 @ 标记。改写后标记会变成「图N」，不能再用来判断要不要换模型。
-      const useH3KeyframeRef = shouldUseH3KeyframeRefModel(mode, videoModel, videoPrompt);
       // @首帧图 / @尾帧图 排到参考图两端。存储的提示词不动，只改这次提交的文本。
+      // 张数按模型上限（H3 参考生 9 张）：参考图全容量提交，服务端混合实现方
+      //（类型 37 默认）六槽接收，锁帧与否由优化分派按提示词点名决定，前端不预裁。
       const placedMentions = placeShotFrameMentionImages(
         videoPrompt,
         referenceImageUrls,
         promptSuffix,
         node.data.previewImageUrl,
         mentionLastUrl,
-        shotFrameMentionImageLimit(mode, videoModel, videoPrompt)
+        shotFrameMultiRefLimit(videoModel)
       );
       if(placedMentions.error) {
         const errorMsg = shotFrameMentionErrorMessage(placedMentions.error);
@@ -423,14 +401,10 @@ async function generateShotFrameVideo(nodeId, node){
       }
 
       if(referenceImageUrls.length > 0) {
-        // 有参考图 → image_to_video + multi_reference。
-        // H3 参考模型点名了首尾帧时，task_id 换成隐藏的混合模型，画面模式仍是参考模式。
-        const submitModel = useH3KeyframeRef ? H3_KEYFRAME_REF_SHORT_KEY : videoModel;
-        const taskId = TaskConfig.getTaskIdByKey(submitModel, 'image_to_video');
+        // 有参考图 → image_to_video + multi_reference。任务始终是下拉参考生（37）：
+        // 任务始终是下拉参考生（37），首帧参考混合为其默认实现方（不改 task_id）。
+        const taskId = TaskConfig.getTaskIdByKey(videoModel, 'image_to_video');
         if(!taskId) {
-          if(useH3KeyframeRef) {
-            throw new Error('未找到 MiniMax H3 首帧参考混合模型 minimax_h3_kfr 的任务配置');
-          }
           throw new Error(`未找到视频模型 ${videoModel} 对应的图生视频任务配置`);
         }
         form.append('task_id', taskId);
@@ -468,11 +442,7 @@ async function generateShotFrameVideo(nodeId, node){
           }
         }
 
-        if(useH3KeyframeRef) {
-          showToast(`本次使用 MiniMax H3 首帧参考混合模型，共 ${referenceImageUrls.length} 张参考图`, 'info');
-        } else {
-          showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
-        }
+        showToast(`使用 ${referenceImageUrls.length} 张参考图生成视频...`, 'info');
         res = await authPostForm('/api/ai-app-run-image', form);
       } else {
         // 无参考图 → 回退 text_to_video
@@ -706,7 +676,6 @@ async function generateShotFrameVideo(nodeId, node){
 
 if (typeof window !== 'undefined') {
   window.placeShotFrameMentionImages = placeShotFrameMentionImages;
-  window.shouldUseH3KeyframeRefModel = shouldUseH3KeyframeRefModel;
   window.promptHasShotFrameMention = promptHasShotFrameMention;
   window.buildShotFrameAutoPrompt = buildShotFrameAutoPrompt;
   window.shotFrameAutoPromptFlags = shotFrameAutoPromptFlags;
@@ -717,11 +686,9 @@ if (typeof window !== 'undefined') {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     placeShotFrameMentionImages,
-    shouldUseH3KeyframeRefModel,
-    H3_KEYFRAME_REF_ROUTE_ENABLED,
     promptHasShotFrameMention,
-    resolveShotFrameReferenceSubmitModel,
-    shotFrameMentionImageLimit,
+    isH3ReferenceVideoModel,
+    shotFrameMultiRefLimit,
     buildShotFrameAutoPrompt,
     shotFrameAutoPromptFlags,
     ensureShotFrameMentionTokens,

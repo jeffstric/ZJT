@@ -2030,7 +2030,7 @@ function renderCandidateUploadControl(scene, assetType) {
     const uploadState = state.candidateUploadsBySceneId?.[scene?.id]?.[assetType];
     const uploading = Boolean(uploadState?.uploading);
     const label = isVideo ? i18nT('btn_upload_video', '上传视频') : i18nT('btn_upload_scene_image', '上传分镜图');
-    const accept = isVideo ? 'video/mp4,video/webm,.mp4,.webm' : 'image/jpeg,image/png,image/gif,image/webp';
+    const accept = isVideo ? 'video/mp4,video/webm,.mp4,.webm' : 'image/jpeg,image/png,image/gif,image/webp,.jfif';
     return `
         <button type="button" class="candidate-upload-button${uploading ? ' is-uploading' : ''}"
                 data-action="upload-scene-candidate" data-candidate-upload-type="${assetType}"

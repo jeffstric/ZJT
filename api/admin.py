@@ -2310,9 +2310,13 @@ async def admin_get_implementation_configs(
 
         # 静态映射未覆盖的实现方（如用户模块动态实现方）按挂载条目的
         # driver_name 归组，使其出现在实现方管理页并可调整算力/排序/禁用。
+        # 代码级硬禁用的条目（enabled=False，如历史类型 50 KFRef）跳过：不再产生
+        # 新提交，其实现方已挂在在用任务组下（类型 37），单独成组只是管理页冗余。
         for task_config in UnifiedConfigRegistry.get_all():
             driver_name = task_config.driver_name
             if not driver_name:
+                continue
+            if not getattr(task_config, "enabled", True):
                 continue
             if task_config.implementations and isinstance(task_config.implementations, list):
                 declared_impls = task_config.implementations

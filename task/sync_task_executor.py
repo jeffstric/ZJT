@@ -28,6 +28,7 @@ from config.constant import (
     get_sync_task_stale_timeout,
 )
 from utils.file_storage.factory import reset_file_storage
+from utils.aigc_explicit_marker import maybe_burn_generated_media
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -258,17 +259,17 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         if ai_tool.implementation:
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
                 if driver:
                     logger.info(f"[SyncTask] Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for task {task_id}")
 
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
         if not driver:
-            # 取工厂记录的真实失败原因（未注册/配置缺失/无可用实现方等），
-            # 不再硬编码"不支持的任务类型"——任务类型本身往往存在，
-            # 真实原因常在 worker 侧驱动注册/配置（2026-09-20 任务 230）。
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 取这一次创建调用返回的失败原因（未注册/配置缺失/无可用实现方等），
+            # 不再硬编码"不支持的任务类型"，也不在返回后再读类变量。
             error_message = (
                 (create_error or {}).get("message")
                 or f"不支持的任务类型: {ai_tool_type}"
@@ -336,6 +337,13 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
                 media_type=media_type,
             )
             result_url = postprocess.result_url
+            # L1 显式标识（明水印）：本执行器为同步 worker 子进程，直接调用安全；
+            # 裁剪之后、父进程建映射/CDN 上传之前（时序保证云端对象带标）。
+            # 失败不阻断交付；与 download_queue worker 主链路幂等（ExplicitLabel 判定）。
+            if result_url and result_url.startswith('/upload/'):
+                burned = maybe_burn_generated_media(result_url, task_id, media_type)
+                if burned:
+                    logger.info(f"[SyncTask] ai_tool={task_id} AIGC 显式标识烧录完成")
             logger.info(f"[SyncTask] Task {task_id} completed with result: {result_url}")
             return SyncTaskResult(
                 task_id=task_id,
