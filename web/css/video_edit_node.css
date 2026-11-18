@@ -1,0 +1,35 @@
+/* 视频编辑（人物替换）节点：复用 .node / .gen-btn / 水印节点的预览结构，只补本节点自己的状态 */
+.video-edit-node .edit-submit-btn {
+  width: 100%;
+}
+.video-edit-node .edit-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.video-edit-node .duration-hint {
+  margin-top: 4px;
+}
+.video-edit-node .duration-hint.is-error {
+  color: #ef4444;
+}
+.video-edit-node .images-hint {
+  margin-top: 4px;
+}
+.video-edit-node .images-hint.is-error {
+  color: #ef4444;
+}
+.video-edit-node .edit-images-list {
+  word-break: break-all;
+}
+.video-edit-node .edit-prompt {
+  min-height: 56px;
+}
+/* 图片输入端口：与视频输入口错开高度，视觉上区分两类输入（口径同 voice-input-port 的偏移写法） */
+.video-edit-node .port.input.image-in {
+  top: calc(50% + 24px);
+  border-color: #38bdf8;
+}
+.video-edit-node .port.input.image-in:hover,
+.video-edit-node .port.input.image-in.can-connect {
+  background: #7dd3fc;
+}
