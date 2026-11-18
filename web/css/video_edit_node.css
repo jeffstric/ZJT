@@ -40,3 +40,23 @@
   background: #7dd3fc;
   box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.3);
 }
+
+/* 「换视频」按钮：视频预览右上角红点 ×，点击移除视频连接以便更换 */
+.video-edit-node .edit-video-remove-btn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.video-edit-node .edit-video-remove-btn:hover {
+  background: #dc2626;
+}

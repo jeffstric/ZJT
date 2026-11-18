@@ -1000,7 +1000,7 @@
   "video_edit_interrupted": "Last submission was interrupted and cannot be recovered, please resubmit",
   "video_edit_result_generating": "Generating...",
   "video_edit_no_video": "Connect a video node first",
-  "video_edit_one_video": "Only one video can be connected to this node",
+  "video_edit_one_video": "Video connected; click the × on the preview to replace it",
   "video_edit_generating": "Video is still generating, wait for the result before replacing",
   "video_edit_uploading": "Video is still uploading, please wait",
   "video_edit_bad_url": "Please use a video uploaded to the server",
@@ -1111,5 +1111,7 @@
   "zoom_fit": "Fit to Screen",
   "zoom_to_50": "Zoom to 50%",
   "zoom_to_100": "Zoom to 100%",
-  "zoom_to_200": "Zoom to 200%"
+  "zoom_to_200": "Zoom to 200%",
+  "video_edit_clear_video": "Replace video",
+  "video_edit_video_cleared": "Video removed, you can connect a new one"
 }

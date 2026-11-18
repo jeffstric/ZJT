@@ -112,7 +112,10 @@
           }).join('');
         return '<div class="field field-always-visible video-preview-field" style="display:none;">' +
             '<div class="label" data-i18n="video_edit_preview">参考视频</div>' +
-            '<div class="video-preview"><video class="video-thumb" playsinline muted></video></div>' +
+            '<div class="video-preview" style="position: relative;">' +
+              '<video class="video-thumb" playsinline muted></video>' +
+              '<button class="edit-video-remove-btn" type="button" title="更换视频" data-i18n="video_edit_clear_video:title">×</button>' +
+            '</div>' +
             '<div class="gen-meta video-name"></div>' +
           '</div>' +
           '<div class="field field-always-visible">' +
@@ -359,11 +362,27 @@
           if (!opts || !opts.skipSave) safeAutoSave();
         };
 
+        // 「换视频」按钮：删除视频连接线 + 清除输入（清除后即可直连新视频）
+        var removeVideoBtn = el.querySelector('.edit-video-remove-btn');
+        if (removeVideoBtn) {
+          removeVideoBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            var conn = state.connections.find(function(c) { return c.to === node.id; });
+            if (conn) {
+              state.connections = state.connections.filter(function(c) { return c.to !== node.id; });
+              if (typeof renderAllConnections === 'function') renderAllConnections();
+              if (typeof renderMinimap === 'function') renderMinimap();
+            }
+            node.clearVideoInput();
+            showToast(textOf('video_edit_video_cleared', '已移除视频，可连接新的视频'), 'success');
+          });
+        }
+
         bindInputPortEvents(el, node, {
           acceptType: 'video',
           connectionType: 'connections',
           single: true,
-          occupiedToastKey: 'video_edit_one_video',
+          occupiedToastKey: 'video_edit_one_video',  // 文案已含引导：点预览右上角 × 更换
           onConnect: function(fromNode) {
             node.applyVideoSource(fromNode);
           }

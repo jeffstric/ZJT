@@ -1000,7 +1000,7 @@
   "video_edit_interrupted": "上次提交已中断，结果无法找回，请重新提交",
   "video_edit_result_generating": "生成中...",
   "video_edit_no_video": "请先连接视频节点",
-  "video_edit_one_video": "视频人物替换节点只能连接一个视频",
+  "video_edit_one_video": "已连接视频，点击预览右上角 × 可更换",
   "video_edit_generating": "视频还在生成，请等成片后再替换",
   "video_edit_uploading": "视频还在上传，请稍候",
   "video_edit_bad_url": "请使用已上传到服务器的视频",
@@ -1111,5 +1111,7 @@
   "zoom_fit": "适合屏幕",
   "zoom_to_50": "缩放至50%",
   "zoom_to_100": "缩放至100%",
-  "zoom_to_200": "缩放至200%"
+  "zoom_to_200": "缩放至200%",
+  "video_edit_clear_video": "更换视频",
+  "video_edit_video_cleared": "已移除视频，可连接新的视频"
 }
