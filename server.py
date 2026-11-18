@@ -5479,7 +5479,16 @@ async def video_character_replace(
                 },
             )
             if not success:
+                # 扣费失败必须阻断落库入队，否则用户免费出片（账实不符）。
+                # 口径同 image_edit / upscale 端点的 deduct 阻断派：
+                # check_computing_power 前置校验已挡住余额不足主场景，
+                # 此处失败多为 check 与 deduct 间的并发消耗或 perseids 瞬时故障；
+                # transaction_id 幂等保证用户重新提交不会重复扣费。
                 logger.error(f"Character replace computing power deduction failed: {message}")
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"算力扣费失败，请稍后重试: {message}",
+                )
 
         # ===== 5. 落库并入队（素材转公网 URL 与工作流提交由驱动在调度进程完成）=====
         prompt_text = (prompt or "").strip()[:2048]
