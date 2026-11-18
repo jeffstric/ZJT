@@ -1714,13 +1714,15 @@
                 const videoUrls = [];
                 const audioUrls = [];
 
+                // isReusableMediaUrl：http(s) 或站内 /upload/ 相对路径均可提交
+                // （后端 13572 修复后参考图落库标准形态即相对路径），排除 blob:/data:
                 currentMessageMedia.forEach(media => {
-                    if (media.type === 'image' && isHttpUrl(media.url) && !imageUrls.includes(media.url)) {
+                    if (media.type === 'image' && isReusableMediaUrl(media.url) && !imageUrls.includes(media.url)) {
                         imageUrls.push(media.url);
-                        thumbnailUrls.push(isHttpUrl(media.thumbnailUrl) ? media.thumbnailUrl : media.url);
-                    } else if (media.type === 'video' && isHttpUrl(media.url) && !videoUrls.includes(media.url)) {
+                        thumbnailUrls.push(isReusableMediaUrl(media.thumbnailUrl) ? media.thumbnailUrl : media.url);
+                    } else if (media.type === 'video' && isReusableMediaUrl(media.url) && !videoUrls.includes(media.url)) {
                         videoUrls.push(media.url);
-                    } else if (media.type === 'audio' && isHttpUrl(media.url) && !audioUrls.includes(media.url)) {
+                    } else if (media.type === 'audio' && isReusableMediaUrl(media.url) && !audioUrls.includes(media.url)) {
                         audioUrls.push(media.url);
                     }
                 });
@@ -2637,7 +2639,9 @@
             function metaImageUrls(meta) {
                 const images = [];
                 const push = (url) => {
-                    if (isHttpUrl(url) && !images.includes(url)) images.push(url);
+                    // isReusableMediaUrl：meta.frame_images/reference_images 已是 /upload/
+                    // 相对路径标准形态（13572 修复后落库口径），isHttpUrl 会全部滤掉
+                    if (isReusableMediaUrl(url) && !images.includes(url)) images.push(url);
                 };
                 (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).forEach(push);
                 (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).forEach(push);
@@ -2645,11 +2649,12 @@
             }
 
             function inferVideoImageModeFromMeta(meta) {
-                const frames = (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
-                const refs = (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                // isReusableMediaUrl：兼容 /upload/ 相对路径（参考图落库标准形态）
+                const frames = (Array.isArray(meta && meta.frame_images) ? meta.frame_images : []).filter(isReusableMediaUrl);
+                const refs = (Array.isArray(meta && meta.reference_images) ? meta.reference_images : []).filter(isReusableMediaUrl);
                 if (refs.length > 0 || frames.length > 2) return 'multi_reference';
                 if (frames.length > 0) return 'first_last_frame';
-                if (isHttpUrl(meta && meta.reference_video) || isHttpUrl(meta && meta.reference_audio)) return 'multi_reference';
+                if (isReusableMediaUrl(meta && meta.reference_video) || isReusableMediaUrl(meta && meta.reference_audio)) return 'multi_reference';
                 return '';
             }
 
@@ -2668,10 +2673,10 @@
                     addMediaItem(null, 'image', url, { serverUrl: url, thumbnailUrl: url });
                 });
                 if (genType === 'video') {
-                    if (isHttpUrl(meta.reference_video)) {
+                    if (isReusableMediaUrl(meta.reference_video)) {
                         addMediaItem(null, 'video', meta.reference_video, { serverUrl: meta.reference_video });
                     }
-                    if (isHttpUrl(meta.reference_audio)) {
+                    if (isReusableMediaUrl(meta.reference_audio)) {
                         addMediaItem(null, 'audio', meta.reference_audio, { serverUrl: meta.reference_audio });
                     }
                 }
@@ -2681,7 +2686,7 @@
             function applyRestoredGenerationModel(genType, meta) {
                 const task = resolveTaskFromMeta(meta);
                 const hasRefs = metaImageUrls(meta).length > 0
-                    || (genType === 'video' && (isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio)));
+                    || (genType === 'video' && (isReusableMediaUrl(meta.reference_video) || isReusableMediaUrl(meta.reference_audio)));
                 const pools = genType === 'image'
                     ? (hasRefs
                         ? [allImageEditModels.value, allImageModels.value]
@@ -2825,11 +2830,14 @@
                         : null;
                     const categories = [task && task.category, ...((task && Array.isArray(task.categories)) ? task.categories : [])]
                         .filter(Boolean);
-                    // 首尾帧/图片编辑参考图存 image_path（frame_images），多参考图存 reference_images
-                    const frameImages = (Array.isArray(meta.frame_images) ? meta.frame_images : []).filter(isHttpUrl);
-                    const multiRefs = (Array.isArray(meta.reference_images) ? meta.reference_images : []).filter(isHttpUrl);
+                    // 首尾帧/图片编辑参考图存 image_path（frame_images），多参考图存 reference_images。
+                    // 用 isReusableMediaUrl 而非 isHttpUrl：参考图落库标准形态是本站 /upload/
+                    // 相对路径（13572 修复后 host 无关存储），isHttpUrl 会全部滤掉，导致
+                    // 重新生成退化成纯文生图（事故：da844815 水杯会话生成的海报与参考杯无关）
+                    const frameImages = (Array.isArray(meta.frame_images) ? meta.frame_images : []).filter(isReusableMediaUrl);
+                    const multiRefs = (Array.isArray(meta.reference_images) ? meta.reference_images : []).filter(isReusableMediaUrl);
                     const hasRefMedia = frameImages.length > 0 || multiRefs.length > 0 ||
-                        isHttpUrl(meta.reference_video) || isHttpUrl(meta.reference_audio);
+                        isReusableMediaUrl(meta.reference_video) || isReusableMediaUrl(meta.reference_audio);
 
                     const form = new FormData();
                     form.append('prompt', String(meta.prompt || ''));
@@ -2867,8 +2875,8 @@
                             } else if (multiRefs.length > 0) {
                                 form.append('image_urls', multiRefs.join(','));
                             }
-                            if (isHttpUrl(meta.reference_audio)) form.append('audio_urls', String(meta.reference_audio));
-                            if (isHttpUrl(meta.reference_video)) form.append('video_urls', String(meta.reference_video));
+                            if (isReusableMediaUrl(meta.reference_audio)) form.append('audio_urls', String(meta.reference_audio));
+                            if (isReusableMediaUrl(meta.reference_video)) form.append('video_urls', String(meta.reference_video));
                             if (meta.enable_face_mask === true) form.append('enable_face_mask', 'true');
                             apiUrl = '/api/ai-app-run-image';
                         } else {
@@ -4311,11 +4319,12 @@
                 const currentMessageMedia = isAgentMode ? collectCurrentMessageMedia() : [];
 
                 try {
-                    // 收集图片 URL（统一使用 HTTP URL）
+                    // 收集图片 URL（http(s) 绝对 URL 或本站 /upload/ 相对路径均可，
+                    // 后者重新编辑恢复参考图后的标准形态，后端 13572 修复后可直接消费）
                     const imageUrls = [];
                     const thumbnailUrls = [];
                     const addImageUrl = (url) => {
-                        if (isHttpUrl(url) && !imageUrls.includes(url)) imageUrls.push(url);
+                        if (isReusableMediaUrl(url) && !imageUrls.includes(url)) imageUrls.push(url);
                     };
                     if (isAgentMode) {
                         const invalidImages = agentImageFiles.value.filter(img => !isHttpUrl(img.serverUrl));
@@ -4377,9 +4386,9 @@
                             }
                         }
                         currentMessageMedia.forEach(media => {
-                            if (media.type === 'video' && isHttpUrl(media.url) && !videoUrls.includes(media.url)) {
+                            if (media.type === 'video' && isReusableMediaUrl(media.url) && !videoUrls.includes(media.url)) {
                                 videoUrls.push(media.url);
-                            } else if (media.type === 'audio' && isHttpUrl(media.url) && !audioUrls.includes(media.url)) {
+                            } else if (media.type === 'audio' && isReusableMediaUrl(media.url) && !audioUrls.includes(media.url)) {
                                 audioUrls.push(media.url);
                             }
                         });
@@ -4391,13 +4400,14 @@
                         }
                     }
 
-                    // 安全校验：只允许 HTTP URL，过滤 blob: / 空 / 非字符串
-                    const validImageUrls = imageUrls.filter(isHttpUrl);
+                    // 安全校验：只允许 http(s) 绝对 URL 或本站 /upload/ 相对路径，
+                    // 过滤 blob:/data: / 空 / 非字符串（与 isReusableMediaUrl 持久化守卫同口径）
+                    const validImageUrls = imageUrls.filter(isReusableMediaUrl);
                     if (imageUrls.length > 0 && validImageUrls.length < imageUrls.length) {
-                        console.warn('[安全] 过滤掉非 HTTP 图片 URL:', imageUrls.filter(u => !isHttpUrl(u)));
+                        console.warn('[安全] 过滤掉不可复用的媒体 URL:', imageUrls.filter(u => !isReusableMediaUrl(u)));
                     }
-                    const validVideoUrls = videoUrls.filter(isHttpUrl);
-                    const validAudioUrls = audioUrls.filter(isHttpUrl);
+                    const validVideoUrls = videoUrls.filter(isReusableMediaUrl);
+                    const validAudioUrls = audioUrls.filter(isReusableMediaUrl);
 
                     // 1. 创建任务
                     // 构建图片偏好（auto 分辨率不传）
