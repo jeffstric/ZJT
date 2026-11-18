@@ -731,6 +731,17 @@ except Exception as e:
     except Exception:
         pass
 
+# 用户模块（接口模块）：develop_f1214 起子系统常驻主仓（见 services/user_module_bootstrap.py）。
+# 存量 enterprise 包自带旧版实现时让位给 enterprise 版（避免双份路由/双份 Supervisor），
+# 否则由主仓版挂载（无商业许可证门禁）。
+try:
+    from services.user_module_bootstrap import bootstrap_user_modules, enterprise_provides_user_modules
+
+    if not enterprise_provides_user_modules():
+        bootstrap_user_modules(app)
+except Exception:
+    logging.getLogger(__name__).exception("主仓用户模块挂载失败（接口模块将不可用）")
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 
@@ -743,7 +754,7 @@ from task.visual_drivers.driver_factory import VideoDriverFactory
 register_all_drivers()
 logger.info("Video drivers registered successfully")
 
-# 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
+# 用户模块实现方绑定加载由 enterprise.register 或主仓 user_module_bootstrap 注入。
 
 # CORS（docs/security/xss_stored_chain_fix_plan.md 阶段 4b）：
 # allow_origins=["*"] 与 allow_credentials=True 组合无效且危险（任意站点可携凭据跨源）。

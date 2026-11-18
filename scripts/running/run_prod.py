@@ -75,14 +75,21 @@ def _find_free_local_port():
 
 
 def _start_module_supervisor(cwd):
-    """用户模块 Supervisor 由商业版 enterprise 包提供；社区版无此包时跳过。
+    """用户模块 Supervisor：develop_f1214 起随子系统常驻主仓；enterprise 旧版
+    自带实现时优先走 enterprise 版（与 services/user_module_bootstrap 分流一致，
+    避免双 Supervisor）；两者都不可用时跳过。
 
     每次调用重新分配端口和 token，保证重启后旧连接不会误连到新实例。
     成功返回 Popen 进程对象；启动失败（超时/立即崩溃）返回 None。
-    （安全设计见 enterprise 仓 doc/user_modules_review.md S1）
+    （安全设计见 docs/backend/user_modules.md）
     """
     try:
-        from enterprise.task.module_supervisor_launcher import start_module_supervisor
+        from services.user_module_bootstrap import enterprise_provides_user_modules
+
+        if enterprise_provides_user_modules():
+            from enterprise.task.module_supervisor_launcher import start_module_supervisor
+        else:
+            from task.module_supervisor_launcher import start_module_supervisor
     except ImportError:
         return None
     return start_module_supervisor(cwd, find_free_port=_find_free_local_port)

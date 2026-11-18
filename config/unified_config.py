@@ -1898,6 +1898,25 @@ IMPLEMENTATION_TO_ID = {
 IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
 
 
+def _user_module_binding_service():
+    """惰性解析用户模块绑定服务模块（enterprise 旧版与主仓版分流，注册表须同侧）。
+
+    惰性导入避免 config -> services 顶层循环依赖；分流判定与
+    services/user_module_bootstrap 一致——enterprise 自带旧版时读 enterprise
+    的注册表（绑定加载也发生在那一侧），否则读主仓版。
+    """
+    try:
+        from services.user_module_bootstrap import enterprise_provides_user_modules
+
+        if enterprise_provides_user_modules():
+            from enterprise.services import user_module_binding_service
+            return user_module_binding_service
+    except Exception:
+        pass
+    from services import user_module_binding_service
+    return user_module_binding_service
+
+
 def get_implementation_id(name: str) -> int:
     """获取 implementation 的 ID，不存在返回 0。
 
@@ -1907,9 +1926,7 @@ def get_implementation_id(name: str) -> int:
     if impl_id:
         return impl_id
     try:
-        # 惰性导入避免 config -> services 顶层循环依赖；失败（如测试环境缺依赖）时按未知处理
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_id
-        return get_dynamic_impl_id(name) or 0
+        return _user_module_binding_service().get_dynamic_impl_id(name) or 0
     except Exception:
         return 0
 
@@ -1924,8 +1941,7 @@ def get_implementation_name(id: int) -> str:
     if impl_name:
         return impl_name
     try:
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_name
-        impl_name = get_dynamic_impl_name(id)
+        impl_name = _user_module_binding_service().get_dynamic_impl_name(id)
         if impl_name:
             return impl_name
     except Exception:

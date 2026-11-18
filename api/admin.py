@@ -81,8 +81,28 @@ def _get_enterprise_admin_status() -> dict[str, object]:
     return enterprise_loader.get_runtime_status()
 
 
+def _is_user_module_available(enterprise_status: dict) -> bool:
+    """用户模块（接口模块）功能可用性判定（features.user_modules）。
+
+    develop_f1214 起子系统常驻主仓且无商业许可证门禁：enterprise 旧版自带实现
+    时沿用旧判定（registration_ready + strict 许可证），否则恒可用（主仓版）。
+    分流判定与 services/user_module_bootstrap 一致。
+    """
+    try:
+        from services.user_module_bootstrap import enterprise_provides_user_modules
+
+        if not enterprise_provides_user_modules():
+            return True
+        return bool(enterprise_status.get("registration_ready")) and _is_user_module_license_active()
+    except Exception:
+        return False
+
+
 def _is_user_module_license_active() -> bool:
-    """用户模块功能的商业许可证检查（strict：须真实激活；enterprise 缺席恒 False）。"""
+    """用户模块功能的商业许可证检查（strict：须真实激活；enterprise 缺席恒 False）。
+
+    仅 enterprise 旧版自带用户模块时由 _is_user_module_available 调用。
+    """
     try:
         from enterprise.services.license.runtime import (
             is_commercial_license_strictly_allowed,
@@ -187,9 +207,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
-                    # 用户模块（接口模块）：enterprise 包完整注册且商业许可证已激活
-                    # 才对前端开放完整界面；未激活显示与社区版相同的锁定卡片。
-                    "user_modules": bool(enterprise_status["registration_ready"]) and _is_user_module_license_active(),
+                    # 用户模块（接口模块）：develop_f1214 起主仓版无许可证门禁；
+                    # enterprise 旧版自带实现时沿用旧判定（须激活许可证）。
+                    "user_modules": _is_user_module_available(enterprise_status),
                 },
             }
         }
