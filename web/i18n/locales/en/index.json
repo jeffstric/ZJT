@@ -1242,7 +1242,7 @@
   "video_edit_duration": "Output Duration (seconds, 5-25, empty = follow video)",
   "video_edit_duration_placeholder": "Follow reference video duration",
   "video_edit_prompt": "Replace Instruction (optional)",
-  "video_edit_prompt_hint": "e.g. Image 1 replaces the one in black armor on the left; keep the microphone in hand",
+  "video_edit_prompt_hint": "Replace the woman in the video with the woman in the image",
   "video_edit_subject": "Subject Type to Detect (optional, English)",
   "video_edit_subject_hint": "Default person; can be dog / car / robot etc.",
   "video_edit_estimate_power": "Estimated Computing Power",

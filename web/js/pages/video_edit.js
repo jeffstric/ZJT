@@ -390,7 +390,7 @@
           <div class="field">
             <label class="label">{{ $t('video_edit_prompt') || '替换说明（选填）' }}</label>
             <textarea v-model="prompt" class="input" rows="3" maxlength="2048" :disabled="loading"
-              :placeholder="$t('video_edit_prompt_hint') || '例如：图1换左边穿黑甲的；右边穿白背心的伴舞不换；保留手里的话筒'"></textarea>
+              :placeholder="$t('video_edit_prompt_hint') || '把视频中的女人替换为图片中的女人'"></textarea>
           </div>
 
           <div class="field">

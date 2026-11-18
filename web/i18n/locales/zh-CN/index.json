@@ -1233,7 +1233,7 @@
   "video_edit_duration": "输出时长（秒，5-25，留空跟随视频）",
   "video_edit_duration_placeholder": "跟随参考视频时长",
   "video_edit_prompt": "替换说明（选填）",
-  "video_edit_prompt_hint": "例如：图1换左边穿黑甲的；右边穿白背心的伴舞不换；保留手里的话筒",
+  "video_edit_prompt_hint": "把视频中的女人替换为图片中的女人",
   "video_edit_subject": "检测主体类型（选填，英文）",
   "video_edit_subject_hint": "默认 person（人），可填 dog / car / robot 等",
   "video_edit_estimate_power": "预计消耗算力",
