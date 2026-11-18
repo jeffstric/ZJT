@@ -123,8 +123,12 @@ class AigcExplicitOptOutModel:
         """
         if not user_id:
             return False
+        # 只看用户设置里的全局开关。任务卡（chat_result_card）的 opt_out/resume
+        # 是单条任务留痕，不能把这个用户后面的图片、视频、数字人、语音水印一起关掉。
         return AigcExplicitOptOutModel._latest_action(
-            'user_id = %s', (user_id,)) == OPT_OUT_ACTION_OPT_OUT
+            'user_id = %s AND request_source = %s',
+            (user_id, OPT_OUT_SOURCE_USER_SETTINGS),
+        ) == OPT_OUT_ACTION_OPT_OUT
 
     @staticmethod
     def list_recent(page: int = 1, page_size: int = 50, user_id: Optional[int] = None) -> Dict[str, Any]:

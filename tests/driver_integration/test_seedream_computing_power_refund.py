@@ -8,6 +8,7 @@ Seedream 算力返还集成测试
 """
 import sys
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
@@ -28,6 +29,28 @@ from config.constant import (
 from perseids_server.client import make_perseids_request
 
 SEEDREAM_TEXT_TO_IMAGE_TYPE = TaskTypeId.SEEDREAM_TEXT_TO_IMAGE
+
+
+@contextmanager
+def _patch_submit_driver(driver):
+    """提交先解析实现方，再走 create_*_result。未登记的名字会落到按类型创建。"""
+    with patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.resolve_implementation_for_user',
+        return_value=('unregistered-test-impl', None),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.probe_input_compatibility',
+        return_value=(True, None),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.tool_has_implementation_lock',
+        return_value=False,
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_implementation_result',
+        return_value=(None, {'message': 'test skip impl'}),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type_result',
+        return_value=(driver, None),
+    ):
+        yield
 
 
 class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
@@ -62,9 +85,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'seedream5_volcengine_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回失败（用户错误，不重试）
             mock_driver.submit_task.return_value = {
@@ -115,9 +136,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'seedream5_volcengine_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回系统错误
             mock_driver.submit_task.return_value = {
@@ -151,9 +170,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'seedream5_volcengine_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 抛出异常
             mock_driver.submit_task.side_effect = Exception("Network connection timeout")
@@ -182,9 +199,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'seedream5_volcengine_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回需要重试的错误
             mock_driver.submit_task.return_value = {
@@ -242,9 +257,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'seedream5_volcengine_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回成功
             mock_driver.submit_task.return_value = {

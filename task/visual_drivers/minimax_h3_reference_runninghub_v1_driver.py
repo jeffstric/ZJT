@@ -39,7 +39,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     has_quoted_dialogue,
     h3_slot_source_prompt,
 )
-from .exceptions import ImageExpiredError
+from .exceptions import ImageExpiredError, UnsupportedReferenceVideoError
 
 
 # 参考图固定 nodeId 列表（对应工作流中的图1~图9 LoadImage 节点，顺序敏感）
@@ -610,6 +610,17 @@ class MinimaxH3ReferenceRunninghubV1Driver(BaseVideoDriver):
         except ImageExpiredError as e:
             # 第三方图床签名过期，无法恢复：友好提示用户重新上传
             self.logger.warning(f"输入图片已过期: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "error_type": "USER",
+                "retry": False
+            }
+
+        except UnsupportedReferenceVideoError as e:
+            # 子类（首帧参考混合）没有视频槽。这是输入不兼容，不是未预期异常：
+            # 不报警、不重试同一实现方，把中文原因交给失败处理。
+            self.logger.warning(f"参考视频与当前实现方不兼容: {e}")
             return {
                 "success": False,
                 "error": str(e),

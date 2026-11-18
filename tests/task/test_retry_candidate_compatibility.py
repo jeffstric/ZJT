@@ -41,6 +41,12 @@ def _run_select(impl_names, drivers_by_impl, db_returns_none=False):
     def fake_create(impl_name):
         return drivers_by_impl.get(impl_name)
 
+    def fake_create_result(impl_name):
+        driver = drivers_by_impl.get(impl_name)
+        if not driver:
+            return None, {"message": "未注册"}
+        return driver, None
+
     def fake_get_impl(impl_name):
         if impl_name in drivers_by_impl:
             return _stub_impl_config()
@@ -58,6 +64,7 @@ def _run_select(impl_names, drivers_by_impl, db_returns_none=False):
         mock_attempts.get_attempted_implementations.return_value = {FAILED_IMPL_ID}
         mock_attempts.get_retry_implementation_count.return_value = 0
         mock_factory.create_driver_by_implementation.side_effect = fake_create
+        mock_factory.create_driver_by_implementation_result.side_effect = fake_create_result
         candidate = PipelineDriverFactory.select_before_finish_retry_candidate(
             ai_tool_id=101,
             ai_tool_type=TASK_TYPE,

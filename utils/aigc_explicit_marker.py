@@ -23,15 +23,19 @@ AIGC 显式标识（明水印）烧录模块
   重写隐式标识（utils/aigc_marking.mark_file），幂等判定依据 has_explicit_label
 - 失败不阻断交付：burn_explicit_label 全容错仅告警
 """
+import asyncio
 import logging
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from config.constant import (
     AIGC_EXPLICIT_LABEL_TEXT,
     AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS,
     AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
+    AIGC_EXPLICIT_BURN_CANCEL_JOIN_SECONDS,
     AIGC_EXPLICIT_FONT_REL,
     AIGC_EXPLICIT_NOTICE_AUDIO_REL,
     AIGC_EXPLICIT_FONT_SIZE_RATIO,
@@ -83,9 +87,115 @@ def _load_font():
     return None
 
 
+class ExplicitBurnSession:
+    """一次显式烧录的取消令牌。
+
+    外层 asyncio.wait_for 超时不会停掉 to_thread 里的 ffmpeg，线程仍可能在
+    超时之后 os.replace 到原文件。cancel() 与 replace_file() 共用一把锁：
+    cancel() 返回后，要么替换已经完成，要么之后的替换会看到取消标志并放弃。
+    """
+
+    def __init__(self):
+        self._cancel = threading.Event()
+        self._replace_lock = threading.Lock()
+        self.done = threading.Event()
+        self._proc = None
+        self._proc_lock = threading.Lock()
+
+    def cancel(self):
+        with self._replace_lock:
+            self._cancel.set()
+        with self._proc_lock:
+            proc = self._proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def is_cancelled(self) -> bool:
+        return self._cancel.is_set()
+
+    def bind_process(self, proc):
+        with self._proc_lock:
+            self._proc = proc
+            already = self._cancel.is_set()
+        if already and proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+
+    def replace_file(self, src, dst) -> bool:
+        with self._replace_lock:
+            if self._cancel.is_set():
+                return False
+            os.replace(src, dst)
+            return True
+
+    def mark_done(self):
+        self.done.set()
+
+
+def _commit_burned_file(session, tmp_path, file_path) -> bool:
+    if session is None:
+        os.replace(tmp_path, file_path)
+        return True
+    return session.replace_file(tmp_path, file_path)
+
+
+def _run_ffmpeg(cmd, session, timeout, cwd=None):
+    """跑 ffmpeg。取消或超时时杀掉进程，避免它在调用方已经放弃之后还写完临时文件。"""
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+    )
+    if session is not None:
+        session.bind_process(proc)
+    deadline = time.monotonic() + timeout
+    try:
+        while proc.poll() is None:
+            if session is not None and session.is_cancelled():
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                return 1, "cancelled"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                proc.kill()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+                raise subprocess.TimeoutExpired(cmd, timeout)
+            try:
+                proc.wait(timeout=min(0.5, remaining))
+            except subprocess.TimeoutExpired:
+                continue
+        stderr = ""
+        if proc.stderr is not None:
+            raw = proc.stderr.read() or b""
+            stderr = raw.decode("utf-8", errors="replace")
+        return proc.returncode, stderr
+    finally:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+
+
 # ==================== 图片角标 ====================
 
-def _burn_image(file_path: Path) -> bool:
+def _burn_image(file_path: Path, session=None) -> bool:
     """图片右下角烧录"AI生成"角标（PNG 无损重存；JPEG quality=95 重存）。"""
     from PIL import Image, ImageDraw, ImageFont
 
@@ -136,13 +246,18 @@ def _burn_image(file_path: Path) -> bool:
         if drop_alpha:
             img = img.convert('RGB')
         img.save(tmp_path, img_format, **save_kwargs)
-    os.replace(tmp_path, file_path)
-    return True
+    committed = _commit_burned_file(session, tmp_path, file_path)
+    if not committed and os.path.isfile(tmp_path):
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    return committed
 
 
 # ==================== 视频起始画面 drawtext ====================
 
-def _burn_video(file_path: Path) -> bool:
+def _burn_video(file_path: Path, session=None) -> bool:
     """视频起始画面烧录"AI生成"文字提示（全片重编码，音频 copy）。
 
     cwd=项目根 + 相对路径传字体：绕开 ffmpeg 滤镜串对 Windows 盘符冒号的转义问题。
@@ -179,11 +294,15 @@ def _burn_video(file_path: Path) -> bool:
             '-movflags', '+faststart',
             tmp_path,
         ]
-        r = subprocess.run(cmd, capture_output=True, timeout=AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
-                           encoding='utf-8', errors='replace', cwd=str(get_project_root()))
-        if r.returncode != 0 or not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
-            raise RuntimeError(f"ffmpeg drawtext 失败: {(r.stderr or '')[-300:]}")
-        os.replace(tmp_path, file_path)
+        code, stderr = _run_ffmpeg(
+            cmd, session, AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS, cwd=str(get_project_root()),
+        )
+        if session is not None and session.is_cancelled():
+            return False
+        if code != 0 or not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
+            raise RuntimeError(f"ffmpeg drawtext 失败: {(stderr or '')[-300:]}")
+        if not _commit_burned_file(session, tmp_path, file_path):
+            return False
         return True
     finally:
         if os.path.isfile(tmp_path):
@@ -231,7 +350,7 @@ def _ensure_notice_audio() -> Path:
                 pass
 
 
-def _burn_audio(file_path: Path) -> bool:
+def _burn_audio(file_path: Path, session=None) -> bool:
     """音频开头拼接节奏提示（第4条：音频加语音或节奏提示），保持原容器格式。"""
     notice_path = _ensure_notice_audio()
     suffix = file_path.suffix.lower().lstrip('.') or 'mp3'
@@ -252,11 +371,13 @@ def _burn_audio(file_path: Path) -> bool:
             '-f', out_format,
             tmp_path,
         ]
-        r = subprocess.run(cmd, capture_output=True, timeout=AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
-                           encoding='utf-8', errors='replace')
-        if r.returncode != 0 or not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
-            raise RuntimeError(f"音频提示拼接失败: {(r.stderr or '')[-300:]}")
-        os.replace(tmp_path, file_path)
+        code, stderr = _run_ffmpeg(cmd, session, AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS)
+        if session is not None and session.is_cancelled():
+            return False
+        if code != 0 or not os.path.isfile(tmp_path) or os.path.getsize(tmp_path) == 0:
+            raise RuntimeError(f"音频提示拼接失败: {(stderr or '')[-300:]}")
+        if not _commit_burned_file(session, tmp_path, file_path):
+            return False
         return True
     finally:
         if os.path.isfile(tmp_path):
@@ -269,7 +390,7 @@ def _burn_audio(file_path: Path) -> bool:
 # ==================== 对外入口 ====================
 
 def burn_explicit_label(file_path, produce_id, media_kind: str = 'auto',
-                        user_id=None) -> bool:
+                        user_id=None, session=None) -> bool:
     """烧录显式标识（明水印）并重写隐式标识。全容错：失败仅告警返回 False。
 
     - 幂等：已烧录（隐式 JSON 含 ExplicitLabel）直接返回 True，避免角标叠加
@@ -292,11 +413,11 @@ def burn_explicit_label(file_path, produce_id, media_kind: str = 'auto',
 
         sniffed = _sniff_format(path)
         if sniffed in ('png', 'jpeg'):
-            ok = _burn_image(path)
+            ok = _burn_image(path, session=session)
         elif sniffed in ('mp4', 'mov'):
-            ok = _burn_video(path)
+            ok = _burn_video(path, session=session)
         elif sniffed in ('mp3', 'wav'):
-            ok = _burn_audio(path)
+            ok = _burn_audio(path, session=session)
         else:
             logger.warning(f"AIGC 显式标识烧录暂不支持该格式({sniffed})，跳过: {path}")
             return False
@@ -319,7 +440,7 @@ def burn_explicit_label(file_path, produce_id, media_kind: str = 'auto',
 
 # ==================== 生成链默认烧录入口（L1，图片/视频） ====================
 
-def maybe_burn_generated_media(result_url, ai_tool_id, media_type: str) -> bool:
+def maybe_burn_generated_media(result_url, ai_tool_id, media_type: str, session=None) -> bool:
     """生成产物默认烧录 L1 显式标识（图片/视频）。
 
     2026-11-11 产品决策（保守合规）：系统无法检测产出内容是否含人脸，全部生成
@@ -361,7 +482,46 @@ def maybe_burn_generated_media(result_url, ai_tool_id, media_type: str) -> bool:
             return False
         if AigcExplicitOptOutModel.has_opt_out_user(uid):
             return False  # 用户级明水印关闭生效中（第9条留痕；隐式标识保留）
-        return burn_explicit_label(str(path), str(ai_tool_id), media_type, uid)
+        return burn_explicit_label(str(path), str(ai_tool_id), media_type, uid, session=session)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"AIGC 生成产物显式标识异常(不阻断交付): {result_url}: {e}")
+        return False
+
+
+async def await_explicit_burn(result_url, ai_tool_id, media_type: str) -> bool:
+    """烧录并等到线程结束（或已被取消）后再返回。
+
+    调用方在这之后才能建 CDN 映射。超时只负责取消，不在线程还可能替换文件时上传。
+    """
+    session = ExplicitBurnSession()
+
+    def _run():
+        try:
+            return maybe_burn_generated_media(
+                result_url, ai_tool_id, media_type, session=session,
+            )
+        finally:
+            session.mark_done()
+
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_run),
+            timeout=AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"AIGC 显式标识烧录超时(>{AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS}s，"
+            f"取消后继续交付): ai_tool={ai_tool_id} {result_url}"
+        )
+        session.cancel()
+        joined = await asyncio.to_thread(
+            session.done.wait, AIGC_EXPLICIT_BURN_CANCEL_JOIN_SECONDS,
+        )
+        if not joined:
+            logger.error(
+                f"AIGC 显式标识烧录线程在取消后仍未退出: ai_tool={ai_tool_id} {result_url}"
+            )
+        return False
     except Exception as e:  # noqa: BLE001
         logger.warning(
             f"AIGC 生成产物显式标识异常(不阻断交付): ai_tool={ai_tool_id} {result_url}: {e}")

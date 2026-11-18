@@ -21,8 +21,8 @@ def test_result_fetch_retry_preserves_generation_try_count(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "task.visual_drivers.VideoDriverFactory.create_driver_by_type",
-        lambda *_args, **_kwargs: driver,
+        "task.visual_drivers.VideoDriverFactory.create_driver_by_type_result",
+        lambda *_args, **_kwargs: (driver, None),
     )
     monkeypatch.setattr(visual_task.AIToolsLogModel, "log", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(

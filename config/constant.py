@@ -601,6 +601,15 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
     "请在后台「实现方管理」检查各实现方的启用状态。"
 )
 
+# 用户固定了某个实现方，但当前这次输入（如参考视频）该实现方不支持。
+# 与「供应商已下线」不同：不清除固定偏好，也不静默换成别的供应商。
+DRIVER_ERROR_FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE = "FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE"
+FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE_MESSAGE = (
+    "已固定供应商「{display_name}」，但该供应商不支持当前输入：{reason}。"
+    "请更换供应商、取消固定，或去掉不支持的素材后再提交。"
+)
+DRIVER_ERROR_INPUT_INCOMPATIBLE = "INPUT_INCOMPATIBLE"
+
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
@@ -1642,6 +1651,9 @@ AIGC_JPEG_APP1_XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
 AIGC_EXPLICIT_LABEL_TEXT = "AI生成"
 AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS = 3      # 视频起始画面提示展示时长（秒）
 AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS = 600     # 视频重编码超时（秒）：全片 libx264 转码
+# 外层超时后杀掉 ffmpeg，并等到烧录线程退出再上传 CDN。
+# 只靠 wait_for 取消不了线程，线程晚一步 os.replace 会把已上传的无标文件换成有标本地文件。
+AIGC_EXPLICIT_BURN_CANCEL_JOIN_SECONDS = 30
 AIGC_EXPLICIT_FONT_REL = "files/fonts/NotoSansSC-Regular.otf"   # 中文角标字体（相对项目根）
 AIGC_EXPLICIT_NOTICE_AUDIO_REL = "files/audio/aigc_notice_v2.mp3"  # 音频节奏提示资产（相对项目根；v2 提升响度，文件名带版本号以强制各环境重新生成——_ensure_notice_audio 仅在文件缺失时合成）
 AIGC_EXPLICIT_FONT_SIZE_RATIO = 0.045        # 角标字号占画面高度比例（实践指南：不超画面高度 1/10）

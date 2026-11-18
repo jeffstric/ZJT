@@ -20,8 +20,10 @@
   `resolve_probed_reference_implementation`、`apply_reference_implementation_policy`
   全部删除；实现方解析统一走（偏好 → 排序 → 默认）。基类
   `validate_input_compatibility` 钩子保留（AutoDL 视频槽等输入契约差异仍依赖）。
-- **带参考视频**：混合 webapp 无视频槽，提交显式失败（不再静默丢弃），由
-  before_finish 重试自动切到带视频槽的参考生实现方（67/AutoDL）。
+- **带参考视频**：混合 webapp 无视频槽。没有固定供应商时，选择阶段跳过本实现方
+  和同样无视频槽的 AutoDL，落到带视频槽的参考生 RunningHub（实现方 67），扣费前完成。
+  用户已固定不支持参考视频的供应商时，提交直接返回中文原因，不扣费，也不清除固定。
+  若任务仍被交到本驱动，上传图片之前返回用户错误，不再静默丢弃，也不靠失败后再重试换供应商。
 
 下文 Step 1~8 与兼容矩阵按原始方案描述，凡与本节冲突处以本节为准。
 

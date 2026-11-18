@@ -723,29 +723,34 @@ def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
     return sep.join(str(part).strip() for part in parts if str(part or '').strip())
 
 
-def _normalize_dialogue_text_for_match(text: Any) -> str:
-    """规范化台词文本，用于判断视频提示词是否已包含该台词。"""
-    s = str(text or "")
-    # 去空白
-    s = re.sub(r"\s+", "", s)
-    # 统一常见引号/省略号变体
-    for src, dst in (
-        ("“", '"'),
-        ("”", '"'),
-        ("‘", "'"),
-        ("’", "'"),
-        ("「", '"'),
-        ("」", '"'),
-        ("『", '"'),
-        ("』", '"'),
-        ("…", "..."),
-        ("⋯", "..."),
-        ("——", "-"),
-        ("—", "-"),
-        ("－", "-"),
-    ):
-        s = s.replace(src, dst)
-    return s
+_DIALOGUE_QUOTE_RE = re.compile(r'[「『“"]([^」』”"]{1,200})[」』”"]')
+
+
+def _dialogue_cjk_key(text: Any) -> str:
+    """台词匹配键：只留 CJK/字母/数字并小写，与前端 normalizeDialogueTextForMatch 一致。"""
+    return re.sub(
+        r"[^0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+",
+        "",
+        str(text or ""),
+    ).lower()
+
+
+def _utterance_already_verbatim(speech: str, rest_text: str) -> bool:
+    """整句台词是否已出现在引号里，或单独占一整行。
+
+    动作里夹着同样几个字不算已经写过。短于 4 个匹配字符的台词不参与去重。
+    """
+    key = _dialogue_cjk_key(speech)
+    if not key or len(key) < 4:
+        return False
+    rest = str(rest_text or "")
+    for match in _DIALOGUE_QUOTE_RE.finditer(rest):
+        if _dialogue_cjk_key(match.group(1)) == key:
+            return True
+    for line in rest.splitlines():
+        if _dialogue_cjk_key(line) == key:
+            return True
+    return False
 
 
 def _format_dialogues_for_video_prompt(
@@ -756,7 +761,8 @@ def _format_dialogues_for_video_prompt(
 ) -> str:
     """将缺失的完整台词幂等追加为「对话：」块，供 video_prompt 使用。
 
-    - 已在 existing_prompt 中出现的台词不重复追加；
+    - 引号里已经有整句，或该句单独占正文一整行时，不重复追加；
+    - 动作里只是夹着同样几个字，仍然追加；
     - 全部已包含则返回空字符串；
     - 角色名优先用 dialogue.character_name，其次 character_name_map。
     """
@@ -766,7 +772,6 @@ def _format_dialogues_for_video_prompt(
         return ""
 
     name_map = character_name_map or {}
-    existing_norm = _normalize_dialogue_text_for_match(existing_prompt)
     lines: List[str] = []
 
     for item in dialogues:
@@ -775,10 +780,7 @@ def _format_dialogues_for_video_prompt(
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        text_norm = _normalize_dialogue_text_for_match(text)
-        if not text_norm:
-            continue
-        if existing_norm and text_norm in existing_norm:
+        if _utterance_already_verbatim(text, existing_prompt):
             continue
 
         raw_name = str(item.get("character_name") or "").strip()
@@ -4953,12 +4955,15 @@ async def generate_scene_video(
     # 时被按 RunningHub 价扣费（多扣，事故 ai_tools 13452：AutoDL 4s 应扣 5 实扣 12）
     impl_id = 0
     actual_impl_name = None
+    resolve_error = None
     try:
         from task.visual_drivers import VideoDriverFactory
         from config.unified_config import get_implementation_id
-        # 实现方统一按（偏好 → 排序 → 默认）解析：类型 37 默认即首帧参考混合
-        # 实现方，扣费=执行（事故 13452）
-        actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        # 实现方统一按（偏好 → 排序 → 默认）解析。失败原因由同一次调用返回，
+        # 不在返回后再读类变量（别的请求会把它覆盖）。扣费=执行（事故 13452）
+        actual_impl_name, resolve_error = VideoDriverFactory.resolve_implementation_for_user(
+            task_type, user_id,
+        )
         if actual_impl_name:
             impl_id = get_implementation_id(actual_impl_name) or 0
     except Exception as e:
@@ -4970,8 +4975,7 @@ async def generate_scene_video(
     # 故障、执行时恢复且偏好指向异价实现方时多扣/漏扣）；固定偏好不可用时也须与
     # /api/ai-app-run-image 端点同为固定语义（不静默换供应商），两入口行为一致。
     if not actual_impl_name:
-        from task.visual_drivers.driver_factory import VideoDriverFactory as _VDF
-        resolve_error = _VDF.get_last_create_error() or {}
+        resolve_error = resolve_error or {}
         return JSONResponse(
             status_code=400,
             content={
