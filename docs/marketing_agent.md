@@ -319,6 +319,12 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 安全与兼容注意：`data-gen-*`/`data-regen-*` 属性值均为参数快照（不含 URL 与提示词，提示词点击时才拉取），构建时经 `escapeHtml` 转义；`bindGeneratedMediaDelegation` 中元数据条/详情面板区域内的点击先于「点击放大」分支短路返回，避免面板在 `data-modal-src` 卡片内部被冒泡误判为放大请求。`tests/js/test_marketing_agent_digital_human_single_video.js` 对 `buildGeneratedMediaRowsHtml` 的静态断言窗口由 1600 放宽至 2600 字符（图片行模板加入元数据条与操作按钮后变长）。
 
+#### 参考媒体相对路径兼容：重新生成/重新编辑不再丢参考图（2026-11-18）
+
+事故（会话 da844815-ebb3-4371-90e1）：用户上传 5 张水杯实拍图生成双十一海报（`edit_image`，参考图以 `/upload/...` 相对路径落库），点击结果卡「重新生成」后产出的图片与水杯毫无关系。根因是 13572 修复（2026-11-14）把参考图落库标准形态统一为**本站相对路径**后，前端「重新编辑/重新生成」链路仍在用 `isHttpUrl`（要求 `http` 开头）过滤 `get-status` meta 返回的 `frame_images`/`reference_images`/`reference_video`/`reference_audio`，相对路径全部被滤掉 → `handleGeneratedResultRegenerate` 误判为无参考图，退化成 `/api/text-to-image` 纯文生图（prompt 相同、参考图为空，`extra_config.mode=text_to_image`）。
+
+修复：meta 参考媒体判定统一改用与持久化守卫/`collectUrlOnlyImageUrls` 同口径的 `isReusableMediaUrl`（http(s) 绝对 URL 或站内 `/` 路径均可，blob:/data: 仍排除），覆盖 `web/js/marketing_agent.js` 中 7 处——`handleGeneratedResultRegenerate`（图片+视频重新生成，含 `audio_urls`/`video_urls` 附加条件）、`metaImageUrls`/`inferVideoImageModeFromMeta`/`restoreGenerationReferenceMedia`/`applyRestoredGenerationModel`（重新编辑恢复与模型推断）、`collectAgentMediaPayload`（验证回答媒体收集）、`sendMessageToApi`（agent 模式发送收集与最终校验；否则重新编辑恢复的相对路径参考图在发送时会被二次丢弃）。提交端无需转绝对 URL：`/api/image-edit` 的 `normalize_site_upload_image_url` 与 visual_drivers 消费链原生支持 `/upload/` 相对路径（host 无关）。回归测试：`web/tests/marketing_agent_regen_relative_ref.test.js`（相对路径走 image-edit、存量绝对 URL 不回归、无参考图退化文生图、blob/data 仍拦截、视频多参考相对路径）。
+
 #### 任务恢复机制
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
