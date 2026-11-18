@@ -73,27 +73,33 @@ def _get_ffprobe_path() -> str:
 # ==================== 标识内容构造 ====================
 
 # 智剧通存在多服务器/多路径部署，ContentProducer 全局占位无法区分实例。
-# Instance 记录「主机名后 6 位 + 部署路径末两个目录」：足够区分多套部署，
+# HostTail/DeployPath 两个字段记录「主机名后 6 位」「部署路径末两个目录」：
+# 字段名自说明（短混合串如 jeffS9 单独裸放易被误读为 key/凭据），
 # 又不暴露 IP/域名/完整路径（防溯源枚举）。进程生命周期内不变，惰性缓存。
 _INSTANCE_TAG = None
 
 
-def _build_instance_tag() -> str:
-    """构造实例标识：主机名后 6 位 + 项目根路径末两个目录，如 jeffS9/appuser/comfyui_server_dev2。
+def _build_instance_tag() -> dict:
+    """构造实例标识字段：HostTail=主机名后 6 位，DeployPath=项目根路径末两个目录。
 
-    取值失败返回空串（调用方跳过该字段，不阻断标识写入）。
+    取值失败返回空 dict（调用方跳过对应字段，不阻断标识写入）。
     """
+    tag = {}
     try:
-        host_tail = socket.gethostname()[-6:] or 'unknown'
+        tag['HostTail'] = socket.gethostname()[-6:] or 'unknown'
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"AIGC HostTail 构造失败（跳过该字段）: {e}")
+    try:
         parts = Path(get_project_root()).parts
         path_tail = '/'.join(parts[-2:]) if len(parts) >= 2 else (parts[-1] if parts else '')
-        return f"{host_tail}/{path_tail}" if path_tail else host_tail
+        if path_tail:
+            tag['DeployPath'] = path_tail
     except Exception as e:  # noqa: BLE001
-        logger.debug(f"AIGC Instance 标识构造失败（跳过该字段）: {e}")
-        return ''
+        logger.debug(f"AIGC DeployPath 构造失败（跳过该字段）: {e}")
+    return tag
 
 
-def get_instance_tag() -> str:
+def get_instance_tag() -> dict:
     """带缓存的实例标识（进程生命周期内主机名与部署路径不变）。"""
     global _INSTANCE_TAG
     if _INSTANCE_TAG is None:
@@ -104,8 +110,9 @@ def get_instance_tag() -> str:
 def build_aigc_json(produce_id, media_kind: str, extra_fields: dict = None) -> str:
     """构造 AIGC 标识 JSON（GB 45438-2025 附录E 字段：Label/ContentProducer/ProduceID/ReservedCode1）。
 
-    Instance 为系统扩展字段（主机名后 6 位 + 部署路径末两个目录），用于区分
-    智剧通多服务器/多路径部署，标准审核工具按附录E 必含字段解析不受影响。
+    HostTail/DeployPath 为系统扩展字段（主机名后 6 位 / 部署路径末两个目录），
+    用于区分智剧通多服务器/多路径部署；字段名自说明，避免短混合串被误读为
+    key/凭据。标准审核工具按附录E 必含字段解析不受影响。
     extra_fields：扩展字段（如显式烧录标记 ExplicitLabel），并入顶层 JSON。
     """
     payload = {
@@ -115,9 +122,7 @@ def build_aigc_json(produce_id, media_kind: str, extra_fields: dict = None) -> s
         'ReservedCode1': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'ContentProp': _MEDIA_PROP.get(media_kind, media_kind or 'unknown'),
     }
-    instance = get_instance_tag()
-    if instance:
-        payload['Instance'] = instance
+    payload.update(get_instance_tag())
     if extra_fields:
         payload.update(extra_fields)
     return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
