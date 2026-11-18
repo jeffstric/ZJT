@@ -60,6 +60,7 @@ from utils.aigc_marking import mark_file_for_task
 from utils.aigc_explicit_marker import burn_explicit_label
 from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 from utils.computing_power import (
+    apply_power_increase_internal,
     build_refund_transaction_id,
     is_already_refunded,
     power_change_settled,
@@ -199,7 +200,11 @@ def _charge_segment(user_id: int, power: int, transaction_id: str) -> bool:
 
 def _refund_segment(ai_tool, reason: str) -> None:
     """段退费（幂等：refund-{原扣费流水号}）。用于段被判定为不可用且不由
-    调度器负责退费的路径（下载兜底残留降级、补段后旧段清理）。"""
+    调度器负责退费的路径（下载兜底残留降级、补段后旧段清理）。
+
+    入账直调算力服务，不依赖用户 auth_token（登出/被顶号用户的段退费
+    同样要能落地，否则落入补偿任务且可能被 lookback 窗口静默甩出）。
+    """
     try:
         if not ai_tool or not getattr(ai_tool, 'user_id', None):
             return
@@ -209,24 +214,10 @@ def _refund_segment(ai_tool, reason: str) -> None:
         if not computing_power:
             return
         transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
-        success, message, response_data = make_perseids_request(
-            endpoint='get_auth_token_by_user_id',
-            method='POST',
-            data={"user_id": ai_tool.user_id}
-        )
-        if not success:
-            logger.error(f"[compose_job] 段 {ai_tool.id} 退费取 token 失败: {message}")
-            return
-        headers = {'Authorization': f"Bearer {response_data['token']}"}
-        success, message, _ = make_perseids_request(
-            endpoint='user/calculate_computing_power',
-            method='POST',
-            headers=headers,
-            data={
-                "computing_power": computing_power,
-                "behavior": "increase",
-                "transaction_id": transaction_id
-            }
+        success, message, _ = apply_power_increase_internal(
+            user_id=ai_tool.user_id,
+            computing_power=computing_power,
+            transaction_id=transaction_id,
         )
         if power_change_settled(success, message):
             logger.info(f"[compose_job] 段 {ai_tool.id} 已退费 {computing_power}（{reason}）")
@@ -533,25 +524,14 @@ def _refill_segment(job, task, seg_index: int) -> Optional[int]:
 
 
 def _refund_by_transaction(user_id: int, transaction_id: str, power: int, reason: str) -> None:
-    """按扣费流水原额退回（refund-{原流水号} 幂等）。"""
+    """按扣费流水原额退回（refund-{原流水号} 幂等）。入账直调算力服务，
+    不依赖用户 auth_token（登出/被顶号用户的回滚退费同样要能落地）。"""
     if not power:
         return
-    success, message, response_data = make_perseids_request(
-        endpoint='get_auth_token_by_user_id', method='POST', data={"user_id": user_id}
-    )
-    if not success:
-        logger.error(f"[compose_job] 回滚取 token 失败 user={user_id}: {message}")
-        return
-    headers = {'Authorization': f"Bearer {response_data['token']}"}
-    success, message, _ = make_perseids_request(
-        endpoint='user/calculate_computing_power',
-        method='POST',
-        headers=headers,
-        data={
-            "computing_power": power,
-            "behavior": "increase",
-            "transaction_id": f"refund-{transaction_id}"
-        }
+    success, message, _ = apply_power_increase_internal(
+        user_id=user_id,
+        computing_power=power,
+        transaction_id=f"refund-{transaction_id}",
     )
     if success:
         logger.info(f"[compose_job] 已退回 {power} 算力（{reason}）流水 {transaction_id}")
