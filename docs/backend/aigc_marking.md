@@ -18,6 +18,7 @@
 
 - `ContentProducer` 当前为占位值 `zjt`（config/constant.py `AIGC_CONTENT_PRODUCER`），**标识服务平台申请到正式编码后必须替换**
 - `ProduceID`：主链路为 ai_tools.id；数字人拼接链为 `compose_<compose_id>`；TTS 为音频文件名
+- `HostTail` + `DeployPath`（系统扩展字段，2026-11-18）：智剧通多服务器/多路径部署区分——主机名后 6 位（如 `jeffS9`）与部署路径末两个目录（如 `appuser/comfyui_server_dev2`），进程内惰性缓存（`utils/aigc_marking.get_instance_tag`）。拆为两个自说明字段命名（裸放短混合串如 jeffS9 易被误读为 key/凭据）；刻意不暴露 IP/域名/完整路径；取值失败时省略对应字段不阻断标识写入。标准审核工具按附录E 必含字段（Label/ContentProducer/ProduceID/ReservedCode1）解析，扩展字段无影响
 
 ## 三、承载格式与写入方式（全部无损）
 

@@ -55,6 +55,11 @@ def test_png_data_url_landing_writes_aigc_label(tmp_path, monkeypatch):
     payload = read_aigc_json(fp)
     assert payload and payload["ProduceID"] == "424242"
     assert payload["ContentProp"] == "image"
+    # 实例标识（多服务器/多路径部署区分）：字段名自说明，防短串被误读为 key
+    host_tail = payload.get("HostTail", "")
+    deploy_path = payload.get("DeployPath", "")
+    assert host_tail and len(host_tail) <= 6
+    assert deploy_path and 1 <= len(deploy_path.split("/")) <= 2
 
 
 def test_jpeg_data_url_landing_writes_aigc_label(tmp_path, monkeypatch):
