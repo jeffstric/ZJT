@@ -76,6 +76,7 @@ with purged_modules('task.visual_task'), stub_modules({
     'utils.aigc_explicit_marker': module_stub(
         'utils.aigc_explicit_marker',
         maybe_burn_generated_media=MagicMock(),
+        await_explicit_burn=MagicMock(),
     ),
     'perseids_server.client': module_stub(
         'perseids_server.client',

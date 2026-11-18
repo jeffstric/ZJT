@@ -154,6 +154,7 @@ def _install_module_stubs():
 
     aigc_marker = types.ModuleType('utils.aigc_explicit_marker')
     aigc_marker.maybe_burn_generated_media = MagicMock(return_value=False)
+    aigc_marker.await_explicit_burn = MagicMock()
     sys.modules['utils.aigc_explicit_marker'] = aigc_marker
 
     opt_out = types.ModuleType('model.aigc_explicit_opt_out')
@@ -216,7 +217,12 @@ class TestImplementationAttemptRecording(unittest.TestCase):
         }
         self.factory.create_driver_by_implementation.return_value = mock_driver
         self.factory.create_driver_by_type.return_value = mock_driver
+        self.factory.create_driver_by_implementation_result.return_value = (mock_driver, None)
+        self.factory.create_driver_by_type_result.return_value = (mock_driver, None)
         self.factory.get_implementation_for_user.return_value = 'ltx2.3_runninghub_v1'
+        self.factory.probe_input_compatibility.return_value = (True, None)
+        self.factory.tool_has_implementation_lock.return_value = False
+        self.factory.resolve_implementation_for_user.return_value = ('ltx2.3_runninghub_v1', None)
 
         impl_config = MagicMock()
         impl_config.sync_mode = False

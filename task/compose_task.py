@@ -687,6 +687,27 @@ def _finish_compose(task, job, status: int, message: Optional[str],
 
 # ==================== 单编排任务处理 ====================
 
+def compose_explicit_label_opted_out(job) -> bool:
+    """数字人成片是否跳过明水印。
+
+    只认两类留痕：用户设置里的全局开关，以及本条成片各段 ai_tools.id 上的任务级开关。
+    compose_jobs.id 与 ai_tools.id 是两套自增序号，不能拿编排 id 去查 ai_tool_id。
+    任一段已申请关闭，则整段拼接成片不再烧明水印（成片包含该段）。
+    """
+    user_id = getattr(job, 'user_id', None)
+    if AigcExplicitOptOutModel.has_opt_out_user(user_id):
+        return True
+    raw_ids = getattr(job, 'segment_ai_tool_ids', None) or []
+    for raw in raw_ids:
+        try:
+            seg_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if seg_id > 0 and AigcExplicitOptOutModel.has_opt_out(seg_id):
+            return True
+    return False
+
+
 def _process_one_compose(task) -> None:
     """处理单个 compose 任务（task.task_id = compose_jobs.id）。"""
     try:
@@ -951,9 +972,7 @@ def _process_one_compose(task) -> None:
     # 烧录失败降级交付无显式标识版本并告警（隐式标识已先行写入，不重复）。
     try:
         _opt_out_user = getattr(job, 'user_id', None)
-        if _marked_path and not (
-                AigcExplicitOptOutModel.has_opt_out(compose_id)
-                or AigcExplicitOptOutModel.has_opt_out_user(_opt_out_user)):
+        if _marked_path and not compose_explicit_label_opted_out(job):
             burn_explicit_label(_marked_path, f"compose_{compose_id}", user_id=_opt_out_user)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[compose_job] compose={compose_id} AIGC 显式标识烧录异常(不阻断): {e}")

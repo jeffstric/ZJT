@@ -223,6 +223,7 @@
 |------|------|----------|
 | [E2E 测试说明](e2e_testing.md) | 端到端测试框架 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/PVbYdlpI4oi3fwxZQFBcG7b0nyb) |
 | [历史缺陷清单和改坏回放](testing/regression_catalog.md) | 把出过的问题收成永久测试，并故意改坏代码确认测试会失败 | 待补充 |
+| [develop 对比 master 手工测试手册](testing/manual_test_develop_vs_master.md) | 完整点选手册：核心回归、本轮已修的高/中缺陷预期、已知未修观察项、结果表 | 待补充 |
 | [MR 大模型代码审查](ci/ai_code_review.md) | MR Pipeline 调用 vLLM（jeffS7/jeffS10）写审查评论，失败不阻塞合并 | 待补充 |
 | [E2E Mock 实现方案](e2e_mock_implementation_plan.md) | 测试 Mock 设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Zbq4d8oCKovWyyxtNlNcCkLynXc) |
 

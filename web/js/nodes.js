@@ -3714,19 +3714,15 @@
         if(data.action) text += t('video_prompt_action', { value: data.action }) + '\n';
         if(data.mood) text += t('video_prompt_mood', { value: data.mood }) + '\n';
         if(data.dialogue && Array.isArray(data.dialogue) && data.dialogue.length > 0){
-          // 台词已按「视频提示词必须含完整对白」规则逐字写入 描述/场景细节/动作 时，
-          // dialogue[] 再整份渲染会让同一句台词出现两次（视频模型收到重复文本）。
-          // 已完整出现在正文中的台词不再渲染；与后端 _format_dialogues_for_video_prompt 幂等策略一致。
-          const bodyNorm = (typeof normalizeDialogueTextForMatch === 'function')
-            ? normalizeDialogueTextForMatch([data.description, data.scene_detail, data.action].join('\n'))
-            : '';
+          // 台词已逐字写进引号，或单独占正文一整行时，不再渲染进「对话：」。
+          // 动作里夹着同样几个字不算重复。与后端 _format_dialogues_for_video_prompt 一致。
+          const body = [data.description, data.scene_detail, data.action].join('\n');
           const dialogueEntries = data.dialogue
             .map(d => `${(d && d.character_name) || ''}: ${(d && d.text) || ''}`.trim())
             .filter((entry, idx) => {
-              if(!bodyNorm) return true;
-              const norm = normalizeDialogueTextForMatch(data.dialogue[idx] && data.dialogue[idx].text);
-              if(!norm || norm.length < 4) return true;
-              return bodyNorm.indexOf(norm) === -1;
+              const speech = data.dialogue[idx] && data.dialogue[idx].text;
+              if (typeof dialogueUtteranceAlreadyVerbatim !== 'function') return true;
+              return !dialogueUtteranceAlreadyVerbatim(speech, body, false);
             });
           if(dialogueEntries.length > 0){
             text += t('video_prompt_dialogue', { value: dialogueEntries.join('; ') }) + '\n';
@@ -4574,7 +4570,11 @@
     let promptAssetRenderCtx = null; // 当前渲染上下文，分组目录异步到位后重渲染用
 
     function resetPromptAssetView() {
-      promptAssetView = { mode: 'root', groupId: null, groupName: '', page: 0, hasMore: false, loading: false, reqSeq: 0 };
+      const current = promptAssetView && promptAssetView.reqSeq;
+      const nextSeq = (typeof bumpPromptAssetReqSeq === 'function')
+        ? bumpPromptAssetReqSeq(current)
+        : ((current || 0) + 1);
+      promptAssetView = { mode: 'root', groupId: null, groupName: '', page: 0, hasMore: false, loading: false, reqSeq: nextSeq };
     }
 
     // 文案取 i18n，缺失时中文兜底（与 shot_frame_mention_* 同一模式）

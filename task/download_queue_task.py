@@ -32,7 +32,6 @@ from config.constant import (
     DOWNLOAD_COMPLETION_MARGIN_SECONDS,
     LICENSE_DENIED_RESCHEDULE_SECONDS,
     AIGC_MARK_TIMEOUT_SECONDS,
-    AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
     AI_TOOL_STATUS_COMPLETED,
     AI_TOOL_STATUS_DOWNLOADING,
     GeneratedVideoFaceGridTrimConstants,
@@ -43,7 +42,7 @@ from model.ai_tools import AIToolsModel
 from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
 from utils.aigc_marking import ensure_marked
-from utils.aigc_explicit_marker import maybe_burn_generated_media
+from utils.aigc_explicit_marker import await_explicit_burn
 from utils.media_cache import get_cache_manager
 from utils.project_path import get_project_root
 from utils.sentry_util import SentryUtil
@@ -155,21 +154,13 @@ async def _process_one(row: dict) -> None:
                 except Exception as me:  # noqa: BLE001
                     logger.warning(
                         f"AIGC 标识兜底异常(不阻断交付): ai_tool={ai_tool_id} {final_url}: {me}")
-            # L1 显式标识（明水印）：图片/视频默认烧录（2026-11-11 保守决策，docs/
-            # compliance/aigc_labeling_plan.md 3.3）。必须在宫格裁剪重写之后（裁剪
-            # 会丢水印）、transition_with_cdn_sync 之前（CDN 上传线程触发后才读本地
-            # 文件，时序保证云端对象带标）。to_thread 不占事件循环；失败不阻断交付。
+            # L1 显式标识（明水印）：图片/视频默认烧录。必须在宫格裁剪之后、
+            # transition_with_cdn_sync 之前。超时由 await_explicit_burn 先取消烧录线程
+            # 并等到它退出，再上传 CDN，避免线程晚一步替换本地文件。失败不阻断交付。
+            # 勿在本函数内再 import asyncio，否则会遮蔽模块导入。
             if final_url and final_url.startswith('/upload/'):
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(
-                            maybe_burn_generated_media, final_url, ai_tool_id, media_type),
-                        timeout=AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        f"AIGC 显式标识烧录超时(>{AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS}s，"
-                        f"不阻断交付): ai_tool={ai_tool_id} {final_url}")
+                    await await_explicit_burn(final_url, ai_tool_id, media_type)
                 except Exception as be:  # noqa: BLE001
                     logger.warning(
                         f"AIGC 显式标识烧录异常(不阻断交付): ai_tool={ai_tool_id} {final_url}: {be}")

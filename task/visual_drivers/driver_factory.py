@@ -3,6 +3,7 @@
 根据驱动类型或驱动名称创建相应的驱动实例
 """
 from typing import Optional, Tuple, Dict, Any, Union
+import json
 import logging
 from .base_video_driver import BaseVideoDriver
 from .exceptions import DriverConfigError
@@ -92,7 +93,21 @@ class VideoDriverFactory:
             2. 业务驱动名称 -> 实现驱动名称（通过 DRIVER_IMPLEMENTATION_MAPPING 或用户偏好）
             3. 实现驱动名称 -> 驱动类实例（通过 _registered_drivers）
         """
-        # 清除上次错误
+        driver, _error = cls.create_driver_by_type_result(driver_type, user_id)
+        return driver
+
+    @classmethod
+    def create_driver_by_type_result(
+        cls,
+        driver_type: int,
+        user_id: Optional[int] = None,
+    ) -> Tuple[Optional[BaseVideoDriver], Optional[Dict[str, Any]]]:
+        """创建驱动，并返回这一次调用自己的失败原因。
+
+        失败原因放在返回值里。不要在调用返回后再读类变量
+        ``_last_create_error``：别的请求会把它改掉。
+        """
+        # 清除上次错误（单线程旧调用仍可读 get_last_create_error）
         cls._last_create_error = None
 
         # 从统一配置获取任务配置
@@ -100,64 +115,72 @@ class VideoDriverFactory:
         if not config:
             logger.error(f"Unsupported driver type: {driver_type}")
             logger.info(f"Supported types: {[c.id for c in UnifiedConfigRegistry.get_all()]}")
-            cls._last_create_error = {
+            error = {
                 "reason": "UNSUPPORTED_TYPE",
                 "message": f"不支持的任务类型: {driver_type}"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
         business_driver_name = config.driver_name
         if not business_driver_name:
             logger.error(f"No driver configured for task type: {driver_type}")
-            cls._last_create_error = {
+            error = {
                 "reason": "NO_DRIVER",
                 "message": f"任务类型 {driver_type} 未配置驱动"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
         # 获取实现驱动名称（考虑用户偏好）和驱动参数
-        implementation_driver_name, driver_params = cls._get_implementation_for_user(driver_type, user_id, config)
+        implementation_driver_name, driver_params, select_error = cls._get_implementation_for_user(
+            driver_type, user_id, config,
+        )
         if not implementation_driver_name:
-            if not cls._last_create_error:
+            if not select_error:
                 logger.error(f"No implementation configured for business driver: {business_driver_name}")
-                cls._last_create_error = {
+                select_error = {
                     "reason": "NO_IMPLEMENTATION",
                     "message": f"驱动 {business_driver_name} 未配置实现方"
                 }
-            return None
+            cls._last_create_error = select_error
+            return None, select_error
 
         # 第三层：根据实现驱动名称获取驱动类
         driver_class = cls._registered_drivers.get(implementation_driver_name)
         if not driver_class:
             logger.error(f"Driver implementation not registered: {implementation_driver_name}")
             logger.info(f"Registered implementations: {list(cls._registered_drivers.keys())}")
-            cls._last_create_error = {
+            error = {
                 "reason": "NOT_REGISTERED",
                 "message": f"驱动 {implementation_driver_name} 未注册"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
         # 创建驱动实例
         try:
             logger.info(f"Creating driver: type={driver_type} -> business={business_driver_name} -> implementation={implementation_driver_name}")
             # 使用 driver_params 动态创建驱动实例
-            return driver_class(**driver_params)
+            return driver_class(**driver_params), None
         except DriverConfigError as e:
             logger.warning(f"Driver {implementation_driver_name} 配置不完整: {e.message}")
             logger.info(f"缺少配置: {', '.join(e.missing_configs)}")
-            cls._last_create_error = {
+            error = {
                 "reason": "CONFIG_MISSING",
                 "message": f"驱动配置不完整，缺少: {', '.join(e.missing_configs)}",
                 "missing_configs": e.missing_configs
             }
-            return None
+            cls._last_create_error = error
+            return None, error
         except Exception as e:
             logger.error(f"Failed to create driver instance for {implementation_driver_name}: {str(e)}")
-            cls._last_create_error = {
+            error = {
                 "reason": "CREATE_FAILED",
                 "message": f"驱动创建失败: {str(e)}"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
     @classmethod
     def create_driver_by_implementation(cls, implementation_name: str) -> Optional[BaseVideoDriver]:
@@ -171,16 +194,26 @@ class VideoDriverFactory:
         Returns:
             BaseVideoDriver: 驱动实例，如果未注册则返回 None
         """
+        driver, _error = cls.create_driver_by_implementation_result(implementation_name)
+        return driver
+
+    @classmethod
+    def create_driver_by_implementation_result(
+        cls,
+        implementation_name: str,
+    ) -> Tuple[Optional[BaseVideoDriver], Optional[Dict[str, Any]]]:
+        """按实现方创建驱动，并返回这一次调用自己的失败原因。"""
         cls._last_create_error = None
 
         driver_class = cls._registered_drivers.get(implementation_name)
         if not driver_class:
             logger.error(f"Driver implementation not registered: {implementation_name}")
-            cls._last_create_error = {
+            error = {
                 "reason": "NOT_REGISTERED",
                 "message": f"驱动 {implementation_name} 未注册"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
         # 获取驱动参数
         driver_params = {}
@@ -190,22 +223,24 @@ class VideoDriverFactory:
 
         try:
             logger.info(f"Creating driver by implementation: {implementation_name}")
-            return driver_class(**driver_params)
+            return driver_class(**driver_params), None
         except DriverConfigError as e:
             logger.warning(f"Driver {implementation_name} 配置不完整: {e.message}")
-            cls._last_create_error = {
+            error = {
                 "reason": "CONFIG_MISSING",
                 "message": f"驱动配置不完整，缺少: {', '.join(e.missing_configs)}",
                 "missing_configs": e.missing_configs
             }
-            return None
+            cls._last_create_error = error
+            return None, error
         except Exception as e:
             logger.error(f"Failed to create driver instance for {implementation_name}: {str(e)}")
-            cls._last_create_error = {
+            error = {
                 "reason": "CREATE_FAILED",
                 "message": f"驱动创建失败: {str(e)}"
             }
-            return None
+            cls._last_create_error = error
+            return None, error
 
     @classmethod
     def get_last_create_error(cls) -> Optional[Dict[str, Any]]:
@@ -226,6 +261,7 @@ class VideoDriverFactory:
         cls,
         task_type: int,
         user_id: Optional[int] = None,
+        compatibility_tool=None,
     ) -> Optional[str]:
         """
         获取实现方名称（公开方法，供外部调用）
@@ -233,16 +269,84 @@ class VideoDriverFactory:
         Args:
             task_type: 任务类型
             user_id: 用户ID（可选）
+            compatibility_tool: 可选。带 video_path 等输入的对象。传入后，
+                自动选择会跳过 validate_input_compatibility 不通过的实现方。
 
         Returns:
             实现方名称，如果不存在返回 None
         """
+        impl_name, _error = cls.resolve_implementation_for_user(
+            task_type, user_id, compatibility_tool=compatibility_tool,
+        )
+        return impl_name
+
+    @classmethod
+    def resolve_implementation_for_user(
+        cls,
+        task_type: int,
+        user_id: Optional[int] = None,
+        compatibility_tool=None,
+    ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+        """解析实现方，并返回这一次调用自己的失败原因。
+
+        给 HTTP 线程用：``asyncio.to_thread`` 返回后再读类变量，会被另一个请求覆盖。
+        """
         config = UnifiedConfigRegistry.get_by_id(task_type)
         if not config:
-            return None
+            error = {
+                "reason": "UNSUPPORTED_TYPE",
+                "message": f"不支持的任务类型: {task_type}",
+            }
+            cls._last_create_error = error
+            return None, error
+        impl_name, _params, error = cls._get_implementation_for_user(
+            task_type, user_id, config, compatibility_tool=compatibility_tool,
+        )
+        return impl_name, error
 
-        impl_name, _ = cls._get_implementation_for_user(task_type, user_id, config)
-        return impl_name
+    @classmethod
+    def probe_input_compatibility(cls, impl_name: str, ai_tool) -> Tuple[bool, Optional[str]]:
+        """已选中的实现方是否吃得下这次输入。实例化失败或钩子抛错视为不兼容。"""
+        return cls._probe_input_compatibility(impl_name, ai_tool)
+
+    @staticmethod
+    def tool_has_implementation_lock(ai_tool) -> bool:
+        """任务快照是否写了 implementation_lock。固定之后不能因为输入不兼容就换供应商。"""
+        raw = getattr(ai_tool, "extra_config", None)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                return False
+        return bool(isinstance(raw, dict) and raw.get("implementation_lock"))
+
+    @classmethod
+    def _probe_input_compatibility(cls, impl_name: str, ai_tool) -> Tuple[bool, Optional[str]]:
+        if ai_tool is None:
+            return True, None
+        driver_class = cls._registered_drivers.get(impl_name)
+        if driver_class is None or not hasattr(driver_class, "validate_input_compatibility"):
+            return True, None
+        params: Dict[str, Any] = {}
+        impl_config = UnifiedConfigRegistry.get_implementation(impl_name)
+        if impl_config and impl_config.driver_params:
+            params = impl_config.driver_params.copy()
+        try:
+            driver = driver_class(**params)
+        except Exception as exc:
+            logger.info("实现方 %s 无法实例化，跳过该候选: %s", impl_name, exc)
+            return False, f"实现方 {impl_name} 无法初始化"
+        try:
+            result = driver.validate_input_compatibility(ai_tool)
+        except Exception as exc:
+            logger.info("实现方 %s 输入校验异常，跳过该候选: %s", impl_name, exc)
+            return False, f"实现方 {impl_name} 输入校验失败"
+        if not isinstance(result, tuple) or len(result) != 2:
+            return True, None
+        ok, reason = result
+        if ok:
+            return True, None
+        return False, reason or "当前输入与该实现方不兼容"
 
     @classmethod
     def get_agent_hint_for_task(cls, task_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, str]]:
@@ -261,7 +365,7 @@ class VideoDriverFactory:
         if not config:
             return None
 
-        impl_name, _ = cls._get_implementation_for_user(task_id, user_id, config)
+        impl_name, _, _err = cls._get_implementation_for_user(task_id, user_id, config)
         if not impl_name:
             return None
 
@@ -294,7 +398,8 @@ class VideoDriverFactory:
         task_type: int,
         user_id: Optional[int],
         config,
-    ) -> Tuple[Optional[str], Dict[str, Any]]:
+        compatibility_tool=None,
+    ) -> Tuple[Optional[str], Dict[str, Any], Optional[Dict[str, Any]]]:
         """
         获取实现方名称和驱动参数（考虑用户偏好）
 
@@ -311,12 +416,14 @@ class VideoDriverFactory:
             config: 任务配置
 
         Returns:
-            (implementation_name, driver_params) 元组
+            (implementation_name, driver_params, error) 元组
             - implementation_name: 实现方名称
             - driver_params: 创建驱动实例需要的额外参数，如 {'site_id': 'site_1'}
+            - error: 这一次调用的失败原因；成功时为 None
         """
         impl_name = None
         locked_pref_failed = False
+        error = None
 
         # 1. 检查用户偏好
         if user_id:
@@ -325,53 +432,103 @@ class VideoDriverFactory:
                 from config.constant import (
                     DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
                     FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE,
+                    DRIVER_ERROR_FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE,
+                    FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE_MESSAGE,
                 )
                 task_key = config.key
                 user_pref = UsersModel.get_implementation_preference(user_id, task_key)
                 if user_pref:
                     # 验证用户偏好：配置就绪 且 已启用（admin 禁用的实现方不能被偏好绕过）
                     pref_usable = cls._is_driver_available(user_pref) and cls._is_impl_enabled(user_pref, config.driver_name)
+                    incompat_reason = None
+                    if pref_usable and compatibility_tool is not None:
+                        compatible, incompat_reason = cls._probe_input_compatibility(
+                            user_pref, compatibility_tool,
+                        )
+                        if not compatible:
+                            pref_usable = False
+                            incompat_reason = incompat_reason or "当前输入与该实现方不兼容"
                     if pref_usable:
                         logger.debug(f"Using user preference for task {task_key}: {user_pref}")
                         impl_name = user_pref
                     elif UsersModel.is_implementation_locked(user_id, task_key):
                         display_name = cls._get_display_name_for_impl(user_pref)
-                        message = FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
-                            display_name=display_name
-                        )
-                        cls._last_create_error = {
-                            "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
-                            "message": message,
-                            "implementation": user_pref,
-                        }
-                        locked_pref_failed = True
-                        # 本次任务仍按固定语义失败（不静默换供应商），但该供应商已不可用，
-                        # 固定标记留着只会让后续任务持续失败且用户难以解除，顺手清除
-                        try:
-                            UsersModel.clear_implementation_preference(user_id, task_key)
-                            logger.info(
-                                f"Cleared locked preference {user_pref} for user {user_id}, "
-                                f"task {task_key}: implementation unavailable"
+                        if incompat_reason:
+                            # 供应商还在，只是这次素材它不支持。不清除固定，也不换成别家。
+                            message = FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE_MESSAGE.format(
+                                display_name=display_name,
+                                reason=incompat_reason,
                             )
-                        except Exception as cleanup_error:
+                            error = {
+                                "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE,
+                                "message": message,
+                                "implementation": user_pref,
+                            }
+                            locked_pref_failed = True
                             logger.warning(
-                                f"Failed to clear locked preference for user {user_id}, "
-                                f"task {task_key}: {cleanup_error}"
+                                f"User locked preference {user_pref} rejects this input "
+                                f"for task {task_key}: {incompat_reason}"
                             )
-                        logger.warning(
-                            f"User locked preference {user_pref} unavailable or disabled "
-                            f"for task {task_key}, skip auto-select"
-                        )
+                        else:
+                            message = FIXED_IMPLEMENTATION_UNAVAILABLE_MESSAGE.format(
+                                display_name=display_name
+                            )
+                            error = {
+                                "reason": DRIVER_ERROR_FIXED_IMPLEMENTATION_UNAVAILABLE,
+                                "message": message,
+                                "implementation": user_pref,
+                            }
+                            locked_pref_failed = True
+                            # 本次任务仍按固定语义失败（不静默换供应商），但该供应商已不可用，
+                            # 固定标记留着只会让后续任务持续失败且用户难以解除，顺手清除
+                            try:
+                                UsersModel.clear_implementation_preference(user_id, task_key)
+                                logger.info(
+                                    f"Cleared locked preference {user_pref} for user {user_id}, "
+                                    f"task {task_key}: implementation unavailable"
+                                )
+                            except Exception as cleanup_error:
+                                logger.warning(
+                                    f"Failed to clear locked preference for user {user_id}, "
+                                    f"task {task_key}: {cleanup_error}"
+                                )
+                            logger.warning(
+                                f"User locked preference {user_pref} unavailable or disabled "
+                                f"for task {task_key}, skip auto-select"
+                            )
                     else:
-                        logger.warning(f"User preference {user_pref} unavailable or disabled, will auto-select")
+                        if incompat_reason:
+                            logger.warning(
+                                f"User preference {user_pref} incompatible ({incompat_reason}), will auto-select"
+                            )
+                        else:
+                            logger.warning(f"User preference {user_pref} unavailable or disabled, will auto-select")
             except Exception as e:
                 logger.warning(f"Failed to get user preference: {e}")
 
-        # 2. 如果没有用户偏好或偏好不可用（且未固定），根据排序选择排序最靠前的可用实现方
+        # 2. 如果没有用户偏好或偏好不可用（且未固定），根据排序选择排序最靠前的可用实现方。
+        #    传入 compatibility_tool 时，跳过吃不下这次输入的实现方（例如无参考视频槽）。
+        incompat_messages = []
         if not impl_name and not locked_pref_failed:
             available_impls = config._get_implementations_info()
+
+            def _accepts(candidate: str) -> bool:
+                if compatibility_tool is None:
+                    return True
+                ok, reason = cls._probe_input_compatibility(candidate, compatibility_tool)
+                if ok:
+                    return True
+                incompat_messages.append(reason or "当前输入与该实现方不兼容")
+                logger.info(
+                    "Skip implementation %s for task %s: input incompatible (%s)",
+                    candidate, config.key, reason,
+                )
+                return False
+
             for impl in available_impls:
                 if not cls._is_driver_available(impl['name']):
+                    continue
+                if not _accepts(impl['name']):
                     continue
                 impl_name = impl['name']
                 logger.debug(f"Auto-selected implementation for task {config.key}: {impl_name}")
@@ -383,17 +540,30 @@ class VideoDriverFactory:
                 from config.constant import (
                     DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
                     NO_IMPLEMENTATION_AVAILABLE_MESSAGE,
+                    DRIVER_ERROR_INPUT_INCOMPATIBLE,
                 )
 
                 default_impl = config.implementation
-                if (
+                default_ok = (
                     default_impl
                     and cls._is_driver_available(default_impl)
                     and cls._is_impl_enabled(default_impl, config.driver_name)
-                ):
+                    and _accepts(default_impl)
+                )
+                if default_ok:
                     impl_name = default_impl
+                elif incompat_messages:
+                    error = {
+                        "reason": DRIVER_ERROR_INPUT_INCOMPATIBLE,
+                        "message": incompat_messages[0],
+                        "implementation": default_impl or None,
+                    }
+                    logger.info(
+                        "No input-compatible implementation for task %s: %s",
+                        config.key, incompat_messages[0],
+                    )
                 else:
-                    cls._last_create_error = {
+                    error = {
                         "reason": DRIVER_ERROR_NO_IMPLEMENTATION_AVAILABLE,
                         "message": NO_IMPLEMENTATION_AVAILABLE_MESSAGE.format(task=config.key),
                         "implementation": default_impl or None,
@@ -410,7 +580,8 @@ class VideoDriverFactory:
             if impl_config and impl_config.driver_params:
                 driver_params = impl_config.driver_params.copy()
 
-        return impl_name, driver_params
+        cls._last_create_error = error
+        return impl_name, driver_params, error
 
     @classmethod
     def _is_driver_available(cls, impl_name: str) -> bool:

@@ -259,17 +259,17 @@ def _execute_sync_task(task_id: int, ai_tool_type: int) -> SyncTaskResult:
         if ai_tool.implementation:
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
                 if driver:
                     logger.info(f"[SyncTask] Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for task {task_id}")
 
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
         if not driver:
-            # 取工厂记录的真实失败原因（未注册/配置缺失/无可用实现方等），
-            # 不再硬编码"不支持的任务类型"——任务类型本身往往存在，
-            # 真实原因常在 worker 侧驱动注册/配置（2026-09-20 任务 230）。
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 取这一次创建调用返回的失败原因（未注册/配置缺失/无可用实现方等），
+            # 不再硬编码"不支持的任务类型"，也不在返回后再读类变量。
             error_message = (
                 (create_error or {}).get("message")
                 or f"不支持的任务类型: {ai_tool_type}"

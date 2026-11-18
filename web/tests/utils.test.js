@@ -6,7 +6,10 @@ const {
   extractMarkedCharacterNames,
   mergeShotCharacterNames,
   videoShotCharacterNames,
-  truncateRefCollection
+  truncateRefCollection,
+  dedupeVideoPromptDialogue,
+  dialogueUtteranceAlreadyVerbatim,
+  bumpPromptAssetReqSeq
 } = require('../js/utils.js');
 
 describe('escapeHtml', () => {
@@ -184,5 +187,57 @@ describe('truncateRefCollection', () => {
     truncateRefCollection(urls, suffix, 5);
     expect(urls).toEqual(['a', 'b']);
     expect(suffix).toEqual(['图1是a', '图2是b']);
+  });
+});
+
+describe('dedupeVideoPromptDialogue', () => {
+  test('动作里夹着四个字时保留对话', () => {
+    const text = '动作：他把欢迎回家四个字写在门口\n对话：旁白：欢迎回家';
+    const out = dedupeVideoPromptDialogue(text);
+    expect(out).toContain('对话：旁白：欢迎回家');
+  });
+
+  test('分号半句不等于整行动作时两句都留', () => {
+    const text = '动作：你留下看门\n对话：张三：我们先走；你留下看门';
+    const out = dedupeVideoPromptDialogue(text);
+    expect(out).toContain('我们先走');
+    expect(out).toContain('你留下看门');
+  });
+
+  test('引号里的整句会删掉重复对话行', () => {
+    const text = '他说：「欢迎回家」\n对话：旁白：欢迎回家';
+    const out = dedupeVideoPromptDialogue(text);
+    expect(out).not.toMatch(/对话\s*[：:]/);
+    expect(out).toContain('他说：「欢迎回家」');
+  });
+
+  test('单独成行的同一句会删掉未拆分的对话', () => {
+    const text = '欢迎回家\n对话：欢迎回家';
+    const out = dedupeVideoPromptDialogue(text);
+    expect(out).toBe('欢迎回家');
+  });
+
+  test('分号半句等于完整引号台词时只删这一半', () => {
+    const text = '他说：「你留下看门」\n对话：张三：我们先走；你留下看门';
+    const out = dedupeVideoPromptDialogue(text);
+    const dialogue = out.split('\n').find((line) => line.indexOf('对话') === 0);
+    expect(dialogue).toContain('我们先走');
+    expect(dialogue).not.toContain('你留下看门');
+  });
+
+  test('短于 4 个字的台词保留', () => {
+    const text = '动作：嗯嗯嗯嗯\n对话：旁白：嗯';
+    expect(dedupeVideoPromptDialogue(text)).toContain('旁白：嗯');
+    expect(dialogueUtteranceAlreadyVerbatim('嗯', '动作：嗯嗯嗯嗯', false)).toBe(false);
+  });
+});
+
+describe('bumpPromptAssetReqSeq', () => {
+  test('从 0 递增，不会回到 0', () => {
+    expect(bumpPromptAssetReqSeq(0)).toBe(1);
+    expect(bumpPromptAssetReqSeq(1)).toBe(2);
+    expect(bumpPromptAssetReqSeq(Number.NaN)).toBe(1);
+    expect(bumpPromptAssetReqSeq(-3)).toBe(1);
+    expect(bumpPromptAssetReqSeq('nope')).toBe(1);
   });
 });

@@ -22,6 +22,7 @@ import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Optional, Any, Dict
 from urllib.parse import urlparse
 from pydantic import BaseModel
@@ -3288,19 +3289,30 @@ async def ai_app_run_image(
             video_path = await asyncio.to_thread(_save_uploaded_image, video)
             logger.info(f"Saved reference video: {video_path}")
 
-        # 实现方解析（偏好 → 排序 → 默认）：类型 37 默认即首帧参考混合实现方
-        # （排序首位、无输入条件），解析失败按固定语义快速失败（不扣费不建任务）。
-        actual_impl = await asyncio.to_thread(
-            VideoDriverFactory.get_implementation_for_user,
-            task_id, user_id,
+        # 实现方解析（偏好 → 排序 → 默认）。带参考视频时跳过没有视频槽的实现方
+        # （首帧参考混合、AutoDL 参考生），改选能用上视频的实现方。
+        # 解析失败（含固定了不支持该输入的供应商）在扣费和建任务之前返回中文原因。
+        # 失败原因必须跟这次调用一起返回：to_thread 回来后再读类变量会被别的请求覆盖。
+        compat_tool = SimpleNamespace(
+            prompt=prompt,
+            image_path=image_path,
+            video_path=video_path,
+            audio_path=audio_path,
+            reference_images=reference_images_json,
+            extra_config=None,
+            duration=duration_seconds,
+            ratio=ratio,
+            user_id=user_id,
         )
+
+        def _resolve_video_impl():
+            return VideoDriverFactory.resolve_implementation_for_user(
+                task_id, user_id, compatibility_tool=compat_tool,
+            )
+
+        actual_impl, create_error = await asyncio.to_thread(_resolve_video_impl)
         if not actual_impl:
-            create_error = VideoDriverFactory.get_last_create_error() or {}
-            if str(create_error.get("reason") or "") == "FIXED_IMPLEMENTATION_UNAVAILABLE":
-                raise HTTPException(
-                    status_code=400,
-                    detail=str(create_error.get("message") or "固定的实现方当前不可用"),
-                )
+            create_error = create_error or {}
             raise HTTPException(
                 status_code=400,
                 detail=str(create_error.get("message") or "没有可用的实现方"),

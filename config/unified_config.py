@@ -2862,9 +2862,11 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
         implementations=[
-            # 首帧参考混合实现方是参考生默认（排序首位，无输入条件）：同一混合 webapp
+            # 首帧参考混合实现方在没有参考视频时是参考生默认（排序首位）：同一混合 webapp
             # 点名时锁帧（KFRef 变体）、没点名全参考图（Ref2VA 变体），见
-            # resolve_h3_prompt_variant；参考生 RunningHub 与 AutoDL 保留为重试/固定备选
+            # resolve_h3_prompt_variant。它和 AutoDL 参考生都没有参考视频槽，
+            # 带 video_path 时选择阶段跳过，落到有视频槽的 RunningHub 参考生。
+            # 用户固定了无视频槽的实现方时不静默换供应商。
             DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # RunningHub 首帧参考（混合 webapp，默认）
             DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub 参考生（重试/固定备选）
             DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,       # AutoDL.Art 参考生（zm_u24，9图+3音频）

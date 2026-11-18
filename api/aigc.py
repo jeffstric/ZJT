@@ -59,6 +59,17 @@ def _media_kind_from_url(url: str) -> str:
     return 'image'
 
 
+def _tool_owned_by(tool, user_id: int) -> bool:
+    """任务必须属于当前登录用户。属主不符与不存在一样，避免用顺序 id 探出别人的任务。"""
+    owner = getattr(tool, 'user_id', None)
+    if owner is None:
+        return False
+    try:
+        return int(owner) == int(user_id)
+    except (TypeError, ValueError):
+        return False
+
+
 def _upload_rel_path(local_path: str) -> Optional[str]:
     """本地绝对路径 → /upload/ 相对路径（用于 media_file_mapping 查询）。"""
     try:
@@ -83,7 +94,7 @@ async def add_explicit_label(request: Request, body: ExplicitLabelRequest):
     user_id = int(user_id)
 
     tool = await asyncio.to_thread(AIToolsModel.get_by_id, body.ai_tool_id)
-    if not tool:
+    if not tool or not _tool_owned_by(tool, user_id):
         raise HTTPException(status_code=404, detail="任务不存在")
     result_url = getattr(tool, 'result_url', None) or ''
     if not result_url.startswith(('/upload/', 'http://', 'https://')):
@@ -137,7 +148,7 @@ async def request_explicit_opt_out(request: Request, body: ExplicitOptOutRequest
     content_type = None
     if ai_tool_id:
         tool = await asyncio.to_thread(AIToolsModel.get_by_id, ai_tool_id)
-        if not tool:
+        if not tool or not _tool_owned_by(tool, user_id):
             raise HTTPException(status_code=404, detail="任务不存在")
         produce_id = str(ai_tool_id)
         content_type = _media_kind_from_url(getattr(tool, 'result_url', '') or '')
@@ -155,14 +166,21 @@ async def request_explicit_opt_out(request: Request, body: ExplicitOptOutRequest
         user_id, ai_tool_id, produce_id, content_type,
         source, ip, user_agent, detail, action,
     )
+    user_scope = (body.scope or '') == 'user'
     if action == OPT_OUT_ACTION_RESUME:
         logger.info(f"[aigc] 显式标识恢复添加 user={user_id} ai_tool={ai_tool_id} scope={body.scope}")
-        return {'success': True, 'opt_out': False,
-                'message': '已恢复：后续内容将重新添加 AI 生成标识'}
+        if user_scope:
+            message = '已恢复：后续内容将重新添加 AI 生成标识'
+        else:
+            message = '已恢复：该任务的内容将重新添加 AI 生成标识'
+        return {'success': True, 'opt_out': False, 'message': message}
     logger.info(f"[aigc] 显式标识关闭申请留痕 user={user_id} ai_tool={ai_tool_id} scope={body.scope}")
-    return {'success': True, 'opt_out': True,
-            'message': '已记录申请：后续生成的图片、视频、数字人、语音合成不再添加画面/音频提示，'
-                       '文件元数据标识将保留'}
+    if user_scope:
+        message = ('已记录申请：后续生成的图片、视频、数字人、语音合成不再添加画面/音频提示，'
+                   '文件元数据标识将保留')
+    else:
+        message = '已记录申请：该任务不再添加画面/音频提示，文件元数据标识将保留'
+    return {'success': True, 'opt_out': True, 'message': message}
 
 
 @router.get('/explicit-optout/status')
