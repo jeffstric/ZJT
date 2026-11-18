@@ -27,6 +27,7 @@ from task.pipeline_drivers.h3_prompt_optimize_util import (
     has_quoted_dialogue,
     h3_slot_source_prompt,
 )
+from .exceptions import UnsupportedReferenceVideoError
 from .minimax_h3_reference_runninghub_v1_driver import (
     _VOICE_NOTE_LINE_RE,
     ASPECT_RATIO_FIELD_DATA,
@@ -34,7 +35,9 @@ from .minimax_h3_reference_runninghub_v1_driver import (
 )
 
 _WEBAPP_ID = "2108549232725680129"
-_PICTURE_NODE_IDS = ("137", "156", "187")
+# 混合 webapp 的 6 个图片节点（P1~P6），与 H3_KFREF_PICTURE_SLOTS 一一对应。
+# 槽位约定：首帧固定 P1、尾帧固定 P6，中间 P2~P5 参考；没点名时全部当参考图。
+_PICTURE_NODE_IDS = ("137", "156", "187", "190", "191", "192")
 _AUDIO_NODE_IDS = ("157", "188")
 _EMPTY_AUDIO_FIELD_VALUE = "None"
 # 优化结果里的音频绑定声明（<Audio 1> / <Audio 2>）：声明几路上传几路
@@ -42,7 +45,13 @@ _AUDIO_DECL_RE = re.compile(r"<Audio\s*([0-9]+)>")
 
 
 class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Driver):
-    """RunningHub「全能参考+首帧+音频」应用。提交和查询复用参考生视频驱动。"""
+    """RunningHub「全能参考+首帧+音频」应用。提交和查询复用参考生视频驱动。
+
+    类型 37 参考生在没有参考视频时的默认实现方（排序首位）：同一混合 webapp 兼容
+    两种形态——提示词点名首尾帧时锁帧（KFRef 优化变体），没点名时全参考图
+    （Ref2VA 优化变体，见 resolve_h3_prompt_variant）。不带参考视频槽。带参考视频时
+    选择阶段会跳过本实现方；若仍被提交到这里，在上传图片之前返回用户错误。
+    """
 
     def __init__(self):
         super().__init__()
@@ -50,12 +59,28 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
         self.driver_type = TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
         self._webapp_id = _WEBAPP_ID
 
+    def validate_input_compatibility(self, ai_tool):
+        """混合 webapp 没有参考视频槽。带视频时不要选中本实现方，也不要静默丢掉视频。"""
+        videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
+        if videos:
+            return False, "首帧参考混合模型不支持参考视频"
+        return True, None
+
     async def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        # 先于任何上传：失败不能先把参考图传到 RunningHub，再变成「服务异常」。
+        videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
+        if videos:
+            self.logger.warning(
+                "MiniMax H3 首帧参考混合模型不支持参考视频（%s 个），提交前拒绝",
+                len(videos),
+            )
+            raise UnsupportedReferenceVideoError("首帧参考混合模型不支持参考视频")
+
         image_urls = [str(item).strip() for item in self.get_reference_images(ai_tool) if str(item or "").strip()]
         extra_config = self._parse_extra_config(ai_tool)
         slot_prompt = h3_slot_source_prompt(extra_config, getattr(ai_tool, "prompt", None) or "")
         plan = assign_h3_keyframe_ref_pictures(image_urls, slot_prompt)
-        pictures = [plan["picture_1"], plan["picture_2"], plan["picture_3"]]
+        pictures = [plan[f"picture_{index}"] for index in range(1, len(_PICTURE_NODE_IDS) + 1)]
         if not any(pictures):
             raise ValueError("MiniMax H3 首帧参考生视频至少需要一张图片")
 
@@ -123,12 +148,6 @@ class MinimaxH3KeyframeRefRunninghubV1Driver(MinimaxH3ReferenceRunninghubV1Drive
                     len(audios),
                 )
                 audios = audios[:declared_count]
-        videos = self._split_reference_paths(getattr(ai_tool, "video_path", None))
-        if videos:
-            self.logger.warning(
-                "MiniMax H3 首帧参考混合模型不支持参考视频，已忽略 %s 个",
-                len(videos),
-            )
 
         uploaded_audios: List[str] = []
         for index, audio in enumerate(audios):

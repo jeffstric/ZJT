@@ -26,8 +26,8 @@ allowed-tools: ["generate_text_to_image", "edit_image", "get_text_to_image_model
 
 ### 4. `edit_image(prompt, image_url, aspect_ratio, count, image_size)` — 图片编辑（图生图）
 - `prompt`（必填）：编辑指令，例如 "将背景替换为海滩"、"转为水彩画风格"
-- `image_url`（必填）：原始图片URL，支持多张图片用英文逗号分隔。对话中每张图片都有 `[图片N]（URL: ...）` 标签，将所有需要编辑的图片 URL 用逗号拼接后传入。例如：`http://xxx/a.jpg,http://xxx/b.jpg`
-- **⚠️ 严禁捏造图片URL**：`image_url` 必须是对话中真实存在的图片地址，绝对不允许编造示例URL（如 `https://example.com/xxx.jpg`）。如果对话中没有图片，应使用 `generate_text_to_image` 而非 `edit_image`。
+- `image_url`（必填）：图片路径，**仅支持本站 `/upload/...` 相对路径**，支持多张图片用英文逗号分隔。对话中每张图片都有 `[图片N]（URL: ...）` 标签，直接使用其中的 `/upload/...` 路径，用逗号拼接后传入。例如：`/upload/asset_library/1/a.png,/upload/character/pic/b.png`
+- **⚠️ 严禁拼接域名、严禁捏造图片路径**：`image_url` 必须是对话中真实存在的 `/upload/...` 相对路径，**不要拼接 `http://` 或域名前缀**（无需完整 URL），绝对不允许编造示例路径，也不支持外部图片链接。如果对话中没有图片，应使用 `generate_text_to_image` 而非 `edit_image`。
 - `aspect_ratio`（可选，默认 16:9）：宽高比
 - `count`（可选，默认 1）：生成数量
 - `image_size`（可选）：输出分辨率，如 1K/2K/3K/4K。它表示希望生成/编辑结果使用的目标清晰度，不是对输入原图像素尺寸的要求。
@@ -85,7 +85,7 @@ allowed-tools: ["generate_text_to_image", "edit_image", "get_text_to_image_model
 ```
 edit_image(
     prompt="Replace the original background with a realistic sunny beach scene while preserving the main subject, lighting, perspective, and natural edges.",
-    image_url="[对话中真实出现的图片URL]",
+    image_url="/upload/asset_library/2/asset_2_1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d.png",
     count=1
 )
 ```
@@ -154,6 +154,6 @@ studio lighting, soft shadows, commercial style, high-end retail aesthetic.
 6. **版权意识**：不生成侵犯他人版权的内容
 7. **判断文生图还是图编辑**：
    - 用户**没有提供原始图片** → 使用 `generate_text_to_image`
-   - 用户**提供了原始图片并要求修改** → 使用 `edit_image`，将图片URL传入 `image_url` 参数
+   - 用户**提供了原始图片并要求修改** → 使用 `edit_image`，将图片路径传入 `image_url` 参数（对话中 `[图片N]` 标签内的 `/upload/...` 相对路径）
 8. **不要为分辨率打断用户**：不要把输出分辨率当作原图门槛，也不要询问 1K/2K/3K/4K；工具层会处理默认值和模型兼容。
-9. **严禁捏造图片URL**：调用 `edit_image` 时，`image_url` 参数必须使用对话中真实出现的图片地址。绝对不允许编造任何示例URL（如 `https://example.com/fan.jpg`）。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_image` 生成新图片。
+9. **严禁拼接域名、严禁捏造图片路径**：调用 `edit_image` 时，`image_url` 参数必须是对话中真实出现的 `/upload/...` 相对路径，**不要拼接 `http://` 或域名前缀**，绝对不允许编造任何示例路径。外部图片链接不受支持。如果没有真实图片可用，应引导用户先上传图片或使用 `generate_text_to_image` 生成新图片。

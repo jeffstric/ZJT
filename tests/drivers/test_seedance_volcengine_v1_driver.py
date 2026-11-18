@@ -607,8 +607,9 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
-    def test_video_upload_failure_skipped(self, mock_compress, mock_upload_cdn):
-        """参考视频上传 CDN 失败：跳过，不阻断流程"""
+    def test_video_upload_failure_fails_fast(self, mock_compress, mock_upload_cdn):
+        """参考视频上传 CDN 失败：fail-fast 返回 USER 错误，不静默跳过
+        （旧行为跳过后视频编辑任务仍以 edit 类型提交，被火山 400 拒绝）"""
         mock_compress.return_value = (True, 'https://cdn.example.com/ref.jpg', None)
         mock_upload_cdn.return_value = (False, None, '上传失败')
         ai_tool = _make_ai_tool(
@@ -619,9 +620,9 @@ class TestBuildCreateRequestMultiReference(unittest.TestCase):
         )
 
         result = self.driver.build_create_request(ai_tool)
-        # 不应包含视频，但请求应成功构建
-        video_items = [c for c in result['json']['content'] if c['type'] == 'video_url']
-        self.assertEqual(len(video_items), 0)
+        self.assertFalse(result['success'])
+        self.assertEqual(result['error_type'], 'USER')
+        self.assertFalse(result['retry'])
 
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.upload_media_to_cdn_sync')
     @patch('task.visual_drivers.seedance_volcengine_v1_driver.compress_and_upload_image_sync')
@@ -1322,6 +1323,44 @@ class TestBuildCreateRequestUsesFaceMaskedImage(unittest.TestCase):
 
         self.assertGreater(mock_compress.call_count, 0)
         self.assertEqual(mock_compress.call_args_list[0].args[0], masked_path)
+
+
+class TestCheckStatusFailureErrorExtraction(unittest.TestCase):
+    """check_status failed 分支：上游 error.code 必须保留（2026-11-11 音频版权错误
+    OutputAudioSensitiveContentDetected.PolicyViolation 依赖错误码做准确分类）"""
+
+    def setUp(self):
+        self.driver = _create_driver()
+        self.driver._cleanup_assets_if_terminal = MagicMock()
+
+    def test_failed_with_code_and_message(self):
+        with patch.object(self.driver, '_request', return_value={
+            'id': 'cgt-xxx',
+            'status': 'failed',
+            'error': {
+                'code': 'OutputAudioSensitiveContentDetected.PolicyViolation',
+                'message': 'The request failed because the output audio may be related to copyright restrictions.',
+            },
+        }):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertIn('OutputAudioSensitiveContentDetected.PolicyViolation', result['error'])
+        self.assertIn('copyright restrictions', result['error'])
+        self.assertEqual(result['error_type'], 'USER')
+
+    def test_failed_error_string_kept_as_is(self):
+        with patch.object(self.driver, '_request', return_value={
+            'id': 'cgt-xxx', 'status': 'failed', 'error': 'boom',
+        }):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error'], 'boom')
+
+    def test_failed_without_error_field(self):
+        with patch.object(self.driver, '_request', return_value={'id': 'cgt-xxx', 'status': 'failed'}):
+            result = self.driver.check_status('cgt-xxx')
+        self.assertEqual(result['status'], 'FAILED')
+        self.assertEqual(result['error'], '任务失败')
 
 
 if __name__ == '__main__':

@@ -8,6 +8,7 @@ RunningHub 槽位释放集成测试
 """
 import sys
 import asyncio
+from contextlib import contextmanager
 from unittest.mock import patch, MagicMock
 
 sys.modules['utils.sentry_util'] = MagicMock()
@@ -29,6 +30,30 @@ from config.constant import (
 LTX2_IMAGE_TO_VIDEO_TYPE = 10
 WAN22_IMAGE_TO_VIDEO_TYPE = 11
 DIGITAL_HUMAN_TYPE = 13
+
+
+@contextmanager
+def _patch_submit_driver(driver=None, type_result=None):
+    """提交先解析实现方，再走 create_*_result。未登记的名字会落到按类型创建。"""
+    if type_result is None:
+        type_result = lambda *_args, **_kwargs: (driver, None)
+    with patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.resolve_implementation_for_user',
+        return_value=('unregistered-test-impl', None),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.probe_input_compatibility',
+        return_value=(True, None),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.tool_has_implementation_lock',
+        return_value=False,
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_implementation_result',
+        return_value=(None, {'message': 'test skip impl'}),
+    ), patch(
+        'task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type_result',
+        side_effect=type_result,
+    ):
+        yield
 
 
 class TestRunningHubSlotRelease(BaseVideoDriverTest):
@@ -81,11 +106,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'ltx2_runninghub_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        # Mock make_perseids_request 用于退还算力流程
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create, \
+        with _patch_submit_driver(mock_driver), \
              patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_create.return_value = mock_driver
             mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
 
             # Mock 驱动的 submit_task 返回失败（用户错误，不重试）
@@ -122,11 +144,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'wan22_runninghub_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        # Mock make_perseids_request 用于退还算力流程
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create, \
+        with _patch_submit_driver(mock_driver), \
              patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_create.return_value = mock_driver
             mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
 
             # Mock 驱动的 submit_task 返回失败
@@ -153,11 +172,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'digital_human_runninghub_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        # Mock make_perseids_request 用于退还算力流程
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create, \
+        with _patch_submit_driver(mock_driver), \
              patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_create.return_value = mock_driver
             mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
 
             # Mock 驱动的 submit_task 返回失败
@@ -184,9 +200,7 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'ltx2_runninghub_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回网络错误（需要重试）
             mock_driver.submit_task.return_value = {
@@ -215,9 +229,7 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver = MagicMock()
         mock_driver.driver_name = 'ltx2_runninghub_v1'
 
-        # Mock VideoDriverFactory.create_driver_by_type 返回 mock 驱动
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type') as mock_create:
-            mock_create.return_value = mock_driver
+        with _patch_submit_driver(mock_driver):
 
             # Mock 驱动的 submit_task 返回成功
             project_id = "test_project_123"
@@ -282,14 +294,14 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         }
 
         # Mock VideoDriverFactory 根据不同任务类型返回不同驱动
-        def mock_create_driver(driver_type, user_id=None):
+        def mock_create_driver_result(driver_type, user_id=None):
             if driver_type == LTX2_IMAGE_TO_VIDEO_TYPE:
-                return mock_driver_ltx2
-            elif driver_type == WAN22_IMAGE_TO_VIDEO_TYPE:
-                return mock_driver_wan22
-            return None
+                return mock_driver_ltx2, None
+            if driver_type == WAN22_IMAGE_TO_VIDEO_TYPE:
+                return mock_driver_wan22, None
+            return None, {"message": "不支持的任务类型: %s" % driver_type}
 
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type', side_effect=mock_create_driver):
+        with _patch_submit_driver(type_result=mock_create_driver_result):
             # Mock 第一个任务提交失败
             ai_tool_1 = AIToolsModel.get_by_id(task_id_1)
             asyncio.run(_submit_new_task(ai_tool_1))
@@ -298,7 +310,7 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         active_slots = RunningHubSlotsModel.count_active_slots()
         self.assertEqual(active_slots, 1, "应该只剩1个活跃槽位")
 
-        with patch('task.visual_drivers.driver_factory.VideoDriverFactory.create_driver_by_type', side_effect=mock_create_driver):
+        with _patch_submit_driver(type_result=mock_create_driver_result):
             # Mock 第二个任务提交成功
             ai_tool_2 = AIToolsModel.get_by_id(task_id_2)
             asyncio.run(_submit_new_task(ai_tool_2))

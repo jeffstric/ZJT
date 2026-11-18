@@ -13,6 +13,14 @@ class DriverConfigError(Exception):
         super().__init__(self.message)
 
 
+class UnsupportedReferenceVideoError(Exception):
+    """实现方没有参考视频槽。
+
+    这是输入不兼容，不是系统故障。提交层应原样返回中文原因，
+    不要收成「服务异常，请联系技术支持」。
+    """
+
+
 class ImageExpiredError(RuntimeError):
     """第三方图床签名 URL 已过期且无法恢复，需提示用户重新上传。
 

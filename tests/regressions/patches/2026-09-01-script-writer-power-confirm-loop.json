@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "script_writer_core/agents/expert_agent.py",
+      "old": "        # 剧本创作链路关闭确认门：不估算、不弹窗。生成本身视为本条消息已授权。\n        if not getattr(self, \"power_confirm_enabled\", True):\n            self._budget_authorize_next = True\n            return None",
+      "new": ""
+    }
+  ]
+}

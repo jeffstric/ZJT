@@ -2130,11 +2130,17 @@
         if(data.connections && Array.isArray(data.connections)){
           state.connections = data.connections;
         }
-        
+
         if(data.imageConnections && Array.isArray(data.imageConnections)){
           state.imageConnections = data.imageConnections;
         }
-        
+
+        // 视频编辑节点：连接晚于节点恢复（restoreNode 时 imageConnections 还未赋值），
+        // 参考图缩略条/算力/时长提示需全量回补（口径同下方 shot_frame 导演台按钮）
+        if (typeof window.refreshVideoEditNodesPower === 'function') {
+          window.refreshVideoEditNodesPower();
+        }
+
         if(data.firstFrameConnections && Array.isArray(data.firstFrameConnections)){
           state.firstFrameConnections = data.firstFrameConnections;
         }

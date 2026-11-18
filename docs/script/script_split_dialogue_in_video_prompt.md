@@ -65,3 +65,29 @@
 
 - `tests/llm/test_script_split_qc_agent.py`：漏写/含台词/引号变体/无对白
 - `tests/storyboard/test_storyboard_generate_from_script.py`：组装兜底与幂等
+
+## video_workflow 前端组装层的重复问题与去重（2026-11，develop_f1181）
+
+7.2 规则让 LLM 把台词逐字写进 `description/action` 后，video_workflow 前端把
+`dialogue[]` 结构化字段又**整份渲染**为「对话：」行（`convertVideoPromptToText`），
+同一句台词在发给视频模型的提示词里出现两次。线上案例：video_workflow id=13 分镜9，
+动作内 `说道："物业现在招保安都不挑人了？…"` 与 `对话：【【苏雨晴】】: 物业现在…` 重复。
+
+后端 storyboard 组装层本就有幂等兜底（见上），前端此前没有——补齐为双层：
+
+| 层 | 位置 | 策略 |
+|---|---|---|
+| 结构化（新节点） | `web/js/nodes.js` `convertVideoPromptToText` | 台词归一化后已完整出现在 `description/scene_detail/action` 中的条目不再渲染；全部重复则整行不输出 |
+| 文本级（存量节点） | `web/js/utils.js` `dedupeVideoPromptDialogue` | 「对话：/Dialogue:」行内逐条判定，重复条剔除、全重复整行移除；兼容分号多条与中英标签 |
+
+挂载点（均 `typeof` 守卫）：
+
+- `shot_frame_video_generator.js` 提交生视频前（存量文本兜底）
+- `nodes.js` 组合多镜头视频拼接处（JSON 走结构化、文本走兜底）
+- `shot_frame_node.js` 提示词展示（`renderCharImages`）与放大编辑器打开时
+  （用户保存后干净文本落库自愈）、违规改写提交前
+
+归一化 helper：`normalizeDialogueTextForMatch`（剔除标记/引号/标点/空白，保留
+CJK/字母数字）。过短台词（归一化后 <4 字符，如「嗯」）不参与去重防误伤；
+台词不在正文中时保留（维持 7.2「完整对白可可见」意图）。`dialogue[]` 结构化
+字段本身不动，TTS/对口型不受影响。

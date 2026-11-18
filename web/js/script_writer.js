@@ -259,12 +259,17 @@
                 handleTokenExpired();
                 return true;
             }
+            // user_mismatch 有两种载体，都按「账号不一致」处理而不是「登录过期」：
+            // - X-User-Id 头与 token 属主不一致 → 401
+            // - query/body 里的 user_id 与登录身份不一致 → 403（check_claimed_user_id）。
+            //   只判 401 时 403 分支会漏掉：URL 带他人 user_id 的链接打开后页面
+            //   一直停在无权状态，不跳转不自愈。
+            if (data && data.error_code === 'user_mismatch') {
+                handleUserMismatch();
+                return true;
+            }
             if (response && response.status === 401) {
-                if (data && data.error_code === 'user_mismatch') {
-                    handleUserMismatch();
-                } else {
-                    handleTokenExpired();
-                }
+                handleTokenExpired();
                 return true;
             }
             return false;
@@ -4078,6 +4083,11 @@
                 ]);
                 const llmData = await llmResp.json().catch(() => ({}));
                 const imageData = await imageResp.json().catch(() => ({}));
+                // URL 带他人 user_id 时（reconcile 未生效的兜底路径），这两个请求
+                // 返回 403 user_mismatch。不处理会静默失败，用户停在无权页面。
+                if (checkTokenExpired(llmData, llmResp) || checkTokenExpired(imageData, imageResp)) {
+                    return;
+                }
                 if (llmData.success && llmData.default) {
                     worldDefaultModels.llm = {
                         model: llmData.default.model,
@@ -5818,6 +5828,27 @@
             container.appendChild(wrapper);
         }
 
+        // 从共享资产库选择图片，作为场景多角度参考图加入列表（与 handleLocMultiImageUpload 成功分支同口径：
+        // 标签为空时回退到当前角度中文文案，加入后清空标签输入）。
+        function pickLocMultiImageFromAssetLibrary() {
+            if (!window.AssetLibrary) return;
+            window.AssetLibrary.openModal({
+                title: '从资产库选择图片',
+                onPick: function (asset) {
+                    if (!asset || !asset.file_url) return;
+                    const angleSelect = document.getElementById('loc-multi-image-angle');
+                    const labelInput = document.getElementById('loc-multi-image-label');
+                    const list = document.getElementById('loc-multi-image-list');
+                    if (!angleSelect || !labelInput || !list) return;
+                    const angle = angleSelect.value;
+                    const label = labelInput.value.trim() || angleSelect.options[angleSelect.selectedIndex].text;
+                    addLocMultiImageItem(list, label, asset.file_url, angle, undefined);
+                    labelInput.value = '';
+                }
+            });
+        }
+        window.pickLocMultiImageFromAssetLibrary = pickLocMultiImageFromAssetLibrary;
+
         function showPropEditor(fileName, data) {
             document.getElementById('edit-modal-title').textContent = `✏️ 编辑道具 - ${fileName}`;
             document.getElementById('prop-edit-form').style.display = 'block';
@@ -6340,12 +6371,15 @@
         }
         window.addPreviewImageToAssetLibrary = addPreviewImageToAssetLibrary;
 
-        // 从资产库选择图片并设为当前预览对象（角色/道具）的形象图（reference_image）。
-        // 复用各自保存接口；形象图统一存相对路径（AI/生图消费链对相对/绝对均认）。
+        // 从资产库选择图片并设为当前预览对象（角色/场景/道具）的主图（reference_image）。
+        // 复用各自保存接口；主图统一存相对路径（AI/生图消费链对相对/绝对均认）。
         function pickPreviewImageFromAssetLibrary() {
-            if (!window.AssetLibrary || (previewImageFileType !== 'characters' && previewImageFileType !== 'props')) return;
+            if (!window.AssetLibrary || !['characters', 'locations', 'props'].includes(previewImageFileType)) return;
+            const title = previewImageFileType === 'locations'
+                ? '从资产库选择场景主图'
+                : (window.t ? window.t('pick_image_from_asset_library_title') : '从资产库选择形象图');
             window.AssetLibrary.openModal({
-                title: window.t ? window.t('pick_image_from_asset_library_title') : '从资产库选择形象图',
+                title,
                 onPick: function (asset) {
                     if (asset && asset.file_url) applyAssetAsPreviewImage(asset.file_url);
                 }
@@ -6355,10 +6389,14 @@
         async function applyAssetAsPreviewImage(url) {
             const fileType = previewImageFileType;
             const fileName = previewImageFileName;
-            if ((fileType !== 'characters' && fileType !== 'props') || !fileName) return;
-            const apiBase = fileType === 'characters' ? '/api/characters-files' : '/api/props-files';
-            const entityKey = fileType === 'characters' ? 'character' : 'prop';
-            const typeLabel = fileType === 'characters' ? '角色卡' : '道具';
+            const saveTargets = {
+                'characters': { apiBase: '/api/characters-files', entityKey: 'character', typeLabel: '角色卡', imageLabel: '形象图' },
+                'locations': { apiBase: '/api/locations-files', entityKey: 'location', typeLabel: '场景', imageLabel: '主参考图' },
+                'props': { apiBase: '/api/props-files', entityKey: 'prop', typeLabel: '道具', imageLabel: '形象图' }
+            };
+            const target = saveTargets[fileType];
+            if (!target || !fileName) return;
+            const { apiBase, entityKey, typeLabel, imageLabel } = target;
             try {
                 const resp = await fetch(`${apiBase}/${encodeURIComponent(fileName)}?user_id=${USER_ID}&world_id=${WORLD_ID}&raw_json=true`, {
                     headers: { 'Authorization': `Bearer ${AUTH_TOKEN}` }
@@ -6396,7 +6434,7 @@
                 showSuccess(window.t ? window.t('restore_image_success') : '已恢复为当前形象图');
                 closeImagePreviewModal();
                 loadFiles(fileType);
-                notifyAgentAssetUpdated(`系统通知：${typeLabel} "${fileName}" 的形象图已被用户从资产库设置，请重新读取最新内容。`);
+                notifyAgentAssetUpdated(`系统通知：${typeLabel} "${fileName}" 的${imageLabel}已被用户从资产库设置，请重新读取最新内容。`);
             } catch (error) {
                 showError((window.t ? window.t('restore_image_failed', {error: error.message}) : '设置形象图失败: ' + error.message));
             }
@@ -8340,6 +8378,13 @@
                     }
                 );
                 const data = await response.json();
+
+                // URL 带他人 user_id 时 X-User-Id 头与登录身份不一致 → 401/403
+                // user_mismatch。不接 checkTokenExpired 会只显示「加载失败」，
+                // 用户停在无权页面无法自愈。
+                if (checkTokenExpired(data, response)) {
+                    return;
+                }
 
                 // 兼容后端返回格式: {code: 0, data: {data: [...]}}
                 const worlds = data.data?.data || data.worlds || [];

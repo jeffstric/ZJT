@@ -449,9 +449,8 @@ class PipelineDriverFactory:
             # 检查实现方是否能初始化（是否有关键配置/key）
             try:
                 from task.visual_drivers import VideoDriverFactory
-                test_driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                test_driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
                 if not test_driver:
-                    create_error = VideoDriverFactory.get_last_create_error()
                     skip_reason = create_error.get('message', '未知原因') if create_error else '未知原因'
                     logger.info(f"Skipping implementation {impl_name} for retry: cannot initialize ({skip_reason})")
                     continue

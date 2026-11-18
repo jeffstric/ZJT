@@ -27,6 +27,7 @@ Video generation task processing
 import logging
 import json
 import asyncio
+import threading
 from datetime import datetime, timedelta
 import uuid
 from perseids_server.client import make_perseids_request
@@ -63,6 +64,7 @@ from model.ai_tools_log import AIToolsLogModel, AIToolsLogEvent
 from config.constant import AI_TOOL_CANCELLABLE_STATUSES, AI_TOOL_ACTIVE_STATUSES
 from task.queued_cancel import cancel_requested_flag, commit_deferred_cancel
 from services.generated_video_face_grid_service import maybe_trim_generated_face_grid_prefix
+from utils.aigc_explicit_marker import await_explicit_burn
 from utils.content_moderation_error import classify_content_moderation
 
 logging.basicConfig(level=logging.INFO)
@@ -72,6 +74,10 @@ logger = logging.getLogger(__name__)
 # 企业版模块加载时通过 register_enterprise_failure_handler() 注册
 # 社区版不注册，_enterprise_failure_handler 保持 None
 _enterprise_failure_handler = None
+
+# 任务失败 agent 通知器钩子（企业版注册：FAILED 终态后把失败原因回传发起会话的
+# 大模型，营销链路用于"音频版权失败 → 询问用户去音轨重试"等引导；社区版不注册）
+_agent_failure_notifier = None
 
 # process_func 返回契约（process_task_with_retry 调度循环消费，见该函数文档）：
 #   PROCESS_RESULT_SUCCESS   → 任务到达成功终态（COMPLETED/DOWNLOADING）
@@ -101,6 +107,32 @@ def register_enterprise_failure_handler(handler):
     global _enterprise_failure_handler
     _enterprise_failure_handler = handler
     logger.info("[Enterprise] Failure retry handler registered")
+
+
+def register_agent_failure_notifier(handler):
+    """
+    注册任务失败 agent 通知器
+
+    由 enterprise/__init__.py 在加载时调用：任务到达 FAILED 终态（无可用重试）
+    后，把失败原因通知到发起会话的大模型（见 enterprise/services/
+    agent_failure_notifier.py）。社区版不调用此函数，通知不生效。
+
+    Args:
+        handler: 通知函数，签名为:
+            handler(task_id, reason, project_id=None) -> None
+            实现方自行保证幂等与自容错；主流程以 daemon 线程调用、不等待结果
+    """
+    global _agent_failure_notifier
+    _agent_failure_notifier = handler
+    logger.info("[Enterprise] Agent failure notifier registered")
+
+
+def _notify_agent_failure_async(task_id, reason, project_id):
+    """daemon 线程中调用通知器，异常只记日志（绝不影响失败主流程/调度循环）"""
+    try:
+        _agent_failure_notifier(task_id, reason, project_id=project_id)
+    except Exception as e:
+        logger.warning(f"Agent failure notifier error for task {task_id}: {e}")
 
 
 def _log_cancel_guard_rejected(task_id, user_id, action):
@@ -359,13 +391,44 @@ async def _submit_new_task(ai_tool):
                 implementation_name = existing_impl_name
                 logger.info(f"Using recorded implementation {existing_impl_name} (id: {ai_tool.implementation}) for task {task_id}")
 
+        if implementation_name:
+            compatible, incompat_reason = VideoDriverFactory.probe_input_compatibility(
+                implementation_name, ai_tool,
+            )
+            if not compatible:
+                if VideoDriverFactory.tool_has_implementation_lock(ai_tool):
+                    logger.warning(
+                        f"Task {task_id} locked implementation {implementation_name} "
+                        f"rejects this input: {incompat_reason}"
+                    )
+                    return _handle_task_failure(
+                        task_id=task_id, ai_tool_type=ai_tool_type,
+                        reason=incompat_reason or "当前固定的实现方不支持该输入",
+                        user_id=ai_tool.user_id,
+                    )
+                logger.info(
+                    f"Task {task_id} recorded implementation {implementation_name} "
+                    f"is input-incompatible ({incompat_reason}), re-selecting"
+                )
+                implementation_name = None
+
         if not implementation_name:
-            implementation_name = VideoDriverFactory.get_implementation_for_user(ai_tool_type, ai_tool.user_id)
+            implementation_name, select_error = VideoDriverFactory.resolve_implementation_for_user(
+                ai_tool_type, ai_tool.user_id, compatibility_tool=ai_tool,
+            )
+            if not implementation_name:
+                select_error = select_error or {}
+                return _handle_task_failure(
+                    task_id=task_id, ai_tool_type=ai_tool_type,
+                    reason=select_error.get("message") or f"不支持的任务类型: {ai_tool_type}",
+                    user_id=ai_tool.user_id,
+                )
 
         if implementation_name:
             implementation_id = get_implementation_id(implementation_name)
             if implementation_id > 0:
                 AIToolsModel.update_only_fields(task_id, implementation=implementation_id)
+                ai_tool.implementation = implementation_id
                 logger.info(f"Recorded implementation {implementation_name} (id: {implementation_id}) for task {task_id}")
                 AIToolsLogModel.log(task_id, AIToolsLogEvent.IMPLEMENTATION_SELECTED,
                                    user_id=ai_tool.user_id,
@@ -448,17 +511,19 @@ async def _submit_new_task(ai_tool):
 
         # 1. 优先使用记录的 implementation 创建驱动，确保重试时使用正确的实现方
         driver = None
+        create_error = None
         if ai_tool.implementation:
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
 
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
 
         if not driver:
-            # 获取详细的错误原因
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 使用同一次创建调用返回的原因，不在返回后再读类变量
             if create_error:
                 error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
                 logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
@@ -800,17 +865,18 @@ async def _check_task_status(ai_tool):
             from config.unified_config import get_implementation_name
             impl_name = get_implementation_name(ai_tool.implementation)
             if impl_name and impl_name != 'unknown':
-                driver = VideoDriverFactory.create_driver_by_implementation(impl_name)
+                driver, create_error = VideoDriverFactory.create_driver_by_implementation_result(impl_name)
                 if driver:
                     logger.info(f"Using recorded implementation {impl_name} (id: {ai_tool.implementation}) for status check, task {task_id}")
 
         # 如果没有记录的 implementation 或创建失败，回退到根据任务类型创建
         if not driver:
-            driver = VideoDriverFactory.create_driver_by_type(ai_tool_type, user_id=ai_tool.user_id)
+            driver, create_error = VideoDriverFactory.create_driver_by_type_result(
+                ai_tool_type, user_id=ai_tool.user_id,
+            )
 
         if not driver:
-            # 获取详细的错误原因
-            create_error = VideoDriverFactory.get_last_create_error()
+            # 使用同一次创建调用返回的原因，不在返回后再读类变量
             if create_error:
                 error_message = create_error.get("message", f"不支持的任务类型: {ai_tool_type}")
                 logger.error(f"Failed to create driver for type {ai_tool_type}: {error_message}")
@@ -1182,7 +1248,17 @@ async def _handle_task_success(project_id, task_id, media_url):
                            message="下载/缓存完成",
                            duration_ms=download_ms,
                            detail={'source_url': media_url, 'final_url': final_url})
-        
+
+        # L1 显式标识（明水印）：入队失败走本同步下载兜底的漏斗补挂——与 download_queue
+        # worker 同层：裁剪之后、transition_with_cdn_sync 之前。超时先取消烧录线程并
+        # 等到退出，再上传 CDN。失败不阻断交付。
+        if final_url and final_url.startswith('/upload/'):
+            try:
+                await await_explicit_burn(final_url, task_id, media_type)
+            except Exception as be:  # noqa: BLE001
+                logger.warning(
+                    f"AIGC 显式标识烧录异常(不阻断交付): ai_tool={task_id} {final_url}: {be}")
+
         completed = AIToolsModel.transition_with_cdn_sync(
             task_id,
             [AI_TOOL_STATUS_PROCESSING, AI_TOOL_STATUS_DOWNLOADING],
@@ -1332,7 +1408,22 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
 
     if not won_failure:
         return PROCESS_RESULT_FAILED
-    
+
+    # FAILED 终态确认：通知 agent 会话（营销链路大模型感知失败原因并按 SOP 引导，
+    # 如音频版权 → 询问去音轨重试）。企业版重试接管的任务在上面提前 return 不会
+    # 到这里——只有真正终态失败才通知，天然不会在重试期间打扰用户。
+    # daemon 线程执行：通知内部有 HTTP 自调用，不能阻塞调度循环。
+    if _agent_failure_notifier:
+        try:
+            threading.Thread(
+                target=_notify_agent_failure_async,
+                args=(task_id, reason, project_id),
+                name=f"agent-failure-notify-{task_id}",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.warning(f"Failed to spawn agent failure notifier for task {task_id}: {e}")
+
     # Refund computing power (note: auth_token not available in background task)
     try:
         # 获取 AI 工具详情

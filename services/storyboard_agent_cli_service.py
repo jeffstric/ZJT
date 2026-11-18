@@ -20,14 +20,15 @@ from config.constant import (
     MediaGenerationSurface,
     MediaGenerationType,
 )
-from config.unified_config import SceneVideoType, TaskTypeId, UnifiedConfigRegistry
+from config.unified_config import (
+    SceneVideoType,
+    TaskTypeId,
+    UnifiedConfigRegistry,
+)
 from services.storyboard_frame_mention import (
     FrameMentionError,
-    H3_KEYFRAME_REF_MAX_IMAGES,
-    h3_keyframe_ref_task_id,
     prepare_frame_mentions,
     prompt_has_frame_mention,
-    should_use_h3_keyframe_ref,
     url_key,
 )
 from model.ai_tools import AIToolsModel
@@ -46,6 +47,7 @@ from model.world import WorldModel
 from model.grid_image_tasks import GridImageTasksModel, GridImageTaskStatus
 from services.storyboard_reference_prompt_service import (
     append_reference_legend,
+    append_single_frame_guard,
     append_storyboard_visual_suffix,
     append_voice_casting_note,
     append_voice_reference_note,
@@ -57,7 +59,10 @@ from services.storyboard_reference_prompt_service import (
     reference_urls,
 )
 from task.pipeline_drivers import PipelineDriverFactory
-from task.pipeline_drivers.h3_prompt_optimize_util import has_quoted_dialogue
+from task.pipeline_drivers.h3_prompt_optimize_util import (
+    has_quoted_dialogue,
+    prompt_marks_first_or_last_frame,
+)
 from services.storyboard_first_frame_grid_service import StoryboardFirstFrameGridService
 from services.storyboard_quality_sequence import (
     get_storyboard_quality_location_reference_coordinator,
@@ -286,7 +291,7 @@ def _align_legend_items(
 
 
 def _peek_snapshot_task_id(generation_snapshots: Dict[str, Dict[str, Any]]) -> Optional[int]:
-    """批次已经锁了模型时，点名首尾帧要按那个模型决定是否改交混合任务。"""
+    """批次已经锁了模型时，点名首尾帧按那个模型的实现方兼容探测裁图。"""
     for key in ("video.reference_to_video", "video.image_to_video"):
         slot = generation_snapshots.get(key) or {}
         task_id = slot.get("task_id") if isinstance(slot, dict) else None
@@ -927,11 +932,11 @@ class StoryboardAgentCliService:
         from script_writer_core.mcp_tool import scoped_image_generation_snapshot
         with scoped_image_generation_snapshot(generation_snapshot):
             if mode == "text_to_image":
-                prompt_text = append_storyboard_visual_suffix(
+                prompt_text = append_single_frame_guard(append_storyboard_visual_suffix(
                     prompt_text,
                     style=storyboard.get("style"),
                     composition_preference=storyboard.get("composition_preference"),
-                )
+                ))
                 result = self.submitter.text_to_image(
                     user_id=str(user_id),
                     world_id=world_id,
@@ -948,11 +953,11 @@ class StoryboardAgentCliService:
                     prompt_text,
                     self._with_source_image_legend(reference_items, context, source_image),
                 )
-                prompt_text = append_storyboard_visual_suffix(
+                prompt_text = append_single_frame_guard(append_storyboard_visual_suffix(
                     prompt_text,
                     style=storyboard.get("style"),
                     composition_preference=storyboard.get("composition_preference"),
-                )
+                ))
                 result = self.submitter.image_edit(
                     user_id=str(user_id),
                     world_id=world_id,
@@ -1099,13 +1104,13 @@ class StoryboardAgentCliService:
                 context, image_mode, extra_urls=extra_urls,
             )
 
-        use_kfr = False
+        mention_applied = False
         if image_mode == "multi_reference" and prompt_has_frame_mention(prompt_text):
             known_task_id = task_type
             if known_task_id in (None, "") and generation_snapshots:
                 known_task_id = _peek_snapshot_task_id(generation_snapshots)
             try:
-                prompt_text, resolved_urls, legend_items, use_kfr = self.apply_collected_frame_mentions(
+                prompt_text, resolved_urls, legend_items = self.apply_collected_frame_mentions(
                     prompt=prompt_text,
                     urls=resolved_urls,
                     items=legend_items,
@@ -1115,6 +1120,7 @@ class StoryboardAgentCliService:
                     frame_first_url=frame_first_url,
                     frame_last_url=frame_last_url,
                 )
+                mention_applied = True
             except StoryboardCliError:
                 raise
 
@@ -1178,36 +1184,25 @@ class StoryboardAgentCliService:
                 )
             task_type = int(generation_snapshot['task_id'])
 
-        # 混合模型是隐藏任务，不能写进用户偏好。快照先按下拉里的参考模型解析，
-        # 这里只改本次提交的 task_id。image_mode 仍是 multi_reference。
-        if use_kfr and mode == "image_to_video":
-            task_type = h3_keyframe_ref_task_id()
-            if isinstance(generation_snapshot, dict):
-                generation_snapshot = dict(generation_snapshot)
-                generation_snapshot["task_id"] = task_type
-                kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
-                if kfr_config is not None:
-                    generation_snapshot["model_key"] = kfr_config.key
-                    generation_snapshot["model_name"] = kfr_config.name
+        # 首帧参考混合实现方（类型 37 默认，排序首位）按实现方排序在最终建行入口
+        # （/api/ai-app-run-image）解析写库，这里不再做探测/裁图：混合 webapp 六槽
+        # 全容量接收，锁帧与否由优化分派按提示词点名决定（resolve_h3_prompt_variant）。
 
         # 角色音色注入（参考生 + 模型 supports_voice_input）：批量补视频与单发同权，
         # 角色音色克隆源音频并入参考音频、提示词追加音色说明。在 determine_mode 与
         # 快照解析之后注入，避免改变媒体模式/槽位判定；grok 等不支持模型不注入。
-        # H3 家族（KFRef 混合 + 参考生）无对白镜头（原文无引号台词）不注入，
+        # H3 参考生（含首帧参考混合实现方）无对白镜头（原文无引号台词）不注入，
         # 同单发生成路径口径：音色参考必须绑台词，无台词上传会被上游拒绝
         # （「无法识别的说话内容」）或被当成成片声音。
         # 有台词镜头按说话人过滤：只注入开口说话角色的音色，不说话角色的音色
         # 上传后无声明目标，会被 H3 错配给画面人物或混入成片人声（同单发口径）。
         if mode == "image_to_video" and not (
-            task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+            task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
             and not has_quoted_dialogue(prompt_text)
         ):
             _config = UnifiedConfigRegistry.get_by_id(int(task_type))
             _speaking_voice_ids = None
-            if int(task_type) in (
-                int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO),
-                int(h3_keyframe_ref_task_id()),
-            ):
+            if int(task_type) == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO):
                 _speaking = extract_speaking_character_ids(context.get('dialogues'))
                 if _speaking:
                     _speaking_voice_ids = _speaking
@@ -1227,9 +1222,10 @@ class StoryboardAgentCliService:
         # MiniMax H3 系列（KFRef/Ref2VA/I2VA/FL2VA）注入角色声学音色指纹
         # （character.voice_desc），批量补视频与单发链路同口径：H3 参考音频只是
         # 弱微调，音色一致性靠文字指纹渲染进提示词。纯文本不占音频槽，
-        # 非 H3 模型零变化；KFRef 无对白镜头与音色注入同口径跳过（防诱导配音）。
+        # 非 H3 模型零变化；点名首尾帧（走 KFRef 变体）且无对白镜头时与音色
+        # 注入同口径跳过（防诱导配音；KFRef 变体 iff 点名，见 resolve_h3_prompt_variant）。
         if PipelineDriverFactory.is_h3_prompt_optimize_type(int(task_type)) and not (
-            task_type == h3_keyframe_ref_task_id()
+            prompt_marks_first_or_last_frame(prompt_text)
             and not has_quoted_dialogue(prompt_text)
         ):
             prompt_text = append_voice_casting_note(
@@ -4696,11 +4692,13 @@ class StoryboardAgentCliService:
         task_id: Optional[int] = None,
         frame_first_url: Any = _FRAME_URL_UNSET,
         frame_last_url: Any = _FRAME_URL_UNSET,
-    ) -> Tuple[str, List[str], List[Dict[str, Any]], bool]:
-        """全能参考下按 @首帧图 / @尾帧图 重排参考图。
+    ) -> Tuple[str, List[str], List[Dict[str, Any]]]:
+        """全能参考下按 @首帧图 / @尾帧图 重排参考图（排图，不裁图）。
 
-        返回 (prompt, urls, items, use_kfr)。缺图时抛 StoryboardCliError，调用方不得建任务。
-        frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；传入空字符串表示界面上没有这张图。
+        返回 (prompt, urls, items)。参考图不再按实现方裁剪（混合 webapp 六槽
+        全容量接收）。缺图时抛 StoryboardCliError，调用方不得建任务。
+        frame_* 为 _FRAME_URL_UNSET 时用分镜已选首尾帧；传入空字符串表示
+        界面上没有这张图。
         """
         context = context or {}
         if frame_first_url is _FRAME_URL_UNSET:
@@ -4712,25 +4710,6 @@ class StoryboardAgentCliService:
         else:
             last_url = _public_upload_url(frame_last_url)
 
-        config = None
-        if task_id not in (None, ""):
-            try:
-                config = UnifiedConfigRegistry.get_by_id(int(task_id))
-            except (TypeError, ValueError):
-                config = None
-        model_keys = []
-        if config is not None:
-            model_keys = [getattr(config, "key", ""), getattr(config, "short_key", "")]
-        use_kfr = should_use_h3_keyframe_ref(image_mode, prompt, *model_keys)
-        max_images = None
-        if use_kfr:
-            max_images = H3_KEYFRAME_REF_MAX_IMAGES
-        elif config is not None:
-            try:
-                parsed = int(getattr(config, "max_multi_ref_images", 0) or 0)
-            except (TypeError, ValueError):
-                parsed = 0
-            max_images = parsed or None
         try:
             rewritten, next_urls, next_items = prepare_frame_mentions(
                 prompt,
@@ -4739,11 +4718,10 @@ class StoryboardAgentCliService:
                 image_mode=image_mode,
                 first_url=first_url,
                 last_url=last_url,
-                max_images=max_images,
             )
         except FrameMentionError as exc:
             raise StoryboardCliError(exc.code, exc.message) from exc
-        return rewritten, next_urls, next_items, use_kfr
+        return rewritten, next_urls, next_items
 
     def _collect_video_reference_bundle(
         self,

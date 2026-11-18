@@ -275,6 +275,7 @@
       "allowed_tools": [
         "generate_text_to_video",
         "image_to_video",
+        "strip_reference_audio",
         "list_video_models",
         "get_user_computing_power",
         "ask_user"

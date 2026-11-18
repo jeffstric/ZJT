@@ -469,10 +469,13 @@
             服务商偏好
           </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'creationDefaults'}" @click="switchToCreationDefaultsTab">
-            创作默认偏好
+            创作偏好
           </button>
           <button class="modal-tab" :class="{active: userSettingsTab === 'apitoken'}" @click="switchToApiTokenTab" v-if="!isCommunityEdition && zjtTokenEnabled">
             智剧通token
+          </button>
+          <button class="modal-tab" :class="{active: userSettingsTab === 'aigc'}" @click="switchToAigcTab">
+            内容标识
           </button>
         </div>
 
@@ -506,7 +509,7 @@
           </button>
         </div>
 
-        <!-- 创作默认偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
+        <!-- 创作偏好 Tab：剧本页/营销页新会话种子（与 CLI 智能体偏好隔离） -->
         <div v-else-if="userSettingsTab === 'creationDefaults'" class="cli-media-pref-panel" style="padding: 16px;">
           <div class="cli-media-pref-intro">
             <p class="cli-media-pref-intro-title">剧本 / 营销创作默认模型</p>
@@ -592,7 +595,7 @@
             </div>
           </template>
           <div v-else class="cli-media-pref-empty">
-            请先创建一个世界，再配置创作默认偏好。
+            请先创建一个世界，再配置创作偏好。
           </div>
         </div>
 
@@ -763,12 +766,39 @@
                 <div class="api-token-title">尚未生成Token</div>
                 <div class="api-token-desc">生成后可将此Token用于接口授权</div>
               </div>
-              <div class="api-token-hint" style="background: #eff6ff; border-left: 3px solid #3b82f6; margin-bottom: 20px;">
+              <div class="api-token-hint" style="background: rgba(59, 130, 246, 0.12); border-left: 3px solid #3b82f6; margin-bottom: 20px;">
                 智剧通token可用于后期的 本地智剧通和官网接口打通。
               </div>
               <button class="btn" @click="generateApiToken" :disabled="apiTokenLoading">
                 {{ apiTokenLoading ? '生成中...' : '🔑 生成Token' }}
               </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 内容标识 Tab：AI 生成内容明水印全局开关（深度合成合规，docs/backend/aigc_marking.md） -->
+        <div v-else-if="userSettingsTab === 'aigc'" style="padding: 16px;">
+          <div class="status danger" v-if="aigcOptOutError" style="margin-bottom: 12px;">{{ aigcOptOutError }}</div>
+          <div class="status success" v-if="aigcOptOutSuccess" style="margin-bottom: 12px;">{{ aigcOptOutSuccess }}</div>
+
+          <h4 style="margin-bottom: 16px; color: var(--text);">AI 生成内容标识</h4>
+          <div v-if="aigcOptOutLoading" style="padding: 40px; text-align: center; color: var(--muted);">
+            加载中...
+          </div>
+          <div v-else>
+            <div class="settings-item">
+              <label class="label" style="display: flex; align-items: center; gap: 10px;">
+                <input type="checkbox" :checked="!aigcWatermarkOff" @change="toggleAigcWatermark($event.target.checked)">
+                生成内容添加"AI生成"提示（图片角标 / 视频起始画面 / 数字人 / 语音合成）
+              </label>
+              <p style="font-size: 12px; color: var(--muted); margin-top: 6px;">
+                根据《人工智能生成合成内容标识办法》：生成的图片默认在适当位置添加"AI生成"角标，生成的视频默认在起始画面添加"AI生成"提示，
+                数字人、合成语音类内容默认在起始画面/开头添加提示。
+                取消勾选即全局关闭（须自行承担发布传播时的主动声明义务，本次变更将依法记录留存不少于 6 个月）。
+              </p>
+            </div>
+            <div style="background: rgba(59, 130, 246, 0.12); border-left: 3px solid #3b82f6; padding: 10px 14px; border-radius: 6px; margin-top: 12px; font-size: 12px; color: var(--text);">
+              说明：生成图片/视频的显式提示默认开启，可在此一键全局关闭；已有内容可在生成结果弹窗中按需添加标识。所有内容的文件元数据中始终保留隐式标识用于内容溯源（法律法规要求，不可关闭）。
             </div>
           </div>
         </div>
@@ -1194,7 +1224,7 @@
     
     <!-- Recharge Computing Power Modal -->
     <div class="modal-overlay" v-if="showRechargePowerModal" @click.self="closeRechargeModal">
-      <div class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;">
+      <div id="rechargeModal" class="modal" style="position: relative; max-width: 600px; max-height: 88vh; overflow-y: auto;" @scroll="updateSubPayHint">
         <button class="modal-close" @click="closeRechargeModal">×</button>
         <div class="modal-title">充值中心</div>
 
@@ -1318,7 +1348,7 @@
                     <span class="per-month">/月 · 每期 {{ selectedSubPlan.computing_power }} 算力</span>
                   </div>
 
-                  <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
+                  <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError, 'sub-agreement-pending': !subAgreed }">
                     <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                     <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，升级立即生效，原套餐的自动续费将自动解除</span>
                   </label>
@@ -1423,7 +1453,7 @@
                   <span class="per-month">/月<span v-if="planShowsIntroPrice(selectedSubPlan)"> · 首月优惠，之后 ¥{{ selectedSubPlan.price }}/月 · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else-if="selectedSubPlan.first_period_bonus && subFirstBonusEligible"> · 首期到账 {{ subPlanHeadlinePower(selectedSubPlan, true) }} 算力，之后每期 {{ selectedSubPlan.computing_power }} 算力</span><span v-else> · 每期 {{ selectedSubPlan.computing_power }} 算力</span></span>
                 </div>
 
-                <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError }">
+                <label class="sub-agreement" :class="{ 'sub-agreement-error': subAgreementError, 'sub-agreement-pending': !subAgreed }">
                   <input type="checkbox" v-model="subAgreed" @change="onSubAgreeChange" />
                   <span>同意 <a href="javascript:void(0)" @click.stop="showSubscriptionAgreement" style="color: var(--primary);">《自动续费服务协议》</a>，到期自动扣费，可随时取消</span>
                 </label>
@@ -1439,6 +1469,14 @@
               </div>
             </div>
           </template>
+
+          <!-- 支付引导浮条：仅当支付面板底部被弹窗可视区遮住（屏幕不够高）时才值得出现——
+               面板已完整露出时提醒「在下方」与所见矛盾。须勾选《自动续费服务协议》才出码；
+               sticky 悬浮弹窗底部，点击平滑滚动到支付面板，露出面板/勾选后自动消失 -->
+          <button v-if="selectedSubPlan && !subAgreed && subPayPanelHidden" type="button" class="sub-pay-hint" @click="scrollToSubPayPanel">
+            <span class="sub-pay-hint-arrow">👇</span>
+            <span>付款码在下方，勾选《自动续费服务协议》后自动生成</span>
+          </button>
         </div>
 
         <!-- ==================== 算力充值 Tab ==================== -->
@@ -1654,6 +1692,7 @@
   <script src="/js/pages/digital_human.js?v=__VERSION__"></script>
   <script src="/js/pages/audio_generate.js?v=__VERSION__"></script>
   <script src="/js/pages/video_enhance.js?v=__VERSION__"></script>
+  <script src="/js/pages/video_edit.js?v=__VERSION__"></script>
   <script src="/js/pages/image_edit.js?v=__VERSION__"></script>
   <script src="/js/pages/text_to_image.js?v=__VERSION__"></script>
   <script src="/js/pages/image_to_video.js?v=__VERSION__"></script>
@@ -1663,6 +1702,7 @@
   <!-- App 组件、路由配置 -->
   <script src="/js/index_app.js?v=__VERSION__"></script>
   <script src="/js/announcement_center.js?v=__VERSION__"></script>
+  <script src="/js/announcement_popup.js?v=__VERSION__"></script>
   <script>
   // i18n 初始化 - 必须在 Vue 应用创建前执行
   window.__STATIC_VERSION = window.__STATIC_VERSION || '';

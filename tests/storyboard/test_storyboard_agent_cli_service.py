@@ -2878,13 +2878,12 @@ def test_generate_video_multi_reference_appends_legend_and_style(patched_storybo
     assert "构图倾向：rule of thirds" in kwargs["prompt"]
 
 
-def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_storyboard_cli):
-    from config.constant import H3_KEYFRAME_REF_ROUTE_ENABLED
+def test_generate_video_frame_mentions_keep_all_images_and_anchor_prompt(patched_storyboard_cli):
+    """点名首尾帧：任务保持 37，不再裁图（混合 webapp 六槽全容量），锚点句进提交文本"""
     from services.storyboard_agent_cli_service import StoryboardCliError
 
-    service = patched_storyboard_cli.module.StoryboardAgentCliService(
-        submitter=patched_storyboard_cli.submitter
-    )
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
     saved = {
         "video.reference_to_video": {
             "task_id": 37,
@@ -2904,21 +2903,18 @@ def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_sto
         generation_snapshots=saved,
     )
     assert result["project_ids"] == [802]
+    # 快照（分镜齿轮/偏好）仍记下拉参考生，不再改交隐藏任务 50
     assert saved["video.reference_to_video"]["task_id"] == 37
     call_name, kwargs = patched_storyboard_cli.submitter.calls[-1]
     assert call_name == "image_to_video"
     assert kwargs["image_mode"] == "multi_reference"
-    # 路由开：改交隐藏任务 50，并按混合模型 3 槽裁图。
-    # 路由关：留在参考生 37，首尾帧仍在两端，中间参考不再裁成 1 张。
+    assert kwargs["task_type"] == 37
     urls = [part for part in kwargs["image_urls"].split(",") if part]
     assert urls[0] == "https://cdn.test/first.png"
     assert urls[-1] == "https://cdn.test/last.png"
-    if H3_KEYFRAME_REF_ROUTE_ENABLED:
-        assert kwargs["task_type"] == 50
-        assert len(urls) == 3
-    else:
-        assert kwargs["task_type"] == 37
-        assert len(urls) > 3
+    # 不再裁到 3：5 张（首帧 + 3 中间参考 + 尾帧）全容量提交，槽位分配交给驱动
+    assert len(urls) == 5
+    assert "https://cdn.test/umbrella.png" in urls and "https://cdn.test/style.png" in urls
     assert "图1是首帧" in kwargs["prompt"]
     assert f"图{len(urls)}是尾帧" in kwargs["prompt"]
     assert "@首帧图" not in kwargs["prompt"]
@@ -2943,6 +2939,31 @@ def test_generate_video_frame_mentions_submit_hidden_h3_keyframe_ref(patched_sto
     else:
         raise AssertionError("missing last frame should not submit")
     assert len(patched_storyboard_cli.submitter.calls) == before
+
+
+def test_generate_video_frame_mentions_submit_full_image_list(patched_storyboard_cli):
+    """参考图不再按实现方裁剪：全部随提交上传，槽位分配由驱动按六槽矩阵处理"""
+    module = patched_storyboard_cli.module
+    service = module.StoryboardAgentCliService(submitter=patched_storyboard_cli.submitter)
+    service.generate_video(
+        scene_id=11,
+        user_id=7,
+        auth_token="token",
+        mode="image_to_video",
+        image_mode="multi_reference",
+        prompt="Walk forward @首帧图 then arrive @尾帧图.",
+        task_type=37,
+        frame_last_url="https://cdn.test/last.png",
+        generation_snapshots={
+            "video.reference_to_video": {"task_id": 37, "model_key": "minimax_h3_reference_to_video"},
+        },
+    )
+    _call_name, kwargs = patched_storyboard_cli.submitter.calls[-1]
+    assert kwargs["task_type"] == 37
+    urls = [part for part in kwargs["image_urls"].split(",") if part]
+    assert urls[0] == "https://cdn.test/first.png"
+    assert urls[-1] == "https://cdn.test/last.png"
+    assert len(urls) > 3
 
 
 def test_generate_video_multi_reference_falls_back_to_text_when_no_images(

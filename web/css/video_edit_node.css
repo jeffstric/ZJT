@@ -1,0 +1,63 @@
+/* 视频编辑（人物替换）节点：复用 .node / .gen-btn / 水印节点的预览结构，只补本节点自己的状态 */
+.video-edit-node .edit-submit-btn {
+  width: 100%;
+}
+.video-edit-node .edit-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.video-edit-node .duration-hint {
+  margin-top: 4px;
+}
+.video-edit-node .duration-hint.is-error {
+  color: #ef4444;
+}
+.video-edit-node .images-hint {
+  margin-top: 4px;
+}
+.video-edit-node .images-hint.is-error {
+  color: #ef4444;
+}
+.video-edit-node .edit-images-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+}
+.video-edit-node .edit-prompt {
+  min-height: 56px;
+}
+/* 图片输入端口（cssClass=video-edit-image-port，与 CONNECTION_TYPES.image
+   的 .{portType}-image-port 解析模板对应）：与视频口错开高度并着色区分 */
+.port.video-edit-image-port {
+  left: -9px;
+  top: calc(50% + 24px);
+  border-color: #38bdf8;
+}
+.port.video-edit-image-port:hover {
+  background: #7dd3fc;
+  transform: none;
+}
+.port.video-edit-image-port.can-connect {
+  background: #7dd3fc;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.3);
+}
+
+/* 「换视频」按钮：视频预览右上角红点 ×，点击移除视频连接以便更换。
+   定位在容器内侧——.video-preview 有 overflow:hidden，负偏移会被裁掉 */
+.video-edit-node .edit-video-remove-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ef4444;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 2;
+}
+.video-edit-node .edit-video-remove-btn:hover {
+  background: #dc2626;
+}

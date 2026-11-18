@@ -15,15 +15,20 @@ Token 在 autodl.art 令牌管理页创建，分组必须选 ComfyUI（autodl.ap
 参考图/音频必须传公网 URL（平台无上传 API）：本地/局域网素材经
 compress_and_upload_image_sync / upload_media_to_cdn_sync 转为七牛 CDN 公网地址。
 
-本文件包含一个基类与两个工作流实现：
+本文件包含一个基类与三个工作流实现：
 - MinimaxH3ReferenceAutodlV1Driver   参考生视频 minimax_h3_zm_u24
   （最多 9 张参考图 ref_image_0~8 + 3 段参考音频 ref_audio_0~2）
 - MinimaxH3FirstLastAutodlV1Driver   首尾帧 minimax_h3_lightx2v
   （first_frame + last_frame 双必填——2026-11-08 三重实测证实：仅首帧提交
   报"缺少必填参数：last_frame"、ref_image_0 报"未定义的参数"；已反馈上游
   待 AutoDL 改为可选后可再放开）
+- MinimaxH3CharReplaceAutodlV1Driver 视频人物替换 minimax_h3_zm_titim
+  （ref_video 必填 + ref_image_0~8 最多 9 张角色图，5-25s，768p 竖/横跟随
+  参考视频方向，原声保留；2026-11-16 实测出片：身份/服装跟随参考图、
+  动作/字幕/道具保留、耗时 329s@5s、0.11 元/秒）
 
-时长 1-15 秒（任务层 supported_durations 仍为 4-10）；分辨率 480p/768p × 竖/横/(1:1)。
+时长 1-15 秒（人物替换工作流 5-25 秒，各自子类钳制）；分辨率 480p/768p × 竖/横/(1:1)
+（人物替换仅 768p 竖/横两档）。
 """
 import json
 import re
@@ -36,6 +41,8 @@ from config.config_util import get_config, get_dynamic_config_value
 from config.constant import (
     LEGACY_RESOLUTION_EXTRA_CONFIG_KEY,
     VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS,
+    VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
 )
 from config.unified_config import DriverImplementation, TaskTypeId, VideoResolution
 from task.pipeline_drivers.h3_prompt_optimize_util import (
@@ -53,6 +60,7 @@ from .base_video_driver import BaseVideoDriver, ImageMode
 # ===== 工作流 ID（AutoDL.Art 工作流广场，更换工作流只需换此常量） =====
 AUTODL_WORKFLOW_REFERENCE = "minimax_h3_zm_u24"       # H3 多图多音频生视频（升级画质）
 AUTODL_WORKFLOW_FIRST_LAST = "minimax_h3_lightx2v"    # H3 首尾帧生视频
+AUTODL_WORKFLOW_CHARACTER_REPLACE = "minimax_h3_zm_titim"  # H3 视频多角色动迁替换
 
 AUTODL_API_BASE_DEFAULT = "https://autodl.art"
 
@@ -80,6 +88,11 @@ RESOLUTION_TIER_MAP = {
     VideoResolution.P720: '768p',
 }
 DEFAULT_RESOLUTION_TIER = '768p'
+
+# 人物替换分辨率：仅 768p 竖/横两档（跟随参考视频方向，端点 ffprobe 探测后
+# 写入 extra_config.char_replace_resolution，驱动原样透传）
+CHAR_REPLACE_RESOLUTION_EXTRA_KEY = 'char_replace_resolution'
+CHAR_REPLACE_RESOLUTION_VALUES = ('768p竖', '768p横')
 
 # 查询状态归一（大小写不敏感：文档示例为 QUEUED/RUNNING/SUCCESS/FAILED，
 # 工作流页输出示例出现过小写 completed，统一 upper 处理）
@@ -872,6 +885,142 @@ class MinimaxH3FirstLastAutodlV1Driver(MinimaxH3AutodlV1Driver):
         payload = self._build_base_payload(ai_tool, extra_config, prompt_text)
         payload["first_frame"] = first_url
         payload["last_frame"] = last_url
+
+        return {
+            "url": f"{self._base_url}/api/v1/comfyui/comfyui_workflow/{self._workflow_id}",
+            "method": "POST",
+            "json": payload,
+            "headers": self._auth_headers(),
+        }
+
+
+class MinimaxH3CharReplaceAutodlV1Driver(MinimaxH3AutodlV1Driver):
+    """
+    MiniMax H3 视频人物替换（AutoDL.Art 工作流 minimax_h3_zm_titim，任务类型 54）
+
+    用参考图里的角色替换引导视频中的角色：动作、位置、节奏、镜头与原声全部
+    跟随参考视频，只换被点名主体的身份（服装/配饰同样跟随参考图）。
+
+    请求体素材槽位：
+    - ref_video（必填）：参考视频公网 URL（MP4/WebM；成片时长=duration，
+      截取视频前 N 秒，短于 duration 的尾段由模型自由发挥）
+    - ref_image_0（必填）~ ref_image_8：最多 9 张角色参考图（JPG/PNG/WebP 公网 URL）
+    - prompt（选填）：指定谁换谁/保留什么/替换后走向（上游内置替换提示词，
+      不支持完全自定义）
+    - video_subject_to_replace（选填）：检测主体类型，必须英文，默认 person
+    - duration：5-25 整数；resolution：仅 768p竖 / 768p横（跟随参考视频方向，
+      端点 ffprobe 探测后写入 extra_config.resolution）
+    """
+
+    def __init__(self):
+        super().__init__(
+            driver_type=TaskTypeId.VIDEO_CHARACTER_REPLACE,
+            workflow_id=AUTODL_WORKFLOW_CHARACTER_REPLACE,
+            impl_name=DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
+        )
+
+    def _clamp_duration(self, ai_tool) -> int:
+        """时长钳制到人物替换工作流合法区间 5-25 秒（覆盖基类 1-15）"""
+        try:
+            duration = int(ai_tool.duration or DEFAULT_DURATION_SECONDS)
+        except (TypeError, ValueError):
+            duration = DEFAULT_DURATION_SECONDS
+        return (
+            max(VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
+                min(VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS, duration))
+        )
+
+    def _build_resolution_value(self, extra_config: Dict[str, Any]) -> str:
+        """
+        人物替换分辨率：端点 ffprobe 探测参考视频方向后写入
+        extra_config.char_replace_resolution（'768p竖' / '768p横'），此处原样透传；
+        缺省按视频方向兜底为 768p竖（上游默认值）。
+        """
+        resolution = extra_config.get(CHAR_REPLACE_RESOLUTION_EXTRA_KEY)
+        if resolution in CHAR_REPLACE_RESOLUTION_VALUES:
+            return resolution
+        if resolution:
+            self.logger.warning(
+                f"人物替换收到未知 resolution {resolution}，回落 768p竖"
+            )
+        return '768p竖'
+
+    def validate_input_compatibility(self, ai_tool) -> Tuple[bool, Optional[str]]:
+        """zm_titim 参考视频必填：无视频任务切到本实现必然 USER 失败，提前判不兼容。
+
+        参考图缺失同理（至少 1 张角色图）。此任务类型仅本一个实现方，
+        钩子主要防管理员误挂载/误切默认实现，以及重试候选选择时的兜底。
+        """
+        raw_video = self.get_video_path(ai_tool)
+        if not raw_video or not str(raw_video).strip():
+            return False, "人物替换工作流需要参考视频，当前任务无视频输入"
+        if not self.get_reference_images(ai_tool):
+            return False, "人物替换工作流需要至少 1 张角色参考图"
+        return True, None
+
+    def build_create_request(self, ai_tool) -> Dict[str, Any]:
+        """构建 zm_titim 提交请求（参考视频 + 角色图逐槽转公网 URL）"""
+        extra_config = self._parse_extra_config(ai_tool)
+
+        # 1. 参考视频（必填）：转公网 URL（不压缩，口径同音频媒体上传）
+        raw_video = self.get_video_path(ai_tool)
+        if not raw_video or not str(raw_video).strip():
+            return {
+                "success": False,
+                "error": "视频人物替换需要上传参考视频",
+                "error_type": "USER",
+                "retry": False
+            }
+        video_url, video_error = self._to_public_media_url(str(raw_video).strip(), "参考视频")
+        if video_error:
+            return {
+                "success": False,
+                "error": video_error,
+                "error_type": "USER",
+                "retry": False
+            }
+
+        # 2. 角色参考图（至少 1 张，最多 9 张）：ai_tools.reference_images JSON 数组
+        images = self.get_reference_images(ai_tool)
+        if not images:
+            return {
+                "success": False,
+                "error": "视频人物替换需要至少 1 张角色参考图",
+                "error_type": "USER",
+                "retry": False
+            }
+        if len(images) > MAX_REFERENCE_IMAGES:
+            self.logger.warning(
+                f"AutoDL 人物替换最多支持{MAX_REFERENCE_IMAGES}张参考图，已忽略多余的图"
+            )
+            images = images[:MAX_REFERENCE_IMAGES]
+
+        # 3. 提示词（选填）：上游已内置替换提示词，用户 prompt 仅用于指定谁换谁/
+        #    保留什么等增量描述，不走 H3 提示词优化 pipeline（无音频槽，无对白概念）
+        payload = {
+            "prompt": (ai_tool.prompt or "").strip()[:2048],
+            "duration": self._clamp_duration(ai_tool),
+            "resolution": self._build_resolution_value(extra_config),
+            "ref_video": video_url,
+        }
+
+        for idx, image_path in enumerate(images):
+            url, error = self._to_public_image_url(image_path, f"角色参考图{idx + 1}")
+            if error:
+                return {
+                    "success": False,
+                    "error": error,
+                    "error_type": "USER",
+                    "retry": False
+                }
+            payload[f"ref_image_{idx}"] = url
+
+        # 4. 检测主体类型（选填，必须英文）：extra_config.params.subject 透传，
+        #    空则不上传（上游默认检测 person）
+        params = extra_config.get("params") if isinstance(extra_config.get("params"), dict) else {}
+        subject = str(params.get("subject") or "").strip()
+        if subject:
+            payload["video_subject_to_replace"] = subject
 
         return {
             "url": f"{self._base_url}/api/v1/comfyui/comfyui_workflow/{self._workflow_id}",

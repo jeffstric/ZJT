@@ -23,6 +23,9 @@ from model.media_file_mapping import MediaFileEntity
 from model.voice import PROVIDER_VOLCENGINE, VoiceModel
 from perseids_server.client import async_make_perseids_request
 from utils.audio_duration_util import probe_audio_duration
+from utils.aigc_marking import mark_file_for_task
+from utils.aigc_explicit_marker import burn_explicit_label
+from model.aigc_explicit_opt_out import AigcExplicitOptOutModel
 from utils.media_mapping_util import register_uploaded_file_mapping
 from utils.volcengine_tts_util import (
     build_audio_filename,
@@ -217,6 +220,17 @@ async def synthesize_speech_for_user(
         with open(tmp_path, 'wb') as f:
             f.write(audio_bytes)
         os.replace(tmp_path, file_path)
+        # AIGC 隐式标识：TTS 合成音频属"合成人声"生成内容（深度合成合规，
+        # docs/compliance/aigc_labeling_plan.md）。本函数在 to_thread 中执行（同步上下文
+        # 安全），ProduceID 用音频文件名（唯一，可溯源 ai_audio 表）；全容错不阻断交付。
+        mark_file_for_task(file_path, filename, 'audio')
+        # L1 显式标识：合成人声属第17条第1款（可能混淆误认），默认开头拼接节奏提示；
+        # 用户已申请关闭（第9条留痕，按用户维度）则跳过。失败降级交付并告警。
+        try:
+            if not AigcExplicitOptOutModel.has_opt_out_user(user_id):
+                burn_explicit_label(file_path, filename, user_id=user_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"TTS 显式标识烧录异常(不阻断交付): {filename}: {e}")
 
     try:
         await asyncio.to_thread(_write_file)

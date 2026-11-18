@@ -171,6 +171,7 @@
 | [图片压缩](backend/image_compression.md) | 后端图片压缩方案 | 待补充 |
 | [算力多维度计算](backend/算力多维度计算方案.md) | 算力计算方案 | 待补充 |
 | [LLM 欠费熔断与输入缓存优化](backend/llm_arrears_breaker_and_input_cache.md) | 欠费熔断 + 剧本拆分 prompt 缓存命中优化 | 待补充 |
+| [AIGC 隐式标识](backend/aigc_marking.md) | 深度合成合规：生成内容文件元数据标识（挂点/格式/验证） | 本地文档 |
 | [邀请佣金系统](backend/invite_commission.md) | 邀请算力奖励、渠道佣金门控与提现 | 已更新 |
 | [用户备注与用户昵称](backend/users_remark_nickname.md) | 管理员备注、用户自定义昵称与随机趣味默认昵称 | 本地文档 |
 | [Agent 消息持久化](backend/agent_chat_message_persistence_design.md) | Agent 消息存储 | 待补充 |
@@ -221,6 +222,7 @@
 | 文档 | 说明 | 飞书链接 |
 |------|------|----------|
 | [E2E 测试说明](e2e_testing.md) | 端到端测试框架 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/PVbYdlpI4oi3fwxZQFBcG7b0nyb) |
+| [历史缺陷清单和改坏回放](testing/regression_catalog.md) | 把出过的问题收成永久测试，并故意改坏代码确认测试会失败 | 待补充 |
 | [MR 大模型代码审查](ci/ai_code_review.md) | MR Pipeline 调用 vLLM（jeffS7/jeffS10）写审查评论，失败不阻塞合并 | 待补充 |
 | [E2E Mock 实现方案](e2e_mock_implementation_plan.md) | 测试 Mock 设计 | [在线版](https://bq3mlz1jiae.feishu.cn/docx/Zbq4d8oCKovWyyxtNlNcCkLynXc) |
 

@@ -264,3 +264,59 @@ class TestReduceViolationHint:
         assert should_suggest_reduce_violation(
             message="内容审核未通过：参考图片包含敏感内容，请更换参考图后重试"
         ) is False
+
+
+class TestOutputAudioCopyright:
+    """输出音频版权限制（Seedance 2.5 等音频生成模型 OutputAudioSensitiveContentDetected.PolicyViolation：
+    AI 把参考素材中的版权音乐复刻进输出音频被拦，需区别于通用版权文案给出换素材动作提示）"""
+
+    FRIENDLY = (
+        "内容审核未通过（音频版权）：生成的音频可能涉及受版权保护的录音或音乐，"
+        "请更换参考音频/视频或调整配乐描述后重试"
+    )
+
+    def test_rewrite_with_code(self):
+        raw = (
+            "API 错误 [OutputAudioSensitiveContentDetected.PolicyViolation]: "
+            "The request failed because the output audio may be related to copyright restrictions. "
+            "Request id: 02179437842014400000000000000000000ffffac183137546a50"
+        )
+        assert rewrite_failure_reason_if_moderation(raw) == self.FRIENDLY
+
+    def test_rewrite_message_only_fallback(self):
+        # 兜底：驱动未带 code，仅凭 message 中的 output audio + copyright 关键词
+        raw = "The request failed because the output audio may be related to copyright restrictions."
+        assert rewrite_failure_reason_if_moderation(raw) == self.FRIENDLY
+
+    def test_classify_source_and_message(self):
+        info = classify_content_moderation(
+            error_code="OutputAudioSensitiveContentDetected.PolicyViolation",
+            error_message="The request failed because the output audio may be related to copyright restrictions.",
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_COPYRIGHT
+        assert info["friendly_message"] == self.FRIENDLY
+
+    def test_normal_copyright_without_audio_keeps_generic_copy(self):
+        # 回归：普通版权错误（无音频维度）不受影响
+        info = classify_content_moderation(
+            error_code="OutputImageSensitiveContentDetected.PolicyViolation",
+            error_message="image may be related to copyright restrictions",
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_OUTPUT
+        assert info["friendly_message"] != self.FRIENDLY
+
+    def test_audio_output_without_copyright_keeps_output_copy(self):
+        # 回归：输出音频违规但非版权原因，走通用"生成结果"文案
+        info = classify_content_moderation(
+            error_code="OutputAudioSensitiveContentDetected",
+            error_message="the output audio contains sensitive content",
+        )
+        assert info is not None
+        assert info["source"] == SOURCE_OUTPUT
+        assert info["friendly_message"] != self.FRIENDLY
+
+    def test_already_friendly_audio_not_double_wrapped(self):
+        assert rewrite_failure_reason_if_moderation(self.FRIENDLY) == self.FRIENDLY
+        assert is_content_moderation_user_message(self.FRIENDLY)

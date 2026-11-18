@@ -305,6 +305,18 @@ def frame_budget(frame_height: int) -> Tuple[int, float]:
     )
 
 
+def estimate_llm_timeout(scene_point_count: int) -> float:
+    """按镜头切换点数量估算剧本生成 LLM 超时（秒）。
+
+    分镜级剧本的输出规模随镜头数线性增长：实测 84.2s 视频 57 镜 pro 档
+    生成耗时 336s（含模型默认思考），固定 LLM_TIMEOUT=180s 时该场景必然
+    超时失败。故在保底 LLM_TIMEOUT 上按每镜 LLM_TIMEOUT_PER_SCENE_SECOND
+    秒线性放宽，封顶 LLM_TIMEOUT_MAX（对应 max_tokens=8000 最坏生成速率
+    + 思考余量）。"""
+    est = C.LLM_TIMEOUT + max(0, int(scene_point_count)) * C.LLM_TIMEOUT_PER_SCENE_SECOND
+    return min(est, C.LLM_TIMEOUT_MAX)
+
+
 def thin_points_by_time(points: List[float], limit: int) -> List[float]:
     """时间点超上限时按序均匀抽稀（保首尾）。"""
     total = len(points)
@@ -543,15 +555,18 @@ async def _generate_script(
         vendor_id=use_vendor_id,
         model_id=use_model_id,
     )
+    # 超时按镜头切换点数动态放宽（长视频分镜剧本生成实测超 180s，见
+    # estimate_llm_timeout）；外层 wait_for 仍为 HTTP 超时 + 15s 缓冲。
+    llm_timeout = estimate_llm_timeout(len(scene_points) if scene_points else 0)
     if "request_timeout" in inspect.signature(client.call_api).parameters:
-        call_kwargs["request_timeout"] = C.LLM_TIMEOUT
+        call_kwargs["request_timeout"] = llm_timeout
     try:
         response = await asyncio.wait_for(
             asyncio.to_thread(client.call_api, **call_kwargs),
-            timeout=C.LLM_TIMEOUT + 15,
+            timeout=llm_timeout + 15,
         )
     except asyncio.TimeoutError as exc:
-        raise ScriptExtractError("剧本生成超时，请稍后重试") from exc
+        raise ScriptExtractError(f"剧本生成超时（上限 {int(llm_timeout)} 秒），请稍后重试") from exc
     except Exception as exc:
         logger.exception("[script-extract] LLM 调用失败 (model=%s)", use_model)
         raise ScriptExtractError(f"剧本生成失败：{exc}") from exc

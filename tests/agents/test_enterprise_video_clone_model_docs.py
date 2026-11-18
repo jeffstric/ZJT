@@ -43,3 +43,15 @@ def test_enterprise_video_clone_docs_include_minimax_h3_model():
         assert "minimax_h3" in text.lower() or "参考生视频" in text, (
             f"{path} should mention MiniMax H3 reference-to-video"
         )
+
+
+def test_enterprise_video_clone_docs_include_wan3_model():
+    for path in VIDEO_CLONE_DOCS:
+        text = path.read_text(encoding="utf-8")
+
+        assert "wan3_r2v" in text, f"{path} should mention wan3_r2v"
+        assert "万相3.0" in text, f"{path} should mention the wan3.0 display name"
+        # 文生版家族降级提示（选万相3.0 文生视频时自动落到参考生）
+        assert "万相3.0 文生视频" in text, (
+            f"{path} should mention wan3 text-to-video family fallback"
+        )

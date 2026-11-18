@@ -410,6 +410,26 @@ class PMAgent(BaseAgent, AskUserMixin):
                     self._handle_tool_calls(message, task, session_data)
                 else:
                     content = message.content or ""
+                    # LLM 空回复兜底（dev3 实测 2026-11-12：失败通知触发的轮次里模型
+                    # 返回了无 tool_calls 且无 content 的空响应，PM 直接 return ""
+                    # 导致前端什么都没有）。截掉空 assistant 消息，显式要求生成
+                    # 用户可见总结后重试；最多补写 2 次，仍空则给兜底文案。
+                    if not content.strip():
+                        if getattr(self, "_empty_reply_retries", 0) < 2:
+                            self._empty_reply_retries = getattr(self, "_empty_reply_retries", 0) + 1
+                            logger.warning(
+                                f"{self.agent_id}: LLM 返回空回复（第 {self._empty_reply_retries} 次），"
+                                "截断后要求重新生成用户总结"
+                            )
+                            self.conversation_history = self.conversation_history[:history_len]
+                            self.add_to_history(
+                                "user",
+                                "（系统提示）你上一条回复是空的。请用简洁的中文向用户总结本次任务的"
+                                "执行结果与后续建议；若任务尚未完成，请说明当前状态和下一步。"
+                            )
+                            continue
+                        content = "任务已执行完成，但生成回复时出现异常，请向智能体确认执行结果。"
+                        logger.warning(f"{self.agent_id}: LLM 连续空回复，使用兜底文案结束")
                     reasoning_content = getattr(message, 'reasoning_content', None)
                     if reasoning_content:
                         history_content = {"text": content, "reasoning_content": reasoning_content}

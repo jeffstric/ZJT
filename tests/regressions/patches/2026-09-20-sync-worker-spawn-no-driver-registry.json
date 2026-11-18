@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "task/sync_task_executor.py",
+      "old": "        init_unified_config()\n        register_all_drivers()",
+      "new": "        init_unified_config()"
+    }
+  ]
+}

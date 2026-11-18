@@ -60,27 +60,32 @@ def test_image_tools_append_storyboard_visual_settings_to_prompt_tail():
         assert prompt == (
             "女孩站在雨中\n\n"
             "图片风格：水墨动画\n"
-            "构图倾向：电影感宽幅构图"
+            "构图倾向：电影感宽幅构图\n\n"
+            "画面要求：单幅静止画面，只呈现一个定格瞬间的完整构图；"
+            "禁止宫格、多格拼图、分屏、对比图、连环画式多个画面。"
         )
         assert result == {"project_ids": [123]}
 
 
 def test_image_tool_visual_suffix_is_idempotent_and_preserves_caller_args():
     executor, delegate = _build_executor()
-    original_args = {
-        "prompt": (
-            "女孩站在雨中\n\n"
-            "图片风格：水墨动画\n"
-            "构图倾向：电影感宽幅构图"
-        )
-    }
+    original_prompt = (
+        "女孩站在雨中\n\n"
+        "图片风格：水墨动画\n"
+        "构图倾向：电影感宽幅构图"
+    )
+    original_args = {"prompt": original_prompt}
 
     executor.execute_tool("edit_image", original_args, "1", "2", "token")
 
     submitted = delegate.calls[0]["tool_args"]["prompt"]
     assert submitted.count("图片风格：水墨动画") == 1
     assert submitted.count("构图倾向：电影感宽幅构图") == 1
-    assert original_args["prompt"] == submitted
+    # 调用方传入的 args 不被改写
+    assert original_args["prompt"] == original_prompt
+    # 单幅画面守卫恰好追加一次
+    assert submitted.count("画面要求：单幅静止画面") == 1
+    assert submitted.startswith(original_prompt)
 
 
 def test_non_image_tool_is_delegated_without_visual_prompt_changes():

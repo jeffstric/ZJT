@@ -319,6 +319,12 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 安全与兼容注意：`data-gen-*`/`data-regen-*` 属性值均为参数快照（不含 URL 与提示词，提示词点击时才拉取），构建时经 `escapeHtml` 转义；`bindGeneratedMediaDelegation` 中元数据条/详情面板区域内的点击先于「点击放大」分支短路返回，避免面板在 `data-modal-src` 卡片内部被冒泡误判为放大请求。`tests/js/test_marketing_agent_digital_human_single_video.js` 对 `buildGeneratedMediaRowsHtml` 的静态断言窗口由 1600 放宽至 2600 字符（图片行模板加入元数据条与操作按钮后变长）。
 
+#### 参考媒体相对路径兼容：重新生成/重新编辑不再丢参考图（2026-11-18）
+
+事故（会话 da844815-ebb3-4371-90e1）：用户上传 5 张水杯实拍图生成双十一海报（`edit_image`，参考图以 `/upload/...` 相对路径落库），点击结果卡「重新生成」后产出的图片与水杯毫无关系。根因是 13572 修复（2026-11-14）把参考图落库标准形态统一为**本站相对路径**后，前端「重新编辑/重新生成」链路仍在用 `isHttpUrl`（要求 `http` 开头）过滤 `get-status` meta 返回的 `frame_images`/`reference_images`/`reference_video`/`reference_audio`，相对路径全部被滤掉 → `handleGeneratedResultRegenerate` 误判为无参考图，退化成 `/api/text-to-image` 纯文生图（prompt 相同、参考图为空，`extra_config.mode=text_to_image`）。
+
+修复：meta 参考媒体判定统一改用与持久化守卫/`collectUrlOnlyImageUrls` 同口径的 `isReusableMediaUrl`（http(s) 绝对 URL 或站内 `/` 路径均可，blob:/data: 仍排除），覆盖 `web/js/marketing_agent.js` 中 7 处——`handleGeneratedResultRegenerate`（图片+视频重新生成，含 `audio_urls`/`video_urls` 附加条件）、`metaImageUrls`/`inferVideoImageModeFromMeta`/`restoreGenerationReferenceMedia`/`applyRestoredGenerationModel`（重新编辑恢复与模型推断）、`collectAgentMediaPayload`（验证回答媒体收集）、`sendMessageToApi`（agent 模式发送收集与最终校验；否则重新编辑恢复的相对路径参考图在发送时会被二次丢弃）。提交端无需转绝对 URL：`/api/image-edit` 的 `normalize_site_upload_image_url` 与 visual_drivers 消费链原生支持 `/upload/` 相对路径（host 无关）。回归测试：`web/tests/marketing_agent_regen_relative_ref.test.js`（相对路径走 image-edit、存量绝对 URL 不回归、无参考图退化文生图、blob/data 仍拦截、视频多参考相对路径）。
+
 #### 任务恢复机制
 
 页面刷新或切换会话时，系统通过以下机制恢复未完成的任务：
@@ -340,6 +346,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 - **文生视频**：`TaskConfig.getModelOptionsForCategory('text_to_video')`
 - **图生视频**：`TaskConfig.getModelOptionsForCategory('image_to_video')`，根据 `videoImageMode` 过滤支持的模型
 - 模型偏好从后端 `GET /api/video-model` 获取，回退到 `localStorage`
+- **驱动可用性过滤**：`initTaskConfig()` 先拉取 `GET /api/computing-power-config` 的 `driver_status`，文生图 / 图片编辑 / 文生视频 / 图生视频四个模型列表统一经 `TaskConfig.filterAvailableModelOptions` 过滤——某厂商驱动未配置（如未配置火山引擎 API Key）时，其模型（Seedream / Seedance 等）不在营销页显示，与 workflow / nodes / image_to_video 页面口径一致；接口失败时 `driver_status` 保持 `{}`，视为全部可用（不过滤）。若过滤后某分类为空，对应初始化恢复逻辑有空列表保护，不会选中不可用模型。
 - 用户在 Agent 模式下切换视频模型时，前端 `syncVideoModelToBackend()` 会调用 `POST /api/video-model` 并携带完整 `video_preferences`（含 `model_name`、`ratio`、`duration`、`resolution`、`image_mode`、`enable_face_mask`），后端合并更新 `_video_preferences_cache`，确保 MCP 视频工具执行时读取到最新偏好
 - **性价比 / 效果双轨切换**：视频模型列表（Agent 模式「其他设置」内联列表与非 Agent 模式底部弹窗两处）顶部提供与 LLM 模型一致的 `model-track-toggle` 按钮。Agent 模式下视频模型列表内联展开于模型选择按钮正下方、对话模型（LLM）选择之上。场景推导口径与模型列表过滤一致：无参考图 → `video.text_to_video`，首尾帧模式 → `video.image_to_video`，多参考模式 → `video.reference_to_video`（复用 `ModelCatalog.sceneForVideoImageMode`）。当前选中模型所处轨道由 `currentVideoTrack` 计算（优先读 `task_config` 下发的 `track` 字段，回退 `ModelCatalog.inferTrack`），点击按钮时 `selectVideoTrack()` 通过 `ModelCatalog.findTaskByTrack` 在当前列表中选中该轨道推荐模型（文生/图生视频：性价比 `minimax_h3`、效果 `seedance_2_0`；多参考：性价比 `minimax_h3_r2v`），并复用 `selectModel()` 完成偏好同步与持久化。选中 Grok、Happy Horse 等非推荐模型时两按钮均不高亮（custom）；若某轨道推荐模型不在当前过滤后的列表中，点击无动作。图片模式不显示该切换。
 
@@ -446,6 +453,13 @@ Prompt 侧配套规则（`[输出语言要求]` 优先于「提示词用英文�
 切换视频模型时已上传图片的保留规则按模式区分：仅首尾帧模式下切到 `supports_last_frame=false` 的模型才裁剪到 1 张主图；全能参考模式切模型不删除参考图（该模式下模型天然不使用尾帧，`supports_last_frame` 与参考图数量无关，上限由各模型 `max_multi_ref_images` 在上传时限制）。
 Agent 视频模式下，主图和后续参考图都会等待上传完成并转换为 HTTP URL；发送给后端时按输入区显示顺序去重收集到 `image_urls`，避免 blob 预览地址或未上传完成的参考图遗漏。
 当前页面即时渲染的用户气泡统一通过 `collectCurrentMessageMedia()` 收集媒体，再由 `buildUserMessageContent()` 渲染；图片、视频、音频模式和 Agent 模式不再分别拼接预览 HTML。Agent 发送给后端的 `image_urls`、`video_urls`、`audio_urls` 也复用同一媒体集合，确保即时显示、请求 payload 和后端保存的增强版用户消息尽量一致。
+
+**媒体入库持久化守卫**（修复"上传中发送 → 刷新后图片丢失"）：消息内容会经 `/api/session/{id}/message` 原样落库，`blob:`/`data:` 本地预览地址刷新后失效，因此落库内容永不携带这类地址，三层防御：
+
+1. `renderMediaPreview()`（`buildUserMessageContent` 唯一的媒体渲染出口）以 `isReusableMediaUrl()` 守卫：url 不可持久化（blob:/data:）时输出占位文本 `media_not_persisted_hint`（"（媒体上传未完成，未能保存）"），不输出 `<img>/<video>/<audio>` 标签；
+2. `handleSend` 在 image/video 模式（agent 模式原有守卫不变）发送前限时等待图片上传完成（`waitForAgentImagesUploaded(10000)`），超时不阻断发送（生成请求走文件直传不依赖 serverUrl），未就绪图片由第 1 层落为占位文本；`submitVerificationAnswer`（验证回答不经 handleSend）同样先限时等待，减少 `collectAgentMediaPayload` 静默过滤未上传图导致模型少收图；
+3. `appendMessageToBackend()` 入口经 `stripNonPersistentMediaTags()` 兜底清洗：src 为 blob:/data: 的 img/video/audio 标签一律替换为占位文本，拦截任何绕过上游守卫的路径。
+
 纯视频参考文件上传到 `/api/upload-agent-video`，只进入 `video_urls` 流程，不会设置图片上传状态，也不会触发图片 HTTP URL 等待。
 
 会话历史从 `chat_messages` 恢复时依赖媒体标签重新渲染图片、视频和音频。`/api/session/{session_id}/task` 写入用户消息时必须把上传接口返回的 URL 拼入 `[图片N]（URL: ... thumb: ...）`、`[视频N]（URL: ...）`、`[音频N]（URL: ...）` 标签后再落库；上传接口已经根据 `server.is_local` 决定返回本地 URL 还是 CDN URL，历史持久化层只保存返回值，不重新判断或改写 CDN。
@@ -454,7 +468,7 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 
 #### 图片/视频模式
 
-图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。有本地文件，或重新编辑带回的参考图 URL 时走图片编辑（URL 放在 `ref_image_urls`）；否则走文生图。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。重新编辑带回的参考图没有 File 对象，图生视频按 URL 列表提交 `image_urls`。
+图片直接通过 `FormData` 上传到 `/api/text-to-image` 或 `/api/image-edit`。有本地文件，或重新编辑带回的参考图 URL 时走图片编辑（URL 放在 `ref_image_urls`）；否则走文生图。视频上传到 `/api/ai-app-run-image`（图生视频）或 `/api/ai-app-run`（文生视频）。重新编辑带回的参考图没有 File 对象，图生视频按 URL 列表提交 `image_urls`。图片/视频模式发送用户消息前同样限时等待图片上传完成；未就绪媒体在落库消息中以占位文本呈现（见上文"媒体入库持久化守卫"），不影响生成请求本身（参考图以文件本体随 FormData 直传）。
 
 #### 视频压缩
 
@@ -466,10 +480,16 @@ Agent 视频模式下，主图和后续参考图都会等待上传完成并转�
 - 压缩阈值：文件 > 10MB、短边 > 480px、总像素 < 409600 或超过最大时长
 - 支持 WebM (VP9/VP8) 和 MP4 格式
 - 超过最大时长的视频自动截断
+- **0 字节产物降级重试与回退**：个别浏览器（实测 360极速浏览器）的 MediaRecorder `isTypeSupported` 通过但编码器实际不吐数据（VP9 硬编静默失败，采集正常 `drewFrames>0` 但 `recordedBytes=0`），录制结果为 0 字节 Blob。处理链：首选编码 0 字节 → `vp8RetryMime()` 降级 VP8 变体重录一次 → 仍 0 字节则 `buildRecorderResult()` 回退上传原始文件（`compressed: false`，后端 `/api/upload-agent-video` 校验兜底）；关键节点（编码支持表、录制开始/停止、帧绘制计数、产物字节数、降级重试）均有 `[VideoCompressor]` 前缀的 console 日志便于定位
+- 后端 `/api/upload-agent-video` 对空文件、ffprobe 无法解析（损坏）的视频一律 400 拒绝并删除落盘文件，不再跳过校验当成功放行（曾致 0 字节 webm 入库 → 下游 ffmpeg EBML 解析失败 → 视频编辑任务缺参考视频被火山 400）
 
 #### @ 引用系统
 
 输入框支持 `@` 触发媒体引用下拉框，列出已上传的媒体文件。选中后插入引用标签到文本中，支持模糊搜索过滤。`mentionDropdown` 状态管理下拉框的显示、查询和选中索引。
+
+**资产胶囊镜像层**：@ 选择共享资产库图片后，输入框中以「缩略图 + 名称」胶囊直观呈现引用（纯文本 textarea 无法内嵌图片，由 `web/js/marketing_mention_chips.js` 在 textarea 上方盖同字距透明镜像层，把 `@资产:{id}` token 文本位置盖成胶囊，机制同 storyboard 的 `chat_mention_chips.js`）。选中下拉条目时 `insertMention` 先经 `MAMentionChips.register` 注入资产池（零请求），`inputText` watcher（`syncMentionChips`）幂等重渲染镜像层——发送清空、URL 参数/meta.prompt 恢复等所有赋值路径都经 watcher 覆盖。胶囊支持悬停大图预览（`data-hover-preview`）、点击定位光标到 token 之后、原子删除（退格整枚删除、token 中间插入被阻止）、折行截断自动独占一行；历史恢复等池外 token 走 `AssetLibrary.api('/assets/{id}')` 详情兜底，每 id 只尝试一次，失败退化纯文本。底层文本仍是 token 本身，提交链路（`handleSend` → `resolveMentionTokens`）不变。
+
+**LLM 图片工具仅接受本站相对路径**：@ 引用还原出的 `/upload/...` 相对路径进入对话后，`edit_image` / `validate_image_url`（角色/场景/道具 reference_image）等图片工具只接受本站 `/upload/` 资源并统一归一化为相对路径（`normalize_site_upload_image_url`），不再要求 http/https 绝对 URL——绝对 URL 形态会诱发 LLM 被拒后拼造域名前缀（13572 事故），`/api/image-edit` 落库前同样归一化防止绝对 URL 随「重新编辑/重新生成」回灌扩散。详见 docs/backend/asset_library.md §5。
 
 ### 算力显示
 
@@ -749,7 +769,18 @@ Agent 模式的消息通过 PM Agent（`pm_agent.py`）处理：
 - 专家通过 `script_writer_core/config/agents_config.json` 中的 `expert_type` 声明所属模式；剧本 PM 只允许 `script` 类型专家，营销 PM 只允许 `marketing` 类型专家
 - `call_agent.AgentName` 的工具枚举会按当前 PM 的 `allowed_expert_types` 动态过滤，`_handle_agent_call()` 也会做后端校验，避免营销模式误调用剧本专家或反向串线
 - 营销视频克隆必须走 `sop-video-clone` 并委托 `marketing-video`；数字人口播必须走 `sop-digital-human` 并委托 `digital-human-creator`，且数字人专家必须实际调用 `generate_digital_human` 并返回非空 `project_ids` 才算提交成功
-- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini）、Seedance 2.5（seedance2.5）和 MiniMax H3 参考生视频（MiniMax H3 / minimax_h3-r2v）；白名单单一事实来源为 `config/unified_config.py::VIDEO_CLONE_DRIVER_KEYS`。用户选择普通 MiniMax H3（首尾帧）做克隆时，由 `resolve_video_clone_task_config` 自动改用 MiniMax H3 参考生视频。创建营销任务时，界面选中的视频模型会写入全部兼容 video 槽位（含 `video.reference_to_video`），`image_to_video` 工具优先使用 `model_source=request` 的快照，避免参考槽里初始化留下的 MiniMax H3 覆盖界面上的 Seedance 2.5。专家提示词必须通过 `video_urls` 传入参考视频。人脸遮盖对 Seedance 2.0 / Fast / Mini / 2.5 显示「是否处理人脸」（`SEEDANCE_FACE_MASK_DRIVER_KEYS`，不含 MiniMax H3）；克隆提示词基线**不含**「将人脸位置的黑色方框修改为真人人脸」句，该句由 seedance 系 driver 在执行时按 pipeline steps 的素材实际遮盖状态动态决定：volcengine / oversea / kkidc（消费遮盖结果，画面有黑框）自动追加，huimengi（网关 `human_review` 自动处理人脸，使用原始素材）自动移除，保证供应商轮换（跨实现方重试）下提示词与素材状态始终一致。公共逻辑位于 `task/visual_drivers/face_mask_prompt.py`，常量为 `config/constant.py::FaceMaskPromptConstants`。Seedance 2.5 克隆（带参考视频）时驱动将 `ratio` 改为 `adaptive`、`duration` 改为 `-1`，输出跟随参考视频，避免火山 `TaskTypeConstraint`。
+- 营销视频克隆当前支持 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini）、Seedance 2.5（seedance2.5）、MiniMax H3 参考生视频（MiniMax H3 / minimax_h3-r2v）和万相3.0 参考生视频（wan3_r2v，2026-11-12 加入，参考视频硬上限：最多 5 段且总时长 ≤15 秒、参考总时长+输出时长 ≤30 秒）；白名单单一事实来源为 `config/unified_config.py::VIDEO_CLONE_DRIVER_KEYS`。用户选择普通 MiniMax H3（首尾帧）做克隆时，由 `resolve_video_clone_task_config` 自动改用 MiniMax H3 参考生视频；选择万相3.0 文生视频时自动改用万相3.0 参考生视频（`VIDEO_CLONE_FAMILY_FALLBACK`）。创建营销任务时，界面选中的视频模型会写入全部兼容 video 槽位（含 `video.reference_to_video`），`image_to_video` 工具优先使用 `model_source=request` 的快照，避免参考槽里初始化留下的 MiniMax H3 覆盖界面上的 Seedance 2.5。专家提示词必须通过 `video_urls` 传入参考视频。人脸遮盖对 Seedance 2.0 / Fast / Mini / 2.5 显示「是否处理人脸」（`SEEDANCE_FACE_MASK_DRIVER_KEYS`，不含 MiniMax H3）；克隆提示词基线**不含**「将人脸位置的黑色方框修改为真人人脸」句，该句由 seedance 系 driver 在执行时按 pipeline steps 的素材实际遮盖状态动态决定：volcengine / oversea / kkidc（消费遮盖结果，画面有黑框）自动追加，huimengi（网关 `human_review` 自动处理人脸，使用原始素材）自动移除，保证供应商轮换（跨实现方重试）下提示词与素材状态始终一致。公共逻辑位于 `task/visual_drivers/face_mask_prompt.py`，常量为 `config/constant.py::FaceMaskPromptConstants`。Seedance 2.5 克隆（带参考视频）时驱动将 `ratio` 改为 `adaptive`、`duration` 改为 `-1`，输出跟随参考视频，避免火山 `TaskTypeConstraint`。
+
+### 任务失败通知大模型（2026-11-12）
+
+营销会话的视频生成任务到达 FAILED 终态（企业版换供应商重试耗尽、无可用候选）后，失败原因会回传给发起会话的大模型，由 PM 主动向用户解释并按 SOP 引导（音频版权失败 → 询问是否去音轨重试）。此前终态失败只有前端轮询 `reason` 展示，大模型完全不知道任务失败（用户追问"为什么失败"时模型无上下文）。
+
+- **钩子**：`task/visual_task.py::register_agent_failure_notifier`（仿 `register_enterprise_failure_handler` 注册模式）。`_handle_task_failure` 在社区版 FAILED 落库 CAS 获胜后以 daemon 线程调用通知器；企业版重试接管的任务（进 WAITING_BEFORE_FINISH）提前 return 不会触发——只有真正终态失败才通知。社区版不注册，零影响。
+- **通知器**：`enterprise/services/agent_failure_notifier.py::notify_agent_task_failure`。project_id → session_id 反查走 chat_messages pending 行的幂等键 `pending:{session_id}:{event_type}:{ids}`（前端 `replace_pending_task` 原位替换 content 后幂等键仍保留），兜底查未替换行的 `__PENDING_TASK__` content；仅 `session_type=2`（营销会话）注入；防重复标记 `task-failed-notify:{project_id}` 随消息文本落库。
+- **触发一轮**：通知器内部 HTTP 自调用 `POST /api/session/{session_id}/task`（复用完整建任务链路：消息落库、SSE、PM daemon 线程执行），auth_token 取 `chat_sessions.auth_token` 走 Authorization 头（X3 红线：不拼 URL）。大模型读到 `[系统通知] 视频生成任务（ID: xxx）生成失败：{reason}` 后按 `sop-video-clone` 引导用户。
+- **去音轨重试**：`enterprise/tools/video_tools.py::strip_reference_audio`（LLM 可见工具）。ffmpeg `-c:v copy -an` 流复制去音轨（不重编码），本系统 `/upload/` URL 直接本地映射、远程 URL 下载临时文件（try/finally 清理）；本地环境直出 `/upload/marketing/video/strip_audio/` URL，生产上传 CDN（30 天签名，失败降级本地 URL）。大模型用新 URL 作为 `video_urls` 重新提交克隆。超时常量 `config/constant.py::STRIP_AUDIO_*`。
+- 测试：`tests/task/test_agent_failure_notifier.py`（钩子注册/异常吞掉/反查双通道/营销过滤/幂等跳过/Authorization 头断言）。
+
 - 本地生活营销视频（餐饮、酒旅、旅游、丽人、休闲娱乐、到店零售、生活服务等）仍走 `sop-video-generation` 并委托 `marketing-video`。此类视频推荐 10~15秒，且推荐使用 Seedance2.0、Seedance2.0 Fast、Seedance2.0 Mini（seedance2.0-mini），因为该系列更适合完整短视频叙事，并能更好表达 BGM、TTS 口播和音效
 - Seedance2.0 系列是普通本地生活视频的推荐模型，不是全局硬限制。若用户当前选择其他视频模型，PM Agent 可以提醒效果差异，但不能拒绝、不得拒绝继续调用当前模型；只有视频克隆等明确限制场景才按硬限制处理
 - 本地生活视频提示词由 `enterprise/skills/marketing-video/SKILL.md` 组织为画面提示词、口播旁白、BGM 与音效提示、店招/品牌文字要求；涉及中文店名、中文口播和招牌文字时可使用中文结构化提示词，避免翻译破坏品牌信息
@@ -845,3 +876,9 @@ Lightbox 中"做同款"调用 `GET /api/marketing-inspirations/{id}/template` �
 营销页使用 `marketing_ui` 下五个独立槽位：文生图、图片编辑、文生视频、图生视频、参考视频。当前模型下拉框会按真实输入切换槽位；选择结果通过 `GET/PUT /api/marketing/media-preferences` 持久化，不再让文生/编辑或普通/参考视频共享一个运行时模型值。
 
 每次创建 Agent 任务时，五个槽位全部写入 `agent_tasks.execution_context_json.generation_snapshots`。工具按真实输入选槽位并强制覆盖 `task_type`，最终快照同时写入 `ai_tools.extra_config.generation_snapshot`。任务提交后再修改界面偏好不会影响运行中任务。
+
+视频模式下 `hasUploadedImage` 由 true→false（用户删图，或发送成功后 `clearAllMedia` 清空媒体）时，选中模型按以下顺序落定，避免界面被"自动换模型"：
+
+1. 当前模型本身在文生视频列表（双分类，如 Seedance 2.5）→ 保留用户选择；
+2. 否则优先同家族文生模型（`findSameFamilyTextToVideoModel`：如 MiniMax H3 首尾帧 `minimax_h3_image_to_video` → MiniMax H3 (文生) `minimax_h3_text_to_video`），避免直接落到 `video.text_to_video` 槽位偏好而跨厂商跳模型（事故：用户选 MiniMax H3 点生成后界面被换成槽位偏好的 Seedance 2.5，实际生成仍是 MiniMax H3）；
+3. 无家族匹配才回退：槽位偏好 → `localStorage marketing_selected_t2v_model` → 列表第一项。

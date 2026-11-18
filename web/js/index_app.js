@@ -6,6 +6,7 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
+    { path: '/video-edit', name: 'video-edit', component: VideoEdit },
     { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
     { path: '/digital-human', name: 'digital-human', component: DigitalHuman },
     { path: '/skill-config', name: 'skill-config', component: SkillConfig }
@@ -124,6 +125,9 @@
       selectedSubPlan: null,
       lastOrderIsUpgrade: false,       // 最近一笔订阅订单是否为套餐升级单（支付成功提示用）
       subAgreed: false,
+      // 支付面板底部超出 #rechargeModal 可视区（屏幕不够高被遮挡）才值得显示引导浮条；
+      // 面板已完整露出时提醒反而碍事。由 updateSubPayHint 在选中套餐/滚动/勾选后测量
+      subPayPanelHidden: false,
       subAgreementError: false,
       subPaymentLoading: false,
       subPaymentError: '',
@@ -177,7 +181,12 @@
       userSettingsLoading: false,
       userSettingsError: '',
       userSettingsSuccess: '',
-      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken'
+      userSettingsTab: 'preferences', // 'profile' | 'preferences' | 'creationDefaults' | 'apitoken' | 'aigc'
+      // AIGC 显式标识（明水印）全局开关（用户设置"内容标识"tab）
+      aigcWatermarkOff: false,      // true=用户已全局关闭明水印（scope=user opt-out 生效中）
+      aigcOptOutLoading: false,
+      aigcOptOutError: '',
+      aigcOptOutSuccess: '',
       // 个人资料（昵称）编辑
       nicknameInput: '',
       profileSaving: false,
@@ -190,7 +199,7 @@
       isCommunityEdition: false,
       isEditionLoaded: false,
       zjtTokenEnabled: false, // 管理员是否开启了智剧通Token
-      // 创作默认偏好（剧本/营销世界默认 LLM + 生图；与 CLI media_pref 隔离）
+      // 创作偏好（剧本/营销世界默认 LLM + 生图；与 CLI media_pref 隔离）
       creationDefaultsLoading: false,
       creationDefaultsError: '',
       creationDefaultsSuccess: '',
@@ -324,7 +333,13 @@
           }
         }
       }
-      
+
+      // ?aigc_tab=1：营销智能体等页面"查看内容标识设置"直达入口（AIGC 明水印合规引导）。
+      // 此处仅暂存标记，登录态就绪后由 maybeOpenPendingAigcSettings 打开设置弹窗。
+      if (urlParams.get('aigc_tab') === '1') {
+        sessionStorage.setItem('pending_aigc_settings', '1');
+      }
+
       this.authToken = urlParams.get('auth_token') || '';
       this.userPhone = urlParams.get('phone') || '';
       this.userEmail = urlParams.get('email') || '';
@@ -384,6 +399,8 @@
         this.fetchUserRole();
         this.fetchCheckinStatus();
         this.fetchChannelLevel();
+        // ?aigc_tab=1 直达：已登录则立即打开"内容标识"设置
+        this.maybeOpenPendingAigcSettings();
       } else {
         // 无 localStorage token：即使 HttpOnly cookie 仍有效，也无法填 Form/JSON
         // 调用点。probe 若发现 cookie 有效则强制重新登录以完成双写；
@@ -426,11 +443,15 @@
       
       // 检查是否处于管理员模式
       this.isAdminMode = localStorage.getItem('admin_mode') === 'true';
-      
+
       // 已登录用户检查创作模式
       if (this.authToken && (this.userPhone || this.userEmail)) {
         this.checkCreationMode();
       }
+
+      // 窗口尺寸/屏幕旋转改变充值弹窗可视高度，浮条显隐需重测
+      this._subPayHintResizeHandler = () => { this.updateSubPayHint(); };
+      window.addEventListener('resize', this._subPayHintResizeHandler);
     },
     computed: {
       route(){ return this.$route },
@@ -441,6 +462,7 @@
         if (this.route.name === 'image-to-video') return this.$t('page_title_image_to_video');
         if (this.route.name === 'ai-script-gen') return this.$t('page_title_ai_script_gen');
         if (this.route.name === 'video-enhance') return this.$t('page_title_video_enhance');
+        if (this.route.name === 'video-edit') return this.$t('page_title_video_edit');
         if (this.route.name === 'audio-generate') return this.$t('page_title_audio_generate');
         return this.$t('page_title_ai_tools');
       },
@@ -547,7 +569,11 @@
         if (newVal && this.captchaEnabled && this.captchaPrefix) {
           this.$nextTick(() => { this.loadCaptchaSdk(); });
         }
-      }
+      },
+      // 选套餐（支付面板出现）与勾选/取消勾选（浮条条件、面板高度）都影响浮条显隐；
+      // 测量在 updateSubPayHint 内部 $nextTick 等 DOM 更新后进行
+      selectedSubPlan() { this.updateSubPayHint(); },
+      subAgreed() { this.updateSubPayHint(); },
     },
     methods: {
       goHome(){ this.$router.push({name:'list'}); },
@@ -1208,7 +1234,13 @@
               } else if(redirectUrl){
                 localStorage.removeItem('redirect_after_login');
               }
-              
+
+              // ?aigc_tab=1 直达：登录成功后打开"内容标识"设置（AIGC 合规引导）
+              this.maybeOpenPendingAigcSettings();
+
+              // 弹窗公告（popup=1）：登录成功后补检一次（DOMContentLoaded 时可能尚未登录）
+              if (window.AnnouncementPopup) window.AnnouncementPopup.maybeShow();
+
               // 登录成功后留在首页，检查模式选择
               this.checkCreationMode();
               // 注册后的官方微信群轻量引导（不阻塞主路径）
@@ -1505,6 +1537,87 @@
         this.loadApiToken();
       },
 
+      // ==================== AIGC 明水印全局开关（用户设置"内容标识"tab） ====================
+
+      switchToAigcTab() {
+        this.userSettingsTab = 'aigc';
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        this.loadAigcOptOutStatus();
+      },
+
+      // ?aigc_tab=1 直达：登录态就绪后打开设置弹窗并切到"内容标识"tab。
+      // 先 showUserSettingsModal 再 switchToAigcTab（show 会把 tab 重置回 preferences）。
+      maybeOpenPendingAigcSettings() {
+        if (sessionStorage.getItem('pending_aigc_settings') !== '1') return;
+        sessionStorage.removeItem('pending_aigc_settings');
+        if (!this.authToken && !this.cookieSession) return; // 未登录：等下次登录触发
+        this.showUserSettingsModal();
+        this.switchToAigcTab();
+      },
+
+      async loadAigcOptOutStatus() {
+        if (!this.authToken && !this.cookieSession) {
+          this.aigcOptOutError = '请先登录后再配置内容标识';
+          return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        try {
+          const response = await axios.get('/api/aigc/explicit-optout/status', {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !!response.data.opt_out;
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '加载标识状态失败';
+          }
+        } catch (error) {
+          console.error('Load AIGC optout status failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '加载标识状态失败';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
+      },
+
+      async toggleAigcWatermark(enable) {
+        // enable=true 恢复添加明水印（resume）；enable=false 全局关闭明水印（opt-out，第9条留痕）
+        if (!enable) {
+          const confirmed = confirm(
+            '确认全局关闭"AI生成"提示标识？\n\n' +
+            '· 生成图片、生成视频、数字人视频与语音合成后续不再添加画面/音频提示；\n' +
+            '· 您须自行承担发布、传播 AI 内容时的主动声明义务；\n' +
+            '· 本次变更将依法记录留存不少于 6 个月；\n' +
+            '· 文件元数据中的隐式标识始终保留（法律法规要求，不可关闭）。'
+          );
+          if (!confirmed) return;
+        }
+        this.aigcOptOutLoading = true;
+        this.aigcOptOutError = '';
+        this.aigcOptOutSuccess = '';
+        try {
+          const response = await axios.post('/api/aigc/explicit-optout', {
+            scope: 'user',
+            action: enable ? 'resume' : 'opt_out'
+          }, {
+            headers: { 'Authorization': `Bearer ${this.authToken}` }
+          });
+          if (response.data && response.data.success) {
+            this.aigcWatermarkOff = !enable;
+            this.aigcOptOutSuccess = response.data.message
+              || (enable ? '已恢复添加 AI 生成标识' : '已全局关闭 AI 生成标识');
+            setTimeout(() => { this.aigcOptOutSuccess = ''; }, 3000);
+          } else {
+            this.aigcOptOutError = (response.data && response.data.detail) || '操作失败';
+          }
+        } catch (error) {
+          console.error('Toggle AIGC watermark failed:', error);
+          this.aigcOptOutError = error?.response?.data?.detail || '操作失败，请稍后重试';
+        } finally {
+          this.aigcOptOutLoading = false;
+        }
+      },
+
       switchToCreationDefaultsTab() {
         this.userSettingsTab = 'creationDefaults';
         this.creationDefaultsError = '';
@@ -1541,7 +1654,7 @@
 
       async ensureCreationDefaultsLoaded() {
         if (!this.authToken && !this.cookieSession) {
-          this.creationDefaultsError = '请先登录后再配置创作默认偏好';
+          this.creationDefaultsError = '请先登录后再配置创作偏好';
           return;
         }
         if (this.creationDefaultsLoading) return;
@@ -1557,7 +1670,7 @@
           }
         } catch (error) {
           console.error('Load creation defaults failed:', error);
-          this.creationDefaultsError = error?.message || '加载创作默认偏好失败';
+          this.creationDefaultsError = error?.message || '加载创作偏好失败';
         } finally {
           this.creationDefaultsLoading = false;
         }
@@ -3370,6 +3483,58 @@
         this.subOrderId = '';
       },
 
+      // 「付款码在下方」浮条点击：平滑滚动充值弹窗内部滚动容器，完整露出支付面板
+      // （优先露出底部协议勾选行）。手动算 scrollTop 而不用 scrollIntoView：
+      // 后者会连带滚动弹窗背后的页面。仅点击触发，不自动滚动。
+      scrollToSubPayPanel() {
+        const scroller = document.getElementById('rechargeModal');
+        if (!scroller) return;
+        const panel = scroller.querySelector('.sub-payment-panel');
+        if (!panel) return;
+        let reduced = false;
+        try {
+          reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+        } catch (e) { /* 匹配失败按支持动画处理 */ }
+        const panelTop = panel.offsetTop; // offsetParent 即 #rechargeModal（position:relative）
+        const panelBottom = panelTop + panel.offsetHeight;
+        const viewTop = scroller.scrollTop;
+        const viewBottom = viewTop + scroller.clientHeight;
+        let target = viewTop;
+        if (panelTop < viewTop) target = Math.max(panelTop - 12, 0);
+        else if (panelBottom > viewBottom) target = Math.max(panelBottom - scroller.clientHeight + 16, 0);
+        if (target === viewTop) return; // 面板已完整可见，不触发滚动
+        const before = scroller.scrollTop;
+        scroller.scrollTo({ top: target, behavior: reduced ? 'auto' : 'smooth' });
+        // 兜底：部分内嵌 WebView 会整体忽略 smooth 滚动（调用即丢弃），
+        // 300ms 后位置纹丝未动才补一次即时滚动；真实浏览器动画已起步，不会触发
+        setTimeout(() => {
+          if (scroller.scrollTop === before && Math.abs(target - before) > 2) {
+            scroller.scrollTo({ top: target, behavior: 'auto' });
+          }
+        }, 300);
+      },
+
+      // 浮条只在支付面板底部被弹窗视口遮住时才有意义：屏幕够高面板已完整露出时，
+      // 「付款码在下方」的提醒与所见矛盾，反而引人下滚。测量面板底边是否超出
+      // #rechargeModal 可视下缘（4px 容差，贴边即视为完整露出）。选中套餐/勾选后经
+      // watcher 调用（内部等 DOM 更新），滚动与窗口尺寸变化经事件直接调用
+      updateSubPayHint() {
+        if (!this.selectedSubPlan || this.subAgreed) {
+          this.subPayPanelHidden = false;
+          return;
+        }
+        this.$nextTick(() => {
+          const scroller = document.getElementById('rechargeModal');
+          const panel = scroller && scroller.querySelector('.sub-payment-panel');
+          if (!scroller || !panel) {
+            this.subPayPanelHidden = false;
+            return;
+          }
+          const panelBottom = panel.offsetTop + panel.offsetHeight;
+          this.subPayPanelHidden = panelBottom > scroller.scrollTop + scroller.clientHeight + 4;
+        });
+      },
+
       // Native 扫码支付后轮询订单状态，支付成功自动提示并刷新订阅状态/算力
       startSubPayPolling() {
         this.stopSubPayPolling();
@@ -3756,6 +3921,10 @@
       // 移除管理员快捷键监听
       if (this._adminKeyHandler) {
         document.removeEventListener('keydown', this._adminKeyHandler);
+      }
+      // 移除支付引导浮条的窗口尺寸监听
+      if (this._subPayHintResizeHandler) {
+        window.removeEventListener('resize', this._subPayHintResizeHandler);
       }
     }
   };

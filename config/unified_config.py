@@ -221,6 +221,17 @@ MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER = {
 VIDEO_ENHANCE_COMPUTING_POWER = {
     seconds: power * 2 for seconds, power in MINIMAX_H3_DIGITAL_HUMAN_COMPUTING_POWER.items()
 }
+# 视频人物替换（AutoDL.Art minimax_h3_zm_titim）按时长算力（5-25 档）。
+# 2026-11-18 按用户实测调价重定价：autodl 高峰实扣 5s=0.66 元（0.132 元/秒，
+# 高于 11-16 页面标价 0.11 元/秒 20%，原表每单亏 ~15%）→ ceil(秒×0.132/0.04)
+# = ceil(秒×3.3)，毛利 0~3%；空闲时段（00:00-08:00）为利润冗余。
+# 输出仅 768p 一档（竖/横跟随参考视频方向），无 480p 档。
+VIDEO_CHARACTER_REPLACE_COMPUTING_POWER = {
+    5: 17, 6: 20, 7: 24, 8: 27, 9: 30, 10: 33,
+    11: 37, 12: 40, 13: 43, 14: 47, 15: 50,
+    16: 53, 17: 57, 18: 60, 19: 63, 20: 66,
+    21: 70, 22: 73, 23: 76, 24: 80, 25: 83,
+}
 
 # AI 视频高清修复「用户可选参数」schema（配置驱动，前端按此渲染参数表单）。
 # 这是参数的唯一事实来源：
@@ -308,6 +319,7 @@ class TaskCategory:
         'IMAGE_TO_VIDEO': '图生视频',
         'TEXT_TO_IMAGE': '文生图',
         'VISUAL_ENHANCE': '视觉增强',
+        'VIDEO_EDIT': '视频编辑',
         'AUDIO': '音频',
         'DIGITAL_HUMAN': '数字人',
         'OTHER': '其他',
@@ -317,6 +329,7 @@ class TaskCategory:
     IMAGE_TO_VIDEO = 'image_to_video'
     TEXT_TO_IMAGE = 'text_to_image'
     VISUAL_ENHANCE = 'visual_enhance'
+    VIDEO_EDIT = 'video_edit'
     AUDIO = 'audio'
     DIGITAL_HUMAN = 'digital_human'
     OTHER = 'other'
@@ -1491,6 +1504,8 @@ class DriverImplementation:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（两步异步：提交 /api/v1/comfyui/comfyui_workflow/{workflow_id} + 轮询 result/{task_id}）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 'minimax_h3_reference_autodl_v1'      # 参考生视频（minimax_h3_zm_u24，9图+3音频）
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 'minimax_h3_first_last_autodl_v1'    # 首尾帧（minimax_h3_lightx2v，首尾帧双必填）
+    # 视频人物替换（minimax_h3_zm_titim，参考视频必填 + 最多 9 参考图，5-25s）
+    MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 'minimax_h3_character_replace_autodl_v1'
     MINIMAX_H3_CHENYU_V1 = 'minimax_h3_chenyu_v1'                          # 图生视频仅首帧（晨羽智云工作流 API v2）
 
     # MiniMax H3 数字人
@@ -1761,6 +1776,7 @@ class DriverImplementationId:
     # MiniMax H3 AutoDL.Art ComfyUI 工作流（参考生 zm_u24 / 首尾帧 lightx2v）
     MINIMAX_H3_REFERENCE_AUTODL_V1 = 108
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
+    MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 111
     MINIMAX_H3_CHENYU_V1 = 110
 
 
@@ -1845,6 +1861,7 @@ IMPLEMENTATION_TO_ID = {
     'minimax_h3_keyframe_ref_runninghub_v1': DriverImplementationId.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,
     'minimax_h3_reference_autodl_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_AUTODL_V1,
     'minimax_h3_first_last_autodl_v1': DriverImplementationId.MINIMAX_H3_FIRST_LAST_AUTODL_V1,
+    'minimax_h3_character_replace_autodl_v1': DriverImplementationId.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
     'minimax_h3_chenyu_v1': DriverImplementationId.MINIMAX_H3_CHENYU_V1,
     'digital_human_minimax_h3_runninghub_v1': DriverImplementationId.DIGITAL_HUMAN_MINIMAX_H3_RUNNINGHUB_V1,
     'wan3_video_dashscope_v1': DriverImplementationId.WAN3_VIDEO_DASHSCOPE_V1,
@@ -2016,6 +2033,9 @@ class DriverKey:
     # 视频高清修复
     VIDEO_ENHANCE = 'video_enhance'
 
+    # 视频编辑（人物替换等，视频进视频出）
+    VIDEO_CHARACTER_REPLACE = 'video_character_replace'
+
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_IMAGE_EDIT = 'qwen_multi_angle_image_edit'
 
@@ -2084,11 +2104,13 @@ VIDEO_CLONE_DRIVER_KEYS = frozenset({
     DriverKey.SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO,
     DriverKey.SEEDANCE_2_5_IMAGE_TO_VIDEO,
     DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+    DriverKey.WAN3_REFERENCE_TO_VIDEO,
 })
 
 # 用户选了同系列但不支持参考视频的模型时，视频克隆落到可克隆型号
 VIDEO_CLONE_FAMILY_FALLBACK = {
     DriverKey.MINIMAX_H3_IMAGE_TO_VIDEO: DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
+    DriverKey.WAN3_TEXT_TO_VIDEO: DriverKey.WAN3_REFERENCE_TO_VIDEO,
 }
 
 
@@ -2233,6 +2255,7 @@ class TaskTypeId:
         'VIDU_Q3_IMAGE_TO_VIDEO': 'Vidu Q3 图生视频',
         'VIDU_Q3_REFERENCE_TO_VIDEO': 'Vidu Q3 参考生视频',
         'VIDU_Q3_TEXT_TO_VIDEO': 'Vidu Q3 文生视频',
+        'VIDEO_CHARACTER_REPLACE': '视频人物替换',
     }
     # 图片编辑
     GEMINI_2_5_FLASH_IMAGE = 1
@@ -2283,6 +2306,9 @@ class TaskTypeId:
     VIDU_Q3_REFERENCE_TO_VIDEO = 44
     MINIMAX_H3_TEXT_TO_VIDEO = 45
     MINIMAX_H3_KEYFRAME_REF_TO_VIDEO = 50
+
+    # 视频编辑
+    VIDEO_CHARACTER_REPLACE = 54
 
 
     # 图片/视频 增强
@@ -2860,7 +2886,13 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         driver_name=DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO,
         implementation=DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
         implementations=[
-            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub（默认）
+            # 首帧参考混合实现方在没有参考视频时是参考生默认（排序首位）：同一混合 webapp
+            # 点名时锁帧（KFRef 变体）、没点名全参考图（Ref2VA 变体），见
+            # resolve_h3_prompt_variant。它和 AutoDL 参考生都没有参考视频槽，
+            # 带 video_path 时选择阶段跳过，落到有视频槽的 RunningHub 参考生。
+            # 用户固定了无视频槽的实现方时不静默换供应商。
+            DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # RunningHub 首帧参考（混合 webapp，默认）
+            DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,   # RunningHub 参考生（重试/固定备选）
             DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,       # AutoDL.Art 参考生（zm_u24，9图+3音频）
         ],
         computing_power=0,
@@ -2871,7 +2903,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=36,
         supported_image_modes=[ImageMode.MULTI_REFERENCE],  # 多参考图模式
         supports_last_frame=False,
-        max_multi_ref_images=9,  # 最多 9 张参考图
+        max_multi_ref_images=9,  # 最多 9 张参考图；首帧参考混合实现方选中时服务端裁到 3 张（两端保留）
         supports_ref_audio_video=True,  # 支持参考音频（≤2）和参考视频（≤2）
         supports_voice_input=True,  # 参考生自动带入角色音色（LoadAudio ≤2）
         power_modifiers=[
@@ -2935,13 +2967,17 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_duration=5,
         default_image_mode=ImageMode.MULTI_REFERENCE,
         sort_order=38,
-        # 画布仍是参考模式。只有提示词点名 @首帧图/@尾帧图 时，前端把 task_id 换成这个隐藏任务。
+        # 历史任务收尾专用：新提交不再创建类型 50（首帧参考混合实现方已挂进类型 37 的
+        # implementations）。在途 type=50 行仍靠 implementation=100 / 本配置找驱动轮询。
         supported_image_modes=[ImageMode.MULTI_REFERENCE],
         supports_last_frame=False,
         max_multi_ref_images=3,
         supports_ref_audio_video=True,  # 最多 2 路音频（节点 157/188）；参考视频由驱动丢弃
         supports_voice_input=True,
         hidden=True,
+        # 代码级硬禁用：拒绝新的类型 50 创建（enabled=False 不能被 implementation_power_config
+        # 重新打开）。旧页面仍提交 minimax_h3_kfr 时由提交入口翻译成类型 37 + 混合实现方。
+        enabled=False,
         power_modifiers=[
             PowerModifier(
                 attribute='resolution',
@@ -3654,6 +3690,26 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         # 基础接口已接入。模型选择器先隐藏，避免没有上传入口时被选中。
         hidden=True,
         sort_order=52,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.VIDEO_CHARACTER_REPLACE,
+        key='video_character_replace',
+        short_key='video_char_replace',
+        name='视频人物替换',
+        model_name='视频人物替换',
+        variant_label='MiniMax H3',
+        category=TaskCategory.VIDEO_EDIT,
+        provider=TaskProvider.AUTODL,
+        driver_name=DriverKey.VIDEO_CHARACTER_REPLACE,
+        implementation=DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1,
+        implementations=[DriverImplementation.MINIMAX_H3_CHAR_REPLACE_AUTODL_V1],
+        # 按输出秒数计费（5-25 档），表见 VIDEO_CHARACTER_REPLACE_COMPUTING_POWER
+        computing_power=VIDEO_CHARACTER_REPLACE_COMPUTING_POWER,
+        supported_durations=sorted(VIDEO_CHARACTER_REPLACE_COMPUTING_POWER),
+        default_duration=5,
+        # 视频编辑类：参考视频必填（成片动作/运镜/原声跟随视频）+ 最多 9 张角色参考图
+        supported_ratios=[],
+        sort_order=53,
     ),
 
     # ==================== 音频 ====================
@@ -4396,12 +4452,13 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
     ),
     ImplementationConfig(
         name='minimax_h3_keyframe_ref_runninghub_v1',
-        display_name='RunningHub',
+        display_name='RunningHub（首帧参考）',
         driver_class='MinimaxH3KeyframeRefRunninghubV1Driver',
         default_computing_power=MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER,
         enabled=True,
-        description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）',
-        sort_order=5207.0,
+        description='RunningHub MiniMax H3 首帧参考混合生视频（webapp 2108549232725680129，3 个图片槽 + 2 路音频）。挂载在参考生任务下，仅提示词点名「图N是首帧/尾帧」时兼容',
+        # 排在参考生实现方（5205/5208）之前：未设偏好且点名首尾帧时，默认走能锁帧的混合模型
+        sort_order=5204.0,
         required_config_keys=['runninghub.api_key'],
         supported_video_resolutions=[
             {'value': VideoResolution.P480, 'label': VideoResolution.P480},
@@ -4466,6 +4523,24 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
                 default=1.0
             )
         ]
+    ),
+    ImplementationConfig(
+        name='minimax_h3_character_replace_autodl_v1',
+        display_name='AutoDL.Art',
+        driver_class='MinimaxH3CharReplaceAutodlV1Driver',
+        default_computing_power=VIDEO_CHARACTER_REPLACE_COMPUTING_POWER,
+        enabled=True,
+        description='AutoDL.Art MiniMax H3 视频人物替换（工作流 minimax_h3_zm_titim，参考视频必填 + 最多 9 参考图，5-25s，768p 竖/横跟随视频方向，原声保留）',
+        sort_order=5210.0,
+        # 任务类型 54 原生供应商即 AutoDL，仍显式标注（口径同上，防密钥池误伤）
+        provider=TaskProvider.AUTODL,
+        required_config_keys=['autodl.api_key'],
+        # 输出仅 768p 一档（竖/横跟随参考视频方向，端点 ffprobe 探测后写入 extra_config）
+        supported_video_resolutions=[
+            {'value': VideoResolution.P720, 'label': VideoResolution.P720},
+        ],
+        default_video_resolution=VideoResolution.P720,
+        supported_durations=list(range(5, 26)),
     ),
     # MiniMax H3 图生视频 晨羽智云工作流（两步异步：submit + run/info 轮询，媒体直接传公网 URL）
     ImplementationConfig(

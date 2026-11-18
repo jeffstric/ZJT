@@ -8,7 +8,8 @@ import aiohttp
 import asyncio
 from pathlib import Path
 
-from config.constant import DOWNLOAD_WRITE_CHUNK_TIMEOUT
+from config.constant import DOWNLOAD_WRITE_CHUNK_TIMEOUT, AIGC_MARK_TIMEOUT_SECONDS
+from utils.aigc_marking import mark_file_for_task
 from utils.download_io_pool import get_download_io_executor
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -305,6 +306,22 @@ class MediaCacheManager:
                 relative_path = file_path.relative_to(self.root_dir)
                 local_url = f"/{relative_path.as_posix()}"
 
+                # AIGC 隐式标识写入（深度合成合规，《标识办法》第5条，docs/compliance/aigc_labeling_plan.md）：
+                # 所有生成产物落盘的汇聚点，一处挂点覆盖全部生成驱动链路。
+                # 失败不阻断交付（mark_file_for_task 内部全容错）；wait_for 防 ffmpeg 卡死；
+                # 标记完成先于 CDN 上传/终态回写（transition_with_cdn_sync 在下载成功后触发），
+                # 保证 CDN 对象与本地文件均已携带标识。幂等：重试/重复落盘不重复写。
+                try:
+                    await asyncio.wait_for(
+                        asyncio.to_thread(mark_file_for_task, str(file_path), task_id, media_type),
+                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        f"AIGC 标识写入超时(>{AIGC_MARK_TIMEOUT_SECONDS}s，不阻断交付): {file_path}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"AIGC 标识写入异常(不阻断交付): {file_path}: {e}")
+
                 logger.info(
                     f"媒体文件缓存成功: {local_url} (大小: {file_size} bytes"
                     + (f", 期望: {expected_size} bytes" if expected_size is not None else "")
@@ -404,6 +421,20 @@ class MediaCacheManager:
             file_bytes = b64.b64decode(data)
             with open(file_path, 'wb') as f:
                 f.write(file_bytes)
+
+            # AIGC 隐式标识写入（深度合成合规，《标识办法》第5条）：
+            # 与 download_and_cache 的 HTTP 下载路径对齐——data URL 落盘同样是生成产物
+            # 汇聚点（gpt_image / gemini_image 等同步驱动经此落盘），此前缺挂点导致
+            # 该链路产物（尤其 opt-out 用户跳过显式烧录后）完全无隐式标识。
+            # 本方法为同步函数，调用方均为 sync worker 子进程内的同步驱动方法，
+            # 直接调用不涉事件循环；图片格式走 Pillow/字节级写入（无 ffmpeg），
+            # mark_file_for_task 内部全容错 + 幂等，失败不阻断交付。
+            media_hint = 'image' if mime_part.startswith('image/') else (
+                'video' if mime_part.startswith('video/') else 'auto')
+            try:
+                mark_file_for_task(str(file_path), task_id, media_hint)
+            except Exception as mark_err:  # noqa: BLE001
+                logger.warning(f"data URL 落盘 AIGC 标识写入异常(不阻断交付): {file_path}: {mark_err}")
 
             # 生成本地URL（相对于项目根目录）
             relative_path = file_path.relative_to(self.root_dir)

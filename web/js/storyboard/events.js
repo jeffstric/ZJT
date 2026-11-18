@@ -56,7 +56,6 @@ import {
     frameMentionErrorMessage,
     insertChatMention,
     promptHasFrameMention,
-    shouldUseH3KeyframeRef,
     stripMentionTrigger,
 } from './frame_mention.js';
 import { syncChatMentionChips, setupHoverPreview, shortImageId } from './chat_mention_chips.js';
@@ -486,10 +485,10 @@ export function validateCandidateUploadFile(file, assetType) {
             ? ''
             : t('msg_video_format_unsupported', '视频仅支持 MP4、WebM 格式');
     }
-    const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const imageExtensions = ['.jpg', '.jpeg', '.jfif', '.png', '.gif', '.webp'];
     return imageExtensions.includes(extension) || String(file?.type || '').startsWith('image/')
         ? ''
-        : t('msg_image_format_unsupported', '仅支持 JPG、PNG、GIF、WebP 图片');
+        : t('msg_image_format_unsupported', '仅支持 JPG、PNG、GIF、WebP、JFIF 图片');
 }
 
 function isSceneCandidateTaskRunning(status) {
@@ -1122,7 +1121,8 @@ function syncChatMentionInsert(inserted) {
     syncChatMentionChips();
 }
 
-/** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。 */
+/** 参考模式点名首尾帧但缺图时，在创建任务之前拦住。返回 false 表示已提示。
+ *  实现方选择（点名时走首帧参考混合模型）由服务端兼容探测决定，前端不再换绑。 */
 function guardFrameMentions(promptText) {
     if (state.videoImageMode !== 'multi_reference') return true;
     const frames = submitVideoFrameUrls(promptText);
@@ -1137,9 +1137,6 @@ function guardFrameMentions(promptText) {
     if (code) {
         notify(frameMentionErrorMessage(code, t));
         return false;
-    }
-    if (shouldUseH3KeyframeRef(state.videoImageMode, model, promptText)) {
-        showToast(t('msg_h3_keyframe_ref_route', '本次使用 MiniMax H3 首帧参考混合模型'), 'info');
     }
     return true;
 }

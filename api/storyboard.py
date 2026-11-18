@@ -49,6 +49,7 @@ from config.constant import (
 )
 from config.config_util import get_config, get_dynamic_config_value
 from config.unified_config import (
+    DriverImplementation,
     SceneVideoType,
     UnifiedConfigRegistry,
     TaskTypeId,
@@ -99,7 +100,6 @@ from utils.resource_access import (
 from model.users import UsersModel
 from services.storyboard_agent_cli_service import StoryboardCliError
 from services.storyboard_frame_mention import (
-    h3_keyframe_ref_task_id,
     prompt_has_frame_mention,
     read_explicit_frame_url,
 )
@@ -723,29 +723,34 @@ def _compact_join(parts: List[Optional[str]], sep: str = "\n") -> str:
     return sep.join(str(part).strip() for part in parts if str(part or '').strip())
 
 
-def _normalize_dialogue_text_for_match(text: Any) -> str:
-    """规范化台词文本，用于判断视频提示词是否已包含该台词。"""
-    s = str(text or "")
-    # 去空白
-    s = re.sub(r"\s+", "", s)
-    # 统一常见引号/省略号变体
-    for src, dst in (
-        ("“", '"'),
-        ("”", '"'),
-        ("‘", "'"),
-        ("’", "'"),
-        ("「", '"'),
-        ("」", '"'),
-        ("『", '"'),
-        ("』", '"'),
-        ("…", "..."),
-        ("⋯", "..."),
-        ("——", "-"),
-        ("—", "-"),
-        ("－", "-"),
-    ):
-        s = s.replace(src, dst)
-    return s
+_DIALOGUE_QUOTE_RE = re.compile(r'[「『“"]([^」』”"]{1,200})[」』”"]')
+
+
+def _dialogue_cjk_key(text: Any) -> str:
+    """台词匹配键：只留 CJK/字母/数字并小写，与前端 normalizeDialogueTextForMatch 一致。"""
+    return re.sub(
+        r"[^0-9A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+",
+        "",
+        str(text or ""),
+    ).lower()
+
+
+def _utterance_already_verbatim(speech: str, rest_text: str) -> bool:
+    """整句台词是否已出现在引号里，或单独占一整行。
+
+    动作里夹着同样几个字不算已经写过。短于 4 个匹配字符的台词不参与去重。
+    """
+    key = _dialogue_cjk_key(speech)
+    if not key or len(key) < 4:
+        return False
+    rest = str(rest_text or "")
+    for match in _DIALOGUE_QUOTE_RE.finditer(rest):
+        if _dialogue_cjk_key(match.group(1)) == key:
+            return True
+    for line in rest.splitlines():
+        if _dialogue_cjk_key(line) == key:
+            return True
+    return False
 
 
 def _format_dialogues_for_video_prompt(
@@ -756,7 +761,8 @@ def _format_dialogues_for_video_prompt(
 ) -> str:
     """将缺失的完整台词幂等追加为「对话：」块，供 video_prompt 使用。
 
-    - 已在 existing_prompt 中出现的台词不重复追加；
+    - 引号里已经有整句，或该句单独占正文一整行时，不重复追加；
+    - 动作里只是夹着同样几个字，仍然追加；
     - 全部已包含则返回空字符串；
     - 角色名优先用 dialogue.character_name，其次 character_name_map。
     """
@@ -766,7 +772,6 @@ def _format_dialogues_for_video_prompt(
         return ""
 
     name_map = character_name_map or {}
-    existing_norm = _normalize_dialogue_text_for_match(existing_prompt)
     lines: List[str] = []
 
     for item in dialogues:
@@ -775,10 +780,7 @@ def _format_dialogues_for_video_prompt(
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        text_norm = _normalize_dialogue_text_for_match(text)
-        if not text_norm:
-            continue
-        if existing_norm and text_norm in existing_norm:
+        if _utterance_already_verbatim(text, existing_prompt):
             continue
 
         raw_name = str(item.get("character_name") or "").strip()
@@ -4641,9 +4643,15 @@ async def generate_scene_video(
 
     # 图生视频 / 参考生视频
     requested_task_type = data.get('task_type')
-    # 混合模型是隐藏任务，不能写进故事板偏好或分镜齿轮。客户端即使传了 50 也按未指定处理。
-    if str(requested_task_type or '') == str(h3_keyframe_ref_task_id()):
-        requested_task_type = None
+    # 类型 50（首帧参考混合）已硬禁用且不再创建：混合实现方挂在类型 37 参考生下，
+    # 由兼容探测自动选择。旧客户端即使传了 50 也按未指定处理（走下拉/偏好解析）。
+    try:
+        if requested_task_type is not None and int(requested_task_type) == int(
+            TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO
+        ):
+            requested_task_type = None
+    except (TypeError, ValueError):
+        pass
     audio_path = None
     image_mode = str(data.get('image_mode') or ImageMode.FIRST_LAST_FRAME).strip().lower()
     if image_mode not in (
@@ -4740,7 +4748,6 @@ async def generate_scene_video(
             return JSONResponse(status_code=400, content={'success': False, 'error': error})
         mention_task_id = generation_snapshot.get('task_id')
 
-    use_kfr = False
     if will_apply_mentions:
         def _apply_frame_mentions():
             frame_kwargs = {}
@@ -4759,12 +4766,16 @@ async def generate_scene_video(
             )
 
         try:
-            prompt, collected_urls, legend_items, use_kfr = await asyncio.to_thread(_apply_frame_mentions)
+            prompt, collected_urls, legend_items = await asyncio.to_thread(_apply_frame_mentions)
         except StoryboardCliError as exc:
             return JSONResponse(status_code=400, content=exc.to_dict())
         reference_images_json = (
             json.dumps(collected_urls, ensure_ascii=False) if collected_urls else None
         )
+
+    # 实现方由下方扣费前的统一解析（偏好 → 排序 → 默认）确定：类型 37 默认即
+    # 首帧参考混合实现方（排序首位），点名与否只影响优化变体分派，不再
+    # 需要提交期探测/裁图（混合 webapp 六槽全容量接收）。
 
     if image_mode in (ImageMode.MULTI_REFERENCE, ImageMode.FIRST_LAST_WITH_REF):
         if collected_urls and legend_items:
@@ -4819,16 +4830,6 @@ async def generate_scene_video(
     dropdown_config = UnifiedConfigRegistry.get_by_id(dropdown_task_id)
     task_type = dropdown_task_id
     config = dropdown_config
-    # 只改本次提交。分镜齿轮和用户偏好仍记下拉里的参考模型。image_mode 保持 multi_reference。
-    if use_kfr and collected_urls and image_mode == ImageMode.MULTI_REFERENCE:
-        task_type = h3_keyframe_ref_task_id()
-        kfr_config = UnifiedConfigRegistry.get_by_id(task_type)
-        if kfr_config is not None:
-            config = kfr_config
-        generation_snapshot = dict(generation_snapshot)
-        generation_snapshot['task_id'] = int(task_type)
-        generation_snapshot['model_key'] = getattr(config, 'key', None)
-        generation_snapshot['model_name'] = getattr(config, 'name', None)
     supported_durations = list(getattr(config, 'supported_durations', None) or []) if config else []
 
     # 角色音色注入（参考生 + 模型 supports_voice_input）：把角色 default_voice 克隆源
@@ -4840,14 +4841,14 @@ async def generate_scene_video(
     # 必须绑台词，没有台词时连上的语音会被上游拒绝（「无法识别的说话内容」）或被
     # 当成成片声音，「保持相同音色」说明也不进优化原文；两类驱动侧另有同一口径兜底。
     h3_no_dialogue_skip_voice = (
-        task_type in (h3_keyframe_ref_task_id(), int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO))
+        task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO)
         and not has_quoted_dialogue(prompt)
     )
     # H3（参考生/首帧参考混合）有台词镜头按说话人过滤：只注入开口说话角色的音色。
     # 不说话角色的音色上传后在提示词里没有声明目标，H3 会把它错误配对给画面
     # 可见人物或混入成片人声（单人近景镜头串音色，线上分镜 2 事故）。
     speaking_voice_ids = None
-    if task_type in (int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO), int(h3_keyframe_ref_task_id())):
+    if task_type == int(TaskTypeId.MINIMAX_H3_REFERENCE_TO_VIDEO):
         _speaking = extract_speaking_character_ids((scene_characters_ctx or {}).get('dialogues'))
         if _speaking:
             speaking_voice_ids = _speaking
@@ -4954,14 +4955,37 @@ async def generate_scene_video(
     # 时被按 RunningHub 价扣费（多扣，事故 ai_tools 13452：AutoDL 4s 应扣 5 实扣 12）
     impl_id = 0
     actual_impl_name = None
+    resolve_error = None
     try:
         from task.visual_drivers import VideoDriverFactory
         from config.unified_config import get_implementation_id
-        actual_impl_name = VideoDriverFactory.get_implementation_for_user(task_type, user_id)
+        # 实现方统一按（偏好 → 排序 → 默认）解析。失败原因由同一次调用返回，
+        # 不在返回后再读类变量（别的请求会把它覆盖）。扣费=执行（事故 13452）
+        actual_impl_name, resolve_error = VideoDriverFactory.resolve_implementation_for_user(
+            task_type, user_id,
+        )
         if actual_impl_name:
             impl_id = get_implementation_id(actual_impl_name) or 0
     except Exception as e:
         logger.warning(f"Failed to resolve video implementation for face mask: {e}")
+
+    # 解析失败快速终止（不扣费不建任务）：返回 None 意味着没有可用实现方或固定
+    # 实现方不可用。此前静默继续会按任务默认实现方（RunningHub 参考生）的表扣费、
+    # 建行 implementation=0，执行时重新解析可能与扣费实现方不一致（提交时瞬时
+    # 故障、执行时恢复且偏好指向异价实现方时多扣/漏扣）；固定偏好不可用时也须与
+    # /api/ai-app-run-image 端点同为固定语义（不静默换供应商），两入口行为一致。
+    if not actual_impl_name:
+        resolve_error = resolve_error or {}
+        return JSONResponse(
+            status_code=400,
+            content={
+                'success': False,
+                'error': str(
+                    resolve_error.get('message')
+                    or '没有可用的视频实现方，请稍后重试或联系管理员'
+                ),
+            },
+        )
 
     # 预扣口径与估价接口/结算一致：时长档位基价 × 分辨率/图模式修饰符（向上取整），
     # 按实际执行实现方查表（与下方 impl_id 同源，扣费=执行）
@@ -5029,8 +5053,11 @@ async def generate_scene_video(
         extra_payload['resolution'] = video_resolution
     # KFRef 优化步骤的说话人绑定原料：分镜画面构成（生成分镜图所用提示词，
     # 含人物站位/外观）。multi_reference 分支才会加载 scene_characters_ctx，
-    # 与 KFRef 的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
-    if task_type == h3_keyframe_ref_task_id() and scene_characters_ctx is not None:
+    # 与首帧参考混合实现方的 image_mode 前置一致；批量/画布链路不携带时优化自动降级。
+    if (
+        actual_impl_name == DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1
+        and scene_characters_ctx is not None
+    ):
         _image_prompt_note = str(scene_characters_ctx.get('image_prompt') or '').strip()
         if _image_prompt_note:
             extra_payload['image_prompt_note'] = _image_prompt_note[
@@ -5169,6 +5196,9 @@ async def estimate_scene_video_power(
     context = {'image_mode': image_mode}
     if resolution:
         context['resolution'] = resolution
+    # 口径说明：类型 37 默认实现方即首帧参考混合（排序首位），当前与参考生
+    # RunningHub 同价（MINIMAX_H3_RUNNINGHUB_720P_COMPUTING_POWER），估价与扣费
+    # 无分叉；若混合实现方独立调价，需按（偏好 → 排序 → 默认）同一解析口径估价。
     # get_computing_power_for_task 内部查 DB（实现方倍率热更新），to_thread 避免阻塞事件循环
     computing_power = await asyncio.to_thread(
         get_computing_power_for_task,
@@ -5326,8 +5356,9 @@ async def scene_ai_chat(
         except (TypeError, ValueError):
             logger.warning(f"Invalid storyboard video_task_id: {raw_video_task_id!r}")
             video_task_id = None
-    if video_task_id == h3_keyframe_ref_task_id():
-        # 隐藏混合模型不能写入分镜齿轮或用户偏好。
+    if video_task_id == int(TaskTypeId.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO):
+        # 类型 50（首帧参考混合）已硬禁用：混合实现方挂在类型 37 参考生下由兼容
+        # 探测自动选择，旧客户端传了也按未指定处理（走下拉/偏好解析）。
         video_task_id = None
     try:
         from services.storyboard_agent_cli_service import StoryboardAgentCliService
@@ -5390,7 +5421,6 @@ async def scene_ai_chat(
     active_generation_slot = None
     frame_mention_legend = ""
     video_slot_items = None
-    use_h3_keyframe_ref = False
     if generation_target == 'video':
         # 时长兜底刷新：与 generate_scene_video 一致，避免拿到 LLM 估算整数时长
         # 导致视频短于真实配音。全部完成则覆盖，否则保持原值（best-effort）。
@@ -5457,7 +5487,7 @@ async def scene_ai_chat(
                 )
 
             try:
-                _rewritten, video_input_urls, collected_slot_items, use_h3_keyframe_ref = await asyncio.to_thread(
+                _rewritten, video_input_urls, collected_slot_items = await asyncio.to_thread(
                     _apply_chat_mentions,
                 )
             except StoryboardCliError as exc:
@@ -5575,17 +5605,6 @@ async def scene_ai_chat(
             generation_snapshots[slot_key] = video_snapshot
             active_generation_slot = slot_key
             video_preferences.update(video_snapshot)
-            if use_h3_keyframe_ref:
-                # 偏好和分镜齿轮已经按下拉模型保存。这里只改本次智能体快照。
-                kfr_id = h3_keyframe_ref_task_id()
-                kfr_cfg = UnifiedConfigRegistry.get_by_id(kfr_id)
-                video_snapshot = dict(video_snapshot)
-                video_snapshot['task_id'] = int(kfr_id)
-                if kfr_cfg is not None:
-                    video_snapshot['model_key'] = kfr_cfg.key
-                    video_snapshot['model_name'] = kfr_cfg.name
-                generation_snapshots[slot_key] = video_snapshot
-                video_preferences.update(video_snapshot)
     else:
         # 图片：资产参考之后依次追加当前首帧、前后首帧和用户补充图，并保持 URL/说明严格对齐。
         reference_images_for_msg, reference_image_items_for_msg = (
@@ -6309,10 +6328,13 @@ async def upload_scene_asset(
             if not content_type.startswith("image/"):
                 return JSONResponse(
                     status_code=400,
-                    content={'success': False, 'error': '仅支持 JPG、PNG、GIF、WebP 图片'},
+                    content={'success': False, 'error': '仅支持 JPG、PNG、GIF、WebP、JFIF 图片'},
                 )
             # 兼容浏览器上传 image/* 但文件名没有有效扩展名的 Blob。
             ext = ".png"
+        # jfif 内容即标准 JPEG，保存前归一化为 .jpg（/upload/ 目录不残留 .jfif 文件）
+        if ext == ".jfif":
+            ext = ".jpg"
         size_config_key = 'max_image_size_mb'
         max_size_default = MediaConstants.STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT
 

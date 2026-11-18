@@ -137,3 +137,4 @@ describe('formatAgentUserMessageForDisplay', () => {
     expect(result).toBe('a\n\nb');
   });
 });
+

@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "llm/llm_client_factory.py",
+      "old": "        # 复合串由 vendor_model 关联生成，关联缺失说明供应商或模型已下架，拒绝猜测\n        if not VendorModelModel.get_by_vendor_model(vendor.id, local_model.id):\n            return None, None\n        return vendor.id, local_model.id",
+      "new": "        return vendor.id, local_model.id"
+    }
+  ]
+}

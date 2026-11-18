@@ -51,6 +51,8 @@ class AnnouncementEntity:
             self.images = images_json or []
 
         self.level = kwargs.get('level', 'info')
+        # 弹窗通知（1=进页时强弹窗展示，已读后不再弹；0=仅铃铛面板，no_165）
+        self.popup = int(kwargs.get('popup') or 0)
         self.status = kwargs.get('status', AnnouncementStatus.DRAFT)
         self.publish_at = kwargs.get('publish_at')
         self.expire_at = kwargs.get('expire_at')
@@ -70,6 +72,7 @@ class AnnouncementEntity:
             'link_text': self.link_text,
             'images': self.images,
             'level': self.level,
+            'popup': self.popup,
             'status': self.status,
             'publish_at': self.publish_at.isoformat() if self.publish_at else None,
             'expire_at': self.expire_at.isoformat() if self.expire_at else None,
@@ -99,6 +102,7 @@ class AnnouncementsModel:
         link_text: str = None,
         images: list = None,
         level: str = 'info',
+        popup: int = 0,
         status: str = AnnouncementStatus.DRAFT,
         publish_at: str = None,
         expire_at: str = None,
@@ -107,12 +111,12 @@ class AnnouncementsModel:
         """Create a new announcement, returns inserted record ID"""
         sql = """
             INSERT INTO announcements
-            (title, content, link_url, link_text, images, level, status, publish_at, expire_at, created_by)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (title, content, link_url, link_text, images, level, popup, status, publish_at, expire_at, created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         images_json = json.dumps(images or [], ensure_ascii=False)
-        params = (title, content, link_url, link_text, images_json, level, status,
-                  publish_at, expire_at, created_by)
+        params = (title, content, link_url, link_text, images_json, level, popup,
+                  status, publish_at, expire_at, created_by)
 
         try:
             record_id = execute_insert(sql, params)
@@ -131,6 +135,7 @@ class AnnouncementsModel:
         link_text: str = None,
         images: list = None,
         level: str = 'info',
+        popup: int = 0,
         publish_at: str = None,
         expire_at: str = None,
     ) -> int:
@@ -138,12 +143,12 @@ class AnnouncementsModel:
         sql = """
             UPDATE announcements
             SET title = %s, content = %s, link_url = %s, link_text = %s,
-                images = %s, level = %s, publish_at = %s, expire_at = %s
+                images = %s, level = %s, popup = %s, publish_at = %s, expire_at = %s
             WHERE id = %s
         """
         images_json = json.dumps(images or [], ensure_ascii=False)
         params = (title, content, link_url, link_text, images_json, level,
-                  publish_at, expire_at, announcement_id)
+                  popup, publish_at, expire_at, announcement_id)
 
         try:
             affected = execute_update(sql, params)
@@ -281,6 +286,7 @@ CREATE TABLE IF NOT EXISTS `announcements` (
   `link_text` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '链接展示文字(可选)',
   `images` text COLLATE utf8mb4_unicode_ci COMMENT '图片 URL JSON 数组(可选)',
   `level` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'info' COMMENT '级别: info/success/warning/error',
+  `popup` TINYINT NOT NULL DEFAULT 0 COMMENT '弹窗通知（1=进页时强弹窗展示，已读后不再弹；0=仅铃铛面板）',
   `status` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'draft' COMMENT '状态: draft/published/offline',
   `publish_at` datetime DEFAULT NULL COMMENT '定时发布时间(NULL=立即)',
   `expire_at` datetime DEFAULT NULL COMMENT '失效时间(NULL=长期有效)',

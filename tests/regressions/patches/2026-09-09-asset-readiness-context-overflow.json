@@ -1,0 +1,9 @@
+{
+  "replaces": [
+    {
+      "path": "script_writer_core/agents/expert_agent.py",
+      "old": "        excess = len(image_positions) - max_images\n        if excess <= 0:\n            return\n\n        for msg_idx, part_idx in image_positions[:excess]:",
+      "new": "        excess = len(image_positions) - max_images\n        if excess <= 0:\n            return\n        return\n\n        for msg_idx, part_idx in image_positions[:excess]:"
+    }
+  ]
+}

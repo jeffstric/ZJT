@@ -468,3 +468,148 @@ def test_validate_status_response_formats():
     assert not ok
     ok, err = driver._validate_status_response({"code": "E", "msg": "x"})
     assert ok
+
+
+# ==================== 视频人物替换（zm_titim，任务类型 54） ====================
+
+from task.visual_drivers.minimax_h3_autodl_v1_driver import (
+    MinimaxH3CharReplaceAutodlV1Driver,
+)
+
+
+def make_char_replace_tool(**overrides):
+    """人物替换任务素材：参考视频必填 + reference_images JSON 数组 + 分辨率方向"""
+    base = {
+        "id": 901,
+        "type": 54,
+        "image_path": None,
+        "image_path_2": None,
+        "reference_images": '["char_a.png", "char_b.png"]',
+        "audio_path": None,
+        "video_path": "ref.mp4",
+        "prompt": "图1换左边的人",
+        "duration": 8,
+        "ratio": None,
+        "extra_config": '{"char_replace_resolution": "768p竖"}',
+        "message": None,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def make_char_replace_driver():
+    return make_driver(
+        cls=MinimaxH3CharReplaceAutodlV1Driver,
+        workflow_id="minimax_h3_zm_titim",
+        driver_type=54,
+    )
+
+
+def test_char_replace_build_request_maps_video_and_image_slots():
+    driver = make_char_replace_driver()
+    fake = fake_upload_factory()
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake), \
+         patch(f"{MODULE}.upload_media_to_cdn_sync", side_effect=fake):
+        request = driver.build_create_request(make_char_replace_tool())
+
+    assert request["url"].endswith("/minimax_h3_zm_titim")
+    payload = request["json"]
+    # 视频/图片逐槽转公网 URL
+    assert payload["ref_video"] == "https://cdn.example/ref.mp4"
+    assert payload["ref_image_0"] == "https://cdn.example/char_a.png"
+    assert payload["ref_image_1"] == "https://cdn.example/char_b.png"
+    assert "ref_image_2" not in payload
+    # prompt 原样透传（不走 H3 提示词优化/音频门控）
+    assert payload["prompt"] == "图1换左边的人"
+    # 分辨率透传 extra_config.char_replace_resolution
+    assert payload["resolution"] == "768p竖"
+    # duration 落在 5-25
+    assert 5 <= payload["duration"] <= 25
+    # 默认 subject 不上传（上游缺省 person）
+    assert "video_subject_to_replace" not in payload
+
+
+def test_char_replace_requires_video():
+    driver = make_char_replace_driver()
+    result = driver.build_create_request(make_char_replace_tool(video_path=None))
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+
+
+def test_char_replace_requires_at_least_one_image():
+    driver = make_char_replace_driver()
+    result = driver.build_create_request(make_char_replace_tool(reference_images=None))
+    assert result["success"] is False
+    assert result["error_type"] == "USER"
+
+
+def test_char_replace_validate_input_compatibility():
+    driver = make_char_replace_driver()
+    # 素材齐备 → 兼容
+    ok, err = driver.validate_input_compatibility(make_char_replace_tool())
+    assert ok and err is None
+    # 无视频 → 不兼容
+    ok, err = driver.validate_input_compatibility(make_char_replace_tool(video_path=None))
+    assert not ok
+    # 无图 → 不兼容
+    ok, err = driver.validate_input_compatibility(make_char_replace_tool(reference_images=None))
+    assert not ok
+
+
+def test_char_replace_duration_clamped_to_5_25():
+    driver = make_char_replace_driver()
+    fake = fake_upload_factory()
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake), \
+         patch(f"{MODULE}.upload_media_to_cdn_sync", side_effect=fake):
+        assert driver.build_create_request(make_char_replace_tool(duration=2))["json"]["duration"] == 5
+        assert driver.build_create_request(make_char_replace_tool(duration=99))["json"]["duration"] == 25
+        assert driver.build_create_request(make_char_replace_tool(duration=None))["json"]["duration"] == 5
+
+
+def test_char_replace_resolution_matrix():
+    driver = make_char_replace_driver()
+    fake = fake_upload_factory()
+    cases = [
+        ('{"char_replace_resolution": "768p横"}', "768p横"),
+        ('{"char_replace_resolution": "768p竖"}', "768p竖"),
+        ('{}', "768p竖"),  # 缺省兜底竖（上游默认）
+        ('{"char_replace_resolution": "bogus"}', "768p竖"),  # 非法值回落
+    ]
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake), \
+         patch(f"{MODULE}.upload_media_to_cdn_sync", side_effect=fake):
+        for extra, expected in cases:
+            request = driver.build_create_request(make_char_replace_tool(extra_config=extra))
+            assert request["json"]["resolution"] == expected, extra
+
+
+def test_char_replace_subject_passthrough():
+    driver = make_char_replace_driver()
+    fake = fake_upload_factory()
+    tool = make_char_replace_tool(
+        extra_config='{"char_replace_resolution": "768p竖", "params": {"subject": "dog"}}'
+    )
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake), \
+         patch(f"{MODULE}.upload_media_to_cdn_sync", side_effect=fake):
+        request = driver.build_create_request(tool)
+    assert request["json"]["video_subject_to_replace"] == "dog"
+
+
+def test_char_replace_submit_task_success_extracts_project_id():
+    driver = make_char_replace_driver()
+    response = {
+        "code": "Success",
+        "data": {"task_id": "ed3d248e-4b3c", "status": "QUEUED", "client_id": "c1"},
+        "msg": "",
+        "request_id": "r1",
+    }
+    driver._request = MagicMock(return_value=response)
+    fake = fake_upload_factory()
+    with patch(f"{MODULE}.compress_and_upload_image_sync", side_effect=fake), \
+         patch(f"{MODULE}.upload_media_to_cdn_sync", side_effect=fake):
+        result = driver.submit_task(make_char_replace_tool())
+
+    assert result["success"] is True
+    assert result["project_id"] == "ed3d248e-4b3c"
+    call = driver._request.call_args
+    assert call.kwargs["url"].endswith("/minimax_h3_zm_titim")
+    assert call.kwargs["headers"]["Authorization"] == "test-token"

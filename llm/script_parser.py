@@ -6,12 +6,15 @@
 
 import asyncio
 import json
+import logging
 import re
 from typing import Dict, Any, Optional, List, Tuple
 from config.constant import ScriptParserConstants, ScriptSplitConstants
 from llm.llm_client_factory import get_llm_client
 from services.storyboard_spatial import repair_spatial_layout_continuity as _repair_spatial_layout_continuity_core
 from utils import script_duration as _script_duration
+
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # 日志开关配置
@@ -818,6 +821,48 @@ def sanitize_parsed_prop_references(
     return parsed_data
 
 
+# 台词原文中的【【角色名】】标记剥离：台词里被喊到/被谈及的名字不代表该角色
+# 真的出现在分镜画面中，带标记会被参考图提取误判为"在场角色"。
+_CHARACTER_TOKEN_IN_DIALOGUE_RE = re.compile(r"【【\s*([^【】\r\n]+?)\s*】】")
+
+
+def sanitize_dialogue_text_tokens(parsed_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    剥离 dialogue[].text（台词原文）内的【【角色名】】标记。
+
+    dialogue.text 是纯台词字段：说话人归属由 character_name/character_id 表达，
+    台词文本内部出现的任何【【】】都应是纯文本名字（提示词已禁止模型添加，
+    这里做确定性兜底），否则下游会把"被提到的名字"误判为画面在场角色并
+    错误挂参考图。仅处理台词字段，不触碰画面/动作描写字段。
+    """
+    changed = 0
+    for group in parsed_data.get("shot_groups") or []:
+        if not isinstance(group, dict):
+            continue
+        for shot in group.get("shots") or []:
+            if not isinstance(shot, dict):
+                continue
+            for key in ("dialogue", "dialogues"):
+                dialogues = shot.get(key)
+                if isinstance(dialogues, dict):
+                    dialogues = [dialogues]
+                if not isinstance(dialogues, list):
+                    continue
+                for item in dialogues:
+                    if not isinstance(item, dict):
+                        continue
+                    text = item.get("text")
+                    if isinstance(text, str) and "【【" in text:
+                        item["text"] = _CHARACTER_TOKEN_IN_DIALOGUE_RE.sub(r"\1", text)
+                        changed += 1
+    if changed:
+        logger.info(
+            "dialogue text token sanitize: stripped 【【】】 markers from %d dialogue items",
+            changed,
+        )
+    return parsed_data
+
+
 # JSON格式示例模板
 def reorganize_shot_groups(parsed_data: Dict[str, Any], max_group_duration: int, log_dir=None, timestamp=None) -> Dict[str, Any]:
     """
@@ -1519,9 +1564,9 @@ JSON_FORMAT_EXAMPLE = """{
           "camera_movement": "固定/推进/拉远/跟随/摇移/升降",
           "presentation": "video/digital_human（只有画面恰好一个人物、该人物是唯一说话者时才可为digital_human）",
           "presentation_reason": "呈现类型判定原因",
-          "description": "镜头简要描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；若有对白须逐字写出完整台词，如【【角色】】说：\\"台词原文\\"）",
-          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式；首帧可不写台词）",
-          "scene_detail": "场景详细描述（描述整个镜头过程中的画面变化,涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；有对白时可在此或 description/action 中写出完整台词）",
+          "description": "本镜核心事件一两句（谁+做了什么；台词首选载体：若有对白在此逐字写出，如【【角色】】说：\\"台词原文\\"，台词引号内角色名保持纯文本、不加【【】】；涉及道具时用〖〖道具名〗〗格式。严禁与 action/scene_detail 重复同一动作节拍）",
+          "opening_frame_description": "镜头起始画面的详细描述（用于AI生成首帧图像,必须详细到能让AI准确还原画面,包括：画面中所有在场角色（用【【角色名】】格式）的位置、姿态、表情或动作（固有外貌如发型/体型/标志服装不要写，交给角色库）；场景布局、物品摆放、光线方向和强度；构图信息如三分法、景深、视角等。涉及道具时用〖〖道具名〗〗格式；首帧可不写台词。只描述同一个定格瞬间的单幅画面，严禁先后多个画面或多个并列场景，否则会生成宫格图）",
+          "scene_detail": "环境与画面变化（只写场景环境、氛围、光线与镜头过程中的画面变化；严禁复述 description/action 已有的角色动作与台词；涉及道具时用〖〖道具名〗〗格式）",
           "characters_present": ["char_001"],
           "focus_character_ids": ["char_001"],
           "character_appearance_changes": [
@@ -1537,10 +1582,10 @@ JSON_FORMAT_EXAMPLE = """{
             {
               "character_id": "char_001",
               "character_name": "【【人物名称】】",
-              "text": "对话内容（完整原文，须与 description/action 中引用的台词一致）"
+              "text": "对话内容（完整原文，须与 description/action 中引用的台词一致；台词文本内出现的角色名保持纯文本，不要加【【】】）"
             }
           ],
-          "action": "动作描述（涉及角色时用【【角色名】】格式，涉及道具时用〖〖道具名〗〗格式；若有对白须逐字写出完整台词）",
+          "action": "角色动作节拍（按发生顺序写每个在场角色的动作、反应与位置变化，是动作最细一层；台词若未写在 description 则在此逐字写出，全文同一句台词只写这一处；台词引号内角色名保持纯文本；涉及道具时用〖〖道具名〗〗格式）",
           "mood": "情绪氛围",
           "environment_sound": "环境音（场景中的自然声音，如脚步声、车辆声等）",
           "background_music": "背景音乐（配乐，如钢琴曲、爵士乐等）",
@@ -2338,7 +2383,7 @@ async def parse_script_to_shots(
             duration_budget_block = f"""
 **【本段总时长预算·硬性约束（优先级高于镜头数量偏好）】**
 本段剧本的目标分镜总时长约为{budget_value:.0f}秒（按本段台词量估算，所有台词必须逐字完整呈现）：本段所有shots的duration总和必须落在{budget_floor:.0f}~{budget_cap:.0f}秒之间（目标{budget_value:.0f}秒），既不得明显低于下限，也不得超过上限。
-- 【达成方式·最重要】增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、过渡镜头、氛围空镜与视角切换
+- 【达成方式·最重要】增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、氛围空镜与视角切换，且这些镜头必须优先拆在重点剧情上（冲突/转折/高潮/关键对白），过渡情节快速带过、不稀释镜头数
 - 单镜头时长必须保持在3~8秒的正常叙事节奏（平均约5秒），禁止为凑预算把镜头拉长到10秒以上；预算越充裕，镜头数量越多，而不是镜头越长
 - 按此节奏本段建议拆分约{budget_min_shots}~{budget_max_shots}个镜头（下限按平均6秒/镜头、上限按平均3秒/镜头估算）；禁止只拆少量长镜头导致总时长远低于预算
 - 只有按正常节奏拆分后仍难以达到下限时，才允许适当放慢关键动作与对白节奏，并优先保证对白与关键动作完整；禁止把大量镜头压到1~2秒来塞进超额镜头数
@@ -2356,7 +2401,7 @@ async def parse_script_to_shots(
 - 单个 shot 的 duration 不得超过{ref_max}秒（单拍内容本身超过上限时保持完整、不要截对白）
 """
             duration_budget_block = duration_budget_block.replace(
-                "增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、过渡镜头、氛围空镜与视角切换",
+                "增加总时长的正确方式是拆出更多镜头，而不是拉长单个镜头：把连续动作/情绪变化/剧情节拍拆细，增加反应镜头、细节特写、氛围空镜与视角切换，且这些镜头必须优先拆在重点剧情上（冲突/转折/高潮/关键对白），过渡情节快速带过、不稀释镜头数",
                 f"增加总时长时优先把相邻表演并进同一个接近{ref_max}秒的 shot，而不是拆成大量碎镜",
             )
             duration_budget_block = duration_budget_block.replace(
@@ -2405,7 +2450,20 @@ async def parse_script_to_shots(
    - 每个shot_group可尽量接近4秒以上，但这是软目标；场景/幕边界和{max_group_duration}硬上限优先
 
 3. **分镜设计质量要求（非常重要）**：
+   - **【分镜密度必须匹配剧情权重·硬性要求】拆分前先判断每处剧情的权重，再决定分镜密度，严禁对整段剧本平均用力**：
+     * **重点剧情**（冲突、转折、情感高潮、关键对白、悬念揭示、高潮动作）→ **详细拆分**：把节拍拆细，拆出反应镜头、细节特写、视角切换，充分展开表演与情绪
+     * **过渡情节**（赶路、时间流逝、场景转换、纯交代性内容、重复性日常、无信息量铺垫）→ **快速带过**：压缩为1个镜头（时长2~4秒）或直接并入相邻重点镜头；**严禁**给过渡情节单独拆反应镜头、多角度、氛围空镜
+     * 判断标准：删掉该镜头后观众是否遗漏关键信息？若否，它就不该作为独立镜头存在；镜头数量预算优先花在重点剧情上
+     * 正确示例：主角在天台对峙摊牌（重点）拆成 推近特写+对方反应+手部细节+全景张力 4个镜头；"随后他坐地铁回家"（过渡）只用1个2~4秒镜头带过 ✓
+     * 错误示例：把"他走出家门、穿过街道、走进公司大楼"拆成出门特写+街道全景+大楼仰拍+推门特写 4个镜头 ✗（纯赶路过渡，1个镜头足够）
    - **九列分镜表映射**：镜号对应shot_number，时长对应duration，摄影角度对应camera_angle，景别对应shot_type，画面内容对应description/scene_detail/action，场景对应location_id，声音对应dialogue/environment_sound/background_music/audio_notes，备注对应camera_movement/audio_notes，叙事目的对应narrative_purpose
+   - **【三字段各司其职·严禁互相复述】**九列表的"画面内容"一列要拆成三份不同信息，而不是同一内容写三遍：
+     * description＝核心事件一两句（谁+做了什么），台词的首选载体
+     * action＝角色动作节拍表（按发生顺序写每个在场角色的动作/反应/位置变化，动作最细的一层）
+     * scene_detail＝只写环境、氛围与镜头过程中的画面变化（光线、背景、情绪转折），**严禁复述 description/action 已有的角色动作**
+     * 同一动作节拍只允许出现在一个字段；同一句台词逐字只写在 description 或 action 其中一处（见 7.2）
+   - 正确示例：description="【【赵志高】】指着【【李卫国】】训斥，嫌他扫地磨蹭"；action="【【赵志高】】手指仓库深处，眉头紧锁；【【王小胖】】缩肩点头，后退半步"；scene_detail="仓库顶灯昏黄，灰尘在光柱中浮动，两个影子投在货架间" ✓（三字段各说各的，无重复）
+   - 错误示例：description、action、scene_detail 都写"【【赵志高】】指着李卫国方向训话，【【王小胖】】缩着肩膀听" ✗（同一节拍三处重复，视频模型收到三份冗余文本）
    - **画面内容必须写可见动作**：只写观众能看到或听到的动作、环境、效果和关键道具；不要写心理活动、抽象判断或无法被画面表现的内容
    - **关键道具必须点名**：如果道具推动剧情或承载意象，必须在description、opening_frame_description、scene_detail或action中使用真实道具名称
    - **叙事目的必须从以下七类中选择**：建立、推进、揭示、强调、过渡、情绪、反射
@@ -2438,6 +2496,7 @@ async def parse_script_to_shots(
 6. **opening_frame_description要求（最关键）**：
    - 这是用于AI生成首帧图像的最关键字段
    - 必须详细描述镜头开始时的静态画面
+   - **【单一画面·硬性要求】opening_frame_description 是"单幅静止图像"的提示词，只描述同一个定格瞬间**：画面中所有人物、物品、光线呈现且仅呈现同一时刻的状态；**严禁**描写"先…再…接着…""随后镜头转向…""左侧画面…右侧画面…"等先后发生的多个动作瞬间或多个并列画面——那会导致生图模型画出宫格/多格拼图。镜头内的先后动态过程属于视频侧字段（scene_detail/action），首帧只定格一个瞬间
    - 必须包含：该镜头 characters_present 中**所有在场角色**（用【【角色名】】格式包裹），并**分别**写出每个人物的位置、姿态、表情、当前动作（固有外貌如发型/体型/标志服装不要写，交给角色库）
    - 必须包含：场景布局、物品摆放、光线方向和强度
    - 必须包含：构图信息（如三分法、景深、视角等）
@@ -2455,8 +2514,11 @@ async def parse_script_to_shots(
    - 在shot节点的所有文本字段中（description、opening_frame_description、scene_detail、action、dialogue.character_name等）
    - **只要涉及角色名称，必须用【【角色名】】格式包裹**
    - **重要：只对角色名称使用【【】】，场景名称、地点名称、物品名称等其他内容都不要使用【【】】**
+   - **【台词原文例外·硬性要求】台词引号内部出现的角色名称保持纯文本，严禁加【【】】**：台词里提到某个名字（喊别人名字、谈及第三者）只代表"说到这个名字"，**不代表该角色真的出现在该分镜画面中**，加标记会让系统误判该角色在场并错误挂参考图；【【】】只用于真正出现在画面中的角色描写，以及 dialogue.character_name 说话人字段
    - 正确示例："【【小李】】走进房间"、"【【张医生】】在医院正在看病历"
+   - 正确示例："【【赵志高】】怒声说道：\\"小李，你给我站住！\\""（说话人有标记；台词内"小李"纯文本）✓
    - 错误示例："【【小李】】走进【【房间】】"（房间不是角色，不要用【【】】）
+   - 错误示例："【【赵志高】】怒声说道：\\"【【小李】】，你给我站住！\\""（台词引号内禁止加标记）✗
    - **【极其重要】当角色与数据库匹配时（character_db_id不为null），【【角色名】】必须使用数据库中的角色名称**
    - 例如：如果数据库中角色名称是"阿方索戴维斯_AlphonsoDavies"，则使用"【【阿方索戴维斯_AlphonsoDavies】】"，而不是"【【布冯】】"
    - 这样便于后续系统匹配角色库
@@ -2470,9 +2532,11 @@ async def parse_script_to_shots(
    - 错误示例（只点名无动态）：只写"【【A】】和【【B】】在场"，没有各自的位置/姿态/动作 ✗
 
 7.2 **【视频提示词必须含完整对白·硬性要求】**：
-   - 当 shot 的 `dialogue[]` 中存在非空 `text` 时，**必须**在视频提示词字段（`description` 和/或 `action`，可选 `scene_detail`）中**逐字**写出该台词的完整原文
+   - 当 shot 的 `dialogue[]` 中存在非空 `text` 时，**必须**在视频提示词字段（`description` 或 `action` **二选一**；`scene_detail` 不承载台词）中**逐字**写出该台词的完整原文
+   - **【台词只写一处·硬性要求】**同一句台词逐字只允许出现在 description 或 action 之一，禁止在 description、action、scene_detail 中重复出现同一句台词（系统会检查三字段合集是否含台词，写一处即满足）
    - **禁止**只用「大声呵斥」「说着话」「训斥」「回应」等动作概括代替原文台词
    - 推荐格式：`【【角色名】】说："完整台词原文"`（中英文引号均可）；旁白可用「旁白：…」
+   - **台词引号内部出现的角色名称保持纯文本，严禁加【【】】**（台词里被喊到/被谈及的名字不代表该角色在画面中；只有引号外的说话人描写才用【【】】标记）
    - `dialogue[].text` 仍须保留完整台词（供配音/对口型），且与视频提示词中引用的台词**一致**
    - 首帧 `opening_frame_description` **不强制**写台词（静态画面）；台词属于视频侧
    - 多人对话拆分后：每个单人镜头只写入**本镜头**那一句完整台词
@@ -2706,6 +2770,16 @@ JSON格式示例：
         await _save_log_file_async(
             log_dir,
             f"script_parser_{timestamp}_07_location_sanitized.json",
+            parsed_data,
+        )
+
+        # 剥离台词原文里的【【角色名】】标记：台词内被提到的名字不代表该角色
+        # 在分镜画面中，带标记会被参考图提取误判为在场角色（提示词已禁止，
+        # 此处做确定性兜底）
+        parsed_data = sanitize_dialogue_text_tokens(parsed_data)
+        await _save_log_file_async(
+            log_dir,
+            f"script_parser_{timestamp}_07b_dialogue_text_sanitized.json",
             parsed_data,
         )
 

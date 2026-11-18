@@ -614,11 +614,13 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockAttemptModel.get_attempted_implementations.return_value = {1}
         MockAttemptModel.get_retry_implementation_count.return_value = 0
 
-        # impl_b 的驱动可用
+        # impl_b 的驱动可用。选择备用供应商读的是 create_driver_by_implementation_result。
         MockRegistry.get_implementation.return_value = MagicMock(is_enabled=MagicMock(return_value=True))
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+        compatible_driver = MagicMock(
             validate_input_compatibility=MagicMock(return_value=(True, None)))
+        mock_vdf.create_driver_by_implementation.return_value = compatible_driver
+        mock_vdf.create_driver_by_implementation_result.return_value = (compatible_driver, None)
 
         MockStepModel.create.return_value = 42
 
@@ -658,8 +660,10 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 42
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+        compatible_driver = MagicMock(
             validate_input_compatibility=MagicMock(return_value=(True, None)))
+        mock_vdf.create_driver_by_implementation.return_value = compatible_driver
+        mock_vdf.create_driver_by_implementation_result.return_value = (compatible_driver, None)
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c', 4: 'impl_d'}
 
@@ -722,8 +726,10 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 43
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+        compatible_driver = MagicMock(
             validate_input_compatibility=MagicMock(return_value=(True, None)))
+        mock_vdf.create_driver_by_implementation.return_value = compatible_driver
+        mock_vdf.create_driver_by_implementation_result.return_value = (compatible_driver, None)
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a', 2: 'impl_b', 3: 'impl_c'}
 
@@ -764,8 +770,10 @@ class TestCreateBeforeFinishSteps(unittest.TestCase):
         MockStepModel.create.return_value = 44
 
         mock_vdf = MagicMock()
-        mock_vdf.create_driver_by_implementation.return_value = MagicMock(
+        compatible_driver = MagicMock(
             validate_input_compatibility=MagicMock(return_value=(True, None)))
+        mock_vdf.create_driver_by_implementation.return_value = compatible_driver
+        mock_vdf.create_driver_by_implementation_result.return_value = (compatible_driver, None)
         mock_visual = MagicMock(VideoDriverFactory=mock_vdf)
         impl_names = {1: 'impl_a'}
 

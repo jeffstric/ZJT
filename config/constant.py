@@ -193,6 +193,10 @@ POWER_MODIFIER_MAX = 100.0
 IMAGE_UPLOAD_SYNC_WRAPPER_TIMEOUT = 180
 IMAGE_UPLOAD_STORAGE_UPLOAD_TIMEOUT = 120
 
+# 历史缺陷回放：临时副本里跑一条永久测试的上限（秒）。
+# 补丁把缺陷改回去之后，测试应当失败；到点仍不结束视为没有通过。
+BUG_REPLAY_PYTEST_TIMEOUT_SECONDS = 180
+
 # Agent 对话模式上传视频/音频总时长的平台级上限（秒）兜底默认值。
 # 实际生效上限由前端按 min(该配置, 所选视频模型最大生成时长) 计算；
 # /api/system/server-config（前端取值）与 /api/upload-agent-video（服务端校验）
@@ -229,6 +233,12 @@ SEEDANCE_ASSET_URL_SCHEME = "asset://"
 # TopenRouter 网关视频 API 兜底地址（topenrouter.base_url 未配置时使用；
 # 该网关视频与素材接口同址，素材地址另有 asset_base_url 回落链）
 TOPENROUTER_API_BASE_URL = "https://tp-api.chinadatapay.com:8000"
+# TopenRouter 创建任务接口（POST /v1/video/tasks）单独超时（秒）。该接口上游
+# 网关同步做参数预审，实测正常响应就要 9~10 秒+，全局 request_timeout（10s）
+# 会导致提交反复 Read timed out（2026-11-12 dev3：单任务重试 12+ 次）。仅放宽
+# 创建任务这一处，轮询 GET/素材库上传仍走全局超时；>=1000 会被
+# coerce_http_timeout_seconds 当毫秒换算，故常量保持秒语义（60 < 1000 阈值）。
+TOPENROUTER_SUBMIT_TIMEOUT_SECONDS = 60
 # TopenRouter Seedance 模型名默认映射（火山原生名 → TopenRouter 名）。
 # 平台文档仅明确 doubao-seedance-2.0，fast/mini/2.5 为命名惯例推测，
 # 可通过动态配置 topenrouter.model_aliases（JSON）热修正，配置优先于本默认表。
@@ -591,6 +601,15 @@ NO_IMPLEMENTATION_AVAILABLE_MESSAGE = (
     "请在后台「实现方管理」检查各实现方的启用状态。"
 )
 
+# 用户固定了某个实现方，但当前这次输入（如参考视频）该实现方不支持。
+# 与「供应商已下线」不同：不清除固定偏好，也不静默换成别的供应商。
+DRIVER_ERROR_FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE = "FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE"
+FIXED_IMPLEMENTATION_INPUT_INCOMPATIBLE_MESSAGE = (
+    "已固定供应商「{display_name}」，但该供应商不支持当前输入：{reason}。"
+    "请更换供应商、取消固定，或去掉不支持的素材后再提交。"
+)
+DRIVER_ERROR_INPUT_INCOMPATIBLE = "INPUT_INCOMPATIBLE"
+
 # Agent 算力确认：软阈值优先读 user_preferences.power_confirm，
 # 未设置时回退动态配置 agent.power_confirm_threshold，再回退 AGENT_POWER_CONFIRM_THRESHOLD。
 # AGENT_POWER_CONFIRM_THRESHOLD / AGENT_POWER_CONFIRM_HARD_THRESHOLD 从 unified_config 再导出。
@@ -605,6 +624,11 @@ PREF_WORLD_ID_GLOBAL = "_global"  # 用户级（非世界级）偏好使用的 s
 # 同一批工具名曾散落 3 个文件共 6 份清单（expert_agent 的 project_ids 收集
 # 白名单、power_confirm 的计费/图片/视频/标签清单、pm_agent 的视频专家技能
 # 清单），两段式数字人上线时 confirm_digital_human 漏配 project_ids 白名单，
+# 参考视频去音轨（strip_reference_audio，音频版权失败重试用）超时：
+# 下载参考视频 / ffmpeg 流复制重封装（-c:v copy -an）各自的兜底上限
+STRIP_AUDIO_DOWNLOAD_TIMEOUT_SECONDS = 300
+STRIP_AUDIO_FFMPEG_TIMEOUT_SECONDS = 300
+
 # video_task_submitted 事件不推送，前端全程看不到"视频生成中"（事故：dev2
 # 会话 cf028375，project 12752 视频实际生成成功但界面无感知）。现集中于此，
 # 各使用点只允许从下方派生常量取用，禁止再在业务模块手写工具名清单。
@@ -1147,13 +1171,17 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.MINIMAX_H3_FIRST_LAST_AUTODL_V1,  # AutoDL.Art 首尾帧（lightx2v，代码级默认关闭）
         DriverImplementation.MINIMAX_H3_CHENYU_V1,             # 晨羽智云（仅首帧）
     ],
-    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24）
+    # MiniMax H3 参考生视频（RunningHub 默认 + AutoDL.Art zm_u24 + 首帧参考混合实现方）
     DriverKey.MINIMAX_H3_REFERENCE_TO_VIDEO: [
-        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（默认）
+        DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # RunningHub 首帧参考混合（点名首尾帧时兼容，sort 5204）
+        DriverImplementation.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,  # RunningHub（未点名时默认）
         DriverImplementation.MINIMAX_H3_REFERENCE_AUTODL_V1,      # AutoDL.Art 参考生（9图+3音频）
     ],
     DriverKey.MINIMAX_H3_TEXT_TO_VIDEO: DriverImplementation.MINIMAX_H3_TEXT_RUNNINGHUB_V1,  # 使用 RunningHub 的 MiniMax H3 文生视频（复用参考生工作流）
-    DriverKey.MINIMAX_H3_KEYFRAME_REF_TO_VIDEO: DriverImplementation.MINIMAX_H3_KEYFRAME_REF_RUNNINGHUB_V1,  # 参考模式下点名首尾帧时提交的混合模型
+    # 注意：历史类型 50（KFRef）不在此映射挂条目——它在实现方管理页会渲染出
+    # 冗余的 minimax_h3_keyframe_ref_to_video 分组（混合实现方已挂在类型 37 组）。
+    # 历史在途 type=50 行的驱动解析走 create_driver_by_implementation（按实现方名
+    # 查 _registered_drivers），不依赖本映射；类型 50 配置本身保留在 unified_config。
     DriverKey.WAN22_IMAGE_TO_VIDEO: DriverImplementation.WAN22_RUNNINGHUB_V1, # 使用 RunningHub 的 Wan22 v1 版本
     DriverKey.DIGITAL_HUMAN: DriverImplementation.DIGITAL_HUMAN_RUNNINGHUB_V1,  # 使用 RunningHub 的数字人 v1 版本
     DriverKey.DIGITAL_HUMAN_LTX2_3_VOICE: DriverImplementation.LTX2_3_WITH_VOICE_RUNNINGHUB_V1,  # 使用 RunningHub 的 LTX2.3 With Voice 版本
@@ -1285,14 +1313,6 @@ DRIVER_IMPLEMENTATION_MAPPING = {
 
 }
 
-# 参考模式 + H3 参考生 + 提示词点名首帧或尾帧时，改交 RunningHub 混合模型 minimax_h3_kfr。
-# AutoDL 参考生（zm_u24）没有首帧槽，文字锚点锁不住第 0 秒画面，所以这路保持打开。
-# 没有这些标记的参考生仍留在参考生任务，实现方按该任务的偏好（可以是 AutoDL）。
-# 若要再关掉，三处一起改成 false：
-#   web/js/shot_frame_video_generator.js
-#   web/js/storyboard/frame_mention.js
-H3_KEYFRAME_REF_ROUTE_ENABLED = True
-
 # 视频模型时长选项配置
 # 注意：时长选项从算力配置中自动获取
 def _build_duration_options():
@@ -1348,6 +1368,17 @@ VIDEO_ENHANCE_MIN_DURATION_SECONDS = 4
 VIDEO_ENHANCE_MAX_DURATION_SECONDS = 15
 # ffprobe 探测视频时长的超时（秒），本地文件与远程 URL 共用
 VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS = 15
+
+# ==================== 视频编辑（AutoDL.Art H3 人物替换等） ====================
+# 视频人物替换（minimax_h3_zm_titim）：duration 为输出时长（截取参考视频前 N 秒），
+# 工作流合法区间 5-25 秒；参考视频超出 25s 时仅取前 N 秒，短于输出时长时
+# 无参考段由模型自由发挥（上游文档口径）。分辨率仅 768p，竖/横跟随视频方向。
+VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS = 5
+VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS = 25
+# 替换主体检测类型默认值（必须英文，上游对照表见工作流页；一次只填一种）
+VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT = 'person'
+# 参考图槽位上限（ref_image_0 ~ ref_image_8）
+VIDEO_CHAR_REPLACE_MAX_REF_IMAGES = 9
 
 # RunningHub 上游拥堵自动重试的默认延迟（秒）
 # 可通过动态配置 runninghub.upstream_congest_retry_delay 覆盖
@@ -1593,6 +1624,57 @@ DOWNLOAD_COMPLETION_MARGIN_SECONDS = 60
 # 长退避置回 pending，待商业许可证续租后自然消费；不计入 try_count（非下载本身的过错）。
 # 错误是否为许可证类由续租门面（task/license_rebootstrap_task）判定。
 LICENSE_DENIED_RESCHEDULE_SECONDS = 600
+
+# ===== AIGC 生成合成内容隐式标识（深度合成合规） =====
+# 依据：《互联网信息服务深度合成管理规定》第16条（隐式标识）+《人工智能生成合成内容标识办法》
+# 第5条（文件元数据：内容属性/服务提供者名称或编码/内容编号）+ GB 45438-2025 附录E（XMP 包格式）。
+# 写入实现见 utils/aigc_marking.py；挂点：media_cache.download_and_cache（落盘）、
+# download_queue worker（宫格裁剪后兜底）、/api/download（下载出口兜底）、compose/TTS 直接落盘点。
+# 显式标识（视频起始画面/音频提示/图片角标）为后续阶段，见 docs/compliance/aigc_labeling_plan.md
+AIGC_MARK_ENABLED = True
+# 服务提供者名称或编码（标识办法第5条允许二选一）。⚠️占位值：标识服务平台（aigc.cac.gov.cn）
+# 申请到正式编码后必须替换。
+AIGC_CONTENT_PRODUCER = "zjt"
+# Label 枚举：1 = AI 生成合成内容（GB 45438-2025 附录E）
+AIGC_LABEL_VALUE = "1"
+# 单文件标识写入超时（秒）：ffmpeg remux（-c copy，秒级）+ Pillow 写入的兜底上限
+AIGC_MARK_TIMEOUT_SECONDS = 90
+# XMP AIGC 命名空间（TC260 实践指南），XMP 属性键 Xmp.TC260.AIGC，值为 JSON 字符串
+AIGC_XMP_NS_URI = "http://www.tc260.org.cn/ns/AIGC/1.0/"
+AIGC_XMP_NS_PREFIX = "TC260"
+# PNG XMP 承载：iTXt 块 keyword（Adobe 规范固定值）
+AIGC_PNG_XMP_KEYWORD = "XML:com.adobe.xmp"
+# JPEG XMP 承载：APP1 段 namespace（含结尾 \x00，Adobe 规范固定值）
+AIGC_JPEG_APP1_XMP_NS = b"http://ns.adobe.com/xap/1.0/\x00"
+
+# ===== AIGC 显式标识（明水印）烧录 =====
+# 依据：《深度合成规定》第17条 +《标识办法》第4条（视频起始画面/图片适当位置/音频语音或节奏提示）。
+# 分级（docs/compliance/aigc_labeling_plan.md 3.3；2026-11-11 产品决策）：
+# - L1 强制默认烧录：数字人视频（人脸生成）、TTS 合成人声、**全部生成图片与生成视频**
+#   （系统无法检测产出是否含人脸，保守按"人脸生成/可能混淆"对待，全量默认烧录；
+#   用户可申请关闭，第9条留痕表 aigc_explicit_opt_out_log 用户级状态机）。
+#   生成链挂点：download_queue worker / visual_task 入队失败兜底 / sync_task_executor
+#   （统一走 utils/aigc_explicit_marker.maybe_burn_generated_media），**必须先于
+#   transition_with_cdn_sync 执行**——保证 CDN 上传对象与本地文件一致带标。
+# - L2 提供功能：结果卡按钮按需烧录保留（覆盖存量内容与 opt-out 恢复后的单件需求）。
+# 实现 utils/aigc_explicit_marker.py；烧录会重编码丢原元数据，统一以 extra_fields={'ExplicitLabel':'1'}
+# 重写隐式标识（幂等判定依据）。⚠️显式关闭功能的前置条件是用户协议含 AIGC 标识条款（第8条）。
+AIGC_EXPLICIT_LABEL_TEXT = "AI生成"
+AIGC_EXPLICIT_VIDEO_DISPLAY_SECONDS = 3      # 视频起始画面提示展示时长（秒）
+AIGC_EXPLICIT_BURN_TIMEOUT_SECONDS = 600     # 视频重编码超时（秒）：全片 libx264 转码
+# 外层超时后杀掉 ffmpeg，并等到烧录线程退出再上传 CDN。
+# 只靠 wait_for 取消不了线程，线程晚一步 os.replace 会把已上传的无标文件换成有标本地文件。
+AIGC_EXPLICIT_BURN_CANCEL_JOIN_SECONDS = 30
+AIGC_EXPLICIT_FONT_REL = "files/fonts/NotoSansSC-Regular.otf"   # 中文角标字体（相对项目根）
+AIGC_EXPLICIT_NOTICE_AUDIO_REL = "files/audio/aigc_notice_v2.mp3"  # 音频节奏提示资产（相对项目根；v2 提升响度，文件名带版本号以强制各环境重新生成——_ensure_notice_audio 仅在文件缺失时合成）
+AIGC_EXPLICIT_FONT_SIZE_RATIO = 0.045        # 角标字号占画面高度比例（实践指南：不超画面高度 1/10）
+# 生成图片默认烧录总开关（Pillow 角标，单张几十~几百 ms，成本可忽略）
+AIGC_EXPLICIT_IMAGE_BURN_ENABLED = True
+# 生成视频默认烧录总开关（drawtext 全片重编码，1080p 10s 片约 10~40s/条，占 CPU；
+# worker 吞吐吃紧时可独立关闭，图片烧录不受影响。观测点：download_queue "tick done" 日志）
+AIGC_EXPLICIT_VIDEO_BURN_ENABLED = True
+AIGC_EXPLICIT_X264_PRESET = "fast"   # 重编码 preset：调 'veryfast' 可降 CPU（同画质下文件略大）
+AIGC_EXPLICIT_VIDEO_CRF = 20         # 重编码 CRF：18≈视觉无损（画质敏感时下调，文件变大）
 
 # ===== 商业许可证周期续租（scheduler job 触发间隔） =====
 # scheduler 等非 ASGI 进程的事件循环是短生命周期的，无法常驻后台续租任务；
@@ -2714,7 +2796,8 @@ class MediaConstants:
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
     # 分镜候选区手工上传：首版采用浏览器兼容性稳定的图片与视频格式。
-    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+    # jfif 即 JPEG 容器（同魔数），入口放行、落盘前归一化为 .jpg
+    STORYBOARD_IMAGE_UPLOAD_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.jfif'}
     STORYBOARD_VIDEO_UPLOAD_EXTENSIONS = {'.mp4', '.webm'}
     STORYBOARD_ASSET_UPLOAD_CHUNK_BYTES = 1024 * 1024
     STORYBOARD_IMAGE_MAX_SIZE_MB_DEFAULT = 20
@@ -2800,7 +2883,16 @@ class VideoScriptExtractConstants:
     # 单帧压缩外层超时（秒）。
     FRAME_COMPRESS_TIMEOUT = 20
     # 剧本生成 LLM 超时（秒）与输出 token 上限（多场景长剧本）。
+    # LLM_TIMEOUT 为保底超时（短视频/少镜头场景）；长视频分镜数多，剧本输出
+    # 规模随镜头数线性增长，超时按镜头切换点数动态放宽（见
+    # estimate_llm_timeout：每镜追加 LLM_TIMEOUT_PER_SCENE_SECOND 秒，
+    # 上限 LLM_TIMEOUT_MAX）。实测依据：84.2s 视频 57 镜 pro 档生成耗时
+    # 336s（含模型默认思考），固定 180s 时该场景必然超时失败。
     LLM_TIMEOUT = 180
+    # 动态超时：每镜头切换点追加的超时秒数（57 镜实测 336s ≈ 5.9s/镜，取整留波动余量）。
+    LLM_TIMEOUT_PER_SCENE_SECOND = 6.0
+    # 动态超时上限（秒）：LLM_MAX_TOKENS=8000 在最坏生成速率（约 20 token/s）+ 思考余量。
+    LLM_TIMEOUT_MAX = 480
     LLM_MAX_TOKENS = 8000
     LLM_TEMPERATURE = 0.4
     # 剧本文本长度上限（字符），超出截断，防止异常输出撑爆 workflow JSON。
@@ -3580,6 +3672,8 @@ class MediaUploadSafetyConstants:
         'MAGIC_SCAN_BYTES': '魔数校验读取的头部字节数',
         'TIFF_EXTS': '允许上传但落盘前必须转码的 TIFF 扩展名',
         'TIFF_CONVERT_TARGET_EXT': 'TIFF 转码目标扩展名（浏览器可解码）',
+        'JFIF_EXTS': '允许上传但落盘前必须重命名的 JFIF 扩展名',
+        'JFIF_CONVERT_TARGET_EXT': 'JFIF 归一化目标扩展名（内容同为 JPEG，仅重命名）',
     }
 
     # 显式拒绝：命中时返回针对性错误信息（白名单本身已排除，这里用于精确提示）
@@ -3588,7 +3682,9 @@ class MediaUploadSafetyConstants:
     # 扩展名白名单（与 _MEDIA_EXTENSIONS / StaticFiles 服务范围保持媒体类型）。
     # tif/tiff 浏览器 <img> 无法解码、CDN 扩展名表也不认，放行仅用于上传入口，
     # 落盘前由 utils/media_upload.convert_tiff_file_to_png 统一转 PNG 后再对外服务
-    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff')
+    # jfif 内容即标准 JPEG（同 FF D8 FF 魔数），放行仅用于上传入口，
+    # 落盘前由 utils/media_upload.normalize_uploaded_image_file 重命名为 .jpg
+    IMAGE_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tif', '.tiff', '.jfif')
     VIDEO_EXTS = ('.mp4', '.mov', '.webm', '.avi', '.mkv')
     AUDIO_EXTS = ('.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac')
 
@@ -3606,6 +3702,13 @@ class MediaUploadSafetyConstants:
     # 转码取第一帧；16bit 降为 8bit；CMYK 转 RGB；转码产物体积不设上限（限制的是上传原文件）
     TIFF_EXTS = ('.tif', '.tiff')
     TIFF_CONVERT_TARGET_EXT = '.png'
+
+    # JFIF 专用：.jfif 内容即标准 JPEG（JPEG/JFIF 是同一文件格式的正式名称），
+    # 浏览器 <img> 可正常解码，但部分 CDN/proxy 的 MIME 表不含 jfif，
+    # 与 TIFF 同策略：上传入口放行、落盘后归一化为 .jpg（无损，仅重命名），
+    # upload 目录不得残留 .jfif 文件。
+    JFIF_EXTS = ('.jfif',)
+    JFIF_CONVERT_TARGET_EXT = '.jpg'
 
 
 # ============ 智能插入分镜 ============

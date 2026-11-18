@@ -25,6 +25,7 @@ from config.volcengine_tts_constants import (
 )
 from model.voice import PROVIDER_VOLCENGINE, VoiceModel
 from perseids_server.utils.permission import require_permission
+from utils.aigc_marking import mark_file_for_task
 from utils.volcengine_tts_util import (
     get_volcengine_tts_config,
     resolve_result_dir,
@@ -213,6 +214,8 @@ async def preview_voice(request: Request, voice_id: int):
             with open(tmp_path, 'wb') as f:
                 f.write(audio_bytes)
             os.replace(tmp_path, cached_path)
+            # AIGC 隐式标识：试听缓存同样为 TTS 生成内容（深度合成合规）；全容错不阻断
+            mark_file_for_task(cached_path, filename, 'audio')
 
         try:
             await asyncio.to_thread(_write_preview)

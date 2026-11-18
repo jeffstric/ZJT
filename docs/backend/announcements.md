@@ -16,7 +16,7 @@
 
 ## 数据库
 
-迁移：`alembic/versions/no_129_20260906_add_announcement_tables.py`（挂在 head `20260905_ai_audio_speed`）。
+迁移：`alembic/versions/no_129_20260906_add_announcement_tables.py`（建表）+ `alembic/versions/no_165_20261111_add_announcements_popup_flag.py`（popup 字段，2026-11-11）。
 
 ### announcements
 
@@ -25,10 +25,11 @@
 | id | int AI PK | |
 | title | varchar(200) NOT NULL | 标题 |
 | content | text | 正文（纯文本，前端按 `white-space: pre-wrap` 渲染，防 XSS） |
-| link_url | varchar(500) NULL | 跳转链接（必须 http/https 或由上传产生的相对路径） |
+| link_url | varchar(500) NULL | 跳转链接（http(s):// 或站内相对路径 `/` 开头、排除 `//`；javascript: 被拒。2026-11-11 放开站内路径以支持弹窗公告跳站内功能页，如 AIGC 预告 → `/index.html?aigc_tab=1` 直达「设置→内容标识」） |
 | link_text | varchar(100) NULL | 链接展示文字 |
 | images | text | 图片 URL JSON 数组（`/upload/announcement/...` 相对路径） |
 | level | varchar(16) | info / success / warning / error |
+| popup | tinyint，默认 0 | **弹窗通知**：1=用户打开接入页面时强弹窗展示（无需进铃铛面板），标记已读后不再弹；0=仅铃铛面板展示。迁移 no_165（2026-11-11）新增 |
 | status | varchar(16) | draft / published / offline |
 | publish_at | datetime NULL | 定时发布，NULL=立即；到点自动生效（查询条件 `publish_at <= NOW()`） |
 | expire_at | datetime NULL | 失效时间，NULL=长期；过期自动不展示（查询条件 `expire_at > NOW()`） |
@@ -80,19 +81,22 @@
 - 路由：`api/announcements.py`（`router` + `admin_router` 两个 APIRouter，`server.py` include）
 - 管理端前端：`web/admin.html`「公告管理」tab + `web/js/admin.js`（loadAnnouncements 等方法）+ `web/css/admin.css`（.ann-* 样式）
 - 用户端前端：`web/index.html`（铃铛 + 面板 + 详情弹窗 DOM，`app.mixin(window.AnnouncementCenterMixin)` 注册）+ `web/js/announcement_center.js`（mixin：轮询/面板/已读）+ `web/css/announcement_center.css`
+- 弹窗公告组件：`web/js/announcement_popup.js`（自包含零模板依赖，动态注入 DOM；textContent 防注入、外链仅 http(s)），接入 `web/index.html` / `web/marketing_agent.html` / `web/video_workflow.html`
 - i18n：`web/i18n/locales/{zh-CN,en}/admin.json`（ann_* 管理端键）、`.../index.json`（ann_* 用户端键）
 - 测试：`tests/crud/test_announcements_crud.py`、`tests/services/test_announcement_service.py`、`tests/api/test_announcements_api.py`
 
 ## 数据流
 
 1. 管理员在 `/admin` →「公告管理」→ 新建公告（可存草稿或直接发布，可设定时发布/失效时间/级别/链接/图片）。
-2. 用户首页登录后，`announcement_center.js` 每 60s 轮询 `/api/announcements/unread-count`，铃铛显示红色徽标。
-3. 点铃铛展开面板：上方「公告」（本站，per-user 已读），下方「系统通知」（复用 `/api/notifications/poll`，全局已读）。
-4. 点击条目 → 详情弹窗（正文 pre-wrap 文本、图片九宫格可点击放大、链接按钮）；打开即自动标记已读，徽标减一。
-5. 「全部已读」按钮调 `/api/announcements/read-all`。
+2. **弹窗公告（popup=1）**：用户打开任一接入页面（index / marketing_agent / video_workflow）且已登录时，`announcement_popup.js` 拉取有效公告列表，发现**最新一条未读弹窗公告**即居中强弹窗展示；点「我知道了」标记已读（服务端 per-user），此后不再弹；有多条未读弹窗公告时逐条分批展示（每次进页只弹一条，不轰炸）。挂载点：DOMContentLoaded 自动检测（覆盖带 token 进页全部场景，含 401→首页登录→redirect 回原页链路）+ 首页登录成功后显式补检（index_app.js）。**首个使用场景：AIGC 内容标识规则变更预告（2026-11-11）**。
+3. 用户首页登录后，`announcement_center.js` 每 60s 轮询 `/api/announcements/unread-count`，铃铛显示红色徽标。
+4. 点铃铛展开面板：上方「公告」（本站，per-user 已读），下方「系统通知」（复用 `/api/notifications/poll`，全局已读）。
+5. 点击条目 → 详情弹窗（正文 pre-wrap 文本、图片九宫格可点击放大、链接按钮）；打开即自动标记已读，徽标减一。
+6. 「全部已读」按钮调 `/api/announcements/read-all`。
 
 ## 设计要点
 
+- **弹窗已读即不再弹**：`announcement_reads` 服务端 per-user 记录（跨设备一致，优于 localStorage 方案）；标记已读失败仅静默，下次进页会再提示一次（宁可重复不丢告知）。
 - **防 XSS**：正文/标题一律 Vue 文本插值渲染（不使用 v-html）；图片 URL 仅接受 `/`、`http(s)://` 开头（服务端校验）；详情弹窗外链 `target="_blank"` 一律带 `rel="noopener noreferrer"`（后端已滤 `javascript:`，前端隔离 window.opener 为纵深防御第二层）。
 - **幂等已读**：`INSERT IGNORE` + 唯一键，重复标记不报错。
 - **定时发布/过期**：不依赖定时任务，查询条件实时过滤（`publish_at <= NOW()` / `expire_at > NOW()`）。时间为 **naive datetime**：与 MySQL `NOW()` 同以部署时区为准，要求应用容器与数据库时区保持一致（跨时区部署需显式对齐，如同时设为 `Asia/Shanghai`）。
