@@ -185,7 +185,21 @@ def test_visual_sync_mode_persists_postprocessed_result_before_completed(
 
     monkeypatch.setattr(mock_interceptor, "is_mock_enabled", lambda: False)
     monkeypatch.setattr(pipeline_processor.PipelineProcessor, "get_pending_steps", lambda *_: [])
-    monkeypatch.setattr(visual_drivers.VideoDriverFactory, "get_implementation_for_user", lambda *_: None)
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "resolve_implementation_for_user",
+        lambda *_args, **_kwargs: ("unregistered-test-impl", None),
+    )
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "probe_input_compatibility",
+        lambda *_args, **_kwargs: (True, None),
+    )
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "tool_has_implementation_lock",
+        lambda *_args, **_kwargs: False,
+    )
     driver = SimpleNamespace(
         driver_name="test-sync-driver",
         submit_task=lambda _ai_tool: {
@@ -194,7 +208,16 @@ def test_visual_sync_mode_persists_postprocessed_result_before_completed(
             "result_url": upstream_url,
         },
     )
-    monkeypatch.setattr(visual_drivers.VideoDriverFactory, "create_driver_by_type", lambda *_args, **_kwargs: driver)
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "create_driver_by_type_result",
+        lambda *_args, **_kwargs: (driver, None),
+    )
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "create_driver_by_implementation_result",
+        lambda *_args, **_kwargs: (None, {"message": "test skip impl"}),
+    )
 
     async def fake_download(*_args, **_kwargs):
         return cached_url
@@ -429,7 +452,11 @@ def test_sync_worker_postprocesses_final_worker_result(
             "result_url": upstream_url,
         },
     )
-    monkeypatch.setattr(visual_drivers.VideoDriverFactory, "create_driver_by_type", lambda *_args, **_kwargs: driver)
+    monkeypatch.setattr(
+        visual_drivers.VideoDriverFactory,
+        "create_driver_by_type_result",
+        lambda *_args, **_kwargs: (driver, None),
+    )
 
     async def fake_download(*_args, **_kwargs):
         return cached_url
