@@ -452,6 +452,7 @@
         const affectedVideoNodes = new Set();
         const srcUrl = typeof getNodeImageUrl === 'function' ? getNodeImageUrl(node) : (node.data && (node.data.url || node.data.reference_image));
 
+        const affectedEditNodes = new Set();
         for(const conn of imageConns) {
           const targetNode = state.nodes.find(n => n.id === conn.to);
           if(targetNode && targetNode.type === 'image_to_video') {
@@ -471,10 +472,20 @@
             else if(conn.portType === 'end' && targetEl && typeof targetEl._updateEndFrame === 'function') targetEl._updateEndFrame();
             else if(conn.portType === 'ref-image' && targetEl && typeof targetEl._updateReferencePreview === 'function') targetEl._updateReferencePreview();
           }
+          // 视频编辑节点：收集受影响节点，连接清除后统一回补缩略条/算力
+          if(targetNode && targetNode.type === 'video_edit') {
+            affectedEditNodes.add(conn.to);
+          }
         }
 
         // 删除连接
         state.imageConnections = state.imageConnections.filter(c => c.from !== id && c.to !== id);
+
+        // 视频编辑节点：连接已清除，回补参考图缩略条/算力（须在 filter 之后，否则读到旧连接）
+        for(const editNodeId of affectedEditNodes) {
+          const editNode = state.nodes.find(n => n.id === editNodeId);
+          if(editNode && typeof editNode.refreshPower === 'function') editNode.refreshPower();
+        }
 
         // 更新所有受影响的图生视频节点的算力显示
         for(const videoNodeId of affectedVideoNodes) {

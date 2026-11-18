@@ -23,7 +23,10 @@
 
   var PORTS = [
     { direction: 'input', titleI18nKey: 'video_edit_input_port', acceptType: 'video', connectionType: 'connections' },
-    { direction: 'input', titleI18nKey: 'video_edit_images_port', acceptType: 'image', connectionType: 'imageConnections', cssClass: 'image-in' },
+    // cssClass 必须为 {portType}-image-port：CONNECTION_TYPES.image.toPortSelector
+    // 按该模板解析落点端口（portType='video-edit' → '.video-edit-image-port'），
+    // 不匹配则连线渲染找不到端口（首版 'image-in' 的翻车原因）
+    { direction: 'input', titleI18nKey: 'video_edit_images_port', acceptType: 'image', connectionType: 'imageConnections', cssClass: 'video-edit-image-port' },
     { direction: 'output', titleI18nKey: 'video_edit_output_port' }
   ];
 
@@ -114,7 +117,7 @@
           '</div>' +
           '<div class="field field-always-visible">' +
             '<div class="label" data-i18n="video_edit_images_label">角色参考图（1-9 张）</div>' +
-            '<div class="gen-meta edit-images-list"></div>' +
+            '<div class="edit-images-thumbs"></div>' +
             '<div class="gen-meta images-hint"></div>' +
           '</div>' +
           '<div class="field field-always-visible">' +
@@ -141,7 +144,7 @@
         var previewField = el.querySelector('.video-preview-field');
         var thumbVideo = el.querySelector('.video-thumb');
         var nameEl = el.querySelector('.video-name');
-        var imagesListEl = el.querySelector('.edit-images-list');
+        var imagesListEl = el.querySelector('.edit-images-thumbs');
         var imagesHintEl = el.querySelector('.images-hint');
         var durationSelect = el.querySelector('.edit-duration');
         var hintEl = el.querySelector('.duration-hint');
@@ -168,33 +171,66 @@
           return fromNode || null;
         }
 
-        /** 已连接的参考图节点列表（imageConnections 按 id 顺序 = 图 1..N，与上游从左到右对应口径一致） */
+        /**
+         * 已连接的参考图列表：[{ node, connId }]（imageConnections 顺序 = 图 1..N，
+         * 与上游"图 N 替换视频里第 N 个角色"口径一致）
+         */
         function findConnectedImages() {
           return state.imageConnections
             .filter(function(c) { return c.to === node.id; })
-            .map(function(c) { return state.nodes.find(function(n) { return n.id === c.from && n.type === 'image'; }); })
+            .map(function(c) {
+              var imgNode = state.nodes.find(function(n) { return n.id === c.from && n.type === 'image'; });
+              return imgNode ? { node: imgNode, connId: c.id } : null;
+            })
             .filter(Boolean);
         }
 
-        function refreshImagesList() {
+        /** 参考图缩略预览（口径同图生视频节点 renderReferencePreview）：50x50 缩略 + 图N 角标 + × 删连接 */
+        function renderImageThumbs() {
+          imagesListEl.innerHTML = '';
           var images = findConnectedImages();
           if (!images.length) {
-            imagesListEl.textContent = textOf('video_edit_images_none', '未连接参考图');
+            var empty = document.createElement('div');
+            empty.className = 'gen-meta';
+            empty.textContent = textOf('video_edit_images_none', '未连接参考图');
+            imagesListEl.appendChild(empty);
             return;
           }
-          imagesListEl.textContent = images.map(function(img, idx) {
-            var name = (img.data && img.data.name) || '';
-            return (idx + 1) + '.' + (name || textOf('video_edit_image_unnamed', '图片'));
-          }).join('  ');
+          images.forEach(function(img, idx) {
+            var url = (img.node.data && img.node.data.url) || '';
+            var item = document.createElement('div');
+            item.style.cssText = 'position: relative; width: 50px; height: 50px; display: inline-block; margin: 0 6px 6px 0;';
+            var safeUrl = typeof escapeHtml === 'function' ? escapeHtml(url) : url;
+            item.innerHTML =
+              '<img src="' + safeUrl + '" style="width: 100%; height: 100%; object-fit: cover; border-radius: 4px; cursor: pointer;" />' +
+              '<div style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: white; font-size: 10px; text-align: center; border-radius: 0 0 4px 4px; padding: 1px 0;">图' + (idx + 1) + '</div>' +
+              '<button class="edit-ref-remove-btn" data-conn-id="' + img.connId + '" style="position: absolute; top: -4px; right: -4px; width: 16px; height: 16px; border-radius: 50%; background: #ef4444; border: none; color: white; font-size: 10px; cursor: pointer; line-height: 1;">×</button>';
+            item.querySelector('img').addEventListener('click', function(e) {
+              e.stopPropagation();
+              if (typeof openImageModal === 'function') openImageModal(url, textOf('video_edit_image_unnamed', '图片') + (idx + 1));
+            });
+            item.querySelector('.edit-ref-remove-btn').addEventListener('click', function(e) {
+              e.stopPropagation();
+              // 删对应连接线并重渲染（口径同 i2v 参考图删除）
+              var connId = Number(this.getAttribute('data-conn-id'));
+              state.imageConnections = state.imageConnections.filter(function(c) {
+                return !(c.to === node.id && c.id === connId);
+              });
+              if (typeof renderImageConnections === 'function') renderImageConnections();
+              node.refreshPower();
+              safeAutoSave();
+            });
+            imagesListEl.appendChild(item);
+          });
         }
 
         function refreshImagesHint() {
           var images = findConnectedImages();
-          var broken = images.filter(function(img) {
-            var url = (img.data && img.data.url) || '';
+          var broken = images.filter(function(item) {
+            var url = (item.node.data && item.node.data.url) || '';
             return !isUsableMediaUrl(url);
           });
-          if (images.some(function(img) { return img.data && img.data.project_id && !(img.data && img.data.url); })) {
+          if (images.some(function(item) { return item.node.data && item.node.data.project_id && !(item.node.data && item.node.data.url); })) {
             imagesHintEl.textContent = textOf('video_edit_image_generating', '有参考图还在生成，请等成片后再提交');
             imagesHintEl.classList.add('is-error');
             return;
@@ -213,6 +249,7 @@
         }
 
         function refreshPower() {
+          renderImageThumbs();
           var seconds = durationSelect.value ? Number(durationSelect.value) : null;
           if (seconds == null) {
             var source = findConnectedVideo();
@@ -260,7 +297,6 @@
         }
 
         node.refreshPower = function() {
-          refreshImagesList();
           refreshImagesHint();
           refreshPower();
           refreshHint();
@@ -336,15 +372,18 @@
         // 图片口：多连（single 不传），上限 9 在 onConnect 里校验——
         // bindInputPortEvents 先 push 连接再回调，超限时回调内自行移除刚建的连接
         bindInputPortEvents(el, node, {
-          cssClass: 'image-in',
+          cssClass: 'video-edit-image-port',
           acceptType: 'image',
           connectionType: 'imageConnections',
           onConnect: function(fromNode, conn) {
+            // 补 portType：CONNECTION_TYPES.image.toPortSelector 按它解析落点端口，
+            // 缺失时连线渲染找不到端口（首版不显示连线的根因）
+            if (conn && !conn.portType) conn.portType = 'video-edit';
             var count = state.imageConnections.filter(function(c) { return c.to === node.id; }).length;
             if (count > MAX_REF_IMAGES) {
               var idx = state.imageConnections.indexOf(conn);
               if (idx !== -1) state.imageConnections.splice(idx, 1);
-              if (typeof renderAllConnections === 'function') renderAllConnections();
+              if (typeof renderImageConnections === 'function') renderImageConnections();
               showToast(textOf('video_edit_max_images', '角色参考图最多 9 张'), 'warning');
             }
             node.refreshPower();
@@ -401,7 +440,7 @@
           }
           var imageUrls = [];
           for (var i = 0; i < images.length; i++) {
-            var imgUrl = (images[i].data && images[i].data.url) || '';
+            var imgUrl = (images[i].node.data && images[i].node.data.url) || '';
             if (typeof imgUrl === 'string' && imgUrl.indexOf('blob:') === 0) {
               showToast(textOf('video_edit_image_uploading', '参考图还在上传，请稍候'), 'warning');
               return;
@@ -588,17 +627,18 @@
         }
       },
       {
-        selector: '.port.input.image-in',
-        portType: 'image-in',
+        selector: '.port.input.video-edit-image-port',
+        portType: 'video-edit',
         accepts: ['image'],
         connectionType: 'imageConnections',
+        allowMultiple: true,
         guard: function(targetNode) {
           var count = state.imageConnections.filter(function(c) { return c.to === targetNode.id; }).length;
-          return count < 9;
+          return count < MAX_REF_IMAGES;
         },
         onConnect: function(fromNode, targetNode) {
           var count = state.imageConnections.filter(function(c) { return c.to === targetNode.id; }).length;
-          if (count > 9) {
+          if (count > MAX_REF_IMAGES) {
             showToast(textOf('video_edit_max_images', '角色参考图最多 9 张'), 'warning');
           }
           if (targetNode && typeof targetNode.refreshPower === 'function') {

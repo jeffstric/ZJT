@@ -18,18 +18,25 @@
 .video-edit-node .images-hint.is-error {
   color: #ef4444;
 }
-.video-edit-node .edit-images-list {
-  word-break: break-all;
+.video-edit-node .edit-images-thumbs {
+  display: flex;
+  flex-wrap: wrap;
 }
 .video-edit-node .edit-prompt {
   min-height: 56px;
 }
-/* 图片输入端口：与视频输入口错开高度，视觉上区分两类输入（口径同 voice-input-port 的偏移写法） */
-.video-edit-node .port.input.image-in {
+/* 图片输入端口（cssClass=video-edit-image-port，与 CONNECTION_TYPES.image
+   的 .{portType}-image-port 解析模板对应）：与视频口错开高度并着色区分 */
+.port.video-edit-image-port {
+  left: -9px;
   top: calc(50% + 24px);
   border-color: #38bdf8;
 }
-.video-edit-node .port.input.image-in:hover,
-.video-edit-node .port.input.image-in.can-connect {
+.port.video-edit-image-port:hover {
   background: #7dd3fc;
+  transform: none;
+}
+.port.video-edit-image-port.can-connect {
+  background: #7dd3fc;
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.3);
 }
