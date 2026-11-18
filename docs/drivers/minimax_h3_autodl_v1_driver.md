@@ -66,7 +66,7 @@
 
 `validate_input_compatibility`：无参考视频或无参考图判不兼容（任务类型 54 仅此一个实现方，钩子防管理员误挂载/重试兜底）。
 
-**计费**：`VIDEO_CHARACTER_REPLACE_COMPUTING_POWER`（5-25 档），按 autodl 高峰价 0.11 元/秒贴本定价 `ceil(秒×0.11/0.04)`；输出仅 768p 无 480p 档。
+**计费**：`VIDEO_CHARACTER_REPLACE_COMPUTING_POWER`（5-25 档）。2026-11-18 按用户实测调价重定价：autodl 高峰实扣 5s=0.66 元（**0.132 元/秒**，高于 11-16 页面标价 0.11 元/秒 20%，原表 `ceil(秒×2.75)` 每单亏 ~15%）→ `ceil(秒×0.132/0.04)`，毛利 0~3%，空闲时段（00:00-08:00）为利润冗余；输出仅 768p 无 480p 档。⚠️ 后台 implementation_power 若已建本实现的行会覆盖代码默认值，调价时需同步清理。
 
 **提交端点**：`POST /api/video-character-replace`（`video:character_replace` 权限，模式同 `/api/video-enhance`：ffprobe 探测时长/方向 → 预扣费 → 落库入队）；前端页面 `/video-edit`（`web/js/pages/video_edit.js`，首页工具卡「视频编辑 🎭」）。
 
