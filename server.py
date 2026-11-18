@@ -113,6 +113,10 @@ from config.constant import (
     VIDEO_ENHANCE_MIN_DURATION_SECONDS,
     VIDEO_ENHANCE_MAX_DURATION_SECONDS,
     VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS,
+    VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
+    VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS,
+    VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT,
+    VIDEO_CHAR_REPLACE_MAX_REF_IMAGES,
     WORKFLOW_DIRECT_UPLOAD_CONFIRM_TIMEOUT,
     WORKFLOW_DIRECT_DOWNLOAD_HTTP_TIMEOUT,
     QINIU_DIRECT_UPLOAD_TOKEN_EXPIRES,
@@ -5284,6 +5288,256 @@ async def video_enhance(
         logger.error(f"Video enhancement failed: {str(e)}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"视频高清修复失败: {str(e)}")
+
+
+async def _probe_video_dimensions(source: str) -> Optional[tuple]:
+    """ffprobe 探测视频宽高（本地路径或远程 URL），失败/超时返回 None。
+
+    人物替换成片方向跟随参考视频：宽高决定 768p竖 / 768p横（仅此两档）。
+    """
+    ffprobe_path = resolve_bin_path(
+        get_config_value("bin", "ffprobe", default="ffprobe"), APP_DIR
+    )
+    cmd = [
+        ffprobe_path, '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height',
+        '-of', 'csv=s=x:p=0',
+        source,
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=VIDEO_ENHANCE_PROBE_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            logger.warning(f"ffprobe timeout when probing video dimensions: {source}")
+            return None
+        if proc.returncode != 0:
+            logger.warning(f"ffprobe failed to probe video dimensions: {source}")
+            return None
+        parts = stdout.decode('utf-8', errors='ignore').strip().split('x')
+        if len(parts) != 2:
+            return None
+        return int(parts[0]), int(parts[1])
+    except (OSError, ValueError) as exc:
+        logger.warning(f"Error probing video dimensions for {source}: {exc}")
+        return None
+
+
+@app.post("/api/video-character-replace")
+@require_permission("video:character_replace")
+async def video_character_replace(
+    request: Request,
+    video: UploadFile = File(None, description="参考视频文件（动作/运镜/原声来源，必填，或 video_url 二选一）"),
+    video_url: str = Form(None, description="参考视频URL（与 video 二选一）"),
+    images: List[UploadFile] = File(None, description="角色参考图 1-9 张（图 N 替换视频里第 N 个角色，从左到右对应）"),
+    image_urls: str = Form(None, description='角色参考图 URL 列表（JSON 数组字符串，与 images 可混用）'),
+    duration_seconds: Optional[int] = Form(None, description="输出时长（秒）5-25；缺省取 min(参考视频时长向上取整, 25)"),
+    prompt: str = Form("", description="替换说明（选填，2048 字符内）：指定谁换谁/保留什么/替换后走向"),
+    subject: str = Form("", description="检测主体类型（选填，必须英文，默认 person，一次只填一种）"),
+    user_id: int = Form(None, description="User ID"),
+    auth_token: str = Form(None, description="Authentication token"),
+):
+    """
+    提交视频人物替换任务（AutoDL.Art H3 工作流 minimax_h3_zm_titim）。
+
+    只落库并入队，视频/图片转公网 URL 与工作流提交由调度进程的
+    minimax_h3_character_replace_autodl_v1 驱动完成。计费按输出时长档位
+    （5-25，0.11 元/秒贴本），提交前预扣，任务失败由后台幂等退费；
+    前端轮询 /api/get-status/{project_id}。
+    """
+    try:
+        state_user_id = getattr(request.state, "user_id", None)
+        if user_id is not None and state_user_id is not None and int(user_id) != int(state_user_id):
+            raise HTTPException(status_code=400, detail="用户ID不匹配")
+        effective_user_id = state_user_id or user_id
+        if not effective_user_id:
+            raise HTTPException(status_code=400, detail="用户ID不能为空")
+
+        task_config = TaskTypeRegistry.get(TaskTypeId.VIDEO_CHARACTER_REPLACE)
+        if not task_config:
+            raise HTTPException(status_code=500, detail="视频人物替换任务未配置")
+
+        # ===== 1. 解析参考视频来源（必填）=====
+        if video is not None and (video.filename or ""):
+            try:
+                saved_video = await asyncio.to_thread(_save_uploaded_image, video)
+            except UploadValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            try:
+                probe_source = resolve_upload_url_to_local_path(saved_video)
+            except ValueError:
+                probe_source = saved_video
+        elif video_url and str(video_url).strip():
+            saved_video = str(video_url).strip()
+            local_file_path = _resolve_local_upload_path(saved_video, '/upload/')
+            probe_source = str(local_file_path) if local_file_path is not None else saved_video
+        else:
+            raise HTTPException(status_code=400, detail="必须提供参考视频文件或视频URL")
+
+        # ===== 2. 解析角色参考图（1-9 张，上传文件与本站/外网 URL 可混用）=====
+        ref_images: List[str] = []
+        if images:
+            for img in images[:VIDEO_CHAR_REPLACE_MAX_REF_IMAGES]:
+                if not (img.filename or ""):
+                    continue
+                try:
+                    ref_images.append(await asyncio.to_thread(_save_uploaded_image, img))
+                except UploadValidationError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if image_urls and str(image_urls).strip():
+            try:
+                url_list = json.loads(image_urls)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(status_code=400, detail=f"image_urls 必须是 JSON 数组字符串: {exc}") from exc
+            if not isinstance(url_list, list):
+                raise HTTPException(status_code=400, detail="image_urls 必须是 JSON 数组")
+            ref_images.extend(str(u).strip() for u in url_list if str(u).strip())
+        # 去重保序（同一张图既上传又传 URL 的边界）
+        seen = set()
+        ref_images = [u for u in ref_images if not (u in seen or seen.add(u))]
+        if not ref_images:
+            raise HTTPException(status_code=400, detail="至少需要 1 张角色参考图")
+        if len(ref_images) > VIDEO_CHAR_REPLACE_MAX_REF_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"角色参考图最多 {VIDEO_CHAR_REPLACE_MAX_REF_IMAGES} 张（图 1~9 从左到右对应视频中的角色）",
+            )
+
+        # ===== 3. ffprobe 探测视频时长/方向：输出时长档位 + 768p竖/横 =====
+        probed_duration = await _probe_video_duration_seconds(probe_source)
+        if duration_seconds and int(duration_seconds) > 0:
+            # 用户显式指定输出时长（语义=想要成片多久），探测值仅作缺省
+            duration_tier = int(duration_seconds)
+        elif probed_duration is not None and probed_duration > 0:
+            duration_tier = int(math.ceil(probed_duration))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="无法识别参考视频时长，请显式传入输出时长 duration_seconds（5-25）",
+            )
+        duration_tier = max(
+            VIDEO_CHAR_REPLACE_MIN_DURATION_SECONDS,
+            min(VIDEO_CHAR_REPLACE_MAX_DURATION_SECONDS, duration_tier),
+        )
+        if probed_duration is not None and 0 < probed_duration < duration_tier:
+            logger.info(
+                f"参考视频 {probed_duration:.2f}s 短于输出时长 {duration_tier}s，"
+                f"超出段将由模型自由发挥（上游工作流口径）"
+            )
+
+        dimensions = await _probe_video_dimensions(probe_source)
+        if dimensions:
+            width, height = dimensions
+            orientation = '768p横' if width > height else '768p竖'
+        else:
+            orientation = '768p竖'
+            logger.warning(f"ffprobe 探测视频方向失败，回落 768p竖: {probe_source}")
+
+        actual_impl = await asyncio.to_thread(
+            VideoDriverFactory.get_implementation_for_user,
+            TaskTypeId.VIDEO_CHARACTER_REPLACE,
+            effective_user_id,
+        ) or task_config.implementation
+        computing_power = await asyncio.to_thread(
+            task_config.get_computing_power,
+            duration_tier,
+            actual_impl,
+        )
+        if not computing_power or computing_power <= 0:
+            raise HTTPException(status_code=400, detail="当前时长未配置算力")
+
+        # ===== 4. 算力检查 + 预扣费（失败由后台调度器幂等退费）=====
+        auth_token = (
+            auth_token
+            or extract_bearer_token(request.headers.get("authorization"))
+            or (request.query_params.get("auth_token") or "")
+        )
+        transaction_id = str(uuid.uuid4())
+        headers = {"Authorization": f"Bearer {auth_token}"}
+        if CHECK_AUTH_TOKEN:
+            success, message, response_data = await async_make_perseids_request(
+                endpoint="user/check_computing_power",
+                method="GET",
+                headers=headers,
+            )
+            if not success:
+                raise HTTPException(status_code=400, detail=message)
+            user_computing_power = response_data.get("computing_power", 0)
+            user_id_from_token = response_data.get("user_id")
+            if user_computing_power < computing_power:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"您的算力不足，人物替换 {duration_tier} 秒需 {computing_power} 算力，当前仅有 {user_computing_power} 算力",
+                )
+            if user_id_from_token is not None and int(user_id_from_token) != int(effective_user_id):
+                raise HTTPException(status_code=400, detail="用户ID不匹配")
+            success, message, _response_data = await async_make_perseids_request(
+                endpoint="user/calculate_computing_power",
+                method="POST",
+                headers=headers,
+                data={
+                    "computing_power": computing_power,
+                    "behavior": "deduct",
+                    "transaction_id": transaction_id,
+                },
+            )
+            if not success:
+                logger.error(f"Character replace computing power deduction failed: {message}")
+
+        # ===== 5. 落库并入队（素材转公网 URL 与工作流提交由驱动在调度进程完成）=====
+        prompt_text = (prompt or "").strip()[:2048]
+        subject_text = (subject or "").strip()
+        extra_config = {
+            "source": "direct",
+            "char_replace_resolution": orientation,
+        }
+        if subject_text and subject_text != VIDEO_CHAR_REPLACE_DEFAULT_SUBJECT:
+            extra_config["params"] = {"subject": subject_text}
+        impl_id = get_implementation_id(actual_impl) if actual_impl else 0
+        ai_tool_id = await asyncio.to_thread(
+            AIToolsModel.create,
+            prompt=prompt_text or "视频人物替换",
+            user_id=effective_user_id,
+            type=TaskTypeId.VIDEO_CHARACTER_REPLACE,
+            video_path=saved_video,
+            image_path=ref_images[0],  # 兼容历史列表按 image_path 渲染
+            reference_images=json.dumps(ref_images, ensure_ascii=False),
+            transaction_id=transaction_id,
+            duration=duration_tier,
+            status=AI_TOOL_STATUS_PENDING,
+            implementation=impl_id,
+            extra_config=json.dumps(extra_config, ensure_ascii=False),
+        )
+        await asyncio.to_thread(
+            TasksModel.create,
+            task_type=TASK_TYPE_GENERATE_VIDEO,
+            task_id=ai_tool_id,
+            status=TASK_STATUS_QUEUED,
+        )
+        return JSONResponse({
+            "success": True,
+            "project_id": ai_tool_id,
+            "status": "submitted",
+            "duration": duration_tier,
+            "resolution": orientation,
+            "computing_power": computing_power,
+        })
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Video character replace failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"视频人物替换失败: {str(e)}")
 
 
 @app.post("/api/video-watermark-remove")

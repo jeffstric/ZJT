@@ -6,6 +6,7 @@
     { path: '/image-to-video', name: 'image-to-video', component: ImageToVideo },
     { path: '/ai-script-gen', name: 'ai-script-gen', component: AIScriptGen },
     { path: '/video-enhance', name: 'video-enhance', component: VideoEnhance },
+    { path: '/video-edit', name: 'video-edit', component: VideoEdit },
     { path: '/audio-generate', name: 'audio-generate', component: AudioGenerate },
     { path: '/digital-human', name: 'digital-human', component: DigitalHuman },
     { path: '/skill-config', name: 'skill-config', component: SkillConfig }
@@ -461,6 +462,7 @@
         if (this.route.name === 'image-to-video') return this.$t('page_title_image_to_video');
         if (this.route.name === 'ai-script-gen') return this.$t('page_title_ai_script_gen');
         if (this.route.name === 'video-enhance') return this.$t('page_title_video_enhance');
+        if (this.route.name === 'video-edit') return this.$t('page_title_video_edit');
         if (this.route.name === 'audio-generate') return this.$t('page_title_audio_generate');
         return this.$t('page_title_ai_tools');
       },

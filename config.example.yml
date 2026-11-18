@@ -187,7 +187,7 @@ topenrouter:
   model_aliases: {}  # 模型名映射 JSON（火山原生名 → 平台名），404 时在此修正
 
 autodl:
-  # AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频等）
+  # AutoDL.Art ComfyUI 工作流 API（H3 多图多音频生视频 / 视频人物替换 minimax_h3_zm_titim 等）
   # Token 获取：登录 https://www.autodl.art/large-model/tokens （令牌管理）→ 创建令牌 → 分组必须选 ComfyUI
   api_key: ""
   base_url: "https://autodl.art"

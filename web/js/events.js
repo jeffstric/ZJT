@@ -371,6 +371,13 @@
       startNodePlacing(nodeId);
     });
 
+    document.getElementById('menuAddVideoEdit').addEventListener('click', () => {
+      const nodeId = createVideoEditNode();
+      renderMinimap();
+      addMenu.classList.remove('show');
+      startNodePlacing(nodeId);
+    });
+
     document.getElementById('menuAddText').addEventListener('click', () => {
       const nodeId = createTextNode();
       renderMinimap();

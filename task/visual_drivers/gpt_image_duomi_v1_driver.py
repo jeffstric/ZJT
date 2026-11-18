@@ -80,6 +80,40 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
             context=context
         )
 
+    def _extract_business_error(self, result: Any) -> Optional[tuple]:
+        """
+        识别多米的业务错误响应，如密钥不正确/额度不足等
+
+        多米网关的错误响应结构固定为：
+        {
+            "code": 403,
+            "data": null,
+            "exec_time": 0.1,
+            "ip": "...",
+            "msg": "请求密钥KEY不正确！"
+        }
+
+        结构有效（code+msg 齐全），不应误判为响应格式错误触发
+        INVALID_RESPONSE_FORMAT 报警（配置类问题不是代码 bug，Sentry 降噪）；
+        错误消息透传给用户。成功响应以 'id' 字段为准，先于本方法判定，
+        不会落到这里。
+
+        Returns:
+            Optional[tuple]: (错误描述, 是否致命)；
+            401/403 认证类为致命（重试无意义），其余 code 视为瞬态；
+            非业务错误（真正的格式异常）返回 None
+        """
+        if not isinstance(result, dict) or 'id' in result:
+            return None
+        msg = result.get('msg')
+        code = result.get('code')
+        if msg and code is not None:
+            # 403/401 类密钥错误补充配置指引，且重试无意义
+            if code in (401, 403):
+                return f"{msg}（code={code}），请检查 duomi.token 配置", True
+            return f"多米API错误(code={code}): {msg}", False
+        return None
+
     def _validate_submit_response(self, result: Any) -> tuple[bool, Optional[str]]:
         """
         验证 submit_task API 响应格式
@@ -264,6 +298,20 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
 
             self.logger.info(f"GPT Image 2 API response: {result}")
 
+            # 多米业务错误（密钥不正确/额度不足等）：结构有效，转用户错误
+            # 不报警（修复前被 _validate_submit_response 误判为格式错误，
+            # 每次密钥失效都触发 INVALID_RESPONSE_FORMAT Sentry 报警）
+            biz = self._extract_business_error(result)
+            if biz:
+                biz_error, is_fatal = biz
+                self.logger.warning(f"Duomi GPT Image 2 业务错误: {biz_error}")
+                return {
+                    "success": False,
+                    "error": biz_error,
+                    "error_type": "USER",
+                    "retry": not is_fatal
+                }
+
             # 验证响应格式
             is_valid, validation_error = self._validate_submit_response(result)
             if not is_valid:
@@ -364,6 +412,23 @@ class GptImageDuomiV1Driver(BaseVideoDriver):
                 }
 
             self.logger.info(f"GPT Image 2 status API response: {raw_result}")
+
+            # 多米业务错误（密钥被撤销/欠费等运行期失效）：结构有效，不报警
+            # 401/403 认证类判 FAILED（重试无意义）；其余 code 视为瞬态继续轮询
+            biz = self._extract_business_error(raw_result)
+            if biz:
+                biz_error, is_fatal = biz
+                self.logger.warning(f"Duomi GPT Image 2 轮询业务错误: {biz_error}")
+                if is_fatal:
+                    return {
+                        "status": "FAILED",
+                        "error": biz_error,
+                        "error_type": "USER"
+                    }
+                return {
+                    "status": "RUNNING",
+                    "message": "上游返回业务错误，稍后继续轮询"
+                }
 
             # 验证响应格式
             is_valid, validation_error = self._validate_status_response(raw_result)
