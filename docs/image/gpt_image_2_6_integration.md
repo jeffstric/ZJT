@@ -43,7 +43,8 @@ GPT Image 2.6 为**新建**模型（独立于 2.5，非改名），拆分为 **S
 - 多米驱动文件: `task/visual_drivers/gpt_image_2_6_duomi_v1_driver.py`
   （复用 `GptImageDuomiV1Driver` 的提交/查询/尺寸映射逻辑，仅覆盖 `DEFAULT_MODEL` 与 `driver_name`）
 - 站点驱动: `task/visual_drivers/gpt_image_common_v1_driver.py`
-  （基类 `GptImage26CommonSunburstV1Driver` / `GptImage26CommonFlareV1Driver`，站点类 site_0 ~ site_5）
+  （基类 `GptImage26CommonSunburstV1Driver` / `GptImage26CommonFlareV1Driver`，站点类 site_0 ~ site_5；
+  2.6 基类扩展 `xhigh`/`max` 质量档与 `gif`/`svg` 输出格式）
 
 ### 多米 API 接口
 
@@ -67,7 +68,20 @@ GPT Image 2.6 为**新建**模型（独立于 2.5，非改名），拆分为 **S
 
 - 文生图: `POST {base_url}/v1/images/generations`（JSON，`model` 为对应 2.6 模型名）
 - 图片编辑: `POST {base_url}/v1/images/edits`（multipart/form-data，`model`/`n`/`size`/`quality` 等与 GPT Image 2 相同）
-- 接口格式细节（尺寸映射、extra_config 透传、响应兼容）与 [GPT Image 2 集成说明](./gpt_image_2_integration.md)、[GPT Image 2.5 集成说明](./gpt_image_2_5_integration.md) 完全一致
+- 同步接口直接返回结果：`response_format` 缺省为 `b64_json`（`url` 返回 7 天有效链接，需及时转存）
+- 接口格式细节（尺寸映射、extra_config 透传、响应兼容）与 [GPT Image 2 集成说明](./gpt_image_2_integration.md)、[GPT Image 2.5 集成说明](./gpt_image_2_5_integration.md) 一致，另有 2.6 扩展：
+
+#### 2.6 扩展参数（gif / svg）
+
+| 参数 | 生效范围 | 说明 |
+|------|---------|------|
+| `output_format` | 文生图 + 图片编辑 | 输出格式：`png`/`jpeg`/`webp`/`gif`/`svg`（GPT Image 2 / 2.5 仅支持前三种）。值大小写不敏感，`jpg` 自动归一为 `jpeg`，非法值忽略并记 warning |
+| `quality` | 文生图 + 图片编辑 | 质量档：2.5 的 `low`/`medium`/`high`/`auto` 之外，2.6 新增 `xhigh`/`max` |
+
+- 两个参数均通过 `ai_tool.extra_config` 传入（如 `{"output_format": "gif", "quality": "xhigh"}`），驱动仅透传合法值
+- `b64_json` 响应不携带格式信息，驱动按字节魔数识别真实格式（png/jpeg/gif/webp/svg）生成 data URL；
+  svg 落盘缓存扩展名为 `.svg`（`utils/media_cache.py` 的 `save_data_url_to_cache` ext_map），gif 此前已支持
+- 接口文档依据：openlux gpt-image-2.6（`POST {base_url}/v1/images/generations`，参数与 gpt-image-2.5 一致）
 
 ## 配置要求
 
@@ -106,6 +120,18 @@ api_aggregator:
 ```
 
 图生图（图片编辑）额外传入 `image_path`（单张 URL、逗号分隔多张或本地路径）。
+
+需要 gif/svg 输出或 `xhigh`/`max` 质量档时，通过 `extra_config` 传入（通用站点实现方）：
+
+```json
+{
+    "type": 56,
+    "prompt": "a rotating loading spinner",
+    "ratio": "1:1",
+    "image_size": "1k",
+    "extra_config": "{\"output_format\": \"gif\", \"quality\": \"xhigh\"}"
+}
+```
 
 ## 相关文件
 

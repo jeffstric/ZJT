@@ -73,6 +73,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     VALID_QUALITIES = {"low", "medium", "high", "auto"}
     VALID_BACKGROUNDS = {"opaque", "auto", "transparent"}
     VALID_MODERATIONS = {"low", "auto"}
+    # 输出格式（OpenAI gpt-image 标准）；2.6 系列子类扩展支持 gif/svg
+    VALID_OUTPUT_FORMATS = {"png", "jpeg", "webp"}
 
     def __init__(self, site_id: str, impl_name: str = None):
         """
@@ -398,6 +400,25 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         else:
             self.logger.warning(f"无效的 {key} 值: {value}，有效值: {valid_values}，已忽略")
 
+    def _append_output_format(self, form_data: Dict[str, Any], config: Dict[str, Any]) -> None:
+        """
+        追加 output_format 字段：值小写化、jpg 归一为 jpeg，仅透传合法值。
+        文生图（JSON body）与图片编辑（multipart 表单）共用。
+        """
+        value = config.get("output_format")
+        if not value:
+            return
+
+        value = str(value).strip().lower()
+        if value == "jpg":
+            value = "jpeg"
+        if value in self.VALID_OUTPUT_FORMATS:
+            form_data["output_format"] = value
+        else:
+            self.logger.warning(
+                f"无效的 output_format 值: {value}，有效值: {self.VALID_OUTPUT_FORMATS}，已忽略"
+            )
+
     def _build_edit_form_data(self, ai_tool, size: str) -> Dict[str, Any]:
         """
         构建 /v1/images/edits 表单字段。
@@ -413,6 +434,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         self._append_optional_form_value(form_data, config, "quality", self.VALID_QUALITIES)
         self._append_optional_form_value(form_data, config, "background", self.VALID_BACKGROUNDS)
         self._append_optional_form_value(form_data, config, "moderation", self.VALID_MODERATIONS)
+        self._append_output_format(form_data, config)
 
         return form_data
 
@@ -474,6 +496,12 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             "n": 1,
             "size": size,
         }
+
+        # 透传 extra_config 中的可选参数（quality / output_format，
+        # 如 gpt-image-2.6 的 xhigh/max 质量档与 gif/svg 输出格式）
+        config = self._parse_extra_config(ai_tool)
+        self._append_optional_form_value(payload, config, "quality", self.VALID_QUALITIES)
+        self._append_output_format(payload, config)
 
         return {
             "url": f"{self._base_url}/v1/images/generations",
@@ -579,6 +607,37 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         
         return truncated
 
+    @staticmethod
+    def _sniff_base64_image_mime(b64_data: str) -> str:
+        """
+        通过 base64 前缀的字节魔数识别图片 MIME 类型。
+
+        images/generations 的 b64_json 响应不携带格式信息，gpt-image-2.6
+        支持 gif/svg 输出后无法靠字段区分真实格式，按字节签名识别，
+        识别失败回退 png（保持历史行为）。
+        """
+        try:
+            prefix_b64 = b64_data[:44]
+            prefix_b64 += "=" * (-len(prefix_b64) % 4)
+            prefix = base64.b64decode(prefix_b64)
+        except Exception:
+            return "image/png"
+        if prefix.startswith(b"\x89PNG"):
+            return "image/png"
+        if prefix.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if prefix.startswith(b"GIF8"):
+            return "image/gif"
+        if prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
+            return "image/webp"
+        if prefix.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<"):
+            return "image/svg+xml"
+        return "image/png"
+
+    def _wrap_b64_as_data_url(self, b64_data: str) -> str:
+        """将 b64_json 包装为带真实 MIME 的 data URL（按魔数识别格式）。"""
+        return f"data:{self._sniff_base64_image_mime(b64_data)};base64,{b64_data}"
+
     def _extract_image_from_response(self, response: dict) -> Optional[str]:
         """
         从 OpenAI API 响应中提取图片 URL 或 base64 数据
@@ -601,7 +660,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 if data.get("url"):
                     return data["url"]
                 if "b64_json" in data:
-                    return f"data:image/png;base64,{data['b64_json']}"
+                    return self._wrap_b64_as_data_url(data["b64_json"])
 
             if data and isinstance(data, list) and len(data) > 0:
                 first_item = data[0]
@@ -611,7 +670,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                         return first_item["url"]
                     # 其次获取 b64_json 字段
                     if "b64_json" in first_item:
-                        return f"data:image/png;base64,{first_item['b64_json']}"
+                        return self._wrap_b64_as_data_url(first_item["b64_json"])
 
             # 2. 尝试处理 chat completions 格式
             choices = response.get("choices", [])
@@ -988,14 +1047,20 @@ class GptImage25CommonFlareSite5V1Driver(GptImage25CommonFlareV1Driver):
 # ============ GPT Image 2.6 具体站点实现类（与 2.5 同构：仅上游模型名不同，每个模型对应一个站点实现方） ============
 
 class GptImage26CommonSunburstV1Driver(GptImageCommonV1Driver):
-    """GPT Image 2.6（sunburst）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名"""
+    """GPT Image 2.6（sunburst）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名
+
+    2.6 系列接口扩展（openlux 文档）：quality 支持 xhigh/max；
+    output_format 在 png/jpeg/webp 基础上扩展支持 gif/svg（flare 定位快速 GIF 帧）。
+    """
 
     DEFAULT_MODEL = "gpt-image-2.6-sunburst"
     EDIT_MODEL = "gpt-image-2.6-sunburst"
+    VALID_QUALITIES = GptImageCommonV1Driver.VALID_QUALITIES | {"xhigh", "max"}
+    VALID_OUTPUT_FORMATS = GptImageCommonV1Driver.VALID_OUTPUT_FORMATS | {"gif", "svg"}
 
 
-class GptImage26CommonFlareV1Driver(GptImageCommonV1Driver):
-    """GPT Image 2.6（flare）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名"""
+class GptImage26CommonFlareV1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6（flare）通用供应商驱动基类，与 Sunburst 仅上游模型名不同"""
 
     DEFAULT_MODEL = "gpt-image-2.6-flare"
     EDIT_MODEL = "gpt-image-2.6-flare"
