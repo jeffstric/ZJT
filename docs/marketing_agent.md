@@ -245,7 +245,7 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
   - `GET /api/user/power-budget` → `{ limit, is_custom, default_limit }`
   - `PUT /api/user/power-budget` body `{ limit }`（非负整数，0=不限制）
   - `DELETE /api/user/power-budget` 回退平台默认
-- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 复用 `.power-confirm-field` 样式（`web/css/marketing_agent.css`），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
+- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 使用 `.settings-compact` 紧凑单行样式（`web/css/marketing_agent.css`，2026-11-15 起设置面板顶部三个配置项——自动确认上限 / 单次任务算力上限 / 输出语言——压缩为单行布局，说明文字移入悬浮 tooltip，为下方模型选择腾出空间），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
 
 ### SSE 流式响应
 

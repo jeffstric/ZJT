@@ -10,6 +10,8 @@
 
 `video_type` 落在 `storyboard_scene.video_type`（`SceneVideoType`）。
 
+> **来源策略（develop_f1212 起）**：剧本拆分**不再自动产出**对口型分镜——即使单人画内对白近景也一律 `video`（提示词固定 `presentation=video`，QC 以 `DH_AUTO_SPLIT_DISABLED` 打回违规输出，`services/storyboard_scene_type.py` 兜底）。对口型的唯一入口是用户在分镜详情**手动切换**（`services/storyboard_video_type_service.py`）；手动选择经反向转换往返保真（`_explicit_video_type` 采信显式 `video_type`）。
+
 > **视频原声**：数字人分镜 `audio_embedded` 默认为 `1`（前端「音频来源 → 视频原声」）。MiniMax 产物已内嵌口型音轨，时间轴连续预览和完整视频导出均保留视频原音轨、跳过 TTS。
 
 ## 生成两阶段（必须串行）
