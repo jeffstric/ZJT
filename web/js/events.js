@@ -531,6 +531,14 @@
           e.preventDefault();
           dissolveGroup(state.selectedGroupId);
           showToast('已解散分组（节点已保留）', 'info');
+        } else if(state.timeline.selectedClipIds && state.timeline.selectedClipIds.length > 0){
+          // v2 多轨时间轴多选删除（进垃圾桶，见 timeline_tracks.js）
+          e.preventDefault();
+          if(typeof ttDeleteSelectedClips === 'function'){
+            ttDeleteSelectedClips();
+          } else {
+            state.timeline.selectedClipIds = [];
+          }
         } else if(state.timeline.selectedClipId !== null){
           e.preventDefault();
           removeFromTimeline(state.timeline.selectedClipId);
@@ -1628,6 +1636,10 @@
     document.getElementById('timelineClearBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       if(confirm('确定要清空时间轴吗？')){
+        // 清空前入垃圾桶（可在垃圾桶一键恢复全部片段）
+        if(typeof pushTimelineClipsToTrash === 'function'){
+          pushTimelineClipsToTrash(state.timeline.clips, state.timeline.audioClips, '清空时间轴');
+        }
         state.timeline.clips = [];
         state.timeline.audioClips = [];
         state.timeline.selectedClipId = null;
@@ -1651,6 +1663,40 @@
     document.getElementById('timelineExportAssetsBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       exportTimelineAssets();
+    });
+
+    // v2 多轨时间轴工具栏 + 垃圾桶（timeline_tracks.js / timeline_trash.js）
+    document.getElementById('timelineTrashBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTrashModal();
+    });
+    document.getElementById('trashEntryBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openTrashModal();
+    });
+    document.getElementById('timelineImportBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.TimelineTracks) window.TimelineTracks.openImport();
+    });
+    document.getElementById('timelineSplitBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.TimelineTracks) window.TimelineTracks.split();
+    });
+    document.getElementById('timelineZoomInBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.TimelineTracks) window.TimelineTracks.zoomIn();
+    });
+    document.getElementById('timelineZoomOutBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.TimelineTracks) window.TimelineTracks.zoomOut();
+    });
+    document.getElementById('ttPlayBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (window.TimelineTracks && typeof ttTogglePlay === 'function') ttTogglePlay();
+    });
+    document.getElementById('ttStopBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (typeof ttStopPlayback === 'function') ttStopPlayback();
     });
 
     // ========== 角色和场景选择功能 ==========

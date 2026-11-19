@@ -419,7 +419,12 @@
 
     function removeNode(id){
       const node = state.nodes.find(n => n.id === id);
-      
+
+      // 删除前先入垃圾桶快照（节点+连线+时间轴片段+分组归属+邻居补丁），见 timeline_trash.js
+      if(node && typeof pushNodeDeletionToTrash === 'function'){
+        pushNodeDeletionToTrash(node);
+      }
+
       // 检查视频节点是否在时间轴中
       if(node && node.type === 'video'){
         const clipsInTimeline = state.timeline.clips.filter(c => c.nodeId === id);

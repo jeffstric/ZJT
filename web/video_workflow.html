@@ -20,6 +20,7 @@
   </script>
   <link rel="stylesheet" href="/css/common.css" />
   <link rel="stylesheet" href="/css/video_workflow.css?v=__VERSION__" />
+  <link rel="stylesheet" href="/css/timeline_tracks.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/video_watermark_node.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/video_edit_node.css?v=__VERSION__" />
   <link rel="stylesheet" href="/css/subscription.css?v=__VERSION__" />
@@ -391,6 +392,15 @@
           <line x1="9" y1="4" x2="9" y2="20"/>
         </svg>
         <span data-i18n="node_asset_panel_btn">节点管理</span>
+      </button>
+      <button class="minimap-asset-entry" id="trashEntryBtn" type="button" title="垃圾桶（删除的素材可恢复）" aria-label="垃圾桶" style="position:relative;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 6h18"/>
+          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+        </svg>
+        <span>垃圾桶</span>
+        <span class="trash-badge"></span>
       </button>
       <div class="minimap" id="minimap">
         <div class="minimap-content" id="minimapContent"></div>
@@ -1230,33 +1240,44 @@
 
   <!-- 涂鸦编辑模态框：由 image_doodle_editor.js 在 open() 时动态注入 -->
 
-  <!-- 时间轴面板 -->
+  <!-- 时间轴面板（v2 多轨：渲染与交互见 web/js/timeline_tracks.js） -->
   <div class="timeline-container" id="timelineContainer" style="display:none;">
     <div class="timeline-header">
       <div class="timeline-header-left">
         <span class="timeline-title" data-i18n="timeline_label">时间轴</span>
         <span class="timeline-total-duration" id="timelineTotalDuration" data-i18n="timeline_total_duration" data-i18n-params='{"duration":"0:00"}'>总时长: 0:00</span>
-        <span style="color:var(--muted);font-size:11px;margin-left:8px;" data-i18n="timeline_drag_hint">提示: 拖拽调整顺序 | 按住Shift拖拽可替换</span>
+        <span class="timeline-hint">拖拽移动 | 拖边缘裁剪 | S 分割 | 空格播放 | Ctrl+滚轮缩放 | 文件可直接拖入</span>
       </div>
       <div class="timeline-header-right">
+        <button class="mini-btn" id="timelineTrashBtn" type="button" title="垃圾桶">🗑 垃圾桶<span class="trash-badge"></span></button>
+        <button class="mini-btn" id="timelineImportBtn" type="button" title="导入本地视频/音频，插入播放头处">导入媒体</button>
+        <button class="mini-btn" id="timelineSplitBtn" type="button" title="在播放头处分割选中片段 (S)">✂ 分割</button>
+        <button class="mini-btn" id="timelineZoomOutBtn" type="button" title="缩小时间轴">−</button>
+        <button class="mini-btn" id="timelineZoomInBtn" type="button" title="放大时间轴">＋</button>
         <button class="mini-btn btn-success" id="timelineExportDraftBtn" data-i18n="timeline_export_draft">导出剪影草稿</button>
         <button class="mini-btn secondary" id="timelineExportAssetsBtn" data-i18n="timeline_export_assets">导出素材包</button>
         <button class="mini-btn btn-danger" id="timelineClearBtn" data-i18n="timeline_clear">清空</button>
         <button class="mini-btn" id="timelineToggleBtn" data-i18n="timeline_collapse">收起</button>
       </div>
     </div>
-    <div class="timeline-ruler" id="timelineRuler"></div>
-    <div class="timeline-tracks" id="timelineTracks">
-      <div class="timeline-track-container timeline-track-container-video">
-        <div class="timeline-track-label" data-i18n="timeline_track_video">视频</div>
-        <div class="timeline-track" id="videoTrack">
-          <!-- 视频片段将动态添加到这里 -->
+    <div class="tt-body">
+      <div class="tt-preview-pane">
+        <div class="tt-preview-screen">
+          <video id="ttPreviewVideo" playsinline></video>
+          <div class="tt-preview-empty" id="ttPreviewEmpty">点击刻度定位 · 空格播放预览</div>
+        </div>
+        <div class="tt-preview-bar">
+          <button id="ttPlayBtn" class="tt-play-btn" type="button" title="播放/暂停（空格）">▶</button>
+          <button id="ttStopBtn" class="tt-stop-btn" type="button" title="回到开头">⏮</button>
+          <span class="tt-timecode" id="ttTimecode">00:00.0 / 00:00.0</span>
         </div>
       </div>
-      <div class="timeline-track-container timeline-track-container-audio">
-        <div class="timeline-track-label" data-i18n="timeline_track_audio">音频</div>
-        <div class="timeline-track" id="audioTrack">
-          <!-- 音频片段将动态添加到这里 -->
+      <div class="tt-timeline-pane" id="ttTimelinePane">
+        <div class="timeline-ruler" id="timelineRuler"></div>
+        <div class="tt-tracks-scroll" id="ttTracksScroll">
+          <div class="tt-tracks-inner" id="ttTracksInner">
+            <!-- 视频轨组/音频轨组/播放头由 timeline_tracks.js 动态渲染 -->
+          </div>
         </div>
       </div>
     </div>
@@ -1301,6 +1322,8 @@
   <script src="/js/workflow_storyboard_switch.js?v=__VERSION__"></script>
   <script src="/js/storyboard_asset_sync.js?v=__VERSION__"></script>
   <script src="/js/timeline.js"></script>
+  <script src="/js/timeline_tracks.js?v=__VERSION__"></script>
+  <script src="/js/timeline_trash.js?v=__VERSION__"></script>
   <script src="/js/workflow.js?v=__VERSION__"></script>
   <script src="/js/canvas.js?v=__VERSION__"></script>
   <!-- 意见反馈：默认 hidden，等 server-config 确认 show_feedback_qr 后再显示，避免加载中误点弹出二维码 -->

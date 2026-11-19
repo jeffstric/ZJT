@@ -1,5 +1,140 @@
     // ============ 时间轴功能 ============
-    
+
+    // ============ v2 多轨布局数据层（渲染/交互见 timeline_tracks.js） ============
+    // clip 新增字段：start（时间轴绝对位置，秒）、track（轨号）。
+    // 旧数据（仅柱子+order）加载后由 migrateTimelineToV2 一次性换算成绝对位置。
+
+    // 片段在时间轴上的可视时长（剪切后实际播放时长）
+    function clipVisualDuration(c) {
+      const dur = (c.endTime || c.duration) - (c.startTime || 0);
+      return dur > 0.05 ? dur : Math.max(0.1, c.duration || 0.1);
+    }
+
+    // 全时间轴总时长（所有片段 max(start + 可视时长)）
+    function getTimelineTotalDuration() {
+      let total = 0;
+      state.timeline.clips.forEach(c => {
+        if (typeof c.start !== 'number') return;
+        total = Math.max(total, c.start + clipVisualDuration(c));
+      });
+      state.timeline.audioClips.forEach(c => {
+        if (typeof c.start !== 'number') return;
+        total = Math.max(total, c.start + clipVisualDuration(c));
+      });
+      return total;
+    }
+
+    // 在同一轨道上把 start 向右平移到第一个不与现有片段重叠的位置
+    function nudgeUntilFree(startSec, durationSec, type, track, excludeClipId) {
+      const clips = (type === 'video' ? state.timeline.clips : state.timeline.audioClips)
+        .filter(c => (c.track || 0) === track && c.id !== excludeClipId);
+      let s = Math.max(0, startSec);
+      let guard = 0;
+      while (guard++ < 500) {
+        const overlap = clips.find(c => {
+          if (typeof c.start !== 'number') return false;
+          const cs = c.start;
+          const ce = cs + clipVisualDuration(c);
+          return s < ce - 0.01 && cs < s + durationSec - 0.01;
+        });
+        if (!overlap) break;
+        s = overlap.start + clipVisualDuration(overlap);
+      }
+      return s;
+    }
+
+    // 在 [startSec, startSec+dur) 区间寻找第一个空闲轨道（按 0..count-1 顺序）。
+    // 全忙则回退到 0 号轨并向右平移。返回 {track, start}
+    function resolveClipPlacement(startSec, durationSec, type) {
+      const countKey = type === 'video' ? 'videoTrackCount' : 'audioTrackCount';
+      const count = Math.max(1, state.timeline[countKey] || 1);
+      for (let t = 0; t < count; t++) {
+        const clips = (type === 'video' ? state.timeline.clips : state.timeline.audioClips)
+          .filter(c => (c.track || 0) === t && typeof c.start === 'number');
+        const busy = clips.some(c => {
+          const cs = c.start;
+          const ce = cs + clipVisualDuration(c);
+          return startSec < ce - 0.01 && cs < startSec + durationSec - 0.01;
+        });
+        if (!busy) return { track: t, start: Math.max(0, startSec) };
+      }
+      return { track: 0, start: nudgeUntilFree(startSec, durationSec, type, 0) };
+    }
+
+    // 追加片段到时间轴末尾（垃圾桶恢复时柱子已清的片段用）
+    function placeClipAtTimelineEnd(clip, type) {
+      const dur = clipVisualDuration(clip);
+      const end = getTimelineTotalDuration();
+      const placement = resolveClipPlacement(end, dur, type);
+      clip.start = placement.start;
+      clip.track = placement.track;
+    }
+
+    // 旧数据一次性迁移到 v2 多轨绝对定位布局。
+    // 换算规则与旧柱子渲染（renderTimelineWithPillars）完全一致：
+    // 柱子按（自由柱最前 → scriptId → shotNumber）排序累加，柱内按 order 排列，
+    // 每个片段 start = 柱子起点 + 柱内累计时长，track = 0（旧版只有单轨）。
+    function migrateTimelineToV2() {
+      const clips = state.timeline.clips;
+      const audioClips = state.timeline.audioClips;
+      const needMigrate = state.timeline.version !== 2
+        || clips.some(c => typeof c.start !== 'number')
+        || audioClips.some(c => typeof c.start !== 'number');
+      if (!needMigrate) return false;
+
+      const sortedPillars = [...state.timeline.pillars].sort((a, b) => {
+        if (a.id === '__free__') return -1;
+        if (b.id === '__free__') return 1;
+        if (a.scriptId !== b.scriptId) return (a.scriptId || 0) - (b.scriptId || 0);
+        return (a.shotNumber || 0) - (b.shotNumber || 0);
+      });
+
+      const pillarStart = new Map();
+      let acc = 0;
+      sortedPillars.forEach(pillar => {
+        pillarStart.set(pillar.id, acc);
+        acc += getPillarActualDuration(pillar);
+      });
+
+      const layout = (clipsArr) => {
+        // 柱内片段按 order 排列
+        const byPillar = new Map();
+        clipsArr.forEach(clip => {
+          const pid = clip.pillarId || '__none__';
+          if (!byPillar.has(pid)) byPillar.set(pid, []);
+          byPillar.get(pid).push(clip);
+        });
+        byPillar.forEach(list => list.sort((a, b) => (a.order || 0) - (b.order || 0)));
+
+        sortedPillars.forEach(pillar => {
+          const list = byPillar.get(pillar.id);
+          if (!list) return;
+          let pillarClipTime = 0;
+          list.forEach(clip => {
+            clip.start = pillarStart.get(pillar.id) + pillarClipTime;
+            clip.track = 0;
+            pillarClipTime += clipVisualDuration(clip);
+          });
+        });
+
+        // 不属于任何已知柱子的片段：追加到末尾
+        const orphans = clipsArr.filter(c => typeof c.start !== 'number');
+        orphans.forEach(clip => {
+          placeClipAtTimelineEnd(clip, 'video');
+        });
+      };
+
+      layout(clips);
+      layout(audioClips);
+
+      state.timeline.videoTrackCount = Math.max(1, state.timeline.videoTrackCount || 1);
+      state.timeline.audioTrackCount = Math.max(1, state.timeline.audioTrackCount || 1);
+      if (!state.timeline.zoom) state.timeline.zoom = 40;
+      state.timeline.version = 2;
+      console.log('[时间轴v2] 旧数据已迁移为多轨绝对定位布局');
+      return true;
+    }
+
     // ============ 柱子(Pillar)系统 ============
     // 柱子是时间轴的基本分区单位，每个柱子对应一个分镜(shot)
     // 柱子标识格式: {scriptId}_{shotNumber}
@@ -552,13 +687,16 @@
     
     // 添加片段到时间轴的辅助函数
     function addClipToTimeline(nodeId, node, duration) {
+      // v2 多轨布局：落在播放头处第一个空闲轨道
+      migrateTimelineToV2();
+
       // 尝试获取节点对应的柱子
       let pillar = getPillarForNode(nodeId);
-      
+
       // 如果找不到柱子，尝试自动迁移历史数据
       if (!pillar) {
         const migrated = autoMigratePillars();
-        
+
         if (migrated) {
           // 迁移成功后重新查找柱子
           pillar = getPillarForNode(nodeId);
@@ -567,15 +705,18 @@
           }
         }
       }
-      
+
       // 如果还是找不到柱子，使用自由柱子（独立片段）
       if (!pillar) {
         pillar = getOrCreateFreePillar();
       }
-      
+
       // 计算该片段在柱子内的order（基于柱子内已有片段数量）
       const pillarClipCount = pillar.videoClipIds.length;
-      
+
+      // v2：从播放头开始找空闲轨道位置
+      const placement = resolveClipPlacement(state.timeline.playhead || 0, duration, 'video');
+
       const clip = {
         id: state.timeline.nextClipId++,
         nodeId: nodeId,
@@ -586,8 +727,10 @@
         endTime: duration,      // 剪切结束时间（秒）
         order: pillarClipCount, // 在柱子内的顺序
         pillarId: pillar.id,    // 所属柱子ID
+        start: placement.start, // v2 时间轴绝对位置（秒）
+        track: placement.track, // v2 轨号
       };
-      
+
       state.timeline.clips.push(clip);
       addClipToPillar(pillar, clip.id, 'video');
 
@@ -627,6 +770,12 @@
     
     // 从时间轴移除片段
     function removeFromTimeline(clipId) {
+      // 删除前入垃圾桶（垃圾桶弹窗内点击"恢复"可找回）
+      if(typeof pushTimelineClipsToTrash === 'function'){
+        const clip = state.timeline.clips.find(c => c.id === clipId);
+        if(clip) pushTimelineClipsToTrash([clip], [], clip.name);
+      }
+
       // 从柱子中移除
       removeClipFromPillar(clipId, 'video');
 
@@ -680,21 +829,13 @@
     // 渲染时间轴
     function renderTimeline() {
       const container = document.getElementById('timelineContainer');
-      const track = document.getElementById('videoTrack');
-      const audioTrack = document.getElementById('audioTrack');
-      const ruler = document.getElementById('timelineRuler');
-      const totalDurationEl = document.getElementById('timelineTotalDuration');
       const expandBtn = document.getElementById('timelineExpandBtn');
 
       // 安全检查：确保所有必要的 DOM 元素存在
-      if (!container || !track || !audioTrack || !ruler || !totalDurationEl || !expandBtn || !canvasContainer) {
+      if (!container || !expandBtn || !canvasContainer) {
         console.warn('[时间轴] 某些 DOM 元素不存在，无法渲染时间轴');
         return;
       }
-
-      // 如果有柱子系统，即使没有片段也显示时间轴（显示空柱子）
-      const hasPillars = state.timeline.pillars.length > 0;
-      const hasClips = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
 
       if (!state.timeline.visible) {
         container.style.display = 'none';
@@ -707,6 +848,27 @@
       expandBtn.style.display = 'none';
       canvasContainer.classList.add('timeline-visible');
 
+      // v2 多轨渲染（timeline_tracks.js）：拖拽/裁剪/分割/播放头/多轨
+      if (window.TimelineTracks && typeof window.TimelineTracks.render === 'function') {
+        migrateTimelineToV2();
+        window.TimelineTracks.render();
+        return;
+      }
+
+      // 旧单轨渲染兜底（v2 模块缺失时保持可用）
+      const track = document.getElementById('videoTrack');
+      const audioTrack = document.getElementById('audioTrack');
+      const ruler = document.getElementById('timelineRuler');
+      const totalDurationEl = document.getElementById('timelineTotalDuration');
+      if (!track || !audioTrack || !ruler || !totalDurationEl) {
+        console.warn('[时间轴] 旧渲染轨道元素不存在');
+        return;
+      }
+
+      // 如果有柱子系统，即使没有片段也显示时间轴（显示空柱子）
+      const hasPillars = state.timeline.pillars.length > 0;
+      const hasClips = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
+
       if (!hasPillars && !hasClips) {
         track.innerHTML = '';
         audioTrack.innerHTML = '';
@@ -715,14 +877,14 @@
         totalDurationEl.setAttribute('data-i18n-params', JSON.stringify({ duration: '0:00' }));
         return;
       }
-      
+
       // 如果有柱子系统，按柱子渲染；否则按原有方式渲染
       if (hasPillars) {
         renderTimelineWithPillars(container, track, audioTrack, ruler, totalDurationEl);
       } else {
         renderTimelineClassic(container, track, audioTrack, ruler, totalDurationEl);
       }
-      
+
       bindTimelineClipEvents();
       bindAudioClipEvents();
       bindPillarClickEvents();
@@ -1216,7 +1378,8 @@
     // 绑定时间轴片段事件
     function bindTimelineClipEvents() {
       const track = document.getElementById('videoTrack');
-      
+      if (!track) return; // v2 多轨模式下无此元素，由 timeline_tracks.js 自行绑定
+
       // 创建插入位置指示器
       let dropIndicator = track.querySelector('.timeline-drop-indicator');
       if (!dropIndicator) {
@@ -1399,6 +1562,7 @@
       
       const startTime = clip.startTime || 0;
       const endTime = clip.endTime || clip.duration;
+      const origDialogStartTime = clip.startTime || 0; // v2：确认时按左端裁剪差值平移 clip.start
       
       // 创建模态框
       const dialog = document.createElement('div');
@@ -1835,15 +1999,19 @@
           showToast('结束时间必须大于开始时间且不超过视频时长', 'error');
           return;
         }
-        
+
         // 更新片段的剪切时间
         clip.startTime = currentStart;
         clip.endTime = currentEnd;
+        // v2 绝对定位：左端裁剪时整体位置右移（内容起点后移），右端裁剪位置不动
+        if(typeof clip.start === 'number' && typeof origDialogStartTime === 'number'){
+          clip.start = Math.max(0, clip.start + (currentStart - origDialogStartTime));
+        }
 
         renderTimeline();
         showToast(window.t ? window.t('timeline_trim_success') : '剪切成功', 'success');
         safeAutoSave()
-        
+
         closeDialog();
       });
       
@@ -1918,18 +2086,30 @@
       return clip.url;
     }
 
-    // 收集时间轴导出用片段数据（草稿导出 / 素材包导出共用），按 order 排序
+    // 收集时间轴导出用片段数据（草稿导出 / 素材包导出共用）。
+    // v2：片段带 timeline_start（时间轴绝对位置）时，后端按"所见即所得"绝对布局生成草稿；
+    // 兼容旧数据（无 start）仍按柱子+order 紧凑排布。
     function collectTimelineExportClips() {
-      const sortedClips = [...(state.timeline.clips || [])].sort((a, b) => a.order - b.order);
-      const sortedAudioClips = [...(state.timeline.audioClips || [])].sort((a, b) => a.order - b.order);
-      const toPayload = (clip) => ({
-        url: resolveClipExportUrl(clip),
-        name: clip.name,
-        duration: clip.duration,
-        startTime: clip.startTime || 0,
-        endTime: clip.endTime || clip.duration,
-        pillarId: clip.pillarId || null
-      });
+      const sortByStartOrOrder = (a, b) => {
+        const as = typeof a.start === 'number' ? a.start : (a.order || 0);
+        const bs = typeof b.start === 'number' ? b.start : (b.order || 0);
+        return as - bs;
+      };
+      const sortedClips = [...(state.timeline.clips || [])].sort(sortByStartOrOrder);
+      const sortedAudioClips = [...(state.timeline.audioClips || [])].sort(sortByStartOrOrder);
+      const toPayload = (clip) => {
+        const payload = {
+          url: resolveClipExportUrl(clip),
+          name: clip.name,
+          duration: clip.duration,
+          startTime: clip.startTime || 0,
+          endTime: clip.endTime || clip.duration,
+          pillarId: clip.pillarId || null
+        };
+        if (typeof clip.start === 'number') payload.timeline_start = Math.max(0, clip.start);
+        if (typeof clip.track === 'number') payload.track = clip.track;
+        return payload;
+      };
       return {
         videoClipsData: sortedClips.map(toPayload),
         audioClipsData: sortedAudioClips.map(toPayload)
@@ -2267,14 +2447,17 @@
         showToast('音频URL无效', 'error');
         return;
       }
-      
+
+      // v2 多轨布局：落在播放头处第一个空闲轨道
+      migrateTimelineToV2();
+
       // 尝试获取节点对应的柱子
       let pillar = getPillarForNode(nodeId);
-      
+
       // 如果找不到柱子，尝试自动迁移历史数据
       if (!pillar) {
         const migrated = autoMigratePillars();
-        
+
         if (migrated) {
           // 迁移成功后重新查找柱子
           pillar = getPillarForNode(nodeId);
@@ -2283,28 +2466,34 @@
           }
         }
       }
-      
+
       // 如果还是找不到柱子，使用自由柱子（独立片段）
       if (!pillar) {
         pillar = getOrCreateFreePillar();
       }
-      
+
       // 计算该片段在柱子内的order（基于柱子内已有片段数量）
       const pillarClipCount = pillar.audioClipIds.length;
-      
+
+      // v2：从播放头开始找空闲轨道位置
+      const audioDur = duration || 5;
+      const placement = resolveClipPlacement(state.timeline.playhead || 0, audioDur, 'audio');
+
       const clip = {
         id: state.timeline.nextAudioClipId++,
         nodeId: nodeId,
         dialogueIndex: dialogueIndex,
         url: audioUrl,
         name: audioName || '音频',
-        duration: duration || 5,
+        duration: audioDur,
         startTime: 0,
-        endTime: duration || 5,
+        endTime: audioDur,
         order: pillarClipCount, // 在柱子内的顺序
         pillarId: pillar.id,    // 所属柱子ID
+        start: placement.start, // v2 时间轴绝对位置（秒）
+        track: placement.track, // v2 轨号
       };
-      
+
       state.timeline.audioClips.push(clip);
       addClipToPillar(pillar, clip.id, 'audio');
 
@@ -2320,6 +2509,12 @@
     
     // 从时间轴移除音频片段
     function removeAudioFromTimeline(clipId) {
+      // 删除前入垃圾桶（垃圾桶弹窗内点击"恢复"可找回）
+      if(typeof pushTimelineClipsToTrash === 'function'){
+        const clip = state.timeline.audioClips.find(c => c.id === clipId);
+        if(clip) pushTimelineClipsToTrash([], [clip], clip.name);
+      }
+
       // 从柱子中移除
       removeClipFromPillar(clipId, 'audio');
 
