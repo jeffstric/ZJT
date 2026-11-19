@@ -507,19 +507,17 @@ def test_charge_segment_skips_when_power_zero(monkeypatch):
 def test_refund_by_transaction_uses_refund_prefix(monkeypatch):
     calls = []
 
-    def fake_request(endpoint=None, method=None, headers=None, data=None, **kw):
-        calls.append({"endpoint": endpoint, "data": data})
-        if endpoint == "get_auth_token_by_user_id":
-            return True, "ok", {"token": "tk"}
+    def fake_increase(user_id, computing_power, transaction_id, **kw):
+        calls.append({"user_id": user_id, "computing_power": computing_power,
+                      "transaction_id": transaction_id})
         return True, "ok", {}
 
-    monkeypatch.setattr(compose_task, "make_perseids_request", fake_request)
+    monkeypatch.setattr(compose_task, "apply_power_increase_internal", fake_increase)
 
     compose_task._refund_by_transaction(3, "txn-a", 55, "补段建记录失败")
 
-    assert calls[1]["data"] == {
-        "computing_power": 55, "behavior": "increase",
-        "transaction_id": "refund-txn-a"}
+    assert calls == [{"user_id": 3, "computing_power": 55,
+                      "transaction_id": "refund-txn-a"}]
 
 
 # ==================== 13. 审核类确定性失败：整单快速失败，不补段 ====================

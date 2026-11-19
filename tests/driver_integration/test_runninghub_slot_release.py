@@ -107,8 +107,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver.driver_name = 'ltx2_runninghub_v1'
 
         with _patch_submit_driver(mock_driver), \
-             patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
+             patch('utils.computing_power.apply_power_increase_internal') as mock_increase:
+            mock_increase.return_value = (True, 'success', {})
 
             # Mock 驱动的 submit_task 返回失败（用户错误，不重试）
             mock_driver.submit_task.return_value = {
@@ -145,8 +145,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver.driver_name = 'wan22_runninghub_v1'
 
         with _patch_submit_driver(mock_driver), \
-             patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
+             patch('utils.computing_power.apply_power_increase_internal') as mock_increase:
+            mock_increase.return_value = (True, 'success', {})
 
             # Mock 驱动的 submit_task 返回失败
             mock_driver.submit_task.return_value = {
@@ -173,8 +173,8 @@ class TestRunningHubSlotRelease(BaseVideoDriverTest):
         mock_driver.driver_name = 'digital_human_runninghub_v1'
 
         with _patch_submit_driver(mock_driver), \
-             patch('task.visual_task.make_perseids_request') as mock_perseids:
-            mock_perseids.return_value = (True, 'success', {'token': 'mock_token'})
+             patch('utils.computing_power.apply_power_increase_internal') as mock_increase:
+            mock_increase.return_value = (True, 'success', {})
 
             # Mock 驱动的 submit_task 返回失败
             mock_driver.submit_task.return_value = {

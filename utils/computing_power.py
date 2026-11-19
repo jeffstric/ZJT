@@ -6,7 +6,7 @@
   get_computing_power_for_task(task_type,...)       → 返回 int，实际扣费用的算力值
   get_computing_power_config_for_task(task_type,...) → 返回 dict，包含配置详情（source/implementation/is_user_preference）
 """
-from typing import Optional, Union, Dict, Any, List
+from typing import Optional, Union, Dict, Any, List, Tuple
 import logging
 import json
 import math
@@ -411,6 +411,50 @@ def power_change_settled(success: bool, message: Optional[str]) -> bool:
     if success:
         return True
     return bool(message) and "该交易已处理" in str(message)
+
+
+def apply_power_increase_internal(
+    user_id: int,
+    computing_power: int,
+    transaction_id: str,
+    message: Optional[str] = None,
+    note: Optional[str] = None,
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """系统侧算力入账（退款补偿、任务失败退费、订阅权益发放等内部路径）。
+
+    历史实现先 get_auth_token_by_user_id 再带 Bearer token 走
+    user/calculate_computing_power 路由；该路由里 token 的唯一作用是换出 user_id
+    （perseids_server/client.py），对登出/被顶号/重置密码的用户返回 NO_VALID_TOKEN，
+    使退款/发放永久失败——补偿任务因此每小时空转，直到 lookback 窗口把债务
+    静默甩出监控（生产环境曾因此形成大规模沉默积压）。
+
+    内部调用方手里本来就有 user_id，直接调用 service 层即可：
+    ComputingPowerService.calculate_computing_power 在单事务里更新余额并写入
+    computing_power_log，transaction_id 唯一索引天然幂等（重复流水返回
+    success=False + 「该交易已处理」，配合 power_change_settled 判定）。
+    与用户登录状态彻底解耦。
+
+    Returns:
+        (success, message, data)：与 make_perseids_request 返回三元组同构，
+        调用方沿用 power_change_settled 判定落地与否。
+    """
+    # 延迟 import：utils.computing_power 被大量轻量入口（脚本/测试）单独引用，
+    # 顶部 import 会把 model.database 全链路带进它们的导入期。
+    from perseids_server.services.computing_power_service import ComputingPowerService
+
+    result = ComputingPowerService.calculate_computing_power(
+        user_id=user_id,
+        computing_power=computing_power,
+        behavior="increase",
+        transaction_id=transaction_id,
+        message=message,
+        note=note,
+    )
+    return (
+        bool(result.get("success")),
+        str(result.get("message") or ""),
+        result.get("data") or {},
+    )
 
 
 def is_already_refunded(ai_tool) -> bool:
