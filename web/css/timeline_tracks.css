@@ -3,13 +3,60 @@
    覆盖 .timeline-container 高度以容纳预览窗与多轨；其余均为新增 tt- 前缀类，不影响旧样式。 */
 
 /* ---- 容器 ---- */
+/* 高度由 --tt-panel-h 统一收口：面板本体 + 画布让位（padding-bottom）+ 浮层
+   （minimap/zoom-controls）都引用同一变量，拖拉把手只改一个变量即可全局联动 */
 .timeline-container {
-  height: 340px;
+  height: var(--tt-panel-h, 340px);
+}
+/* 覆盖 video_workflow.css 的固定让位值，改为跟随面板高度 */
+.canvas-container.timeline-visible {
+  padding-bottom: calc(var(--tt-panel-h, 340px) + 12px);
+}
+.canvas-container.timeline-visible .minimap {
+  bottom: calc(var(--tt-panel-h, 340px) + 24px);
+}
+.canvas-container.timeline-visible .zoom-controls {
+  bottom: calc(var(--tt-panel-h, 340px) + 24px);
 }
 .timeline-container .timeline-hint {
   color: var(--muted);
   font-size: 11px;
   margin-left: 8px;
+}
+
+/* ---- 顶部拖拉把手（调整面板高度） ---- */
+.tt-resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 9px;
+  cursor: row-resize;
+  z-index: 102;
+}
+.tt-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  transition: background 0.15s, width 0.15s;
+}
+.tt-resize-handle:hover::after,
+.tt-resize-handle.dragging::after {
+  background: var(--info);
+  width: 96px;
+}
+body.tt-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+body.tt-resizing iframe {
+  pointer-events: none;
 }
 
 /* ---- 主体：预览窗 + 轨道区 ---- */

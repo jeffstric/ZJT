@@ -8,6 +8,68 @@
 const TT_MAX_TRACKS = 6;      // 视频/音频各自的最大轨数
 const TT_LABEL_W = 72;        // 左侧轨标签宽度（与 CSS --tt-label-w 保持一致）
 const TT_SNAP_PX = 8;         // 吸附阈值（像素）
+const TT_PANEL_H_DEFAULT = 340;  // 面板默认高度（px）
+const TT_PANEL_H_MIN = 200;      // 面板最小高度
+const TT_PANEL_H_KEY = 'tt_panel_height_px';  // localStorage 键（本机 UI 偏好，不进 workflow_data）
+
+// ---- 面板高度（拖拉把手） ----
+// 高度收口在 CSS 变量 --tt-panel-h：面板本体、画布让位、minimap/zoom 浮层都引用它
+function ttApplyPanelHeight(h) {
+  document.documentElement.style.setProperty('--tt-panel-h', Math.round(h) + 'px');
+}
+
+function ttClampPanelHeight(h) {
+  const max = Math.max(TT_PANEL_H_MIN + 80, window.innerHeight - 160);
+  return Math.min(Math.max(TT_PANEL_H_MIN, Math.round(h)), max);
+}
+
+function ttInitPanelHeight() {
+  const saved = Number(localStorage.getItem(TT_PANEL_H_KEY));
+  if (saved >= TT_PANEL_H_MIN) ttApplyPanelHeight(ttClampPanelHeight(saved));
+}
+
+function ttBindResizeHandle() {
+  const handle = document.getElementById('ttResizeHandle');
+  const container = document.getElementById('timelineContainer');
+  if (!handle || !container || handle._ttBound) return;
+  handle._ttBound = true;
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = container.getBoundingClientRect().height;
+    handle.classList.add('dragging');
+    document.body.classList.add('tt-resizing');
+
+    const onMove = (ev) => {
+      // 向上拖 = 变高（面板贴屏底）
+      ttApplyPanelHeight(ttClampPanelHeight(startH + (startY - ev.clientY)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('tt-resizing');
+      ttHideContextMenu();
+      const h = ttClampPanelHeight(container.getBoundingClientRect().height);
+      ttApplyPanelHeight(h);
+      localStorage.setItem(TT_PANEL_H_KEY, String(h));
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp, { once: true });
+  });
+
+  // 双击恢复默认高度
+  handle.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    ttApplyPanelHeight(TT_PANEL_H_DEFAULT);
+    localStorage.setItem(TT_PANEL_H_KEY, String(TT_PANEL_H_DEFAULT));
+  });
+}
+
+// 页面加载即应用上次的面板高度（脚本在 body 底部，DOM 已就绪）
+ttInitPanelHeight();
+ttBindResizeHandle();
 
 // ---- 几何/数据辅助 ----
 
