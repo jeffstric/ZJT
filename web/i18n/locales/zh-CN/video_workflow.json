@@ -1113,5 +1113,6 @@
   "zoom_to_100": "缩放至100%",
   "zoom_to_200": "缩放至200%",
   "video_edit_clear_video": "更换视频",
-  "video_edit_video_cleared": "已移除视频，可连接新的视频"
+  "video_edit_video_cleared": "已移除视频，可连接新的视频",
+  "timeline_free_clips": "独立片段"
 }

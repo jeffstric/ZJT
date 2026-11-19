@@ -1674,9 +1674,13 @@
       e.stopPropagation();
       openTrashModal();
     });
-    document.getElementById('timelineImportBtn').addEventListener('click', (e) => {
+    document.getElementById('timelineUndoBtn').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (window.TimelineTracks) window.TimelineTracks.openImport();
+      if (typeof ttUndoTimelineChange === 'function') {
+        ttUndoTimelineChange();
+      } else if (typeof undoWorkflowChange === 'function') {
+        undoWorkflowChange();
+      }
     });
     document.getElementById('timelineSplitBtn').addEventListener('click', (e) => {
       e.stopPropagation();

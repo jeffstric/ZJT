@@ -364,23 +364,18 @@
   border-bottom: 3px solid transparent;
 }
 
-/* ---- 文件拖入提示层 ---- */
-.tt-drop-overlay {
+/* ---- 磁吸指示线 ---- */
+.tt-snap-indicator {
   position: absolute;
-  inset: 0;
-  z-index: 20;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  color: var(--info-text);
-  background: rgba(59, 130, 246, 0.12);
-  border: 2px dashed var(--info);
-  border-radius: 8px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.8);
+  z-index: 6;
   pointer-events: none;
-}
-.tt-drop-overlay.show {
-  display: flex;
+  display: none;
 }
 
 /* ---- 右键菜单 ---- */

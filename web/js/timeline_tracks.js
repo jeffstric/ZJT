@@ -31,22 +31,43 @@ function ttSnapCandidates() {
   return pts;
 }
 
-function ttApplySnap(startSec, durationSec, excludeId) {
+// 计算吸附：返回 {start, snapAt}——snapAt 为命中的吸附线时间点（未命中为 null）。
+// 音频片段对"视频片段边缘"的吸附给更大的阈值（磁吸优先，方便对齐视频分段口）。
+function ttComputeSnap(startSec, durationSec, type, excludeId) {
   const px = ttGetZoom();
-  const threshold = TT_SNAP_PX / px;
+  let threshold = TT_SNAP_PX / px;
+  if (type === 'audio') threshold = Math.max(threshold, 12 / px); // 音频磁吸阈值放宽到 12px
   const cands = ttSnapCandidates();
   let best = null;
   cands.forEach(pt => {
     // 片段起点对齐候选点
     const d1 = Math.abs(startSec - pt);
-    if (d1 < threshold && (best === null || d1 < best.d)) best = { d: d1, v: pt };
+    if (d1 < threshold && (best === null || d1 < best.d)) best = { d: d1, v: pt, snapAt: pt };
     // 片段终点对齐候选点
     const endSec = startSec + durationSec;
     const d2 = Math.abs(endSec - pt);
-    if (d2 < threshold && (best === null || d2 < best.d)) best = { d: d2, v: pt - durationSec };
+    if (d2 < threshold && (best === null || d2 < best.d)) best = { d: d2, v: pt - durationSec, snapAt: pt };
   });
-  if (best && best.v >= -0.01) return Math.max(0, best.v);
-  return startSec;
+  if (best && best.v >= -0.01) return { start: Math.max(0, best.v), snapAt: best.snapAt };
+  return { start: startSec, snapAt: null };
+}
+
+// 吸附指示线（磁吸命中时的垂直参考线）
+function ttShowSnapIndicator(snapAt) {
+  let line = document.getElementById('ttSnapIndicator');
+  if (!line) {
+    line = document.createElement('div');
+    line.id = 'ttSnapIndicator';
+    line.className = 'tt-snap-indicator';
+    document.getElementById('ttTracksInner').appendChild(line);
+  }
+  line.style.display = 'block';
+  line.style.left = (TT_LABEL_W + snapAt * ttGetZoom()) + 'px';
+}
+
+function ttHideSnapIndicator() {
+  const line = document.getElementById('ttSnapIndicator');
+  if (line) line.style.display = 'none';
 }
 
 function ttFindClip(type, id) {
@@ -56,6 +77,15 @@ function ttFindClip(type, id) {
 
 function ttPauseIfPlaying() {
   if (state.timeline.playing) pauseTimelinePlayback();
+}
+
+// i18n 安全取值：key 未收录时 t() 会原样返回 key，此处回退到默认中文
+function ttT(key, fallback) {
+  if (window.t) {
+    const v = window.t(key);
+    if (v && v !== key) return v;
+  }
+  return fallback;
 }
 
 // ---- 选择 ----
@@ -132,6 +162,7 @@ function ttRender() {
   ttBindEvents();
   ttUpdatePlayBtnState();
   ttSyncPreviewAtPlayhead();
+  ttCapturePillarGeometry();
 }
 
 function ttRenderGroup(type, contentW) {
@@ -191,7 +222,7 @@ function ttComputePillarBands(laneClips) {
         scriptId: pillar ? pillar.scriptId : null,
         shotNumber: pillar ? pillar.shotNumber : null,
         isFree: pid === '__free__',
-        label: pid === '__free__' ? (window.t ? window.t('timeline_free_clips') : '独立片段')
+        label: pid === '__free__' ? ttT('timeline_free_clips', '独立片段')
           : (pillar ? `镜头${pillar.shotNumber}` : ''),
         start, end
       });
@@ -575,8 +606,6 @@ function ttBindEvents() {
       const scrollEl = document.getElementById('ttTracksScroll');
       if (scrollEl) scrollEl.scrollLeft = Math.max(0, tAtPointer * newPx + TT_LABEL_W - pointerX);
     }, { passive: false });
-    // OS 文件拖入
-    ttBindFileDrop(scroll);
   }
 }
 
@@ -625,12 +654,22 @@ function ttStartMove(e, clipEl, clip) {
     targetInfo = ttGetDropTarget(ev.clientY, type);
     clearLaneHighlight();
     if (targetInfo && targetInfo.laneEl) targetInfo.laneEl.classList.add('drop-active');
+
+    // 实时磁吸：吸附命中时显示垂直指示线（音频对视频分段口的对齐反馈）
+    const rawStart = Math.max(0, ttPointerTimeX(ev.clientX) - grabOffsetSec);
+    const snap = ttComputeSnap(rawStart, clipVisualDuration(clip), type, clip.id);
+    if (snap.snapAt !== null) {
+      ttShowSnapIndicator(snap.snapAt);
+    } else {
+      ttHideSnapIndicator();
+    }
   };
 
   const onUp = (ev) => {
     window.removeEventListener('pointermove', onMove);
     removeGhost();
     clearLaneHighlight();
+    ttHideSnapIndicator();
     if (!dragging) {
       // 纯点击：处理选择（Ctrl 多选）
       ttHandleSelectionClick(type, clip.id, e.ctrlKey || e.metaKey);
@@ -641,9 +680,12 @@ function ttStartMove(e, clipEl, clip) {
       renderTimeline();
       return;
     }
-    // 落点时间：指针当前位置对应的时间轴起点，吸附 + 防重叠
+    // 落点时间：指针当前位置对应的时间轴起点，磁吸 + 防重叠
     let finalStart = Math.max(0, ttPointerTimeX(ev.clientX) - grabOffsetSec);
-    finalStart = ttApplySnap(finalStart, clipVisualDuration(clip), clip.id);
+    finalStart = ttComputeSnap(finalStart, clipVisualDuration(clip), type, clip.id).start;
+    // 分镜柱子归属按"落点意图时间"（nudge 前）判定——nudge 防重叠可能把片段
+    // 顶进相邻柱子的范围，不能用顶完的时间判定用户想放进哪个分镜
+    const dropIntentStart = finalStart;
     finalStart = nudgeUntilFree(finalStart, clipVisualDuration(clip), targetInfo.type, targetInfo.track, clip.id);
 
     if (targetInfo.addNew) {
@@ -652,12 +694,71 @@ function ttStartMove(e, clipEl, clip) {
     }
     clip.start = finalStart;
     clip.track = targetInfo.track;
+    ttSyncClipPillarToDropTime(clip, type, dropIntentStart);
     renderTimeline();
     safeAutoSave();
   };
 
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp, { once: true });
+}
+
+// 拖拽落位后，按落点时间把片段划入覆盖该位置的分镜柱子（pillarId + 柱内成员同步）。
+// 用拖拽前的柱子几何快照判定（渲染时色带范围由片段聚合而来，拖动中已失真）；
+// 无柱子覆盖时保留原 pillarId 不动（避免误改分镜归属）。
+function ttSyncClipPillarToDropTime(clip, type, finalStart) {
+  if (typeof window.__ttPillarGeometry !== 'object' || !window.__ttPillarGeometry) return;
+  const geom = window.__ttPillarGeometry;
+  const hit = geom.find(g => finalStart >= g.start - 0.01 && finalStart < g.end - 0.01);
+  if (!hit || hit.pillarId === clip.pillarId) return;
+
+  const arr = type === 'video' ? state.timeline.clips : state.timeline.audioClips;
+  const oldPillar = state.timeline.pillars.find(p => p.id === clip.pillarId);
+  const newPillar = state.timeline.pillars.find(p => p.id === hit.pillarId);
+  if (!newPillar) return;
+
+  // 从旧柱子成员移除
+  if (oldPillar) {
+    const idsKey = type === 'video' ? 'videoClipIds' : 'audioClipIds';
+    oldPillar[idsKey] = oldPillar[idsKey].filter(id => id !== clip.id);
+  }
+  // 加入新柱子并重排柱内 order
+  const idsKey = type === 'video' ? 'videoClipIds' : 'audioClipIds';
+  if (!newPillar[idsKey].includes(clip.id)) newPillar[idsKey].push(clip.id);
+  newPillar[idsKey].forEach((cid, i) => {
+    const c = arr.find(x => x.id === cid);
+    if (c) c.order = i;
+  });
+  clip.pillarId = newPillar.id;
+}
+
+// 每次渲染时记录柱子色带几何（拖拽落点判定分镜归属用）
+function ttCapturePillarGeometry() {
+  const bands = [];
+  document.querySelectorAll('.tt-pillar-band').forEach(el => {
+    const lane = el.closest('.tt-lane-content');
+    if (!lane) return;
+    const laneRect = lane.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const px = ttGetZoom();
+    const start = (r.left - laneRect.left) / px;
+    bands.push({
+      pillarId: el.dataset.pillarId,
+      start,
+      end: start + r.width / px,
+    });
+  });
+  // 同一柱子跨轨多色带：合并同 pillarId 的范围
+  const merged = new Map();
+  bands.forEach(b => {
+    if (!merged.has(b.pillarId)) merged.set(b.pillarId, { pillarId: b.pillarId, start: b.start, end: b.end });
+    else {
+      const m = merged.get(b.pillarId);
+      m.start = Math.min(m.start, b.start);
+      m.end = Math.max(m.end, b.end);
+    }
+  });
+  window.__ttPillarGeometry = [...merged.values()];
 }
 
 // 指针当前位置对应的时间轴秒数
@@ -881,123 +982,6 @@ function ttZoomOut() {
   if (scroll) scroll.scrollLeft = Math.max(0, anchor * ttGetZoom() - scroll.clientWidth / 2);
 }
 
-// ---- 插入素材（上传/拖入） ----
-
-function ttInsertMediaAtPlayhead(url, name, isAudio, duration) {
-  migrateTimelineToV2();
-  ttPauseIfPlaying();
-  const pillar = getOrCreateFreePillar();
-  const type = isAudio ? 'audio' : 'video';
-  const placement = resolveClipPlacement(state.timeline.playhead || 0, duration, type);
-  const clip = {
-    id: isAudio ? state.timeline.nextAudioClipId++ : state.timeline.nextClipId++,
-    nodeId: null,
-    url,
-    name: name || (isAudio ? '音频' : '视频'),
-    duration,
-    startTime: 0,
-    endTime: duration,
-    order: pillar[isAudio ? 'audioClipIds' : 'videoClipIds'].length,
-    pillarId: pillar.id,
-    start: placement.start,
-    track: placement.track,
-  };
-  (isAudio ? state.timeline.audioClips : state.timeline.clips).push(clip);
-  addClipToPillar(pillar, clip.id, type);
-  state.timeline.visible = true;
-  // 播放头推进到片段末尾，连续插入时依次排开
-  state.timeline.playhead = placement.start + duration;
-  renderTimeline();
-  safeAutoSave();
-  return clip;
-}
-
-const TT_MEDIA_AUDIO_RE = /\.(mp3|wav|m4a|aac|ogg|flac)$/i;
-const TT_MEDIA_VIDEO_RE = /\.(mp4|mov|webm|avi|mkv|m4v)$/i;
-
-function ttImportMediaFiles(files) {
-  const mediaFiles = [...files].filter(f => TT_MEDIA_AUDIO_RE.test(f.name) || TT_MEDIA_VIDEO_RE.test(f.name));
-  if (!mediaFiles.length) {
-    showToast('请选择视频或音频文件', 'warning');
-    return;
-  }
-  mediaFiles.forEach(async (file) => {
-    try {
-      showToast(`正在上传 ${file.name} ...`, 'info');
-      const url = await uploadFile(file);
-      const isAudio = TT_MEDIA_AUDIO_RE.test(file.name);
-      let duration = isAudio ? 5 : 10;
-      try {
-        duration = isAudio ? await getAudioDuration(url) : await getVideoDuration(url);
-      } catch (e) { /* 探测失败用默认时长 */ }
-      ttInsertMediaAtPlayhead(url, file.name, isAudio, duration);
-      showToast(`已插入 ${file.name}`, 'success');
-    } catch (err) {
-      console.error('[时间轴] 导入媒体失败:', err);
-      showToast('导入失败: ' + (err.message || '未知错误'), 'error');
-    }
-  });
-}
-
-function ttBindFileDrop(target) {
-  if (!target || target._ttDropBound) return;
-  target._ttDropBound = true;
-
-  let dragDepth = 0;
-  let overlay = null;
-  const ensureOverlay = () => {
-    if (overlay) return overlay;
-    overlay = document.createElement('div');
-    overlay.className = 'tt-drop-overlay';
-    overlay.textContent = '松开鼠标，插入视频/音频到播放头处';
-    target.appendChild(overlay);
-    return overlay;
-  };
-
-  target.addEventListener('dragenter', (e) => {
-    if (!e.dataTransfer || ![...(e.dataTransfer.types || [])].includes('Files')) return;
-    e.preventDefault();
-    dragDepth++;
-    ensureOverlay().classList.add('show');
-  });
-  target.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer || ![...(e.dataTransfer.types || [])].includes('Files')) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'copy';
-  });
-  target.addEventListener('dragleave', () => {
-    dragDepth = Math.max(0, dragDepth - 1);
-    if (dragDepth === 0 && overlay) overlay.classList.remove('show');
-  });
-  target.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    dragDepth = 0;
-    if (overlay) overlay.classList.remove('show');
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-      ttImportMediaFiles(e.dataTransfer.files);
-    }
-  });
-}
-
-function ttOpenImportDialog() {
-  let input = document.getElementById('ttImportInput');
-  if (!input) {
-    input = document.createElement('input');
-    input.type = 'file';
-    input.id = 'ttImportInput';
-    input.multiple = true;
-    input.accept = 'video/*,audio/*';
-    input.style.display = 'none';
-    document.body.appendChild(input);
-    input.addEventListener('change', () => {
-      if (input.files && input.files.length) ttImportMediaFiles(input.files);
-      input.value = '';
-    });
-  }
-  input.click();
-}
-
 // ---- 键盘快捷键 ----
 
 window.addEventListener('keydown', (e) => {
@@ -1025,6 +1009,13 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// ---- 时间轴撤销（按钮/Ctrl+Z 共用）：暂停播放后回滚到上一份工作流快照 ----
+
+function ttUndoTimelineChange() {
+  ttPauseIfPlaying();
+  if (typeof undoWorkflowChange === 'function') undoWorkflowChange();
+}
+
 // ---- 模块出口 ----
 
 window.TimelineTracks = {
@@ -1034,5 +1025,5 @@ window.TimelineTracks = {
   zoomOut: ttZoomOut,
   split: ttSplitSelectedAtPlayhead,
   deleteSelected: ttDeleteSelectedClips,
-  openImport: ttOpenImportDialog,
+  undo: ttUndoTimelineChange,
 };
