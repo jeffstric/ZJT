@@ -1589,6 +1589,23 @@ class DriverImplementation:
     GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1 = 'gpt_image_2_5_common_flare_site4_v1'
     GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1 = 'gpt_image_2_5_common_flare_site5_v1'
 
+    # GPT Image 2.6（与 2.5 同构：sunburst / flare 两个独立模型，接口与 GPT Image 2 一致，
+    # 仅模型名不同；每个模型 7 个实现方：多米 + 聚合站点 site_0~site_5）
+    DUOMI_GPT_IMAGE_2_6_SUNBURST_V1 = 'duomi_gpt_image_2_6_sunburst_v1'
+    DUOMI_GPT_IMAGE_2_6_FLARE_V1 = 'duomi_gpt_image_2_6_flare_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1 = 'gpt_image_2_6_common_sunburst_site0_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1 = 'gpt_image_2_6_common_sunburst_site1_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1 = 'gpt_image_2_6_common_sunburst_site2_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1 = 'gpt_image_2_6_common_sunburst_site3_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1 = 'gpt_image_2_6_common_sunburst_site4_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1 = 'gpt_image_2_6_common_sunburst_site5_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1 = 'gpt_image_2_6_common_flare_site0_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1 = 'gpt_image_2_6_common_flare_site1_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1 = 'gpt_image_2_6_common_flare_site2_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1 = 'gpt_image_2_6_common_flare_site3_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1 = 'gpt_image_2_6_common_flare_site4_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1 = 'gpt_image_2_6_common_flare_site5_v1'
+
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
 
@@ -1779,6 +1796,22 @@ class DriverImplementationId:
     MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 111
     MINIMAX_H3_CHENYU_V1 = 110
 
+    # GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方）
+    DUOMI_GPT_IMAGE_2_6_SUNBURST_V1 = 112
+    DUOMI_GPT_IMAGE_2_6_FLARE_V1 = 113
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1 = 114
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1 = 115
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1 = 116
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1 = 117
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1 = 118
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1 = 119
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1 = 120
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1 = 121
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1 = 122
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1 = 123
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1 = 124
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1 = 125
+
 
 # implementation 字符串到 ID 的映射
 IMPLEMENTATION_TO_ID = {
@@ -1890,6 +1923,20 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_2_5_common_flare_site3_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,
     'gpt_image_2_5_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,
     'gpt_image_2_5_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,
+    'duomi_gpt_image_2_6_sunburst_v1': DriverImplementationId.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,
+    'duomi_gpt_image_2_6_flare_v1': DriverImplementationId.DUOMI_GPT_IMAGE_2_6_FLARE_V1,
+    'gpt_image_2_6_common_sunburst_site0_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,
+    'gpt_image_2_6_common_sunburst_site1_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,
+    'gpt_image_2_6_common_sunburst_site2_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,
+    'gpt_image_2_6_common_sunburst_site3_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,
+    'gpt_image_2_6_common_sunburst_site4_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,
+    'gpt_image_2_6_common_sunburst_site5_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,
+    'gpt_image_2_6_common_flare_site0_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,
+    'gpt_image_2_6_common_flare_site1_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,
+    'gpt_image_2_6_common_flare_site2_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,
+    'gpt_image_2_6_common_flare_site3_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,
+    'gpt_image_2_6_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,
+    'gpt_image_2_6_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,
     'video_watermark_runninghub_v1': DriverImplementationId.VIDEO_WATERMARK_RUNNINGHUB_V1,
     'video_enhance_runninghub_v1': DriverImplementationId.VIDEO_ENHANCE_RUNNINGHUB_V1,
 }
@@ -2053,6 +2100,8 @@ class DriverKey:
     GPT_IMAGE_2 = 'gpt_image_2'
     GPT_IMAGE_2_5_SUNBURST = 'gpt_image_2_5_sunburst'
     GPT_IMAGE_2_5_FLARE = 'gpt_image_2_5_flare'
+    GPT_IMAGE_2_6_SUNBURST = 'gpt_image_2_6_sunburst'
+    GPT_IMAGE_2_6_FLARE = 'gpt_image_2_6_flare'
     Z_INDEX_IMAGE_EDIT = 'z_index_image_edit'
 
     # Seedance 图生视频
@@ -2218,6 +2267,8 @@ class TaskTypeId:
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
         'GPT_IMAGE_2_5_FLARE': 'GPT Image 2.5 Flare 图片编辑',
+        'GPT_IMAGE_2_6_SUNBURST': 'GPT Image 2.6 Sunburst 图片编辑',
+        'GPT_IMAGE_2_6_FLARE': 'GPT Image 2.6 Flare 图片编辑',
         'Z_INDEX_IMAGE_EDIT': 'Z-index 图片编辑',
         'SORA2_TEXT_TO_VIDEO': 'Sora2 文生视频',
         'SORA2_IMAGE_TO_VIDEO': 'Sora2 图生视频',
@@ -2273,6 +2324,8 @@ class TaskTypeId:
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
     GPT_IMAGE_2_5_FLARE = 47
+    GPT_IMAGE_2_6_SUNBURST = 55
+    GPT_IMAGE_2_6_FLARE = 56
     Z_INDEX_IMAGE_EDIT = 48
 
     # 文生视频
@@ -2710,6 +2763,65 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='1:1',
         default_size='1k',
         sort_order=7,
+        supports_grid_image=True,
+        supports_grid_merge=False,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_6_SUNBURST,
+        key='gpt-image-2.6-sunburst-edit',
+        short_key='gpt-image-2.6-sunburst',
+        name='GPT Image 2.6 Sunburst 图片编辑',
+        model_name='GPT Image 2.6 Sunburst',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2_6_SUNBURST,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,  # 多米（默认）
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,  # ZJT 官方站点
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
+        ],
+        computing_power=2,  # 与 GPT Image 2.5 同价
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
+        default_ratio='1:1',
+        default_size='1k',
+        # 紧跟 GPT Image 2.5（sort_order=6/7）之后展示
+        sort_order=9,
+        supports_grid_image=True,
+        supports_grid_merge=False,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_6_FLARE,
+        key='gpt-image-2.6-flare-edit',
+        short_key='gpt-image-2.6-flare',
+        name='GPT Image 2.6 Flare 图片编辑',
+        model_name='GPT Image 2.6 Flare',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2_6_FLARE,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,  # 多米（默认）
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,  # ZJT 官方站点
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,  # 聚合站点5
+        ],
+        computing_power=2,  # 与 GPT Image 2.5 同价
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
+        default_ratio='1:1',
+        default_size='1k',
+        sort_order=10,
         supports_grid_image=True,
         supports_grid_merge=False,
     ),
@@ -4062,6 +4174,172 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         enabled=True,
         description='聚合站点5 GPT Image 2.5 Flare 接口（同步）',
         sort_order=3550.0,
+        sync_mode=True,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+
+    # ==================== GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5；定价与 2.5 一致） ====================
+    ImplementationConfig(
+        name='duomi_gpt_image_2_6_sunburst_v1',
+        display_name='多米',
+        driver_class='GptImage26DuomiSunburstV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='多米平台 GPT Image 2.6 Sunburst 接口（异步任务轮询）',
+        sort_order=3600.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='duomi_gpt_image_2_6_flare_v1',
+        display_name='多米',
+        driver_class='GptImage26DuomiFlareV1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='多米平台 GPT Image 2.6 Flare 接口（异步任务轮询）',
+        sort_order=3610.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImage26CommonSunburstSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='ZJT官方 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3700.0,
+        sync_mode=True,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImage26CommonSunburstSite1V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点1 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3710.0,
+        sync_mode=True,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site2_v1',
+        display_name='gpt_site2',
+        driver_class='GptImage26CommonSunburstSite2V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点2 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3720.0,
+        sync_mode=True,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site3_v1',
+        display_name='gpt_site3',
+        driver_class='GptImage26CommonSunburstSite3V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点3 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3730.0,
+        sync_mode=True,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site4_v1',
+        display_name='gpt_site4',
+        driver_class='GptImage26CommonSunburstSite4V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点4 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3740.0,
+        sync_mode=True,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site5_v1',
+        display_name='gpt_site5',
+        driver_class='GptImage26CommonSunburstSite5V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点5 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3750.0,
+        sync_mode=True,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImage26CommonFlareSite0V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='ZJT官方 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3800.0,
+        sync_mode=True,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImage26CommonFlareSite1V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点1 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3810.0,
+        sync_mode=True,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site2_v1',
+        display_name='gpt_site2',
+        driver_class='GptImage26CommonFlareSite2V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点2 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3820.0,
+        sync_mode=True,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site3_v1',
+        display_name='gpt_site3',
+        driver_class='GptImage26CommonFlareSite3V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点3 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3830.0,
+        sync_mode=True,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site4_v1',
+        display_name='gpt_site4',
+        driver_class='GptImage26CommonFlareSite4V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点4 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3840.0,
+        sync_mode=True,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site5_v1',
+        display_name='gpt_site5',
+        driver_class='GptImage26CommonFlareSite5V1Driver',
+        default_computing_power=2,
+        enabled=True,
+        description='聚合站点5 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3850.0,
         sync_mode=True,
         site_number=5,
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
