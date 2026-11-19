@@ -431,7 +431,7 @@
           modelEl.innerHTML = `
             <option value="gemini">标准版 (2算力)</option>
             <option value="gemini_pro">加强版 (6算力)</option>
-            <option value="seedream-5.0">Seedream 5.0 (6算力)</option>
+            <option value="seedream-5.0">Seedream 5.0 Pro (20算力)</option>
           `;
         }
         // 确保已保存的模型值在下拉框中可见

@@ -770,8 +770,8 @@
           }
           if (modelOptionsCache.length === 0) {
             modelOptionsCache = [
-              { value: 'seedream-5.0', label: 'Seedream 5.0', computingPower: 6 },
-              { value: 'seedream-4.5', label: 'Seedream 4.5', computingPower: 8 },
+              { value: 'seedream-5.0', label: 'Seedream 5.0 Pro', computingPower: 20 },
+              { value: 'seedream-4.5', label: 'Seedream 5.0 Pro', computingPower: 20 },
               { value: 'gpt-image-2', label: 'GPT Image 2', computingPower: 4 }
             ];
           }

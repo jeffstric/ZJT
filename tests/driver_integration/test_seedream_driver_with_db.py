@@ -51,7 +51,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         self.assertEqual(req['method'], 'POST')
 
         # 验证 json 结构
-        self.assertEqual(req['json']['model'], 'doubao-seedream-5-0-260128')
+        self.assertEqual(req['json']['model'], 'doubao-seedream-5-0-pro-260628')
         self.assertEqual(req['json']['prompt'], '一个女孩')
         # size 是像素尺寸，9:16 + 2K = 1600x2848
         self.assertEqual(req['json']['size'], '1600x2848')
@@ -125,7 +125,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         """测试提交任务成功 - 基于实际 API 响应"""
         # 模拟 API 成功响应（基于用户提供的实际日志）
         mock_request.return_value = {
-            'model': 'doubao-seedream-5-0-260128',
+            'model': 'doubao-seedream-5-0-pro-260628',
             'created': 1772622963,
             'data': [{
                 'url': 'https://example.com/test-image.png',
@@ -161,7 +161,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
         # 验证请求参数
         self.assertIn('ark.cn-beijing.volces.com', call_args.kwargs['url'])
         self.assertEqual(call_args.kwargs['method'], 'POST')
-        self.assertEqual(call_args.kwargs['json']['model'], 'doubao-seedream-5-0-260128')
+        self.assertEqual(call_args.kwargs['json']['model'], 'doubao-seedream-5-0-pro-260628')
         self.assertEqual(call_args.kwargs['json']['prompt'], '一个女孩')
         # 9:16 + 2K = 1600x2848
         self.assertEqual(call_args.kwargs['json']['size'], '1600x2848')
@@ -193,7 +193,7 @@ class TestSeedreamVolcengineWithDB(BaseVideoDriverTest):
     def test_submit_task_empty_data(self, mock_request):
         """测试提交任务返回空数据"""
         mock_request.return_value = {
-            'model': 'doubao-seedream-5-0-260128',
+            'model': 'doubao-seedream-5-0-pro-260628',
             'created': 1772622963,
             'data': []
         }

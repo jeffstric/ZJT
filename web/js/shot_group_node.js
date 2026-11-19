@@ -301,7 +301,7 @@
           shotGroupModelEl.innerHTML = `
             <option value="gemini" ${node.data.model === 'gemini' ? 'selected' : ''}>标准版</option>
             <option value="gemini_pro" ${node.data.model === 'gemini_pro' ? 'selected' : ''}>加强版</option>
-            <option value="seedream-5.0" ${node.data.model === 'seedream-5.0' ? 'selected' : ''}>Seedream 5.0</option>
+            <option value="seedream-5.0" ${node.data.model === 'seedream-5.0' ? 'selected' : ''}>Seedream 5.0 Pro</option>
           `;
         }
         if(!node.data.model){

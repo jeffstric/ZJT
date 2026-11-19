@@ -6343,7 +6343,7 @@
             // 默认模型兜底
             function loadDefaultModels() {
                 allImageModels.value = [
-                    { icon: '🖼️', name: 'Seedream 5.0', desc: window.t('desc_seedream'), tag: window.t('recommended'), key: 'seedream_5', value: 'seedream_5' },
+                    { icon: '🖼️', name: 'Seedream 5.0 Pro', desc: window.t('desc_seedream'), tag: window.t('recommended'), key: 'seedream_5', value: 'seedream_5' },
                     { icon: '🖼️', name: 'GPT IMAGE 2', desc: window.t('desc_dalle3'), tag: '', key: 'gpt_image_2', value: 'gpt_image_2' },
                     { icon: '🖼️', name: '可图 3.0', desc: window.t('desc_kling_image'), tag: '', key: 'kling_image', value: 'kling_image' },
                     { icon: '🖼️', name: '通义万相 3.0', desc: window.t('desc_wanxiang'), tag: '', key: 'wanxiang', value: 'wanxiang' }
