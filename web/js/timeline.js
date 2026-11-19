@@ -2297,7 +2297,7 @@
         <div class="modal-card" style="max-width: 460px; background: white;">
           <div class="modal-header" style="background: white; border-bottom: 1px solid #e5e7eb;">
             <div class="modal-title" style="color: #111827;">导出成品视频</div>
-            <button class="modal-close" type="button" aria-label="关闭">×</button>
+            <button class="modal-close" type="button" aria-label="关闭" style="background: #f3f4f6; color: #374151;">×</button>
           </div>
           <div class="modal-body" style="padding: 20px; background: white; color: #374151;">
             <div style="font-size: 13px; line-height: 1.7;">
@@ -2373,6 +2373,7 @@
             clearInterval(timer);
             closeBtn.style.display = '';
             startBtn.style.display = '';
+            startBtn.disabled = false;
             startBtn.textContent = '重试';
             setProgress(100, '失败：' + (job.error || '未知错误'));
           }

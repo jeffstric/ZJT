@@ -119,6 +119,39 @@ def _probe_src_duration(path: str) -> Optional[float]:
     return dur
 
 
+_audio_duration_cache: Dict[str, Optional[float]] = {}
+
+
+def _probe_audio_duration(path: str) -> Optional[float]:
+    """ffprobe 探测源文件**音轨**实际时长（按路径缓存）。
+
+    音轨可能短于视频流/容器时长——裁剪起点超音轨尾的音频路会是空流，
+    空流进 amix 会让 ffmpeg 挂起（实测 rc=124 超时），必须提前剔除。
+    """
+    if path in _audio_duration_cache:
+        return _audio_duration_cache[path]
+    cmd = [
+        _ffprobe_path(),
+        "-v", "quiet",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]
+    dur = None
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True,
+            timeout=30, encoding="utf-8", errors="replace",
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            dur = float(proc.stdout.strip())
+    except Exception as e:
+        logger.warning("ffprobe 音轨时长探测失败 %s: %s", path, e)
+    _audio_duration_cache[path] = dur
+    return dur
+
+
 def _seg_text(parts: List[str]) -> str:
     return ";\n".join(parts)
 
@@ -238,7 +271,19 @@ def _render_audio_track(
     cmd: List[str] = [_ffmpeg_path(), "-y", "-v", "error"]
     parts: List[str] = []
     labels: List[str] = []
-    for k, (file_path, src_off, src_end, abs_start) in enumerate(audio_sources):
+    k = 0
+    for (file_path, src_off, src_end, abs_start) in audio_sources:
+        # 裁剪区间按音轨实际时长钳制；起点已超音轨尾的源整路剔除
+        # （空流进 amix 会让 ffmpeg 挂起，实测 rc=124 超时）
+        audio_dur = _probe_audio_duration(file_path)
+        if audio_dur is not None and audio_dur > 0:
+            if src_off >= audio_dur - 0.05:
+                logger.info("音频源裁剪起点超音轨尾，剔除: %s (%.2fs >= %.2fs)",
+                            os.path.basename(file_path), src_off, audio_dur)
+                continue
+            src_end = min(src_end, audio_dur)
+        if src_end - src_off < 0.05:
+            continue
         cmd += ["-i", file_path]
         delay_ms = int(round(abs_start * 1000))
         parts.append(
@@ -247,6 +292,7 @@ def _render_audio_track(
             f"adelay={delay_ms}|{delay_ms},apad[a{k}]"
         )
         labels.append(f"[a{k}]")
+        k += 1
 
     if labels:
         parts.append(
@@ -411,6 +457,19 @@ def get_timeline_export_job(job_id: str) -> Optional[dict]:
         except Exception:
             return None
     return None
+
+
+def has_active_job_for_user(user_id: int) -> bool:
+    """该用户是否已有进行中的导出任务（同用户串行，防并发 ffmpeg 拖垮机器）。
+
+    只查进程内存——重启后旧后台任务已死，JSON 里残留的 downloading 状态不算活跃。
+    """
+    with _export_job_lock:
+        for job in _export_jobs.values():
+            if (job.get('user_id') == user_id
+                    and job.get('status') in ('pending', 'downloading', 'rendering', 'uploading')):
+                return True
+    return False
 
 
 def create_timeline_export_job(user_id: int, workflow_name: str = "") -> dict:

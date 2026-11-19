@@ -191,6 +191,7 @@ from services.timeline_video_service import (
     get_timeline_export_job,
     update_timeline_export_job,
     cleanup_job_tmp_dir,
+    has_active_job_for_user,
 )
 from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
@@ -13156,6 +13157,11 @@ async def export_timeline_video(
             return JSONResponse(
                 status_code=400,
                 content={'success': False, 'error': f'片段总数超过上限({TimelineVideoExportConstants.MAX_CLIPS})'}
+            )
+        if has_active_job_for_user(user_id):
+            return JSONResponse(
+                status_code=429,
+                content={'success': False, 'error': '已有导出任务进行中，请等待完成后再导出'}
             )
         total_duration = _timeline_video_total_duration(payload.video_clips)
         if total_duration <= 0.05:
