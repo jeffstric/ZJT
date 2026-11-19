@@ -449,6 +449,29 @@ body.tt-resizing iframe {
 }
 
 /* ---- 垃圾桶 ---- */
+/* .modal-card 基础样式是黑底（为视频/图片预览模态设计），浅色模式下业务弹窗
+   需逐个 ID 覆盖成白底（先例见 #shotGroupModal）；暗色模式由
+   html.theme-dark .modal:not(#videoModal):not(#imageModal) 统一接管，无需处理 */
+#trashModal .modal-card {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+}
+#trashModal .modal-header {
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+}
+#trashModal .modal-body {
+  background: #ffffff;
+}
+#trashModal .modal-close {
+  background: #f3f4f6;
+  color: #374151;
+}
+#trashModal .modal-close:hover {
+  background: #e5e7eb;
+}
 .trash-badge {
   display: none;
   align-items: center;
