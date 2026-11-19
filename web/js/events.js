@@ -1660,6 +1660,11 @@
       exportTimelineToDraft();
     });
 
+    document.getElementById('timelineExportVideoBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportTimelineToVideo();
+    });
+
     document.getElementById('timelineExportAssetsBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       exportTimelineAssets();

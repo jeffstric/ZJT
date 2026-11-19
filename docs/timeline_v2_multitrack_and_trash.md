@@ -15,6 +15,7 @@
 | 播放预览 | 时间轴内嵌预览窗，播放头（定时器驱动）+ 视频取最上层活跃片段 + 音频多轨并行 |
 | 插入素材 | 仅经画布：节点「加入时间轴」按钮（落播放头处第一个空闲轨）。时间轴不提供直接导入媒体入口（素材必须先进画布节点） |
 | 导出所见即所得 | 「导出剪影草稿」按时间轴绝对布局生成（片段带 `timeline_start` 时走后端绝对模式） |
+| 导出成品视频 | 时间轴一键烧录 mp4（24fps）：服务端 ffmpeg 合成，异步 job + 轮询（见下「导出成品视频」章节） |
 
 ## 二、数据结构（`state.timeline` / `state.trash`）
 
@@ -86,3 +87,23 @@
 - 视频轨/音频轨上限各 6；音频拖进视频轨（或反之）会被拒绝。
 - 撤销按钮走工作流级快照回滚（与 Ctrl+Z 同一机制），会整体回退最近一步（画布+时间轴一起），非时间轴专属 undo 栈。
 - 导出素材包（`/api/export_timeline_assets`）不涉及位置，未改动。
+
+## 六、导出成品视频（`/api/export_timeline_video`）
+
+时间轴工具栏「导出视频」→ 确认弹窗 → POST 建 job 立即返回 job_id → 前端 2s 轮询
+`GET /api/export_timeline_video/job/{id}`（阶段：下载素材→渲染中→上传→完成/失败）→ 自动下载。
+
+- **服务**：`services/timeline_video_service.py`（同步函数纪律：API 层 `asyncio.to_thread` + `wait_for(TimelineVideoExportConstants.FFMPEG_TIMEOUT_SECONDS=1800)`）
+- **合成模型**：一条 24fps 黑底画布（`TimelineVideoExportConstants.OUTPUT_FPS`），每段视频
+  `trim(start/end 裁剪)→setpts 重定位到 timeline_start→scale/pad 等比铺满→逐层 overlay`；
+  跨轨重叠区后叠的（轨号高）覆盖先叠的（与预览"最上层活跃片段"一致）；段间空洞黑底；
+  音频 = 视频内嵌音轨（ffprobe 探测存在才纳入）+ 音频轨片段，`atrim→adelay 到绝对位置
+  →aresample 44100/立体声→amix(normalize=0)`，全无音频源挂 `anullsrc` 静音兜底；
+  输出 `-t TOTAL` 时长钳制、libx264 crf20 veryfast、aac 192k、faststart
+- **分辨率**：`JIANYING_RATIO_RESOLUTION[state.ratio]`（与剪映草稿导出一致）
+- **交付**：`server.is_local=true` → 本地 `/upload/timeline_video_export/{日期}/xxx.mp4`；
+  否则 `upload_local_file_to_cdn` 上 CDN 后删本地
+- **job 状态**：内存 dict + `upload/timeline_video_export/jobs/{id}.json` 落盘（仿故事板 export-full-video）
+- **边界**：多轨重叠取高轨；不扣算力（本地渲染能力，与导出草稿一致）；AIGC 隐码本期不打
+  （与故事板 export-full-video 先例一致）；片段总数上限 `MAX_CLIPS=100`；job 轮询对
+  `JOB_RETENTION_SECONDS` 之外的旧任务按不存在处理（状态文件天然留存，清理靠人工/后续任务）

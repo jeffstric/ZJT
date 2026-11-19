@@ -2280,6 +2280,140 @@
 
     // 导出时间轴素材包 zip（对齐故事板「导出素材包」：原视频/音频素材 + manifest，
     // 服务端打包上传后返回 download_url）
+    // 导出成品视频（服务端 ffmpeg 烧录）：异步 job + 轮询，见 /api/export_timeline_video
+    function exportTimelineToVideo() {
+      if (!state.timeline.clips || state.timeline.clips.length === 0) {
+        showToast('时间轴为空，无法导出视频', 'error');
+        return;
+      }
+
+      const workflowName = document.querySelector('.brand-title')?.textContent || '未命名工作流';
+      const total = getTimelineTotalDuration();
+      const estMin = Math.max(1, Math.ceil(total / 60 * 2)); // 粗略估计：约 2 倍成片时长
+
+      const dialog = document.createElement('div');
+      dialog.className = 'modal show';
+      dialog.innerHTML = `
+        <div class="modal-card" style="max-width: 460px; background: white;">
+          <div class="modal-header" style="background: white; border-bottom: 1px solid #e5e7eb;">
+            <div class="modal-title" style="color: #111827;">导出成品视频</div>
+            <button class="modal-close" type="button" aria-label="关闭">×</button>
+          </div>
+          <div class="modal-body" style="padding: 20px; background: white; color: #374151;">
+            <div style="font-size: 13px; line-height: 1.7;">
+              将按当前时间轴布局直接渲染出一个 mp4 成片（24fps）：<br>
+              总时长约 <strong>${Math.floor(total / 60)}分${Math.round(total % 60)}秒</strong>，
+              预计需要 <strong>${estMin} 分钟以内</strong>，可关闭本窗口稍后在时间轴继续查看进度。
+            </div>
+            <div id="ttExportVideoProgress" style="display:none; margin-top: 16px;">
+              <div style="height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden;">
+                <div id="ttExportVideoBar" style="height: 100%; width: 0%; background: #3b82f6; transition: width .4s;"></div>
+              </div>
+              <div id="ttExportVideoStage" style="font-size: 12px; color: #6b7280; margin-top: 8px;">准备中...</div>
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;">
+              <button class="mini-btn btn-secondary" id="ttExportVideoCloseBtn" type="button" style="display:none;">关闭</button>
+              <button class="btn btn-primary" id="ttExportVideoStartBtn" type="button">开始导出</button>
+            </div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(dialog);
+
+      const closeDialog = () => { dialog.classList.remove('show'); setTimeout(() => dialog.remove(), 300); };
+      dialog.querySelectorAll('.modal-close').forEach(btn => btn.addEventListener('click', closeDialog));
+
+      const progressWrap = dialog.querySelector('#ttExportVideoProgress');
+      const bar = dialog.querySelector('#ttExportVideoBar');
+      const stageEl = dialog.querySelector('#ttExportVideoStage');
+      const closeBtn = dialog.querySelector('#ttExportVideoCloseBtn');
+      const startBtn = dialog.querySelector('#ttExportVideoStartBtn');
+
+      const setProgress = (pct, stage) => {
+        progressWrap.style.display = 'block';
+        bar.style.width = pct + '%';
+        stageEl.textContent = stage || '';
+      };
+
+      const pollJob = async (jobId) => {
+        const timer = setInterval(async () => {
+          let job = null;
+          try {
+            const res = await fetch(`/api/export_timeline_video/job/${jobId}`, {
+              headers: { 'X-User-Id': localStorage.getItem('user_id') || '1' }
+            });
+            const data = await res.json();
+            job = data.success ? data.job : null;
+          } catch (e) { /* 网络抖动下一轮重试 */ }
+          if (!job) return;
+
+          const stageText = {
+            pending: '排队中...', downloading: '下载素材中...', rendering: '视频渲染中（ffmpeg 烧录）...',
+            uploading: '上传产物中...', completed: '完成', failed: '失败'
+          }[job.status] || job.status;
+          setProgress(job.progress || 0, stageText);
+
+          if (job.status === 'completed') {
+            clearInterval(timer);
+            closeBtn.style.display = '';
+            startBtn.style.display = 'none';
+            setProgress(100, '完成');
+            showToast('视频导出成功，开始下载', 'success');
+            const url = job.download_url || '';
+            if (/^https?:\/\//i.test(url) || url.startsWith('/')) {
+              if (typeof window.downloadWithAuth === 'function') {
+                window.downloadWithAuth(url, job.filename || 'timeline_video.mp4');
+              } else {
+                window.location.href = url;
+              }
+            } else {
+              showToast('下载链接无效', 'error');
+            }
+          } else if (job.status === 'failed') {
+            clearInterval(timer);
+            closeBtn.style.display = '';
+            startBtn.style.display = '';
+            startBtn.textContent = '重试';
+            setProgress(100, '失败：' + (job.error || '未知错误'));
+          }
+        }, 2000);
+      };
+
+      startBtn.addEventListener('click', async () => {
+        startBtn.disabled = true;
+        startBtn.textContent = '提交中...';
+        const { videoClipsData, audioClipsData } = collectTimelineExportClips();
+        try {
+          const res = await fetch('/api/export_timeline_video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-User-Id': localStorage.getItem('user_id') || '1' },
+            body: JSON.stringify({
+              video_clips: videoClipsData,
+              audio_clips: audioClipsData,
+              workflow_name: workflowName,
+              ratio: state.ratio,
+              request_origin: window.location.origin
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success && data.job_id) {
+            startBtn.style.display = 'none';
+            closeBtn.style.display = '';
+            setProgress(2, '已提交，等待处理...');
+            showToast('导出任务已提交', 'success');
+            pollJob(data.job_id);
+          } else {
+            throw new Error(data.error || '提交失败');
+          }
+        } catch (err) {
+          console.error('[时间轴] 导出视频失败:', err);
+          showToast('导出视频失败: ' + (err.message || '未知错误'), 'error');
+          startBtn.disabled = false;
+          startBtn.textContent = '开始导出';
+        }
+      });
+    }
+
     async function exportTimelineAssets() {
       if (!state.timeline.clips || state.timeline.clips.length === 0) {
         showToast(window.t ? window.t('timeline_assets_empty') : '时间轴为空，无法导出素材包', 'error');

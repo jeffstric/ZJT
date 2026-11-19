@@ -185,6 +185,13 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.timeline_video_service import (
+    render_timeline_video,
+    create_timeline_export_job,
+    get_timeline_export_job,
+    update_timeline_export_job,
+    cleanup_job_tmp_dir,
+)
 from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
@@ -204,6 +211,7 @@ from config.constant import (
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
     SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK,
+    TimelineVideoExportConstants,
 )
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -13106,6 +13114,132 @@ async def export_timeline_assets(
                 await asyncio.to_thread(shutil.rmtree, base_temp_dir, True)
             except Exception as e:
                 logger.warning(f"清理素材包临时目录失败: {e}")
+
+
+class ExportTimelineVideoRequest(BaseModel):
+    """时间轴导出成品视频请求（片段结构与 export_timeline_draft 一致）。"""
+    video_clips: List[dict] = []
+    audio_clips: List[dict] = []
+    ratio: Optional[str] = None  # 画布比例，如 9:16 / 16:9
+    workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
+
+
+def _timeline_video_total_duration(video_clips: List[dict]) -> float:
+    """按 timeline_start + 裁剪时长计算成片总时长（后端权威，不信任前端传值）。"""
+    total = 0.0
+    for clip in video_clips:
+        ts = float(clip.get('timeline_start') or 0)
+        ss = max(0.0, float(clip.get('startTime') or 0))
+        se = float(clip.get('endTime') or clip.get('duration') or 0)
+        total = max(total, ts + max(0.0, se - ss))
+    return round(total + 0.05, 3)
+
+
+@app.post('/api/export_timeline_video')
+async def export_timeline_video(
+    payload: ExportTimelineVideoRequest,
+    http_request: Request,
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """时间轴导出成品视频：建异步 job 立即返回 job_id，前端轮询 GET 同路径 /job/{id}。
+
+    渲染为 ffmpeg 重编码（几十秒~分钟级），采用与故事板 export-full-video 相同的
+    HTTP 内后台 asyncio 任务 + job 轮询模式；渲染本体在线程池（asyncio.to_thread +
+    wait_for 超时）执行，不阻塞事件循环。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        if not payload.video_clips:
+            return JSONResponse(status_code=400, content={'success': False, 'error': '时间轴为空，无法导出视频'})
+        if len(payload.video_clips) + len(payload.audio_clips) > TimelineVideoExportConstants.MAX_CLIPS:
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': f'片段总数超过上限({TimelineVideoExportConstants.MAX_CLIPS})'}
+            )
+        total_duration = _timeline_video_total_duration(payload.video_clips)
+        if total_duration <= 0.05:
+            return JSONResponse(status_code=400, content={'success': False, 'error': '片段时长无效，无法导出'})
+
+        ratio = payload.ratio or JIANYING_DEFAULT_RATIO
+        width, height = JIANYING_RATIO_RESOLUTION.get(ratio, JIANYING_RATIO_RESOLUTION[JIANYING_DEFAULT_RATIO])
+
+        job = create_timeline_export_job(user_id, payload.workflow_name or '')
+        job_id = job['job_id']
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
+
+        async def _run():
+            try:
+                update_timeline_export_job(job_id, status='downloading', progress=5)
+                date_folder = datetime.now().strftime('%Y-%m-%d')
+                out_dir = os.path.join(get_upload_dir(), TimelineVideoExportConstants.WORK_SUBDIR, date_folder)
+                dl_dir = os.path.join(get_upload_dir(), TimelineVideoExportConstants.WORK_SUBDIR, 'tmp', job_id, 'downloads')
+                os.makedirs(out_dir, exist_ok=True)
+                os.makedirs(dl_dir, exist_ok=True)
+
+                downloaded_video = await _download_timeline_media_clips(payload.video_clips, 'video', dl_dir, request_origin)
+                downloaded_audio = await _download_timeline_media_clips(payload.audio_clips, 'audio', dl_dir, request_origin)
+
+                update_timeline_export_job(job_id, status='rendering', progress=30)
+                local_path = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        render_timeline_video,
+                        downloaded_video, downloaded_audio, out_dir,
+                        width, height,
+                    ),
+                    timeout=TimelineVideoExportConstants.FFMPEG_TIMEOUT_SECONDS,
+                )
+
+                update_timeline_export_job(job_id, status='uploading', progress=85)
+                filename = os.path.basename(local_path)
+                is_local = get_dynamic_config_value("server", "is_local", default=True)
+                if is_local:
+                    download_url = f"{SERVER_HOST}/upload/{TimelineVideoExportConstants.WORK_SUBDIR}/{date_folder}/{filename}"
+                    logger.info(f"时间轴视频导出(本地): {download_url}")
+                else:
+                    download_url, filename = await upload_local_file_to_cdn(local_path, 'video/mp4')
+                    try:
+                        os.remove(local_path)
+                    except OSError:
+                        pass
+                    logger.info(f"时间轴视频导出(已上CDN): {download_url}")
+
+                update_timeline_export_job(
+                    job_id, status='completed', progress=100,
+                    download_url=download_url, filename=filename,
+                )
+            except _TimelineMediaExportError as e:
+                logger.warning(f"时间轴视频导出失败(素材下载): {e.error}")
+                update_timeline_export_job(job_id, status='failed', error=e.error, progress=100)
+            except Exception as e:
+                logger.error(f"时间轴视频导出失败 job={job_id}: {e}")
+                logger.error(traceback.format_exc())
+                update_timeline_export_job(job_id, status='failed', error=str(e) or '导出失败', progress=100)
+            finally:
+                cleanup_job_tmp_dir(job_id)
+
+        asyncio.create_task(_run())
+        return JSONResponse(status_code=200, content={'success': True, 'job_id': job_id, 'total_duration': total_duration})
+
+    except Exception as e:
+        logger.error(f"时间轴视频导出任务创建失败: {e}")
+        return JSONResponse(status_code=500, content={'success': False, 'error': str(e) or '创建导出任务失败'})
+
+
+@app.get('/api/export_timeline_video/job/{job_id}')
+async def get_export_timeline_video_job(job_id: str):
+    """轮询时间轴视频导出任务状态。"""
+    job = get_timeline_export_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={'success': False, 'error': '导出任务不存在或已过期'})
+    return JSONResponse(status_code=200, content={'success': True, 'job': {
+        'job_id': job.get('job_id'),
+        'status': job.get('status'),
+        'progress': job.get('progress'),
+        'download_url': job.get('download_url'),
+        'filename': job.get('filename'),
+        'error': job.get('error'),
+    }})
 
 
 @app.get("/video-workflow-list")
