@@ -24,6 +24,68 @@
   margin-left: 8px;
 }
 
+/* ---- 工具栏 icon 按钮（时间轴 header 一排，紧凑协调） ---- */
+.tt-toolbar-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tt-toolbar-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+.tt-toolbar-btn.tt-btn-success {
+  background: var(--success, #16a34a);
+  border-color: var(--success, #16a34a);
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-success:hover {
+  background: #15803d;
+  border-color: #15803d;
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-danger {
+  background: var(--danger, #ef4444);
+  border-color: var(--danger, #ef4444);
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-danger:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.tt-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+/* 垃圾桶角标在 icon 按钮右上角 */
+.tt-toolbar-btn .trash-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  margin-left: 0;
+}
+/* header 右侧容器：icon 排布局 */
+.timeline-container .timeline-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ---- 顶部拖拉把手（调整面板高度） ---- */
 .tt-resize-handle {
   position: absolute;
