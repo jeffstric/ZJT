@@ -417,3 +417,22 @@ MR1+MR2+MR3 合入后，审计所述「LLM 输出 → 渲染 → 拖库」链即
 | cookie 也失效才提示 | 单次 alert（沿用 `alert_login_expired` i18n key）+ 跳 `LOGIN_URL`（已带回当前页） |
 
 防回归：`web/tests/script_writer_token_expired_self_heal.test.js` 静态断言防重入标志、清 token、无 Authorization 头探测、reload 自愈与 60 秒节流、单次 alert 回退。其余以「快照 token + 裸 401 弹窗」模式工作的独立页面（marketing_agent 等）可复制同构方案，待后续批次收口。
+
+### 九次深挖：同机多端口部署 cookie 互踩（develop_2982，2026-11-20）
+
+现象：同一浏览器访问多个本机环境（如 `localhost:13003` / `localhost:13004`，各自独立端口与数据库），登录后登的环境会顶掉先登录环境的会话——后者页面请求 401「登录已过期」。
+
+根因：浏览器 cookie 作用域只按 host 匹配、**不区分端口**（RFC 6265）。两个环境的 `Set-Cookie: auth_token=<token>` 同 host（`localhost`）同名同 path，按规范后者覆盖前者；而各环境数据库独立、token 互不识别，被覆盖方每次请求都带着别家的 token → 401 确证失效 → 前端清 localStorage 登录态。localStorage / sessionStorage 按 origin（含端口）隔离本不受影响，HttpOnly cookie 是唯一跨端口共享通道（SSE 等无头请求也依赖它翻译鉴权）。
+
+修复（develop_2982）——cookie 名按访问端口隔离：
+
+| 改动 | 说明 |
+|---|---|
+| `config/constant.py` | 新增 `AUTH_COOKIE_PORT_SUFFIX_TEMPLATE='_{port}'`、`AUTH_COOKIE_DEFAULT_PORTS=(80,443)`；`AUTH_COOKIE_NAME` 保留为无端口基础名 |
+| `utils/resource_access.get_auth_cookie_name(request)` | Host 带显式非默认端口 → `auth_token_<port>`（如 `auth_token_13003`）；无端口 / 显式 80/443（反代正式形态）→ 基础名 `auth_token`，**线上存量会话零影响**；IPv6 `[::1]:13005` 亦可解析 |
+| `server.py` | `set_auth_cookie` 写入、`auth_cookie_translation_middleware` 读取、`/api/auth/logout` 两处 `delete_cookie` 全部改用动态名 |
+| `utils/resource_access.enforce_x_user_id_consistency` | X-User-Id 一致性校验的 cookie 兜底读取同步改动态名 |
+
+兼容性说明：本机多端口环境升级后各环境需**各自重新登录一次**（旧共享 `auth_token` 已无法区分归属）；此后各端口 cookie 互不可见，互不干扰。显式 80/443 与不带端口归一化为同一 cookie 名，避免同一服务长出两套会话。
+
+防回归：`tests/api/test_auth_cookie_name.py` 覆盖 host 形态矩阵（带端口 / 无端口 / 80 / 443 / IPv6）、`set_auth_cookie` 的 Set-Cookie 名、X-User-Id 兜底读取只认带后缀名（旧基础名带端口访问时不再兜底，避免串环境）。

@@ -209,8 +209,8 @@ async def enforce_x_user_id_consistency(request):
     - token 缺失/无效 → 401（missing_auth_token / invalid_auth_token）
     - token 属主 ≠ X-User-Id → 401（user_mismatch）
 
-    认证 cookie（AUTH_COOKIE_NAME）作为 Authorization 缺失时的兜底读取，
-    使本校验与 cookie 翻译中间件的执行顺序无关。
+    认证 cookie（get_auth_cookie_name，含端口隔离后缀）作为 Authorization
+    缺失时的兜底读取，使本校验与 cookie 翻译中间件的执行顺序无关。
 
     Returns:
         None 放行；否则返回可直接回传的 JSONResponse。
@@ -224,13 +224,14 @@ async def enforce_x_user_id_consistency(request):
     if not claimed:
         return None
 
-    from config.constant import AUTH_COOKIE_NAME
     from model.user_tokens import UserTokensModel
     from perseids_server.utils.auth_identity import normalize_authorization_token
 
     token = normalize_authorization_token(request.headers.get("authorization"))
     if not token:
-        token = normalize_authorization_token(request.cookies.get(AUTH_COOKIE_NAME))
+        token = normalize_authorization_token(
+            request.cookies.get(get_auth_cookie_name(request))
+        )
     if not token:
         return JSONResponse(
             status_code=401,
@@ -324,3 +325,33 @@ def decide_auth_cookie_renewal(
         # 单会话正常页面：Bearer 与 cookie 同源，续期让 cookie 寿命跟随活跃期
         return cookie_token
     return None
+
+
+def get_auth_cookie_name(request) -> str:
+    """按请求访问端口返回认证 cookie 名（同机多端口部署隔离）。
+
+    背景：浏览器 cookie 作用域只按 host 匹配、不区分端口（RFC 6265），
+    同一浏览器里 localhost:13003 与 localhost:13004 写入同名 auth_token
+    会互相覆盖，后登录的环境顶掉先登录环境的会话（各环境数据库独立、
+    token 互不识别 → 401 假过期）。因此带显式非默认端口访问时，cookie
+    名追加端口后缀（auth_token_13003），各端口环境的 cookie 互不可见。
+
+    无显式端口或为默认端口（80/443，反向代理正式部署形态）时保持基础名
+    AUTH_COOKIE_NAME，存量线上会话升级后不受影响。
+
+    Args:
+        request: starlette Request（取 url.port；IPv6 [::1]:13005 形态亦可解析）
+
+    Returns:
+        str: 该请求应读写的认证 cookie 名
+    """
+    from config.constant import (
+        AUTH_COOKIE_DEFAULT_PORTS,
+        AUTH_COOKIE_NAME,
+        AUTH_COOKIE_PORT_SUFFIX_TEMPLATE,
+    )
+
+    port = request.url.port
+    if port and port not in AUTH_COOKIE_DEFAULT_PORTS:
+        return AUTH_COOKIE_NAME + AUTH_COOKIE_PORT_SUFFIX_TEMPLATE.format(port=port)
+    return AUTH_COOKIE_NAME

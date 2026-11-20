@@ -870,6 +870,13 @@ USER_TOKEN_RENEW_THRESHOLD_DAYS = 2
 AUTH_COOKIE_NAME = 'auth_token'
 AUTH_COOKIE_MAX_AGE_SECONDS = USER_TOKEN_EXPIRE_DAYS * 86400
 
+# 同机多端口部署的 cookie 隔离（见 utils/resource_access.get_auth_cookie_name）：
+# 浏览器 cookie 作用域只按 host 不按端口，localhost:13003/13004 会互相覆盖同名
+# auth_token。带显式非默认端口访问时 cookie 名追加该后缀（auth_token_13003），
+# 各环境互不可见；无端口/默认端口（80/443 反代部署）保持基础名，存量会话不失效。
+AUTH_COOKIE_PORT_SUFFIX_TEMPLATE = '_{port}'
+AUTH_COOKIE_DEFAULT_PORTS = (80, 443)
+
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
 
