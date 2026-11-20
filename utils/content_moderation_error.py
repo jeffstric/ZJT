@@ -387,7 +387,12 @@ def classify_content_moderation(
         "moderation_error",
         "channel_error",
     ):
-        if err_type == "channel_error":
+        if err_type in ("channel_error", "image_generation_user_error"):
+            # image_generation_user_error 是 OpenAI 系"用户错误"总桶，既包含内容审核
+            # 拦截，也包含参数错误（invalid size/param、GIF 帧表超像素预算等），
+            # 仅消息特征确实像审核时才按内容审核处理（事故：openlux GIF 9 帧帧表
+            # 3072x3072 超预算 400 被误报为"内容审核未通过"）；
+            # content_policy_violation / moderation_error 类型名本身即审核语义，维持直接判定
             is_moderation = _is_moderation_message(message)
         else:
             is_moderation = True

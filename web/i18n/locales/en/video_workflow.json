@@ -433,6 +433,8 @@
   "image_node_model_label": "Model",
   "image_node_ratio_label": "Image Ratio",
   "image_node_size_label": "Resolution",
+  "image_node_output_format_label": "Output Format",
+  "image_node_output_format_default": "Default (PNG)",
   "canvas_drop_only_media": "Only image/video files are supported",
   "canvas_drop_image_too_large": "Image exceeds {max}MB limit: {name}",
   "canvas_drop_files_added": "Created {count} node(s)",

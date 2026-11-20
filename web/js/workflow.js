@@ -2617,7 +2617,7 @@
     // 图片节点文生图：无底图时按提示词直接生成图片。
     // 无参考图走 /api/text-to-image（aspect_ratio）；有参考图（角色/场景/道具等）
     // 走 /api/image-edit 的 ref_image_urls（与宫格生图一致，编辑接口允许仅参考图无底图）。
-    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls){
+    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls, extraConfig){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -2645,6 +2645,11 @@
         }
         form.append('task_id', taskId);
         form.append('aspect_ratio', ratio || '9:16');
+        // 文生图专属扩展参数（如 GPT Image 2.6 的 output_format=gif/svg，键值来自
+        // 任务配置 params_schema）。上游 edits 端点不支持 gif/svg，图生图分支不透传。
+        if(extraConfig && Object.keys(extraConfig).length > 0){
+          form.append('extra_config', JSON.stringify(extraConfig));
+        }
         apiUrl = '/api/text-to-image';
       }
 
@@ -3195,6 +3200,11 @@
               const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
               if(sizeField) sizeField.style.display = 'none';
             }
+          }
+          // 恢复「输出格式」选项（仅 params_schema 配置了 output_format 的模型如
+          // GPT Image 2.6 显示；模型不支持时钩子会把 node.data.outputFormat 重置为 ''）
+          if(typeof el._updateOutputFormatOptions === 'function'){
+            el._updateOutputFormatOptions(node.data.model);
           }
           if(drawCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; drawCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;

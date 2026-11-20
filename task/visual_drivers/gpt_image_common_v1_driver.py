@@ -75,6 +75,14 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     VALID_MODERATIONS = {"low", "auto"}
     # 输出格式（OpenAI gpt-image 标准）；2.6 系列子类扩展支持 gif/svg
     VALID_OUTPUT_FORMATS = {"png", "jpeg", "webp"}
+    # GIF 帧参数合法范围（上游 gpt-image-2.6：2~16 帧、单帧 20ms~2s）
+    GIF_FRAME_COUNT_RANGE = (2, 16)
+    GIF_FRAME_DURATION_MS_RANGE = (20, 2000)
+    # GIF 帧表安全帧格边长上限（任务 158/159/160 实测）：帧表=帧格×固定网格模板
+    # （9 帧 3x3、4/6 帧 4x2/2x4），受上游「帧表最长边 ≤3840 + 像素预算 ~829 万」双重
+    # 限制：3x3 要求帧格 ≤960（像素），4x2 要求帧格 ≤960（边长），取 928 留余量
+    # （16 的倍数；9 帧帧表 2784x2784=7.75MP，4x2 帧表 3712x1856 均可通过）
+    GIF_MAX_CELL_EDGE = 928
 
     def __init__(self, site_id: str, impl_name: str = None):
         """
@@ -419,6 +427,63 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 f"无效的 output_format 值: {value}，有效值: {self.VALID_OUTPUT_FORMATS}，已忽略"
             )
 
+    def _append_gif_frame_params(self, payload: Dict[str, Any], config: Dict[str, Any]) -> None:
+        """
+        GIF 帧参数透传（frame_count / frame_duration_ms，转 int），仅在 gif 输出时生效。
+
+        上游默认 9 帧拼帧表（如 3x3），1K 尺寸下帧表 3072x3072 超出像素预算直接 400
+        （任务 158 事故），必须把帧数控制权交给调用方；非 gif 格式忽略这两个参数。
+        """
+        if payload.get("output_format") != "gif":
+            return
+
+        ranges = (
+            ("frame_count", *self.GIF_FRAME_COUNT_RANGE),
+            ("frame_duration_ms", *self.GIF_FRAME_DURATION_MS_RANGE),
+        )
+        for key, lo, hi in ranges:
+            raw = config.get(key)
+            if raw is None or raw == "":
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                self.logger.warning(f"无效的 {key} 值: {raw}，已忽略")
+                continue
+            if lo <= value <= hi:
+                payload[key] = value
+            else:
+                self.logger.warning(f"{key} 值超出范围: {value}（合法 {lo}~{hi}），已忽略")
+
+    def _clamp_size_for_gif(self, size: str, output_format: Optional[str]) -> str:
+        """
+        GIF 帧表安全帧格收敛（仅 gif 生效）：帧格任一边超 GIF_MAX_CELL_EDGE 时，
+        按最长边等比缩小并对齐 16 的倍数（上游尺寸约束），保持宽高比。
+
+        帧表由帧格 × 固定网格模板拼成（9 帧 3x3、4/6 帧 4x2/2x4），受上游
+        「帧表最长边 ≤3840 + 像素预算 ~829 万」双重限制（任务 158/159/160 实测：
+        1K/1024 帧格下 9 帧超像素预算、4/6 帧超长边，全部 400）。
+        """
+        if output_format != "gif":
+            return size
+        try:
+            w_str, h_str = str(size).lower().split("x", 1)
+            w, h = int(w_str), int(h_str)
+        except (ValueError, AttributeError):
+            return size
+        if w <= self.GIF_MAX_CELL_EDGE and h <= self.GIF_MAX_CELL_EDGE:
+            return size
+
+        scale = self.GIF_MAX_CELL_EDGE / max(w, h)
+        new_w = max(16, int(w * scale) // 16 * 16)
+        new_h = max(16, int(h * scale) // 16 * 16)
+        adjusted = f"{new_w}x{new_h}"
+        if adjusted != size:
+            self.logger.warning(
+                f"GIF 帧表尺寸限制：帧格 {size} 等比缩小为 {adjusted}（安全边长 ≤{self.GIF_MAX_CELL_EDGE}）"
+            )
+        return adjusted
+
     def _build_edit_form_data(self, ai_tool, size: str) -> Dict[str, Any]:
         """
         构建 /v1/images/edits 表单字段。
@@ -502,6 +567,9 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         config = self._parse_extra_config(ai_tool)
         self._append_optional_form_value(payload, config, "quality", self.VALID_QUALITIES)
         self._append_output_format(payload, config)
+        self._append_gif_frame_params(payload, config)
+        # GIF 帧表尺寸限制：帧格超出安全边长时等比缩小（仅 gif 生效，保持比例、16 的倍数）
+        payload["size"] = self._clamp_size_for_gif(payload["size"], payload.get("output_format"))
 
         return {
             "url": f"{self._base_url}/v1/images/generations",
@@ -516,7 +584,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 "mode": "create",
                 "ratio": ratio,
                 "image_size": image_size,
-                "mapped_size": size,
+                "mapped_size": payload["size"],
             },
         }
 
@@ -637,6 +705,24 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     def _wrap_b64_as_data_url(self, b64_data: str) -> str:
         """将 b64_json 包装为带真实 MIME 的 data URL（按魔数识别格式）。"""
         return f"data:{self._sniff_base64_image_mime(b64_data)};base64,{b64_data}"
+
+    @staticmethod
+    def _friendly_api_error(error_info: Any) -> Optional[str]:
+        """
+        对已知参数类上游错误给出可操作的中文提示（上游 raw message 为英文）。
+
+        目前覆盖：GIF 帧表超出像素预算（openlux/gpt-image-2.6，任务 158 事故）。
+        """
+        if not isinstance(error_info, dict):
+            return None
+        message = str(error_info.get("message") or "").lower()
+        if "pixel budget" in message or "no supported sheet" in message:
+            return (
+                "GIF 帧表尺寸超出上游限制：帧表由帧拼图而成，需同时满足"
+                "「最长边 ≤ 3840」与像素预算（实测 1K 下 9 帧帧表 3072x3072 超预算、"
+                "4/6 帧帧表 4096x2048 超边长）。请先改用 2 帧，或降低分辨率后重试"
+            )
+        return None
 
     def _extract_image_from_response(self, response: dict) -> Optional[str]:
         """
@@ -775,7 +861,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             if "error" in result:
                 error_info = result.get("error", {})
                 error_msg = error_info.get("message", "未知错误") if isinstance(error_info, dict) else str(error_info)
-                user_error = build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
+                user_error = self._friendly_api_error(error_info) or \
+                    build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
                 self.logger.warning(f"GPT Image 2 API returned error: {error_msg} -> {user_error}")
                 return {
                     "success": False,
@@ -845,7 +932,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             response_body = getattr(e, "response_body", None)
             http_error_info = response_body.get("error") if isinstance(response_body, dict) else None
             if http_error_info:
-                user_error = build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
+                user_error = self._friendly_api_error(http_error_info) or \
+                    build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
                 self.logger.warning(f"GPT Image 2 API HTTP error: {http_error_info} -> {user_error}")
                 return {
                     "success": False,

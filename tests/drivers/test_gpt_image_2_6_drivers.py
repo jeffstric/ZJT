@@ -68,7 +68,27 @@ def test_sunburst_and_flare_are_two_independent_models():
     for cfg in (sunburst_cfg, flare_cfg):
         assert cfg.category == 'image_edit'
         assert 'text_to_image' in cfg.categories
-        assert cfg.computing_power == 2
+        # 任务级算力为 0：基准按实现方分流（多米 2 渠道价 / 通用站点 7 成本价）
+        assert cfg.computing_power == 0
+        modifier_attrs = {m.attribute for m in cfg.power_modifiers}
+        assert modifier_attrs == {'resolution', 'quality', 'output_format', 'frame_count'}
+
+
+def test_pricing_split_by_implementation():
+    """多米实现方基准 2（渠道定价），通用站点实现方基准 7（openlux 实测成本基准）。"""
+    impls = {
+        name: UnifiedConfigRegistry.get_implementation(name)
+        for name in (
+            'duomi_gpt_image_2_6_sunburst_v1',
+            'duomi_gpt_image_2_6_flare_v1',
+            'gpt_image_2_6_common_sunburst_site0_v1',
+            'gpt_image_2_6_common_flare_site5_v1',
+        )
+    }
+    assert impls['duomi_gpt_image_2_6_sunburst_v1'].default_computing_power == 2
+    assert impls['duomi_gpt_image_2_6_flare_v1'].default_computing_power == 2
+    assert impls['gpt_image_2_6_common_sunburst_site0_v1'].default_computing_power == 7
+    assert impls['gpt_image_2_6_common_flare_site5_v1'].default_computing_power == 7
 
 
 def test_each_model_has_seven_implementations_with_duomi_default():
@@ -219,3 +239,101 @@ def test_base_common_driver_rejects_gif_and_svg():
     driver = _make_common_driver(GptImage25CommonSunburstSite0V1Driver)
     request = driver.build_create_request(_common_tool({"output_format": "gif"}))
     assert "output_format" not in request["json"]
+
+
+def test_26_task_configs_expose_output_format_params_schema():
+    """2.6 两个任务类型通过 params_schema 向文生图页下发输出格式/画质选项
+    （配置驱动渲染前端参数表单，gif/svg 仅 2.6 系列支持）。"""
+    for task_type in (TaskTypeId.GPT_IMAGE_2_6_SUNBURST, TaskTypeId.GPT_IMAGE_2_6_FLARE):
+        cfg = UnifiedConfigRegistry.get_by_id(task_type)
+        schema_keys = [p["key"] for p in cfg.params_schema]
+        assert "output_format" in schema_keys
+        assert "quality" in schema_keys
+        assert "frame_count" in schema_keys  # GIF 帧数，默认 4（9 帧 1K 下超像素预算）
+        format_values = {opt["value"] for p in cfg.params_schema if p["key"] == "output_format"
+                         for opt in p["options"]}
+        assert {"png", "jpeg", "webp", "gif", "svg"} <= format_values
+
+        frontend = cfg.to_frontend_dict()
+        assert "params_schema" in frontend
+        assert [p["key"] for p in frontend["params_schema"]] == schema_keys
+
+
+def test_common_26_gif_frame_params_passthrough():
+    """GIF 帧参数（frame_count/frame_duration_ms）仅在 gif 输出时透传（int），
+    非 gif 格式/超范围/非法值忽略——防上游默认 9 帧在 1K 下帧表超像素预算 400。"""
+    driver = _make_common_driver(GptImage26CommonSunburstSite0V1Driver)
+
+    gif_tool = _common_tool({
+        "output_format": "gif",
+        "frame_count": "4",
+        "frame_duration_ms": "150",
+    })
+    payload = driver.build_create_request(gif_tool)["json"]
+    assert payload["output_format"] == "gif"
+    assert payload["frame_count"] == 4
+    assert payload["frame_duration_ms"] == 150
+
+    # 非 gif 格式：帧参数不下发
+    png_tool = _common_tool({"output_format": "png", "frame_count": "4"})
+    png_payload = driver.build_create_request(png_tool)["json"]
+    assert "frame_count" not in png_payload
+
+    # 超范围 / 非法值忽略
+    bad_tool = _common_tool({"output_format": "gif", "frame_count": "99", "frame_duration_ms": "abc"})
+    bad_payload = driver.build_create_request(bad_tool)["json"]
+    assert "frame_count" not in bad_payload
+    assert "frame_duration_ms" not in bad_payload
+
+
+def test_common_26_gif_clamps_frame_cell_size():
+    """GIF 帧格自动收敛：帧表=帧格×固定网格（9帧3x3/4~6帧4x2），受上游
+    「最长边≤3840 + 像素预算~829万」限制（任务 158/159/160 实测 1K 下全灭），
+    gif 时帧格等比缩放到边长 ≤928（保持比例、16 的倍数）；非 gif 不缩放。"""
+    driver = _make_common_driver(GptImage26CommonSunburstSite0V1Driver)
+
+    # 1K 1:1：1024x1024 → 928x928
+    gif_payload = driver.build_create_request(_common_tool({"output_format": "gif"}))["json"]
+    assert gif_payload["size"] == "928x928"
+
+    # 1K 16:9：1536x864 → 928x512（等比，16 倍数对齐）
+    tool_169 = SimpleNamespace(
+        id=1, prompt="a cat", image_path="", ratio="16:9", image_size="1k",
+        extra_config=json.dumps({"output_format": "gif"}),
+    )
+    payload_169 = driver.build_create_request(tool_169)["json"]
+    assert payload_169["size"] == "928x512"
+
+    # 2K 1:1：2048x2048 → 928x928
+    tool_2k = SimpleNamespace(
+        id=1, prompt="a cat", image_path="", ratio="1:1", image_size="2k",
+        extra_config=json.dumps({"output_format": "gif"}),
+    )
+    assert driver.build_create_request(tool_2k)["json"]["size"] == "928x928"
+
+    # 非 gif（png/svg）不缩放
+    assert driver.build_create_request(_common_tool({"output_format": "png"}))["json"]["size"] == "1024x1024"
+    assert driver.build_create_request(_common_tool({"output_format": "svg"}))["json"]["size"] == "1024x1024"
+
+
+def test_image_generation_user_error_not_always_moderation():
+    """image_generation_user_error 是用户错误总桶：参数错误（GIF 帧表超像素预算）
+    不再误报为"内容审核未通过"；真正的安全拦截消息仍按审核分类（任务 158 事故回归）。"""
+    from utils.content_moderation_error import format_user_facing_moderation_error
+
+    param_error = format_user_facing_moderation_error(
+        error_code="invalid_value",
+        error_message=(
+            "No supported sheet fits 9 GIF frames at size '1024x1024'. "
+            "Invalid size '3072x3072'. Requested resolution exceeds the current pixel budget."
+        ),
+        error_type="image_generation_user_error",
+    )
+    assert param_error is None  # 非审核错误，走通用错误文案
+
+    moderation_error = format_user_facing_moderation_error(
+        error_code="content_policy_violation",
+        error_message="Your request was rejected by the safety system.",
+        error_type="image_generation_user_error",
+    )
+    assert moderation_error is not None and moderation_error.startswith("内容审核未通过")

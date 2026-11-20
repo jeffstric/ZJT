@@ -14,6 +14,9 @@ from config.unified_config import UnifiedConfigRegistry, UnifiedTaskConfig, get_
 from config.constant import (
     IMAGE_MODE_EXTRA_CONFIG_KEY,
     VIDEO_RESOLUTION_EXTRA_CONFIG_KEY,
+    IMAGE_QUALITY_EXTRA_CONFIG_KEY,
+    IMAGE_OUTPUT_FORMAT_EXTRA_CONFIG_KEY,
+    IMAGE_FRAME_COUNT_EXTRA_CONFIG_KEY,
     TASK_COMPUTING_POWER,
     VIDEO_EDIT_BILLING_TASK_TYPES,
     DIFF_REFUND_TXN_PREFIX,
@@ -21,6 +24,76 @@ from config.constant import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_duomi_implementation(implementation: Optional[str]) -> bool:
+    """实现方是否为多米供应商。
+
+    多米 GPT Image 驱动不透传 quality/output_format，上游恒按默认品质计费，
+    因此算力上下文不计入画质维度，避免用户选了高画质走多米却被多收。
+    """
+    return "duomi" in (implementation or "").lower()
+
+
+def build_image_task_billing_context(
+    extra_config: Optional[Any],
+    image_size: Optional[str] = None,
+    implementation: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    构建图片任务（文生图/图片编辑）的算力修饰符上下文。
+
+    提交扣费（server.py 两个图片端点）与失败退费重算
+    （build_context_from_task_record）必须使用同一入口，保证同一次任务
+    两条路径算力一致。
+
+    维度规则（依据 2026-11-20 openlux 网关消费导出实测，定价推导见
+    config/unified_config.py GPT_IMAGE_2_6 任务注释）：
+    - resolution：仅静态图计入（GIF 帧格被驱动收敛 ≤928，上游成本与
+      1K/2K/4K 档位无关，计了反而倒挂）；
+    - quality：仅通用站点实现方计入（多米不透传，上游按默认品质计费）；
+    - output_format='gif' + frame_count：GIF 多帧上游按帧倍增 token，按帧计。
+
+    Args:
+        extra_config: ai_tools.extra_config（JSON 字符串或字典），
+            取 quality / output_format / frame_count 键
+        image_size: 分辨率档位（1k/2k/4k，大小写不敏感）
+        implementation: 实现方名称（决定 quality 维度是否生效）
+
+    Returns:
+        context 字典，如 {'resolution': '1k', 'quality': 'max'} 或
+        {'output_format': 'gif', 'frame_count': '6'}
+    """
+    context: Dict[str, Any] = {}
+    try:
+        extra: Dict[str, Any] = {}
+        if extra_config:
+            parsed = json.loads(extra_config) if isinstance(extra_config, str) else dict(extra_config)
+            if isinstance(parsed, dict):
+                extra = parsed
+
+        output_format = str(extra.get(IMAGE_OUTPUT_FORMAT_EXTRA_CONFIG_KEY) or "").strip().lower()
+        if output_format == "gif":
+            # GIF：帧格已被驱动收敛（≤928），分辨率/画质不再影响上游成本维度，
+            # 成本随帧数增长，仅按 输出格式 + 帧数 两维计费。
+            # 帧数缺省按 2 帧显式补齐（schema 默认与上游默认一致），避免吃到
+            # frame_count 修饰符的静态默认值 1.0 而漏计帧数钱。
+            context["output_format"] = "gif"
+            frame_count = str(extra.get(IMAGE_FRAME_COUNT_EXTRA_CONFIG_KEY) or "").strip()
+            context["frame_count"] = frame_count or "2"
+            return context
+
+        if image_size:
+            # 原样透传（提交值与落库值大小写不一，修饰符表提供大小写双键兼容，
+            # 见 GPT_IMAGE_2_6_POWER_MODIFIERS），保持与退费回退链路口径一致
+            context["resolution"] = str(image_size).strip()
+        quality = str(extra.get(IMAGE_QUALITY_EXTRA_CONFIG_KEY) or "").strip().lower()
+        if quality and not _is_duomi_implementation(implementation):
+            context["quality"] = quality
+        return context
+    except Exception as e:
+        logger.error(f"Failed to build image task billing context: {e}")
+        return {}
 
 
 def build_context_from_task_record(task_record) -> Dict[str, Any]:
@@ -56,9 +129,25 @@ def build_context_from_task_record(task_record) -> Dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # 2. 图片任务 resolution：从 image_size 字段回退
-        if 'resolution' not in context and task_record and hasattr(task_record, 'image_size') and task_record.image_size:
-            context['resolution'] = task_record.image_size
+        # 2. 图片任务计费维度（quality/output_format/frame_count，GIF 不计分辨率/画质）。
+        #    与提交扣费同入口（build_image_task_billing_context），扣返一致。
+        impl_id = getattr(task_record, 'implementation', None)
+        impl_name = get_implementation_name(impl_id) if impl_id else None
+        image_context = build_image_task_billing_context(
+            getattr(task_record, 'extra_config', None),
+            image_size=getattr(task_record, 'image_size', None),
+            implementation=impl_name,
+        )
+        for key, value in image_context.items():
+            context.setdefault(key, value)
+
+        # 3. 图片任务 resolution 从 image_size 字段回退（值原样透传，大小写与提交值一致；
+        #    修饰符键需兼容大小写，见 GPT_IMAGE_2_6_POWER_MODIFIERS）。
+        #    GIF 任务已在第 2 步决策（帧格收敛后上游成本与档位无关，不计分辨率），
+        #    此处跳过，避免回退又把分辨率加回来。
+        if 'resolution' not in context and context.get('output_format') != 'gif':
+            if task_record and hasattr(task_record, 'image_size') and task_record.image_size:
+                context['resolution'] = task_record.image_size
 
     except Exception as e:
         logger.error(f"Failed to build context from task record: {e}")

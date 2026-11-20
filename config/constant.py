@@ -585,6 +585,11 @@ IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY = "implementation_lock"
+# GPT Image 2.6 图片任务计费键（与 GPT_IMAGE_2_6_PARAMS_SCHEMA /
+# gpt_image_common_v1_driver 透传键保持一致，算力修饰符上下文据此取值）
+IMAGE_QUALITY_EXTRA_CONFIG_KEY = "quality"
+IMAGE_OUTPUT_FORMAT_EXTRA_CONFIG_KEY = "output_format"
+IMAGE_FRAME_COUNT_EXTRA_CONFIG_KEY = "frame_count"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
 
 # 用户固定供应商后，所选实现方不可用时的驱动错误

@@ -260,6 +260,56 @@ VIDEO_ENHANCE_PARAMS_SCHEMA = [
 ]
 
 
+# GPT Image 2.6 文生图用户可选参数 schema（配置驱动渲染前端参数表单，机制同
+# VIDEO_ENHANCE_PARAMS_SCHEMA）：output_format/quality 由通用站点驱动从
+# ai_tool.extra_config 读取并透传上游（gif/svg 为 2.6 系列独有能力，
+# 故 schema 只挂在 2.6 的 sunburst / flare 两个任务类型上）。
+GPT_IMAGE_2_6_PARAMS_SCHEMA = [
+    {
+        "key": "output_format",
+        "label": "输出格式",
+        "type": "select",
+        "options": [
+            {"value": "png", "label": "PNG"},
+            {"value": "jpeg", "label": "JPEG"},
+            {"value": "webp", "label": "WebP"},
+            {"value": "gif", "label": "GIF 动图"},
+            {"value": "svg", "label": "SVG 矢量"},
+        ],
+        "default": "png",
+    },
+    {
+        "key": "quality",
+        "label": "画质",
+        "type": "select",
+        "options": [
+            {"value": "auto", "label": "自动"},
+            {"value": "low", "label": "低（最快）"},
+            {"value": "medium", "label": "中"},
+            {"value": "high", "label": "高"},
+            {"value": "xhigh", "label": "超高"},
+            {"value": "max", "label": "最高"},
+        ],
+        "default": "auto",
+    },
+    {
+        # 仅在 output_format=gif 时由驱动透传（frame_count，int）。
+        # 实测 openlux 帧表模板受限（1K/1024 帧格）：9 帧→3072x3072 超像素预算，
+        # 4/6 帧→4096x2048 超长边（>3840），仅 2 帧稳定可用（任务 158/159/160 实测）
+        "key": "frame_count",
+        "label": "GIF 帧数（仅 GIF 生效）",
+        "type": "select",
+        "options": [
+            {"value": "2", "label": "2 帧（推荐）"},
+            {"value": "4", "label": "4 帧（可能触发帧表尺寸限制）"},
+            {"value": "6", "label": "6 帧（可能触发帧表尺寸限制）"},
+            {"value": "9", "label": "9 帧（1K 下帧表超像素预算）"},
+        ],
+        "default": "2",
+    },
+]
+
+
 def validate_video_enhance_params(raw_params: Dict[str, Any]) -> Dict[str, str]:
     """按 VIDEO_ENHANCE_PARAMS_SCHEMA 校验接口透传的用户参数（非法即拒绝）。
 
@@ -463,6 +513,55 @@ class PowerModifier:
     attribute: str
     values: Dict[str, float]
     default: float = 1.0
+
+
+# GPT Image 2.6（sunburst / flare）算力修饰符表，两个任务类型共用。
+# 基准不在任务级（computing_power=0），按实现方下沉：通用站点 7（1K PNG 默认品质，
+# 多米 2（渠道定价，见 ALL_IMPLEMENTATIONS 的 GPT Image 2.6 节）。
+# 定价依据 2026-11-20 openlux 网关消费导出（consumption_export_by_key_20261120）实测：
+# - 上游按输出 token 计费，约 $1.766e-5/token（模型倍率 2.5 × 补全倍率 6.0 × 分组倍率
+#   0.59 ÷ 50 万额度/美元）；算力成本 = 美元 × 汇率 7.2 ÷ 0.04 元/算力 = 美元 × 180。
+# - 实测样本（1K 档）：PNG 1024² 默认品质 1756 token = $0.031（成本 5.6 算力）；
+#   GIF 2 帧 auto 2561 token = $0.045（8.2）；GIF 2 帧默认品质 5617 token = $0.099
+#   （17.9）；GIF 6 帧 max 10241~22466 token = $0.181~0.397（32.6~71.4）。
+# - 站点基准 7（成本 5.6，毛利 ~25%）；各档定价均 ≥ 实测成本（GIF 按最差样本），
+#   任意维度递增无倒挂。2K/4K 暂无实测，按像素量（4×/8×）估算成本并取整
+#   （2K medium 成本约 12.7、4K 约 20~26 算力）。
+# 注意：quality 维度仅对通用站点实现方生效（多米不透传 quality，见
+# utils/computing_power.build_image_task_billing_context）；GIF 帧格被驱动收敛
+# ≤928，上游成本与 1K/2K/4K 档位无关，故 GIF 不计 resolution/quality 维度。
+GPT_IMAGE_2_6_POWER_MODIFIERS = [
+    # 分辨率（静态图）：像素量 2K≈4×1K、4K≈8×1K，无实测按成本估算取 2.0/4.0。
+    # 键同时提供大小写两种写法：提交链路（build_image_task_billing_context）
+    # 统一小写，退费回退链路原样透传 ai_tools.image_size（宫格链路落库大写 "2K"/"4K"）。
+    PowerModifier(
+        attribute='resolution',
+        values={'1k': 1.0, '1K': 1.0, '2k': 2.0, '2K': 2.0, '4k': 4.0, '4K': 4.0},
+        default=1.0,
+    ),
+    # 画质：按实测/估算 token 量排序（低 < 中 < 自动 < 高 < 超高 < 最高），
+    # 倍率 × 基准 7 后各档均不低于对应成本（medium 5.6 / auto 8.2 / max 32.6）
+    PowerModifier(
+        attribute='quality',
+        values={'low': 0.5, 'medium': 1.0, 'auto': 1.5, 'high': 2.0, 'xhigh': 3.5, 'max': 6.0},
+        default=1.0,
+    ),
+    # 输出格式：GIF 动图附加系数（帧间一致性开销，叠加帧数维度）
+    PowerModifier(
+        attribute='output_format',
+        values={'gif': 1.5},
+        default=1.0,
+    ),
+    # GIF 帧数：上游按帧倍增 token。按实测最差样本定价：2 帧成本最高 17.9 算力、
+    # 6 帧最高 71.4 算力（21/74 覆盖）；4/9 帧无实测，按帧数插值取整。
+    # default=1.0：修饰符对所有任务生效，静态图（无帧数上下文）必须不吃帧数钱；
+    # GIF 缺省帧数由 build_image_task_billing_context 显式补 "2"。
+    PowerModifier(
+        attribute='frame_count',
+        values={'2': 2.0, '4': 4.5, '6': 7.0, '9': 10.0},
+        default=1.0,
+    ),
+]
 
 
 @dataclass
@@ -688,7 +787,8 @@ class UnifiedTaskConfig:
     # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
     supports_voice_input: bool = False
 
-    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA。
+    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA /
+    # GPT_IMAGE_2_6_PARAMS_SCHEMA。
     # 非空时在 to_frontend_dict 中作为 params_schema 透出，接口/驱动按此校验与映射。
     params_schema: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -851,6 +951,16 @@ class UnifiedTaskConfig:
         转换为前端需要的格式
         """
         all_categories = [self.category] + self.categories
+        implementations_info = self._get_implementations_info()
+        # 任务级未配置算力（0）时，回落默认实现方的算力（与 get_computing_power
+        # 的实现方回退语义一致），避免前端价格展示为 0。
+        # 典型场景：GPT Image 2.6 按实现方计价（多米 2 / 通用站点 7）。
+        default_impl_power = 0
+        if not self.computing_power:
+            for impl_info in implementations_info:
+                if impl_info.get('is_default'):
+                    default_impl_power = impl_info.get('computing_power') or 0
+                    break
         result = {
             'id': self.id,
             'key': self.key,
@@ -868,8 +978,8 @@ class UnifiedTaskConfig:
             'hidden': self.hidden,
             'sort_order': self.sort_order,
             'implementation': self.implementation,  # 默认实现方
-            'implementations': self._get_implementations_info(),  # 可选实现方列表
-            'computing_power': self.computing_power,  # 算力配置（可能是固定值或按时长映射）
+            'implementations': implementations_info,  # 可选实现方列表
+            'computing_power': self.computing_power or default_impl_power,  # 算力配置（可能是固定值或按时长映射）
         }
 
         # 始终下发，空列表表示该模型不支持选择分辨率（勿与缺省字段混淆）
@@ -2786,7 +2896,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
             DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
         ],
-        computing_power=2,  # 与 GPT Image 2.5 同价
+        computing_power=0,  # 按实现方计价：多米基准 2（渠道定价）、通用站点基准 7（openlux 实测成本，见下节实现方配置）
+        power_modifiers=GPT_IMAGE_2_6_POWER_MODIFIERS,
         supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
         supported_sizes=['1k', '2k', '4k'],
         default_ratio='1:1',
@@ -2795,6 +2906,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=9,
         supports_grid_image=True,
         supports_grid_merge=False,
+        # 文生图页据此渲染输出格式/画质选择（gif/svg 为 2.6 独有，仅通用站点实现方生效）
+        params_schema=GPT_IMAGE_2_6_PARAMS_SCHEMA,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.GPT_IMAGE_2_6_FLARE,
@@ -2816,7 +2929,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,  # 聚合站点4
             DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,  # 聚合站点5
         ],
-        computing_power=2,  # 与 GPT Image 2.5 同价
+        computing_power=0,  # 按实现方计价：多米基准 2（渠道定价）、通用站点基准 7（openlux 实测成本，见下节实现方配置）
+        power_modifiers=GPT_IMAGE_2_6_POWER_MODIFIERS,
         supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
         supported_sizes=['1k', '2k', '4k'],
         default_ratio='1:1',
@@ -2824,6 +2938,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=10,
         supports_grid_image=True,
         supports_grid_merge=False,
+        # 文生图页据此渲染输出格式/画质选择（gif/svg 为 2.6 独有，仅通用站点实现方生效）
+        params_schema=GPT_IMAGE_2_6_PARAMS_SCHEMA,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.Z_INDEX_IMAGE_EDIT,
@@ -4179,12 +4295,17 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
-    # ==================== GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5；定价与 2.5 一致） ====================
+    # ==================== GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5） ====================
+    # 定价分流（2026-11-20 起，业务决定）：任务级 computing_power=0，基准下沉到实现方——
+    # - 多米（异步）：2 点（渠道定价，低于 openlux 实测成本， knowingly）；
+    # - 通用站点 site_0~5（同步，走 openlux 网关）：7 点 = 1K PNG 默认品质真实成本基准
+    #   （$0.031 ≈ 5.6 算力 + ~25% 毛利，推导见 GPT_IMAGE_2_6_POWER_MODIFIERS），
+    #   画质/GIF 帧数等修饰符维度仅对通用站点生效（多米不透传，见 build_image_task_billing_context）。
     ImplementationConfig(
         name='duomi_gpt_image_2_6_sunburst_v1',
         display_name='多米',
         driver_class='GptImage26DuomiSunburstV1Driver',
-        default_computing_power=2,
+        default_computing_power=2,  # 渠道基准价，不按 openlux 成本定价
         enabled=True,
         description='多米平台 GPT Image 2.6 Sunburst 接口（异步任务轮询）',
         sort_order=3600.0,
@@ -4194,7 +4315,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='duomi_gpt_image_2_6_flare_v1',
         display_name='多米',
         driver_class='GptImage26DuomiFlareV1Driver',
-        default_computing_power=2,
+        default_computing_power=2,  # 渠道基准价，不按 openlux 成本定价
         enabled=True,
         description='多米平台 GPT Image 2.6 Flare 接口（异步任务轮询）',
         sort_order=3610.0,
@@ -4204,7 +4325,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site0_v1',
         display_name='ZJTapi',
         driver_class='GptImage26CommonSunburstSite0V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='ZJT官方 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3700.0,
@@ -4216,7 +4337,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site1_v1',
         display_name='gpt_site1',
         driver_class='GptImage26CommonSunburstSite1V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点1 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3710.0,
@@ -4228,7 +4349,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site2_v1',
         display_name='gpt_site2',
         driver_class='GptImage26CommonSunburstSite2V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点2 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3720.0,
@@ -4240,7 +4361,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site3_v1',
         display_name='gpt_site3',
         driver_class='GptImage26CommonSunburstSite3V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点3 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3730.0,
@@ -4252,7 +4373,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site4_v1',
         display_name='gpt_site4',
         driver_class='GptImage26CommonSunburstSite4V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点4 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3740.0,
@@ -4264,7 +4385,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_sunburst_site5_v1',
         display_name='gpt_site5',
         driver_class='GptImage26CommonSunburstSite5V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点5 GPT Image 2.6 Sunburst 接口（同步）',
         sort_order=3750.0,
@@ -4276,7 +4397,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site0_v1',
         display_name='ZJTapi',
         driver_class='GptImage26CommonFlareSite0V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='ZJT官方 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3800.0,
@@ -4288,7 +4409,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site1_v1',
         display_name='gpt_site1',
         driver_class='GptImage26CommonFlareSite1V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点1 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3810.0,
@@ -4300,7 +4421,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site2_v1',
         display_name='gpt_site2',
         driver_class='GptImage26CommonFlareSite2V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点2 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3820.0,
@@ -4312,7 +4433,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site3_v1',
         display_name='gpt_site3',
         driver_class='GptImage26CommonFlareSite3V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点3 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3830.0,
@@ -4324,7 +4445,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site4_v1',
         display_name='gpt_site4',
         driver_class='GptImage26CommonFlareSite4V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点4 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3840.0,
@@ -4336,7 +4457,7 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='gpt_image_2_6_common_flare_site5_v1',
         display_name='gpt_site5',
         driver_class='GptImage26CommonFlareSite5V1Driver',
-        default_computing_power=2,
+        default_computing_power=7,  # openlux 实测成本基准
         enabled=True,
         description='聚合站点5 GPT Image 2.6 Flare 接口（同步）',
         sort_order=3850.0,
