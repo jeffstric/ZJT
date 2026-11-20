@@ -571,6 +571,16 @@
                                             </div>
                                         </div>
 
+                                        <!-- 输出格式选择（仅图片模式 + 模型 params_schema 配置 output_format，如 GPT Image 2.6） -->
+                                        <div v-if="mediaType === 'image' && imageOutputFormatSchema" style="margin-bottom: 20px;">
+                                            <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ imageOutputFormatSchema.label }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="opt in imageOutputFormatSchema.options" :key="opt.value" @click.stop="imageOutputFormat = opt.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: imageOutputFormat === opt.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: imageOutputFormat === opt.value ? '#e6f7ff' : '#f5f5f5', color: imageOutputFormat === opt.value ? '#00a8e6' : '#1a1a1a' }">
+                                                    {{ opt.label }}
+                                                </div>
+                                            </div>
+                                        </div>
+
                                         <div v-if="mediaType === 'video' && currentVideoResolutionOptions.length" style="margin-bottom: 20px;">
                                             <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ $t('video_resolution') || $t('select_resolution') }}</span>
                                             <div style="display: flex; gap: 8px; flex-wrap: wrap;">
@@ -781,6 +791,14 @@
                                             <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ $t('video_resolution') || $t('select_resolution') }}</span>
                                             <div style="display: flex; gap: 8px;">
                                                 <div v-for="res in currentVideoResolutionOptions" :key="res.value" @click.stop="selectedVideoResolution = res.value" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedVideoResolution === res.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedVideoResolution === res.value ? '#e6f7ff' : '#f5f5f5', color: selectedVideoResolution === res.value ? '#00a8e6' : '#1a1a1a' }">{{ res.label || res.value }}</div>
+                                            </div>
+                                        </div>
+
+                                        <!-- 输出格式选择（仅图片模式 + 模型 params_schema 配置 output_format，如 GPT Image 2.6） -->
+                                        <div v-if="!isVideoMode && imageOutputFormatSchema">
+                                            <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ imageOutputFormatSchema.label }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="opt in imageOutputFormatSchema.options" :key="opt.value" @click.stop="imageOutputFormat = opt.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: imageOutputFormat === opt.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: imageOutputFormat === opt.value ? '#e6f7ff' : '#f5f5f5', color: imageOutputFormat === opt.value ? '#00a8e6' : '#1a1a1a' }">{{ opt.label }}</div>
                                             </div>
                                         </div>
                                     </div>

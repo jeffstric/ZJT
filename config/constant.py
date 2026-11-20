@@ -585,6 +585,11 @@ IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY = "implementation_lock"
+# GPT Image 2.6 图片任务计费键（与 GPT_IMAGE_2_6_PARAMS_SCHEMA /
+# gpt_image_common_v1_driver 透传键保持一致，算力修饰符上下文据此取值）
+IMAGE_QUALITY_EXTRA_CONFIG_KEY = "quality"
+IMAGE_OUTPUT_FORMAT_EXTRA_CONFIG_KEY = "output_format"
+IMAGE_FRAME_COUNT_EXTRA_CONFIG_KEY = "frame_count"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
 
 # 用户固定供应商后，所选实现方不可用时的驱动错误
@@ -1265,6 +1270,26 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,  # 聚合站点3
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,  # 聚合站点4
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,  # 聚合站点5
+    ],
+
+    # GPT Image 2.6 相关驱动（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5）
+    DriverKey.GPT_IMAGE_2_6_SUNBURST: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
+    ],
+    DriverKey.GPT_IMAGE_2_6_FLARE: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,  # 聚合站点5
     ],
 
     # Grok 相关驱动

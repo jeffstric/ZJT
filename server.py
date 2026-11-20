@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Optional, Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,7 @@ from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
 from utils.computing_power import (
     build_context_from_task_record,
+    build_image_task_billing_context,
     get_implementation_for_user,
     resolve_video_edit_billing_duration,
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
@@ -1148,6 +1149,17 @@ async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
     return f"https://{cdn_domain}/{str(mapping.cloud_path).lstrip('/')}"
 
 
+def _content_disposition_attachment(filename: str) -> str:
+    """构建 RFC 5987 Content-Disposition：非 ASCII 文件名走 filename* 百分号编码，
+    并给出 ASCII 兜底 filename（HTTP 响应头必须 latin-1 可编码，直接塞中文会在
+    uvicorn 编码响应头时 500——事故：画布下载「生成结果.gif」报
+    'latin-1' codec can't encode characters）。
+    """
+    raw = str(filename or "download")
+    fallback = re.sub(r'[^\x20-\x7e]', "_", raw).replace('"', "'") or "download"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(raw)}"
+
+
 @app.get("/api/download")
 @require_permission("file:download")
 async def download_image(
@@ -1208,13 +1220,13 @@ async def download_image(
                 else:
                     content_type = 'application/octet-stream'
 
-                # 返回本地文件
+                # 返回本地文件（Content-Disposition 由 FileResponse 按 RFC 5987
+                # 自行编码；切勿再手写裸 filename 头，中文文件名会 latin-1 500）
                 return FileResponse(
                     path=str(file_path),
                     media_type=content_type,
                     filename=filename,
                     headers={
-                        "Content-Disposition": f"attachment; filename={filename}",
                         "Cache-Control": "public, max-age=31536000, immutable"
                     }
                 )
@@ -1283,7 +1295,7 @@ async def download_image(
                 content_stream,
                 media_type=content_type,
                 headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Disposition": _content_disposition_attachment(filename),
                     "Content-Type": content_type,
                     "Cache-Control": "public, max-age=31536000, immutable"
                 }
@@ -2081,12 +2093,15 @@ async def image_edit(
             mode=MediaGenerationMode.IMAGE_EDIT,
             extra_config=extra_config,
         )
-        # 根据 image_size 构建 context，用于算力修饰符计算
-        context = {}
-        if image_size:
-            context['resolution'] = image_size
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        # 构建算力修饰符上下文（分辨率/画质/输出格式/帧数，GIF 特例与多米
+        # 不透传 quality 的取舍见 build_image_task_billing_context），退费重算同入口
+        context = build_image_task_billing_context(
+            audited_extra_config,
+            image_size=image_size,
+            implementation=actual_impl,
+        )
         computing_power = task_config.get_computing_power(
             implementation=actual_impl,
             context=context,
@@ -2238,6 +2253,7 @@ async def text_to_image(
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
     generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
+    extra_config: str = Form(None, description="Extra config JSON（如 gpt-image-2.6 的 output_format/quality）"),
 ):
     """
     Submit text-to-image task
@@ -2260,13 +2276,17 @@ async def text_to_image(
             task_id=task_id,
             media_type=MediaGenerationType.IMAGE,
             mode=MediaGenerationMode.TEXT_TO_IMAGE,
+            extra_config=extra_config,
         )
-        # 根据 image_size 构建 context，用于算力修饰符计算
-        context = {}
-        if image_size:
-            context['resolution'] = image_size
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        # 构建算力修饰符上下文（分辨率/画质/输出格式/帧数，GIF 特例与多米
+        # 不透传 quality 的取舍见 build_image_task_billing_context），退费重算同入口
+        context = build_image_task_billing_context(
+            audited_extra_config,
+            image_size=image_size,
+            implementation=actual_impl,
+        )
         computing_power = task_config.get_computing_power(
             implementation=actual_impl,
             context=context,
@@ -2609,6 +2629,8 @@ def _build_task_meta_payload(task_record) -> dict:
         "resolution": None,         # 视频分辨率（extra_config.resolution，如 720P/1080P）
         "image_mode": None,         # 图生视频模式（first_last_frame/multi_reference）
         "enable_face_mask": None,
+        "output_format": None,      # 图片输出格式（extra_config.output_format，如 png/gif/svg）
+        "quality": None,            # 图片质量档位（extra_config.quality）
         "prompt": None,
         "reference_images": [],     # 多参考模式参考图 URL 列表（reference_images JSON）
         "frame_images": [],         # 首尾帧/图片编辑参考图 URL 列表（image_path 逗号分隔）
@@ -2653,6 +2675,8 @@ def _build_task_meta_payload(task_record) -> dict:
         meta["resolution"] = extra.get("resolution")
         meta["image_mode"] = extra.get("image_mode")
         meta["enable_face_mask"] = bool(extra.get("enable_face_mask")) if "enable_face_mask" in extra else None
+        meta["output_format"] = extra.get("output_format")
+        meta["quality"] = extra.get("quality")
     except Exception as e:
         logger.warning(f"构建任务元数据失败（不影响状态轮询）: {e}")
     return meta
