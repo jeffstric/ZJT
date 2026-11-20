@@ -991,7 +991,7 @@ function ttSplitSelectedAtPlayhead() {
   safeAutoSave();
 }
 
-// 多选删除（进垃圾桶）
+// 多选删除（仅删引用，不进垃圾桶——垃圾桶只存画布删除的节点；误删走撤销）
 function ttDeleteSelectedClips() {
   const sel = state.timeline.selectedClipIds || [];
   if (!sel.length) return;
@@ -1000,12 +1000,6 @@ function ttDeleteSelectedClips() {
     .map(s => state.timeline.clips.find(c => c.id === s.id)).filter(Boolean);
   const audioClips = sel.filter(s => s.type === 'audio')
     .map(s => state.timeline.audioClips.find(c => c.id === s.id)).filter(Boolean);
-  if (typeof pushTimelineClipsToTrash === 'function') {
-    const title = videoClips.length + audioClips.length === 1
-      ? (videoClips[0] || audioClips[0]).name
-      : `${videoClips.length + audioClips.length} 个片段`;
-    pushTimelineClipsToTrash(videoClips, audioClips, title);
-  }
   videoClips.forEach(c => removeClipFromPillar(c.id, 'video'));
   audioClips.forEach(c => removeClipFromPillar(c.id, 'audio'));
   const vIds = new Set(videoClips.map(c => c.id));

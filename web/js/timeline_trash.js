@@ -176,21 +176,9 @@ function pushNodeDeletionToTrash(node){
   return item;
 }
 
-// 时间轴片段删除前调用（removeFromTimeline/removeAudioFromTimeline/清空）
-function pushTimelineClipsToTrash(videoClips, audioClips, title){
-  const clips = (videoClips || []).map(_trashSafeClone);
-  const audio = (audioClips || []).map(_trashSafeClone);
-  if(clips.length === 0 && audio.length === 0) return null;
-  const item = _trashPush(
-    clips.length + audio.length === 1 ? TRASH_KIND_CLIPS : TRASH_KIND_CLEAR,
-    title || (clips.length + audio.length === 1
-      ? (clips[0] || audio[0]).name
-      : `${clips.length + audio.length} 个片段`),
-    '',
-    { videoClips: clips, audioClips: audio });
-  showTrashUndoToast(`已删除时间轴片段，可在垃圾桶恢复`, item.id);
-  return item;
-}
+// 时间轴片段删除不再入垃圾桶（垃圾桶只存画布删除的节点，2026-11-20 用户确认）。
+// 节点快照 payload 中的 videoClips/audioClips 仍随节点入桶（恢复节点时连带恢复）。
+// TRASH_KIND_CLIPS/TRASH_KIND_CLEAR 常量与恢复分支保留：兼容旧工作流里已存的条目。
 
 // ---- 恢复 ----
 
@@ -482,7 +470,7 @@ function openTrashModal(){
           <button class="modal-close" type="button" aria-label="关闭">×</button>
         </div>
         <div class="modal-body" style="padding: 12px 16px;">
-          <div class="trash-hint">删除的节点和时间轴片段会暂存在这里（最多 ${TRASH_ITEM_LIMIT} 条，超出自动淘汰最早的），恢复后回到原位置；被恢复节点的原连线也会一并还原。</div>
+          <div class="trash-hint">画布里删除的节点会暂存在这里（最多 ${TRASH_ITEM_LIMIT} 条，超出自动淘汰最早的），恢复后回到原位置，原连线与该节点的时间轴片段一并还原。时间轴片段的删除只是移除引用，不进垃圾桶（误删可用 Ctrl+Z 撤销）。</div>
           <div class="trash-list" id="trashModalList"></div>
           <div style="display:flex;justify-content:flex-end;margin-top:12px;">
             <button class="mini-btn btn-danger" id="trashClearAllBtn">清空垃圾桶</button>

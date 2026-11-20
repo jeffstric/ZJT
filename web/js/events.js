@@ -1636,10 +1636,6 @@
     document.getElementById('timelineClearBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       if(confirm('确定要清空时间轴吗？')){
-        // 清空前入垃圾桶（可在垃圾桶一键恢复全部片段）
-        if(typeof pushTimelineClipsToTrash === 'function'){
-          pushTimelineClipsToTrash(state.timeline.clips, state.timeline.audioClips, '清空时间轴');
-        }
         state.timeline.clips = [];
         state.timeline.audioClips = [];
         state.timeline.selectedClipId = null;

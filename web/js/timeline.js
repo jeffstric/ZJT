@@ -768,14 +768,9 @@
       });
     }
     
-    // 从时间轴移除片段
+    // 从时间轴移除片段（仅删引用，不进垃圾桶——垃圾桶只存画布删除的节点；
+    // 误删可用 Ctrl+Z / 时间轴撤销按钮回滚）
     function removeFromTimeline(clipId) {
-      // 删除前入垃圾桶（垃圾桶弹窗内点击"恢复"可找回）
-      if(typeof pushTimelineClipsToTrash === 'function'){
-        const clip = state.timeline.clips.find(c => c.id === clipId);
-        if(clip) pushTimelineClipsToTrash([clip], [], clip.name);
-      }
-
       // 从柱子中移除
       removeClipFromPillar(clipId, 'video');
 
@@ -2642,14 +2637,8 @@
       safeAutoSave()
     }
     
-    // 从时间轴移除音频片段
+    // 从时间轴移除音频片段（仅删引用，不进垃圾桶——垃圾桶只存画布删除的节点）
     function removeAudioFromTimeline(clipId) {
-      // 删除前入垃圾桶（垃圾桶弹窗内点击"恢复"可找回）
-      if(typeof pushTimelineClipsToTrash === 'function'){
-        const clip = state.timeline.audioClips.find(c => c.id === clipId);
-        if(clip) pushTimelineClipsToTrash([], [clip], clip.name);
-      }
-
       // 从柱子中移除
       removeClipFromPillar(clipId, 'audio');
 
