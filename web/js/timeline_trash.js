@@ -172,7 +172,7 @@ function pushNodeDeletionToTrash(node){
       groupIds,
       neighborPatches: _trashCaptureNeighborPatches(nodeId)
     });
-  showTrashUndoToast(`已删除「${item.title}」，可在垃圾桶恢复`, item.id);
+  showTrashUndoToast(`已删除「${item.title}」，可在左下角「失物找回」恢复`, item.id);
   return item;
 }
 
@@ -346,7 +346,7 @@ function clearTrashItems(){
 function undoLastTrash(){
   const latest = state.trash.items[state.trash.items.length - 1];
   if(!latest){
-    showToast('垃圾桶为空', 'info');
+    showToast('失物找回是空的', 'info');
     return;
   }
   restoreTrashItem(latest.id);
@@ -419,7 +419,7 @@ function renderTrashModalList(){
   if(countEl) countEl.textContent = `${items.length} 项`;
 
   if(items.length === 0){
-    listEl.innerHTML = '<div class="trash-empty">垃圾桶是空的</div>';
+    listEl.innerHTML = '<div class="trash-empty">失物找回是空的</div>';
     return;
   }
 
@@ -465,15 +465,15 @@ function openTrashModal(){
     modal.innerHTML = `
       <div class="modal-card" style="max-width: 560px;">
         <div class="modal-header">
-          <div class="modal-title">垃圾桶</div>
+          <div class="modal-title">失物找回</div>
           <span class="trash-count" id="trashModalCount"></span>
           <button class="modal-close" type="button" aria-label="关闭">×</button>
         </div>
         <div class="modal-body" style="padding: 12px 16px;">
-          <div class="trash-hint">画布里删除的节点会暂存在这里（最多 ${TRASH_ITEM_LIMIT} 条，超出自动淘汰最早的），恢复后回到原位置，原连线与该节点的时间轴片段一并还原。时间轴片段的删除只是移除引用，不进垃圾桶（误删可用 Ctrl+Z 撤销）。</div>
+          <div class="trash-hint">画布里删除的节点会暂存在这里（最多 ${TRASH_ITEM_LIMIT} 条，超出自动淘汰最早的），恢复后回到原位置，原连线与该节点的时间轴片段一并还原。时间轴片段的删除只是移除引用，不进失物找回（误删可用 Ctrl+Z 撤销）。</div>
           <div class="trash-list" id="trashModalList"></div>
           <div style="display:flex;justify-content:flex-end;margin-top:12px;">
-            <button class="mini-btn btn-danger" id="trashClearAllBtn">清空垃圾桶</button>
+            <button class="mini-btn btn-danger" id="trashClearAllBtn">清空失物找回</button>
           </div>
         </div>
       </div>
@@ -483,7 +483,7 @@ function openTrashModal(){
     modal.addEventListener('click', (e) => { if(e.target === modal) modal.classList.remove('show'); });
     modal.querySelector('#trashClearAllBtn').addEventListener('click', () => {
       if(state.trash.items.length === 0) return;
-      showConfirmModal('确定要清空垃圾桶吗？清空后无法再恢复。', { confirmText: '清空' }).then(ok => {
+      showConfirmModal('确定要清空「失物找回」吗？清空后无法再恢复。', { confirmText: '清空' }).then(ok => {
         if(ok) clearTrashItems();
       });
     });

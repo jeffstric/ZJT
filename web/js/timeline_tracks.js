@@ -1029,7 +1029,7 @@ function ttShowContextMenu(x, y, type, clipId) {
   if (ttFindClip(type, clipId) && ttFindClip(type, clipId).nodeId) {
     items.push({ label: '↗ 跳转到节点', fn: () => focusOnNode(ttFindClip(type, clipId).nodeId) });
   }
-  items.push({ label: '🗑 删除（进垃圾桶）', fn: () => ttDeleteSelectedClips() });
+  items.push({ label: '🗑 删除片段（仅删引用，可 Ctrl+Z 撤销）', fn: () => ttDeleteSelectedClips() });
   menu.innerHTML = items.map((it, i) => `<div class="tt-context-item" data-idx="${i}">${escapeHtml(it.label)}</div>`).join('');
   document.body.appendChild(menu);
   const menuRect = menu.getBoundingClientRect();

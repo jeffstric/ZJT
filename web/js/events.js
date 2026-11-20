@@ -1666,11 +1666,7 @@
       exportTimelineAssets();
     });
 
-    // v2 多轨时间轴工具栏 + 垃圾桶（timeline_tracks.js / timeline_trash.js）
-    document.getElementById('timelineTrashBtn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      openTrashModal();
-    });
+    // v2 多轨时间轴工具栏（timeline_tracks.js）；垃圾桶入口已移到左下角「失物找回」（timeline_trash.js）
     document.getElementById('timelineDelRefBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       if (typeof ttDeleteSelectedClips === 'function') ttDeleteSelectedClips();

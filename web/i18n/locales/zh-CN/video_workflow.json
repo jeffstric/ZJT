@@ -1114,5 +1114,6 @@
   "zoom_to_200": "缩放至200%",
   "video_edit_clear_video": "更换视频",
   "video_edit_video_cleared": "已移除视频，可连接新的视频",
-  "timeline_free_clips": "独立片段"
+  "timeline_free_clips": "独立片段",
+  "trash_recover_title": "失物找回（画布删除的节点可恢复）"
 }

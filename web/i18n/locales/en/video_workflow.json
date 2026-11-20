@@ -1114,5 +1114,6 @@
   "zoom_to_200": "Zoom to 200%",
   "video_edit_clear_video": "Replace video",
   "video_edit_video_cleared": "Video removed, you can connect a new one",
-  "timeline_free_clips": "Free clips"
+  "timeline_free_clips": "Free clips",
+  "trash_recover_title": "Lost & found (recover deleted nodes)"
 }
