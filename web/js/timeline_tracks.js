@@ -698,6 +698,12 @@ function ttStartMove(e, clipEl, clip) {
   const startX = e.clientX, startY = e.clientY;
   const grabOffsetSec = Math.max(0, (e.clientX - innerRect.left - TT_LABEL_W) / px - clip.start);
 
+  // 选域互斥：先清画布节点选择（clearSelection 内部会同步清时间轴选择，
+  // 故必须在其后再设置时间轴选择），否则 Delete 键两个选择域同时有值时
+  // 用户预期混乱（画布 Delete 误删片段，反之亦然）
+  if (typeof clearSelection === 'function' && (state.selectedNodeId != null || (state.selectedNodeIds && state.selectedNodeIds.length > 0))) {
+    clearSelection();
+  }
   // 按下即选中（剪映同款）：不等松手，误点邻轨也能立刻看到选中的是谁。
   // 选择只在这里处理一次；onUp 的纯点击分支不再重复处理（Ctrl toggle 会抵消）。
   ttHandleSelectionClick(type, clip.id, e.ctrlKey || e.metaKey);
