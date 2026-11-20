@@ -2055,6 +2055,19 @@ IMPLEMENTATION_TO_ID = {
 IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
 
 
+def _user_module_binding_service():
+    """惰性解析用户模块绑定服务模块（恒为主仓版，分流层已移除）。
+
+    惰性导入避免 config -> services 顶层循环依赖。两侧实现历史上读同一张绑定表
+    （UserModuleTaskBindingModel）、implementation_id 来自 DB 跨侧一致，且
+    enterprise 旧版绑定加载已被 services.user_module_bootstrap 的迁移期 shim
+    中和（绑定只由主仓侧加载），恒读主仓版安全。
+    """
+    from services import user_module_binding_service
+
+    return user_module_binding_service
+
+
 def get_implementation_id(name: str) -> int:
     """获取 implementation 的 ID，不存在返回 0。
 
@@ -2064,9 +2077,7 @@ def get_implementation_id(name: str) -> int:
     if impl_id:
         return impl_id
     try:
-        # 惰性导入避免 config -> services 顶层循环依赖；失败（如测试环境缺依赖）时按未知处理
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_id
-        return get_dynamic_impl_id(name) or 0
+        return _user_module_binding_service().get_dynamic_impl_id(name) or 0
     except Exception:
         return 0
 
@@ -2081,8 +2092,7 @@ def get_implementation_name(id: int) -> str:
     if impl_name:
         return impl_name
     try:
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_name
-        impl_name = get_dynamic_impl_name(id)
+        impl_name = _user_module_binding_service().get_dynamic_impl_name(id)
         if impl_name:
             return impl_name
     except Exception:

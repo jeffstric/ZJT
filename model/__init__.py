@@ -46,7 +46,19 @@ from .video_voice_replace import (
     VideoVoiceReplaceSegment,
     VideoVoiceReplaceSegmentModel,
 )
-# 用户模块实体（user_modules/user_module_binding）随商业版 enterprise 包提供。
+# 用户模块实体（user_modules/user_module_binding）：develop_f1214 起随子系统常驻主仓
+# （此前随商业版 enterprise 包提供）。
+from .user_modules import (
+    UserModuleStatus,
+    UserModuleReleaseStatus,
+    ModuleJobStatus,
+    UserModuleEntity,
+    UserModuleReleaseEntity,
+    ModuleJobEntity,
+    UserModulesModel,
+    ModuleJobsModel,
+)
+from .user_module_binding import UserModuleTaskBindingModel, UserModuleTaskBindingEntity
 
 __all__ = [
     'AIToolsModel',
@@ -145,4 +157,14 @@ __all__ = [
     'VideoVoiceReplaceJobModel',
     'VideoVoiceReplaceSegment',
     'VideoVoiceReplaceSegmentModel',
+    'UserModuleStatus',
+    'UserModuleReleaseStatus',
+    'ModuleJobStatus',
+    'UserModuleEntity',
+    'UserModuleReleaseEntity',
+    'ModuleJobEntity',
+    'UserModulesModel',
+    'ModuleJobsModel',
+    'UserModuleTaskBindingModel',
+    'UserModuleTaskBindingEntity',
 ]

@@ -88,18 +88,6 @@ def _get_enterprise_admin_status() -> dict[str, object]:
     return enterprise_loader.get_runtime_status()
 
 
-def _is_user_module_license_active() -> bool:
-    """用户模块功能的商业许可证检查（strict：须真实激活；enterprise 缺席恒 False）。"""
-    try:
-        from enterprise.services.license.runtime import (
-            is_commercial_license_strictly_allowed,
-        )
-
-        return bool(is_commercial_license_strictly_allowed())
-    except Exception:
-        return False
-
-
 def _is_commercial_base_license_active() -> bool:
     """commercial.base 商业能力检查（密钥池/佣金/供应商自动切换等共用）。
 
@@ -194,9 +182,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
-                    # 用户模块（接口模块）：enterprise 包完整注册且商业许可证已激活
-                    # 才对前端开放完整界面；未激活显示与社区版相同的锁定卡片。
-                    "user_modules": bool(enterprise_status["registration_ready"]) and _is_user_module_license_active(),
+                    # 用户模块（接口模块）：主仓能力（develop_f1214 起），
+                    # 社区/商业版均可用，无商业许可证门禁。
+                    "user_modules": True,
                 },
             }
         }

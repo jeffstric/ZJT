@@ -712,8 +712,14 @@ app.include_router(subscription_router)
 from api.asset_library import router as asset_library_router
 app.include_router(asset_library_router)
 
-# 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
-# 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
+# 用户模块（接口模块）为主仓能力（develop_f1214 起，无商业门禁）：必须先于
+# enterprise 挂载，迁移期内 enterprise 包自带的旧版同名路由后注册，被 FastAPI
+# 同路径先注册优先自然阴影（见 services/user_module_bootstrap.py）。
+try:
+    from services.user_module_bootstrap import bootstrap_user_modules
+    bootstrap_user_modules(app)
+except Exception:
+    logging.getLogger(__name__).exception("主仓用户模块挂载失败（接口模块将不可用）")
 
 # 尝试加载 enterprise 模块，未加载时注册主仓库的用户路由（演示模式）
 try:
@@ -732,6 +738,27 @@ except Exception as e:
     except Exception:
         pass
 
+# 迁移期 shim：enterprise 旧版 _register_user_modules 的启动钩子与绑定重载循环会调用
+# enterprise 侧绑定加载，其"先全量清空注册表 + 许可证未激活不重载"会抹掉主仓刚注册的
+# 实现方。禁用该函数后绑定只由主仓侧加载（enterprise 新版移除用户模块后为纯 no-op）。
+try:
+    from services.user_module_bootstrap import neutralize_enterprise_user_module_binding_load
+
+    neutralize_enterprise_user_module_binding_load()
+except Exception:
+    logging.getLogger(__name__).exception("enterprise 旧版用户模块绑定加载中和失败")
+
+# enterprise.register() 会用同名工具覆盖主仓用户模块生成工具（迁移期并存）；
+# 再注册主仓版保证智能体工具链恒走主仓（无许可证门禁）。依赖上方
+# register_dynamic_tools 的同名 last-wins 替换语义，否则幂等重复注册会抛错。
+try:
+    from tools.user_module_agent_tools import register_user_module_agent_tools
+    from script_writer_core.agents.tool_executor import register_enterprise_tool
+
+    register_user_module_agent_tools(register_enterprise_tool)
+except Exception:
+    logging.getLogger(__name__).exception("主仓用户模块生成工具再注册失败")
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 
@@ -744,7 +771,8 @@ from task.visual_drivers.driver_factory import VideoDriverFactory
 register_all_drivers()
 logger.info("Video drivers registered successfully")
 
-# 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
+# 用户模块实现方绑定加载由主仓 user_module_bootstrap 注入；enterprise 旧版绑定加载
+# 已被迁移期 shim 中和（见上方 neutralize_enterprise_user_module_binding_load）。
 
 # CORS（docs/security/xss_stored_chain_fix_plan.md 阶段 4b）：
 # allow_origins=["*"] 与 allow_credentials=True 组合无效且危险（任意站点可携凭据跨源）。

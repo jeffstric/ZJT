@@ -3407,14 +3407,23 @@ def register_dynamic_tools(tool_defs):
 
     工具本体（schema + 执行函数）随商业版 enterprise 包提供；注入后 LLM 即可看到
     对应工具。执行函数经 ToolExecutor.register_enterprise_tool 注册。
+    已存在同名 schema 时按 last-wins 原地替换并打 warning（迁移期主仓/enterprise
+    双侧注册同名用户模块工具，后注册者生效；warning 保留重名可排查性，避免
+    完全静默掩盖其它真正的重名 bug）。
     """
     if not isinstance(tool_defs, list):
         raise ValueError("tool_defs 必须是工具 schema 列表")
     for tool_def in tool_defs:
         name = tool_def.get("name")
-        if not name or any(t.get("name") == name for t in MCP_TOOLS):
-            raise ValueError(f"动态工具名缺失或重复: {name!r}")
-    MCP_TOOLS.extend(tool_defs)
+        if not name:
+            raise ValueError(f"动态工具名缺失: {tool_def!r}")
+        for i, existing in enumerate(MCP_TOOLS):
+            if existing.get("name") == name:
+                MCP_TOOLS[i] = tool_def
+                logger.warning("动态工具 schema 重名，已按 last-wins 原地替换: %s", name)
+                break
+        else:
+            MCP_TOOLS.append(tool_def)
     logger.info(f"已注入动态工具 schema: {[t['name'] for t in tool_defs]}")
 
 

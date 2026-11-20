@@ -120,3 +120,43 @@ def test_retry_global_passes_when_licensed(monkeypatch):
     result = _run_retry_global(monkeypatch, community=False, licensed=True)
     assert result["code"] == 0
     assert writes, "已激活态应真正写入开关配置"
+
+
+# ---------------------------------------------------------------------------
+# /api/admin/dashboard：features.user_modules 恒 True（主仓能力，无许可证门禁）
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_user_modules_feature_always_available(monkeypatch):
+    """商业部署 + enterprise 在场 + 许可证未激活：接口模块仍须上报可用。
+
+    用户模块（接口模块）自 develop_f1214 起为主仓能力（主仓恒为 owner，无商业
+    许可证门禁），features.user_modules 恒 True——否则 admin.html 会误显锁定卡片。
+    """
+    async def _fake_require_admin(_auth_token):
+        return SimpleNamespace(id=1)
+
+    monkeypatch.setattr(admin_api, "require_admin", _fake_require_admin)
+    monkeypatch.setattr(
+        admin_api,
+        "UsersModel",
+        SimpleNamespace(get_total_count=lambda: 0, get_active_count=lambda: 0),
+    )
+    monkeypatch.setattr(
+        admin_api,
+        "VideoWorkflowModel",
+        SimpleNamespace(count_active_recent_days=lambda days=3: 0),
+    )
+    monkeypatch.setattr("services.registration_quota.get_max_active_users", lambda: 1)
+    monkeypatch.setattr("task.runninghub_key_pool.is_available", lambda: False)
+    monkeypatch.setattr("services.branding.is_available", lambda: False)
+    # 模拟商业部署（enterprise 已完整注册）的最严苛场景
+    monkeypatch.setattr(
+        admin_api,
+        "_get_enterprise_admin_status",
+        lambda: {"registration_ready": True, "license_control_available": True},
+    )
+
+    result = asyncio.run(admin_api.admin_dashboard(auth_token="Bearer x"))
+    assert result["code"] == 0
+    assert result["data"]["features"]["user_modules"] is True
