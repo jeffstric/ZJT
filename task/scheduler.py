@@ -735,15 +735,10 @@ def init_scheduler(app):
     )
 
     # 用户模块（接口模块）任务提交/轮询与实现方绑定重载：develop_f1214 起随
-    # 子系统常驻主仓；存量 enterprise 包自带旧版时优先走 enterprise 版（与
-    # services/user_module_bootstrap 的分流判定一致，避免双份调度任务）。
+    # 子系统常驻主仓且主仓恒为 owner（分流层已移除，恒走主仓版调度注册）。
     try:
-        from services.user_module_bootstrap import enterprise_provides_user_modules
+        from task.user_module_scheduler import register_user_module_scheduler_jobs
 
-        if enterprise_provides_user_modules():
-            from enterprise.task.user_module_scheduler import register_user_module_scheduler_jobs
-        else:
-            from task.user_module_scheduler import register_user_module_scheduler_jobs
         register_user_module_scheduler_jobs(
             scheduler,
             run_async_task=lambda coro_fn: partial(_run_async_task, coro_fn),

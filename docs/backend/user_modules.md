@@ -12,13 +12,16 @@
 > MODULE_CALL_FAILED 真实事故）。runner.py 在 Runner 进程内只走裸名导入；
 > Runner 校验一律先 `model_dump` 按结构校验（`_validate_result`）作纵深防御，
 > 协议违规返回 `MODULE_PROTOCOL_VIOLATION` 结构化错误码。
-> **新旧并存分流**：存量 enterprise 包自带旧版实现（带商业许可证门禁）时，
-> 所有挂载点经 `services/user_module_bootstrap.enterprise_provides_user_modules()`
-> 判定（edition.mode=enterprise 且旧版 `enterprise.register` 仍含
-> `_register_user_modules`）优先走 enterprise 版，主仓版让位——避免双份路由/
-> 调度/Supervisor/生成工具。开源部署（community 模式）恒走主仓版。
-> enterprise 仓移除用户模块并抬升 min_core_version 后，分流恒走主仓版，
-> 兼容层可整体删除。
+> **主仓恒为 owner（2026-11-20 起，分流层已移除）**：主仓是用户模块的唯一
+> owner，所有挂载点恒用主仓版，不看 enterprise 是否自带旧版实现、不看商业
+> 许可证。迁移期内存量 enterprise 包仍自带旧版实现，三者共存关系：旧版同名
+> 路由被 FastAPI 先注册优先**阴影**（主仓版在 server.py 先挂载）；旧版同名
+> 生成工具被主仓版**再注册覆盖**（`register_dynamic_tools` 同名 last-wins
+> 替换）；旧版绑定加载（"先清空注册表 + 许可证未激活不重载"会抹掉主仓实现方）
+> 被 `services.user_module_bootstrap.neutralize_enterprise_user_module_binding_load`
+> 迁移期 shim **中和**为 no-op，绑定只由主仓侧加载。enterprise 仓移除用户
+> 模块并抬升 min_core_version 后，阴影/覆盖/shim 自然消失（见
+> `docs/backend/user_modules_open_source_plan.md`）。
 
 # 用户模块运行时
 

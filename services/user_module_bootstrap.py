@@ -1,17 +1,21 @@
-"""用户模块（接口模块）子系统主仓引导入口（develop_f1214 起）。
+"""用户模块（接口模块）子系统主仓引导入口（develop_f1214 起，主仓恒为 owner）。
 
 背景：用户模块原随商业版 enterprise 包提供（路由/运行时/调度/生成工具均从
-enterprise.* 导入）。develop_f1214 将完整子系统迁入主仓并解除商业许可证门禁，
-但存量 enterprise 包仍自带旧版实现（带许可证门禁）。为避免双份路由、双份
-调度任务、双份 Supervisor 与双份生成工具注册，所有挂载点统一经
-``enterprise_provides_user_modules()`` 分流：
+enterprise.* 导入）。develop_f1214 将完整子系统迁入主仓并解除商业许可证门禁。
 
-- enterprise 包提供该能力（``enterprise.register``/bootstrap 含用户模块）→
-  继续走 enterprise 版，主仓实现静默让位（行为与旧版一致，仍受许可证门禁）；
-- enterprise 缺席或其新版已移除用户模块 → 主仓版接管（无门禁）。
+2026-11-20 起归属决策落地：主仓是用户模块的唯一 owner，所有挂载点恒用主仓版，
+不再看 enterprise 是否自带旧版实现（分流开关 enterprise_provides_user_modules
+已删除）。迁移期内存量 enterprise 包仍自带旧版实现，三者的共存关系：
 
-迁移完成后（enterprise 仓移除用户模块并抬升 min_core_version），分流判定
-恒走主仓版，届时可整体删除该兼容层。
+- 路由：主仓版先挂载（server.py 中先于 enterprise 加载），FastAPI 同路径先
+  注册者胜，enterprise 旧版同名路由后注册、被自然阴影（死代码）；
+- 生成工具：enterprise.register 仍会用同名工具覆盖主仓版（dict/schema 均
+  last-wins），server.py 在 enterprise 加载后用主仓版再注册覆盖回来；
+- 绑定加载：enterprise 旧版"先全量清空注册表 + 许可证未激活不重载"会抹掉
+  主仓刚注册的实现方，由 ``neutralize_enterprise_user_module_binding_load``
+  中和为 no-op，绑定只由主仓侧加载。
+
+enterprise 仓移除用户模块并抬升 min_core_version 后，阴影/覆盖/shim 自然消失。
 """
 
 from __future__ import annotations
@@ -22,26 +26,33 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def enterprise_provides_user_modules() -> bool:
-    """enterprise 包是否实际接管用户模块（自带旧版实现且处于企业版模式）。
+def neutralize_enterprise_user_module_binding_load() -> bool:
+    """迁移期 shim：禁用 enterprise 旧版"先清空注册表"的用户模块绑定加载。
 
-    与 utils/enterprise_loader.discover() 的第一道门一致：edition.mode !=
-    enterprise 时 enterprise 不会注册任何路由，此时必须由主仓版接管，否则
-    本地含 enterprise 目录的开源部署会出现"模块既不在 enterprise 侧也未在
-    主仓侧挂载"的真空。企业版模式下再看旧版 __init__ 是否保留
-    _register_user_modules（新版移除后恒走主仓版）。
+    仅当旧版 enterprise（自带 _register_user_modules）已在当前进程导入时生效：
+    经 sys.modules 探测（不打断 enterprise_loader 的加载决策、无 import 副作用），
+    把 enterprise._load_user_module_bindings_safely 替换为 no-op。enterprise 的
+    Web 启动钩子（enterprise/__init__.py:442）与绑定重载循环（453 行）均在调用时
+    经模块全局名解析，补丁对两者同时生效；bootstrap_background_process
+    （enterprise/__init__.py:84）同理。新版 enterprise 移除用户模块后 hasattr 为
+    False，本函数天然 no-op。PyArmor 混淆不影响模块属性 setattr。
     """
-    try:
-        from config.config_util import get_config_value
+    import sys
 
-        mode = str(get_config_value("edition", "mode", default="community") or "community")
-        if mode.strip().lower() != "enterprise":
-            return False
-        import enterprise
-
-        return hasattr(enterprise, "_register_user_modules")
-    except Exception:
+    enterprise = sys.modules.get("enterprise")
+    if enterprise is None:
         return False
+    if not hasattr(enterprise, "_register_user_modules"):
+        return False  # 新版 enterprise 已移除用户模块子系统
+    if getattr(enterprise, "_load_user_module_bindings_safely", None) is None:
+        return False
+
+    def _noop() -> None:
+        return None
+
+    enterprise._load_user_module_bindings_safely = _noop
+    logger.info("已中和 enterprise 旧版用户模块绑定加载（主仓恒为 owner）")
+    return True
 
 
 def _load_bindings_safely() -> None:
@@ -67,7 +78,8 @@ def _register_agent_tools() -> None:
 def bootstrap_user_modules(app) -> None:
     """主仓版用户模块挂载：路由 + Supervisor 启动验证 + 绑定重载循环 + 生成工具。
 
-    仅当 enterprise 不提供该能力时由 server.py 调用；与 enterprise 版互斥。
+    server.py 无条件调用且必须先于 enterprise 加载（路由先注册优先）；
+    enterprise 旧版同名路由/工具/绑定加载分别被阴影/再注册覆盖/shim 中和。
     """
     import os
 
@@ -125,5 +137,5 @@ def bootstrap_user_modules_background() -> None:
 __all__ = [
     "bootstrap_user_modules",
     "bootstrap_user_modules_background",
-    "enterprise_provides_user_modules",
+    "neutralize_enterprise_user_module_binding_load",
 ]

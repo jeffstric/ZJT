@@ -1899,21 +1899,15 @@ IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
 
 
 def _user_module_binding_service():
-    """惰性解析用户模块绑定服务模块（enterprise 旧版与主仓版分流，注册表须同侧）。
+    """惰性解析用户模块绑定服务模块（恒为主仓版，分流层已移除）。
 
-    惰性导入避免 config -> services 顶层循环依赖；分流判定与
-    services/user_module_bootstrap 一致——enterprise 自带旧版时读 enterprise
-    的注册表（绑定加载也发生在那一侧），否则读主仓版。
+    惰性导入避免 config -> services 顶层循环依赖。两侧实现历史上读同一张绑定表
+    （UserModuleTaskBindingModel）、implementation_id 来自 DB 跨侧一致，且
+    enterprise 旧版绑定加载已被 services.user_module_bootstrap 的迁移期 shim
+    中和（绑定只由主仓侧加载），恒读主仓版安全。
     """
-    try:
-        from services.user_module_bootstrap import enterprise_provides_user_modules
-
-        if enterprise_provides_user_modules():
-            from enterprise.services import user_module_binding_service
-            return user_module_binding_service
-    except Exception:
-        pass
     from services import user_module_binding_service
+
     return user_module_binding_service
 
 

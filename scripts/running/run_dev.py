@@ -92,18 +92,14 @@ def main():
         port = get_port_from_config()
     port = str(port)
     
-    # 0. 启动用户模块 Supervisor（develop_f1214 起随子系统常驻主仓：批准发布时
-    #     的候选 Release 运行时校验、模块任务执行都依赖它；enterprise 旧版自带
-    #     实现时优先走 enterprise 版，两者都不可用时静默跳过）。
+    # 0. 启动用户模块 Supervisor（develop_f1214 起随子系统常驻主仓且主仓恒为
+    #     owner：批准发布时的候选 Release 运行时校验、模块任务执行都依赖它；
+    #     分流层已移除，恒用主仓 launcher，子系统不可用时静默跳过）。
     #     与 run_prod 同款 launcher，env 写入 URL/TOKEN 后 web/scheduler 才能连上。
     try:
         from config.config_util import get_config_value
-        from services.user_module_bootstrap import enterprise_provides_user_modules
+        from task.module_supervisor_launcher import start_module_supervisor
 
-        if enterprise_provides_user_modules():
-            from enterprise.task.module_supervisor_launcher import start_module_supervisor
-        else:
-            from task.module_supervisor_launcher import start_module_supervisor
         if get_config_value("user_modules", "enabled", default=True):
             supervisor_proc = start_module_supervisor(cwd, find_free_port=_find_free_local_port)
             if supervisor_proc is not None:
