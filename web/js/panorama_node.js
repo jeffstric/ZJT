@@ -770,8 +770,7 @@
           }
           if (modelOptionsCache.length === 0) {
             modelOptionsCache = [
-              { value: 'seedream-5.0', label: 'Seedream 5.0 Pro', computingPower: 20 },
-              { value: 'seedream-4.5', label: 'Seedream 5.0 Pro', computingPower: 20 },
+              { value: 'seedream-5.0-pro', label: 'Seedream 5.0 Pro', computingPower: 20 },
               { value: 'gpt-image-2', label: 'GPT Image 2', computingPower: 4 }
             ];
           }
@@ -792,7 +791,7 @@
           // 默认模型：优先「可用 且 支持宽幅全景比例（宽比≥2:1）」，否则第一个可用项
           if (!node.data.model) {
             var preferred = modelOptionsCache.find(function(o) {
-              if (o.value === 'seedream-5.0') return true;
+              if (o.value === 'seedream-5.0-pro') return true;
               try {
                 var ratios = window.TaskConfig.getRatioOptions(o.value) || [];
                 return ratios.some(function(r) {

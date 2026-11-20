@@ -529,7 +529,7 @@
           const fallbackOptions = [
             { value: 'gemini', label: '标准版 (2算力)' },
             { value: 'gemini_pro', label: '加强版 (6算力)' },
-            { value: 'seedream-5.0', label: 'Seedream 5.0 Pro (20算力)' }
+            { value: 'seedream-5.0-pro', label: 'Seedream 5.0 Pro (20算力)' }
           ];
           fallbackOptions.forEach(opt => {
             const optEl = document.createElement('option');

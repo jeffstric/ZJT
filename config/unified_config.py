@@ -2207,8 +2207,8 @@ class TaskTypeId:
         'GEMINI_3_PRO_IMAGE': 'Gemini 3 Pro 图片编辑',
         'GEMINI_3_1_FLASH_IMAGE': 'Gemini 3.1 Flash 图片编辑',
         'NANO_BANANA_2_1_IMAGE': 'Nano Banana 2.1 图片编辑',
-        'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 Pro 文生图',
-        'SEEDREAM_4_5_IMAGE': 'Seedream 5.0 Pro 图片编辑',
+        'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
+        'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
@@ -2460,10 +2460,12 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,
         key='seedream-5.0',
         short_key='seedream-5.0',
-        # 2026-11-20：5.0 快照下线，底层统一 doubao-seedream-5-0-pro-260628，名称同步
-        # 算力同步对齐 5.0 Pro 成本价（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）
-        name='Seedream 5.0 Pro',
-        model_name='Seedream 5.0 Pro',
+        # 2026-11-20：底层快照 doubao-seedream-5-0-260128 已被方舟下线关停，
+        # 任务停用（hidden）：前端选择器/偏好槽位不再显示，历史任务展示与重试
+        # 仍可用（重试经驱动 MODEL_MAPPING 兼容映射到在售 5-0-pro-260628）。
+        # 任务 ID/key/名称/算力保持原样不动，新任务走 seedream-5.0-pro（Task 33）
+        name='Seedream 5.0',
+        model_name='Seedream 5.0',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -2473,22 +2475,25 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
             DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1,
         ],
-        computing_power=20,
+        computing_power=6,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '3K'],
         default_ratio='9:16',
         default_size='2K',
         sort_order=13,
         supports_grid_image=True,  # 支持宫格生图
+        hidden=True,  # 2026-11-20 停用：底层 5-0-260128 快照已被方舟下线
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_4_5_IMAGE,
         key='seedream-4.5',
         short_key='seedream-4.5',
-        # 2026-11-20：4.5 快照下线，底层统一 doubao-seedream-5-0-pro-260628，名称同步
-        # 算力同步对齐 5.0 Pro 成本价（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）
-        name='Seedream 5.0 Pro',
-        model_name='Seedream 5.0 Pro',
+        # 2026-11-20：底层快照 doubao-seedream-4-5-251128 已被方舟下线关停，
+        # 任务停用（hidden）：前端选择器/偏好槽位不再显示，历史任务展示与重试
+        # 仍可用（重试经驱动 MODEL_MAPPING 兼容映射到在售 5-0-pro-260628）。
+        # 任务 ID/key/名称/算力保持原样不动，新任务走 seedream-5.0-pro（Task 33）
+        name='Seedream 4.5',
+        model_name='Seedream 4.5',
         category=TaskCategory.IMAGE_EDIT,
         categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
         provider=TaskProvider.VOLCENGINE,
@@ -2498,13 +2503,14 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
             DriverImplementation.SEEDREAM5_VOLCENGINE_OVERSEA_V1,
         ],
-        computing_power=20,
+        computing_power=8,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
         supported_sizes=['2K', '4K'],
         default_ratio='9:16',
         default_size='2K',
         sort_order=14,
         supports_grid_image=True,  # 支持宫格生图
+        hidden=True,  # 2026-11-20 停用：底层 4-5-251128 快照已被方舟下线
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_5_0_PRO,

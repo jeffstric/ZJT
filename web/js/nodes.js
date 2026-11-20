@@ -240,7 +240,7 @@
           <option value="gpt-image-2">GPT Image 2</option>
           <option value="gemini-3-pro-4grid">加强版4宫格</option>
           <option value="gemini-3-pro-image-preview">加强版9宫格</option>
-          <option value="seedream-5.0">Seedream 5.0 Pro</option>
+          <option value="seedream-5.0-pro">Seedream 5.0 Pro</option>
         `;
       }
 
@@ -1673,7 +1673,7 @@
             shotGroupModelEl.innerHTML = `
               <option value="gemini" ${node.data.model === 'gemini' ? 'selected' : ''}>标准版</option>
               <option value="gemini_pro" ${node.data.model === 'gemini_pro' ? 'selected' : ''}>加强版</option>
-              <option value="seedream-5.0" ${node.data.model === 'seedream-5.0' ? 'selected' : ''}>Seedream 5.0 Pro</option>
+              <option value="seedream-5.0-pro" ${node.data.model === 'seedream-5.0-pro' ? 'selected' : ''}>Seedream 5.0 Pro</option>
             `;
           }
           // 如果没有设置默认值，使用后端配置的第一个选项

@@ -19,8 +19,9 @@ class Seedream5VolcengineOverseaV1Driver(Seedream5VolcengineV1Driver):
     """
 
     # 海外版模型映射：task_id -> 模型名称（不带 doubao- 前缀）
-    # 2026-11-20 与国内版同步：5-0-260128 / 4-5-251128 为同代退役快照，统一迁移
-    # seedream-5-0-pro-260628（该模型海外站已有 SEEDREAM_5_0_PRO 实测映射）
+    # 2026-11-20 与国内版同步：5-0-260128 / 4-5-251128 为同代退役快照；
+    # Task 16/18 已停用（hidden），此处保留兼容映射指向在售
+    # seedream-5-0-pro-260628（历史重试/显式 task_id 调用兜底）
     MODEL_MAPPING = {
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "seedream-5-0-pro-260628",

@@ -18,28 +18,36 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
 
 ## 支持的模型
 
-| Task ID | 模型名称（国内） | 模型名称（海外） | 算力 | 支持尺寸 |
-|---------|-----------------|-----------------|:----:|---------|
-| 16 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K |
-| 18 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 4K |
-| 32 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K |
+| Task ID | 模型名称（国内） | 模型名称（海外） | 算力 | 支持尺寸 | 状态 |
+|---------|-----------------|-----------------|:----:|---------|------|
+| 16 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 6 | 2K, 3K | **停用**（hidden） |
+| 18 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 8 | 2K, 4K | **停用**（hidden） |
+| 33 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K | 在售 |
 
 > 海外版模型名不带 `doubao-` 前缀（海外网关惯例）。
 
 ## 2026-11-20 退役模型迁移
 
-方舟下线模型公告：`doubao-seedream-5-0-260128`（原 Task 16）与
-`doubao-seedream-4-5-251128`（原 Task 18）到期未迁移关停，官方建议统一迁移
-`doubao-seedream-5-0-pro-260628`。任务类型 key（`seedream-5.0` / `seedream-4.5`）
-与 TaskTypeId 保持不变，底层模型、展示名（`Seedream 5.0 Pro`）与算力（统一 20，
-对齐 5.0 Pro 成本价 8毛 ÷ 0.04）同步更新。
+方舟下线模型公告：`doubao-seedream-5-0-260128`（Task 16）与
+`doubao-seedream-4-5-251128`（Task 18）到期未迁移关停，官方建议统一迁移
+`doubao-seedream-5-0-pro-260628`。处理方式：
+
+- **Task 16/18 停用（`hidden=True`）**：任务 ID、key（`seedream-5.0` /
+  `seedream-4.5`）、名称（Seedream 5.0 / 4.5）与算力（6/8）全部保持原样，
+  前端模型选择器与用户偏好槽位不再显示；历史任务展示与重试仍可用，
+  重试经驱动 `MODEL_MAPPING` 兼容映射到在售 5-0-pro-260628（映射旧快照
+  必然 ClosedEndpoint 失败）。
+- **Task 32（Seedream 5.0 Pro，key `seedream-5.0-pro`）为唯一在售入口**，
+  算力 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）。
+- `output_format=png` 三个任务类型统一下发（4.5 不支持该参数的问题已随
+  停用消失）。
 
 ## Seedream 5.0 Pro
 
 - **模型名**：`doubao-seedream-5-0-pro-260628`
-- **算力**：固定 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价；2026-11-20 起 Task 16/18 亦对齐此价）
+- **算力**：固定 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）
 - **尺寸**：2K / 3K / 4K 全支持
-- **output_format**：`output_format=png`（2026-11-20 起三个任务类型统一下发，4.5 不支持该参数的问题已随下线消失）
+- **output_format**：`output_format=png`（三个任务类型统一下发，4.5 不支持该参数的问题已随停用消失）
 - **宫格生图**：支持（`supports_grid_image=True`）
 
 ## 配置

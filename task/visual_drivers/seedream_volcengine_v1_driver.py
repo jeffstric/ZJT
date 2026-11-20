@@ -24,9 +24,11 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
     """
 
     # 模型映射：task_id -> 模型名称
-    # 2026-11-20 方舟下线模型公告：doubao-seedream-5-0-260128 与
-    # doubao-seedream-4-5-251128 到期未迁移关停，官方建议统一迁移
-    # doubao-seedream-5-0-pro-260628；任务类型 key 保持不变（前端/外部引用兼容）
+    # 2026-11-20 方舟下线模型公告：doubao-seedream-5-0-260128（Task 16）与
+    # doubao-seedream-4-5-251128（Task 18）到期未迁移关停。两个任务已在
+    # unified_config 停用（hidden），新任务走 Task 33（seedream-5.0-pro）。
+    # 此处保留 16/18 的兼容映射指向在售 5-0-pro-260628：停用任务的历史重试 /
+    # 显式 task_id 调用仍可能进来，映射到旧快照必然 ClosedEndpoint 失败
     MODEL_MAPPING = {
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-5-0-pro-260628",
