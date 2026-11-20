@@ -860,3 +860,23 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
             model_name="doubao-seedance-2-5-260628",
             impl_name=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
         )
+
+
+class Seedance25FlashVolcengineV1Driver(Seedance25VolcengineV1Driver):
+    """
+    Seedance 2.5 Flash 全模态视频驱动（2026-11-12 发布）
+
+    接口与 2.5 完全兼容（content 数组结构、role 取值、状态轮询一致），
+    仅 model_name 不同。与 2.5 的差异：
+    - 生成速度约 2 倍，官方价 46 元/百万 tokens（文生/图生，不含视频输入）
+    - 仅 480P / 720P（不支持 1080P，配置层不含该档位）
+    - 单次最多 10 个参考（配置层 max_multi_ref_images=10）
+    """
+
+    def __init__(self):
+        SeedanceVolcengineV1Driver.__init__(
+            self,
+            driver_type=TaskTypeId.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+            model_name="doubao-seedance-2-5-flash-261115",
+            impl_name=DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
+        )

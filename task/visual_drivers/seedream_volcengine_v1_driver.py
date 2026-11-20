@@ -33,6 +33,8 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_5_0_PRO: "doubao-seedream-5-0-pro-260628",
+        # 2026-11-09 发布（官方模型发布公告确认快照 ID）
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "doubao-seedream-5-5-261028",
     }
 
     # 支持的图片尺寸

@@ -23,6 +23,7 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
 | 16 | doubao-seedream-5-0-260128（已下线） | seedream-5-0-260128 | 6 | 2K, 3K | **停用**（hidden） |
 | 18 | doubao-seedream-4-5-251128（已下线） | seedream-4-5-251128 | 8 | 2K, 4K | **停用**（hidden） |
 | 33 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K | 在售 |
+| 55 | doubao-seedream-5-5-261028 | seedream-5-5-261028（未证实） | 7 | 2K, 3K, 4K | 在售（暂仅国内实现） |
 
 > 海外版模型名不带 `doubao-` 前缀（海外网关惯例）。
 >
@@ -44,6 +45,14 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
   算力 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）。
 - `output_format=png` 三个任务类型统一下发（4.5 不支持该参数的问题已随
   停用消失）。
+
+## Seedream 5.5
+
+- **模型名**：`doubao-seedream-5-5-261028`（2026-11-09 发布，官方模型发布公告）
+- **能力**：文生图 / 单图编辑 / 多图融合 / 原生 RGBA 透明底 / 多轮精准编辑（官方称最多 100 轮）
+- **算力**：7（官方定价页暂未列出，按第三方核对口径约 0.28 元/张，ceil(0.28 ÷ 0.04) = 7；上线实测后可在后台热调）
+- **实现方**：暂仅国内站（`seedream5_volcengine_v1`）；海外站快照未证实，`MODEL_MAPPING` 已预置 `seedream-5-5-261028`，404 时修正
+- **复用架构**：与 5.0 Pro 同一驱动类，仅 `MODEL_MAPPING` 加一行，无需新建驱动文件/实现方/工厂注册
 
 ## Seedream 5.0 Pro
 

@@ -13,10 +13,13 @@
 | 23 | doubao-seedance-2-0-260128 | `Seedance20VolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 31 | doubao-seedance-2-0-mini-260615 | `Seedance20MiniVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 36 | doubao-seedance-2-5-260628 | `Seedance25VolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
+| 56 | doubao-seedance-2-5-flash-261115 | `Seedance25FlashVolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
 >
 > **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。支持分辨率 480P / 720P / 1080P（不支持 4K），1080P 算力为 720P 的 1.78 倍。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
+>
+> **Seedance 2.5 Flash**（2026-11-12 发布，Task 56）：接口与 2.5 完全兼容，仅 model 名不同（`doubao-seedance-2-5-flash-261115`）。生成速度约 2 倍；官方价 46 元/百万 tokens（文生/图生，不含视频输入），720P ≈ 0.99 元/秒（较 2.5 便宜约 34%）。**仅 480P / 720P（不支持 1080P）**，480P 由 `SEEDANCE_480P_PRICE_MULTIPLIER` 倍率折算；单次最多 10 个参考；时长 5–30s。代码侧算力兜底按 `ceil(秒 × 0.99 ÷ 0.04)`（720P 基价，贴本口径）：5s=124、10s=248、30s=743，上线实测后可在后台热调。实现方 `seedance_2_5_flash_volcengine_v1` 数字 ID 为 **112**，暂仅国内站。
 
 ## 720p 默认算力配置
 

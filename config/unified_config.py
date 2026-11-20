@@ -1563,6 +1563,10 @@ class DriverImplementation:
     SEEDANCE_2_0_MINI_TOPENROUTER_V1 = 'seedance_2_0_mini_topenrouter_v1'
     SEEDANCE_2_5_TOPENROUTER_V1 = 'seedance_2_5_topenrouter_v1'
 
+    # Seedance 2.5 Flash（2026-11-12 发布，火山引擎国内站；480P/720P 不支持 1080P，
+    # 单段最长 30s，单次最多 10 个参考；文生/图生视频 46 元/百万 tokens）
+    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 'seedance_2_5_flash_volcengine_v1'
+
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
     GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
@@ -1710,6 +1714,8 @@ class DriverImplementationId:
 
     # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
     SEEDANCE_2_5_VOLCENGINE_V1 = 68
+    # Seedance 2.5 Flash（2026-11-12 发布，火山引擎国内站）
+    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 112
     SEEDANCE_2_5_HUIMENGI_V1 = 69
 
     # Grok huimengi 网关
@@ -1854,6 +1860,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_TOPENROUTER_V1,
     'seedance_2_0_mini_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_MINI_TOPENROUTER_V1,
     'seedance_2_5_topenrouter_v1': DriverImplementationId.SEEDANCE_2_5_TOPENROUTER_V1,
+    'seedance_2_5_flash_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
@@ -2061,6 +2068,7 @@ class DriverKey:
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 'seedance_2_0_mini_image_to_video'
     SEEDANCE_2_5_IMAGE_TO_VIDEO = 'seedance_2_5_image_to_video'
+    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 'seedance_2_5_flash_image_to_video'
 
     # Grok 图生视频
     GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
@@ -2210,6 +2218,7 @@ class TaskTypeId:
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
+        'SEEDREAM_5_5_IMAGE': 'Seedream 5.5 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
         'QWEN_2_1_IMAGE': 'qwenimage2.1',
@@ -2233,6 +2242,7 @@ class TaskTypeId:
         'SEEDANCE_2_0_IMAGE_TO_VIDEO': 'Seedance 2.0 图生视频',
         'SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO': 'Seedance 2.0 Mini 图生视频',
         'SEEDANCE_2_5_IMAGE_TO_VIDEO': 'Seedance 2.5 图生视频',
+        'SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO': 'Seedance 2.5 Flash 图生视频',
         'GROK_IMAGE_TO_VIDEO': 'Grok 图生视频',
         'HAPPY_HORSE_IMAGE_TO_VIDEO': 'Happy Horse 图生视频',
         'HAPPY_HORSE_REFERENCE_TO_VIDEO': 'Happy Horse 参考生视频',
@@ -2292,6 +2302,8 @@ class TaskTypeId:
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
     SEEDANCE_2_5_IMAGE_TO_VIDEO = 36
+    SEEDREAM_5_5_IMAGE = 55
+    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 56
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
@@ -2533,6 +2545,32 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=15,
+        supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDREAM_5_5_IMAGE,
+        key='seedream-5.5',
+        short_key='seedream-5.5',
+        # 2026-11-09 发布：doubao-seedream-5-5-261028，支持文生图/单图编辑/
+        # 多图融合/原生 RGBA 透明底/多轮精准编辑（官方约 0.28 元/张，
+        # 定价页暂未列出，第三方核对口径；算力 = ceil(0.28/0.04) = 7，
+        # 上线实测后可在后台热调）
+        name='Seedream 5.5',
+        model_name='Seedream 5.5',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
+        implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDREAM5_VOLCENGINE_V1,  # 暂仅国内站（海外快照未证实，实测后再挂）
+        ],
+        computing_power=7,
+        supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
+        supported_sizes=['2K', '3K', '4K'],
+        default_ratio='9:16',
+        default_size='2K',
+        sort_order=16,
         supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
@@ -3310,6 +3348,55 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
                     VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
                     VideoResolution.P720: 1.0,
                     VideoResolution.P1080: SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+        key='seedance_2_5_flash_image_to_video',
+        short_key='seedance_2_5_flash',
+        # 2026-11-12 发布：doubao-seedance-2-5-flash-261115，生成速度较 2.5 约 2 倍。
+        # 仅 480P/720P（不支持 1080P）；单段最长 30s；单次最多 10 个参考。
+        # 官方价 46 元/百万 tokens（文生/图生，不含视频输入），720P ≈ 0.99 元/秒
+        # （较 2.5 便宜约 34%）；算力 = ceil(秒 × 0.99 ÷ 0.04)（贴本口径，720P 基价），
+        # 480P 由 SEEDANCE_480P_PRICE_MULTIPLIER 倍率折算，上线实测后可后台热调
+        name='Seedance 2.5 Flash',
+        model_name='Seedance 2.5 Flash',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,  # 暂仅国内站
+        ],
+        supported_ratios=['9:16', '16:9'],
+        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        default_ratio='9:16',
+        default_duration=5,
+        computing_power={  # 720P 基价（元/秒 0.99 ÷ 0.04 = 24.75 算力/秒，ceil）
+            5: 124, 6: 149, 7: 174, 8: 198, 9: 223, 10: 248,
+            11: 273, 12: 297, 13: 322, 14: 347, 15: 372, 16: 396,
+            17: 421, 18: 446, 19: 471, 20: 495, 21: 520, 22: 545,
+            23: 570, 24: 594, 25: 619, 26: 644, 27: 669, 28: 693,
+            29: 718, 30: 743,
+        },
+        sort_order=42,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
+        supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
+        max_multi_ref_images=10,  # Flash 官方限制单次最多 10 个参考
+        supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                    # Flash 官方不支持 1080P，不提供该档位
                 },
                 default=1.0
             )

@@ -26,6 +26,10 @@ class Seedream5VolcengineOverseaV1Driver(Seedream5VolcengineV1Driver):
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_5_0_PRO: "seedream-5-0-pro-260628",
+        # 5.5 海外站快照未证实（惯例推测：无 doubao- 前缀 + 同版本号）；
+        # SEEDREAM_5_5_IMAGE 当前 implementations 仅挂国内实现，此条为
+        # 后续接入海外实现时的预置映射，404 时在此修正
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "seedream-5-5-261028",
     }
 
     def __init__(self):
