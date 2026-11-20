@@ -189,11 +189,12 @@ body.tt-resizing iframe {
 .tt-lane {
   display: flex;
   align-items: stretch;
-  height: 56px;
-  margin: 2px 0;
+  height: 64px;
+  margin: 3px 0;
+  border-bottom: 1px solid var(--border);
 }
 .tt-lane-audio {
-  height: 40px;
+  height: 46px;
 }
 .tt-lane-label {
   width: var(--tt-label-w);
@@ -209,6 +210,29 @@ body.tt-resizing iframe {
   position: sticky;
   left: 0;
   z-index: 3;
+  gap: 2px;
+}
+/* 轨道删除按钮：hover 轨道标签时出现（仅空轨可删，见 ttRemoveLane） */
+.tt-lane-del {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tt-lane-label:hover .tt-lane-del {
+  opacity: 1;
+}
+.tt-lane-del:hover {
+  background: var(--danger-bg, #fef2f2);
+  color: var(--danger);
 }
 .tt-lane-content {
   position: relative;
@@ -271,14 +295,15 @@ body.tt-resizing iframe {
 /* ---- 片段 ---- */
 .tt-clip {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
+  top: 5px;
+  bottom: 5px;
   background: #111827;
   border-radius: 6px;
   overflow: hidden;
   cursor: grab;
   z-index: 1;
   border: 2px solid transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 .tt-clip:active {
   cursor: grabbing;

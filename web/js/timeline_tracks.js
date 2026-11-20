@@ -252,7 +252,7 @@ function ttRenderGroup(type, contentW) {
     const clipsHtml = clips.map(c => ttRenderClip(c, type, px)).join('');
     html += `
       <div class="tt-lane tt-lane-${type}" data-track-type="${type}" data-track-index="${i}">
-        <div class="tt-lane-label">${labelName} ${i + 1}</div>
+        <div class="tt-lane-label">${labelName} ${i + 1}${count > 1 ? `<button class="tt-lane-del" data-lane-del="${type}" data-track="${i}" title="删除此空轨道" aria-label="删除${labelName}轨道${i + 1}">×</button>` : ''}</div>
         <div class="tt-lane-content" style="width:${contentW}px">${bandHtml}${clipsHtml}</div>
       </div>
     `;
@@ -611,6 +611,14 @@ function ttBindEvents() {
     });
   });
 
+  // 轨道标签上的删除按钮（仅空轨可删，见 ttRemoveLane）
+  inner.querySelectorAll('.tt-lane-del').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      ttRemoveLane(btn.dataset.laneDel, Number(btn.dataset.track));
+    });
+  });
+
   // "添加轨道"存根：点击直接加一轨
   inner.querySelectorAll('.tt-add-stub').forEach(stubEl => {
     stubEl.addEventListener('click', (e) => {
@@ -690,6 +698,10 @@ function ttStartMove(e, clipEl, clip) {
   const startX = e.clientX, startY = e.clientY;
   const grabOffsetSec = Math.max(0, (e.clientX - innerRect.left - TT_LABEL_W) / px - clip.start);
 
+  // 按下即选中（剪映同款）：不等松手，误点邻轨也能立刻看到选中的是谁。
+  // 选择只在这里处理一次；onUp 的纯点击分支不再重复处理（Ctrl toggle 会抵消）。
+  ttHandleSelectionClick(type, clip.id, e.ctrlKey || e.metaKey);
+
   let dragging = false;
   let ghost = null;
   let targetInfo = null;
@@ -733,8 +745,7 @@ function ttStartMove(e, clipEl, clip) {
     clearLaneHighlight();
     ttHideSnapIndicator();
     if (!dragging) {
-      // 纯点击：处理选择（Ctrl 多选）
-      ttHandleSelectionClick(type, clip.id, e.ctrlKey || e.metaKey);
+      // 纯点击：选择已在 pointerdown 处理，这里无需动作
       return;
     }
     clipEl.classList.remove('dragging');
@@ -763,6 +774,25 @@ function ttStartMove(e, clipEl, clip) {
 
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp, { once: true });
+}
+
+// 删除轨道（仅允许删除空轨；更高轨号片段下移补位保持紧凑）
+function ttRemoveLane(type, trackIndex) {
+  const countKey = type === 'video' ? 'videoTrackCount' : 'audioTrackCount';
+  const arr = type === 'video' ? state.timeline.clips : state.timeline.audioClips;
+  const onLane = arr.filter(c => (c.track || 0) === trackIndex);
+  if (onLane.length > 0) {
+    showToast(`「${type === 'video' ? '视频' : '音频'} ${trackIndex + 1}」轨道上还有 ${onLane.length} 个片段，请先移走或删除`, 'warning');
+    return;
+  }
+  ttPauseIfPlaying();
+  arr.forEach(c => {
+    if ((c.track || 0) > trackIndex) c.track -= 1;
+  });
+  state.timeline[countKey] = Math.max(1, state.timeline[countKey] - 1);
+  renderTimeline();
+  safeAutoSave();
+  showToast(`已删除空的${type === 'video' ? '视频' : '音频'}轨道`, 'success');
 }
 
 // 拖拽落位后，按落点时间把片段划入覆盖该位置的分镜柱子（pillarId + 柱内成员同步）。
