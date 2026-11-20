@@ -103,6 +103,7 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 - **注册时间**：列表默认只显示注册日期，鼠标移动到日期上可查看完整时间
 - **操作按钮**：智剧通Token按钮在列表中以窄按钮 `Token` 显示，鼠标移动到按钮上可查看完整开启/关闭状态
 - **角色配置**：管理员/普通用户的角色切换入口已移入用户详情弹窗，列表中仅展示当前角色
+- **分组列**：展示用户当前所属分组（未分组显示灰色「未分组」徽标）
 
 #### 2.2 用户操作
 
@@ -115,6 +116,7 @@ UPDATE users SET role = 'admin' WHERE phone = '你的手机号';
 | 开佣金/关佣金 | 开启或关闭该用户的渠道现金佣金（非社区版）。默认用户邀请链接只发算力；开启后其邀请的充值才会产生佣金 |
 | 启用/智剧通Token | 开启或关闭用户的智剧通Token功能（非社区版） |
 | 调整有效期 | 调整用户智剧通Token的过期时间（非社区版，需Token已启用） |
+| 设组 | 把用户归入某个分组或移出分组（每个用户最多属于一个分组），详见「用户分组」章节 |
 | 禁用/启用 | 切换用户状态 |
 | 角色切换 | 在用户详情弹窗中将普通用户提升为管理员，或将管理员调整为普通用户 |
 
@@ -339,6 +341,29 @@ POST /api/admin/models/{id}/billing/reset-defaults?vendor_id=可选
 - **未读角标**：侧边栏菜单显示未读数量（超过99显示"99+"）
 - **自动轮询**：每30秒自动轮询新通知
 
+### 9. 用户分组
+
+管理员创建分组并把用户归入分组（**单组制**：每个用户最多属于一个分组）。分组仅用于后台管理与报表统计，不影响用户登录与权限。
+
+- **新建/编辑分组**：名称全局唯一（≤100字符），可填备注（≤500字符）
+- **成员查看**：点击「成员」按钮分页查看组内用户
+- **删除分组**：组内用户自动回到未分组（组内无用户也可直接删除）
+- **设组入口**：用户管理页操作列「设组」按钮，下拉选择分组或「未分组」
+
+数据表：`user_group`（model/user_group.py），`users.group_id` 指向所属分组（NULL=未分组）。迁移脚本 `no_167_20261119_add_user_group`。
+
+### 10. 报表中心
+
+#### 10.1 月度分组算力消耗报表
+
+- **口径**：统计 `computing_power_log` 中 `behavior='deduct'`（消耗）的算力总和，与仪表盘「每日统计」口径一致
+- **月份范围**：`YYYY-MM` 起止月份，默认最近 6 个月（含当月），最大跨度 24 个月
+- **汇总**：按月汇总各分组消耗总和，未分组用户计入「未分组」桶（虚拟分组 id=0）
+- **图表**：ECharts 堆叠柱状图（x=月份，series=分组，未分组固定灰色），点击柱体可直接下钻
+- **下钻**：点击汇总表行或图表柱体，弹窗查看该月该分组内每个用户的消耗明细（备注优先展示，零消耗用户也列出）
+- **导出**：汇总表与明细表均支持导出 CSV（带 BOM，Excel 直接打开）
+- **分组口径说明**：按用户的**当前分组**归集，不回溯分组变动历史（用户换组后，历史消耗按换组后的归属展示）
+
 ## API 接口
 
 所有管理接口需要在请求头中携带 `Authorization: Bearer <token>`，且用户角色必须为 `admin`。
@@ -428,6 +453,68 @@ GET /api/admin/dashboard/daily-power-stats?days=7&start_date=2026-10-10&end_date
 
 `daily[].users` 已按当日消耗降序排列；`nickname` 为空时后端回退为 `用户{user_id}`；`display_name` 为展示名——有管理员备注（`users.remark`）时优先返回备注，否则回退昵称。前端据此渲染每日消耗堆积柱状图（Top10 用户 + 其他用户）与用户消耗汇总表格。
 
+### 月度分组算力报表（汇总）
+
+```
+GET /api/admin/reports/monthly-group-power?start_month=2026-06&end_month=2026-11
+```
+
+参数：
+- `start_month`：可选，起始月份（含），格式 `YYYY-MM`。未传时默认取最近 6 个月（含当月）。
+- `end_month`：可选，结束月份（含），格式 `YYYY-MM`。
+- 跨度最大 24 个月，超出返回 400。
+
+按月+分组聚合 `computing_power_log` 中 `behavior='deduct'` 的消耗（口径与每日统计一致）。未分组用户计入 `group_id=0` 的"未分组"虚拟桶：
+
+```json
+{
+    "code": 0,
+    "data": {
+        "start_month": "2026-06",
+        "end_month": "2026-11",
+        "months": [
+            {
+                "month": "2026-11",
+                "total_power": 1200,
+                "groups": [
+                    {"group_id": 3, "group_name": "设计组", "total_power": 800, "record_count": 12, "user_count": 3},
+                    {"group_id": 0, "group_name": "未分组", "total_power": 400, "record_count": 6, "user_count": 2}
+                ]
+            }
+        ]
+    }
+}
+```
+
+`user_count` 为该月该组内有消耗记录的去重用户数；`groups` 按当月消耗降序。统计按用户**当前分组**归集，不回溯分组变动历史。
+
+### 月度分组算力报表（下钻明细）
+
+```
+GET /api/admin/reports/monthly-group-power/detail?month=2026-11&group_id=3
+```
+
+参数：
+- `month`：必填，`YYYY-MM`。
+- `group_id`：分组 id；`0` 表示"未分组"桶。默认 0。
+
+组内零消耗用户也返回（`power=0`）：
+
+```json
+{
+    "code": 0,
+    "data": {
+        "month": "2026-11",
+        "group_id": 3,
+        "group_name": "设计组",
+        "total_power": 800,
+        "users": [
+            {"user_id": 5, "nickname": "张三", "remark": "设计部", "display_name": "设计部", "power": 500, "record_count": 8}
+        ]
+    }
+}
+```
+
 ### 队列积压
 
 ```
@@ -460,6 +547,57 @@ GET /api/admin/dashboard/queues
 ```
 
 `overall` / `level` 取值：`ok` / `warn` / `danger` / `unknown`。`unknown` 表示该表查询失败（例如尚未执行迁移）。前端用 `id` / `metrics[].key` / `hint` 走 i18n，不直接展示后端中文。
+
+### 用户分组管理
+
+#### 分组列表
+
+```
+GET /api/admin/user-groups
+```
+
+返回全部分组（含各组当前成员数 `member_count`），按创建时间正序。
+
+#### 创建分组
+
+```
+POST /api/admin/user-groups
+{"name": "设计组", "remark": "可选备注"}
+```
+
+名称必填、全局唯一（≤100字符），重名返回 400「分组名称已存在」。
+
+#### 更新分组
+
+```
+PUT /api/admin/user-groups/{group_id}
+{"name": "新名称", "remark": "新备注"}
+```
+
+#### 删除分组
+
+```
+DELETE /api/admin/user-groups/{group_id}
+```
+
+删除时组内用户自动回到未分组（`users.group_id` 置 NULL），无需先清空成员。
+
+#### 分组成员
+
+```
+GET /api/admin/user-groups/{group_id}/members?page=1&page_size=20
+```
+
+分页返回组内用户（`page_size` 最大 100），`display_name` 备注优先。
+
+#### 设置用户分组
+
+```
+PUT /api/admin/users/{user_id}/group
+{"group_id": 3}
+```
+
+`group_id` 传 `null` 表示移出分组（回到未分组）。单组制：设组即覆盖原分组归属。
 
 ### 用户列表
 

@@ -10,6 +10,7 @@ from .runninghub_slots import RunningHubSlotsModel, RunningHubSlot
 from .database import get_db_connection, execute_query, execute_update, execute_insert, transaction, execute_insert_in_transaction, execute_update_in_transaction
 from .users import UsersModel, User
 from .user_tokens import UserTokensModel, UserToken
+from .user_group import UserGroupModel, UserGroup
 from .user_api_tokens import UserApiTokensModel, UserApiToken
 from .computing_power import ComputingPowerModel, ComputingPower
 from .computing_power_log import ComputingPowerLogModel, ComputingPowerLog
@@ -69,6 +70,8 @@ __all__ = [
     'execute_update_in_transaction',
     'UsersModel',
     'User',
+    'UserGroupModel',
+    'UserGroup',
     'UserTokensModel',
     'UserToken',
     'UserApiTokensModel',

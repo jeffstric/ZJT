@@ -3926,6 +3926,22 @@ ARTICLE_FETCH_XHS_PROVIDER = ''
 NICKNAME_MAX_LEN = 30
 # 管理员备注长度上限（DB 列 VARCHAR(500)）
 REMARK_MAX_LEN = 500
+
+# ============ 用户分组（model/user_group.py、api/admin.py） ============
+# 分组名称长度上限（DB 列 VARCHAR(100)）
+USER_GROUP_NAME_MAX_LEN = 100
+# 分组备注长度上限（DB 列 VARCHAR(500)）
+USER_GROUP_REMARK_MAX_LEN = 500
+# 报表"未分组"桶的虚拟分组 id（users.group_id IS NULL 的用户归入此桶）
+REPORT_UNGROUPED_GROUP_ID = 0
+
+# ============ 管理端报表（api/admin.py /reports/*） ============
+# 月度分组算力报表默认查询月数
+REPORT_MONTHLY_DEFAULT_MONTHS = 6
+# 月度分组算力报表最大查询月数
+REPORT_MONTHLY_MAX_MONTHS = 24
+# 分组成员分页每页上限
+USER_GROUP_MEMBERS_PAGE_SIZE_MAX = 100
 # 默认昵称（随机趣味名，如"机智的熊猫"= 形容词 + 动物，不带数字）去重尝试次数
 NICKNAME_GENERATE_MAX_ATTEMPTS = 10
 
