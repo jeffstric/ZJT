@@ -847,7 +847,7 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
     - 纯音频输入（无图无视频，仅参考音频）
     - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
     - 参考音频总时长 ≤30s（2.0 系列为 ≤15s）
-    - 视频时长 [4, 30]s
+    - 视频时长 [2, 30]s（2026-11-20 官方放开 2~4s 短时长）
     支持分辨率 480P / 720P / 1080P（不支持 4K）。
     """
 
@@ -871,6 +871,7 @@ class Seedance25FlashVolcengineV1Driver(Seedance25VolcengineV1Driver):
     - 生成速度约 2 倍，官方价 46 元/百万 tokens（文生/图生，不含视频输入）
     - 仅 480P / 720P（不支持 1080P，配置层不含该档位）
     - 单次最多 10 个参考（配置层 max_multi_ref_images=10）
+    - 视频时长 [2, 30]s（2~4s 短时长随 2.5 系列一并开放）
     """
 
     def __init__(self):

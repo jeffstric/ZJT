@@ -3331,7 +3331,8 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
-        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        # 2026-11-20：官方放开 2~4s 短时长，与 5~30s 一并开放
+        supported_durations=[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
         default_ratio='9:16',
         default_duration=5,
         sort_order=41,
@@ -3373,10 +3374,12 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,  # 暂仅国内站
         ],
         supported_ratios=['9:16', '16:9'],
-        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        # 2026-11-20：官方放开 2~4s 短时长，与 5~30s 一并开放
+        supported_durations=[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
         default_ratio='9:16',
         default_duration=5,
         computing_power={  # 720P 基价（元/秒 0.99 ÷ 0.04 = 24.75 算力/秒，ceil）
+            2: 50, 3: 75, 4: 99,
             5: 124, 6: 149, 7: 174, 8: 198, 9: 223, 10: 248,
             11: 273, 12: 297, 13: 322, 14: 347, 15: 372, 16: 396,
             17: 421, 18: 446, 19: 471, 20: 495, 21: 520, 22: 545,
