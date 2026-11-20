@@ -13126,10 +13126,15 @@ class ExportTimelineVideoRequest(BaseModel):
     request_origin: Optional[str] = None
 
 
-def _timeline_video_total_duration(video_clips: List[dict]) -> float:
-    """按 timeline_start + 裁剪时长计算成片总时长（后端权威，不信任前端传值）。"""
+def _timeline_video_total_duration(video_clips: List[dict], audio_clips: List[dict] = None) -> float:
+    """按 timeline_start + 裁剪时长计算成片总时长（后端权威，不信任前端传值）。
+
+    音频片段也计入：音频超出视频尾时成片以黑场+声音延续到音频尾（与剪映
+    导出行为一致，兑现时间轴"所见即所得"），此前仅按视频计算会把音频尾部
+    静默截断。
+    """
     total = 0.0
-    for clip in video_clips:
+    for clip in list(video_clips or []) + list(audio_clips or []):
         ts = float(clip.get('timeline_start') or 0)
         ss = max(0.0, float(clip.get('startTime') or 0))
         se = float(clip.get('endTime') or clip.get('duration') or 0)
@@ -13163,7 +13168,7 @@ async def export_timeline_video(
                 status_code=429,
                 content={'success': False, 'error': '已有导出任务进行中，请等待完成后再导出'}
             )
-        total_duration = _timeline_video_total_duration(payload.video_clips)
+        total_duration = _timeline_video_total_duration(payload.video_clips, payload.audio_clips)
         if total_duration <= 0.05:
             return JSONResponse(status_code=400, content={'success': False, 'error': '片段时长无效，无法导出'})
 

@@ -337,7 +337,10 @@ def render_timeline_video(
     if len(video_segments) + len(audio_segments) > consts.MAX_CLIPS:
         raise RuntimeError(f"片段总数超过上限({consts.MAX_CLIPS})，请精简时间轴后导出")
 
-    total = round(max(seg['end'] for seg in video_segments) + 0.05, 3)
+    # 成片总时长：视频与音频片段都计入——音频超出视频尾时画面黑场+声音延续
+    # 到音频尾（与剪映导出一致），否则音频尾部会被 atrim=end 静默截断
+    all_ends = [seg['end'] for seg in video_segments] + [seg['end'] for seg in audio_segments]
+    total = round(max(all_ends) + 0.05, 3)
 
     os.makedirs(work_dir, exist_ok=True)
     seg_dir = os.path.join(work_dir, "segments")
