@@ -20,11 +20,14 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
 
 | Task ID | 模型名称（国内） | 模型名称（海外） | 算力 | 支持尺寸 | 状态 |
 |---------|-----------------|-----------------|:----:|---------|------|
-| 16 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 6 | 2K, 3K | **停用**（hidden） |
-| 18 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 8 | 2K, 4K | **停用**（hidden） |
+| 16 | doubao-seedream-5-0-260128（已下线） | seedream-5-0-260128 | 6 | 2K, 3K | **停用**（hidden） |
+| 18 | doubao-seedream-4-5-251128（已下线） | seedream-4-5-251128 | 8 | 2K, 4K | **停用**（hidden） |
 | 33 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K | 在售 |
 
 > 海外版模型名不带 `doubao-` 前缀（海外网关惯例）。
+>
+> 停用任务（16/18）的历史重试/显式 task_id 调用经驱动 `MODEL_MAPPING`
+> 兼容映射到在售的 `doubao-seedream-5-0-pro-260628`（见下文迁移说明）。
 
 ## 2026-11-20 退役模型迁移
 
