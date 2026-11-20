@@ -214,6 +214,6 @@ GIF 2 帧 21 / 4 帧 48 / 6 帧 74 / 9 帧 105 算力（GIF 帧格被驱动收�
 - 通用站点驱动: `task/visual_drivers/gpt_image_common_v1_driver.py`（文件末尾 2.6 站点类）
 - 工厂注册: `task/visual_drivers/driver_factory.py`
 - 算力上下文: `utils/computing_power.py`（`build_image_task_billing_context`）
-- 算力种子迁移: `alembic/versions/no_167_20261119_add_gpt_image_2_6_power.py`
-- 算力基准同步迁移（2→7）: `alembic/versions/no_168_20261120_update_gpt_image_2_6_power_base.py`
+- 算力种子迁移: `alembic/versions/no_169_20261119_add_gpt_image_2_6_power.py`
+- 算力基准同步迁移（2→7，仅站点）: `alembic/versions/no_170_20261120_update_gpt_image_2_6_power_base.py`
 - 单元测试: `tests/drivers/test_gpt_image_2_6_drivers.py`、`tests/config/test_gpt_image_2_6_power.py`

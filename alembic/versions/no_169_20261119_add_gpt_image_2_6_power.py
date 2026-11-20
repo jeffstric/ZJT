@@ -7,7 +7,7 @@ implementation_power_config 种子数据：
 固定 2 点算力，与管理后台 implementation_power_config 页面对应，与 GPT Image 2.5 定价保持一致
 
 Revision ID: 20261119_add_gpt_image_2_6_power
-Revises: 20261111_add_aigc_popup_notice
+Revises: 20261119_add_user_group
 Create Date: 2026-11-19
 """
 from typing import Sequence, Union
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # revision identifiers, used by Alembic.
 # ⚠️ revision 长度必须 <= 32 字符 (alembic_version.version_num 为 varchar(32))
 revision: str = '20261119_add_gpt_image_2_6_power'
-down_revision: Union[str, None] = '20261111_add_aigc_popup_notice'
+down_revision: Union[str, None] = '20261119_add_user_group'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
