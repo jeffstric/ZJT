@@ -1671,6 +1671,10 @@
       e.stopPropagation();
       openTrashModal();
     });
+    document.getElementById('timelineDelRefBtn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (typeof ttDeleteSelectedClips === 'function') ttDeleteSelectedClips();
+    });
     document.getElementById('trashEntryBtn').addEventListener('click', (e) => {
       e.stopPropagation();
       openTrashModal();

@@ -994,7 +994,10 @@ function ttSplitSelectedAtPlayhead() {
 // 多选删除（仅删引用，不进垃圾桶——垃圾桶只存画布删除的节点；误删走撤销）
 function ttDeleteSelectedClips() {
   const sel = state.timeline.selectedClipIds || [];
-  if (!sel.length) return;
+  if (!sel.length) {
+    showToast('请先选中要删除的片段（点击片段选中，Ctrl 多选）', 'info');
+    return;
+  }
   ttPauseIfPlaying();
   const videoClips = sel.filter(s => s.type === 'video')
     .map(s => state.timeline.clips.find(c => c.id === s.id)).filter(Boolean);
