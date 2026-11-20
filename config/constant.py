@@ -875,6 +875,13 @@ USER_TOKEN_RENEW_THRESHOLD_DAYS = 2
 AUTH_COOKIE_NAME = 'auth_token'
 AUTH_COOKIE_MAX_AGE_SECONDS = USER_TOKEN_EXPIRE_DAYS * 86400
 
+# 同机多端口部署的 cookie 隔离（见 utils/resource_access.get_auth_cookie_name）：
+# 浏览器 cookie 作用域只按 host 不按端口，localhost:13003/13004 会互相覆盖同名
+# auth_token。带显式非默认端口访问时 cookie 名追加该后缀（auth_token_13003），
+# 各环境互不可见；无端口/默认端口（80/443 反代部署）保持基础名，存量会话不失效。
+AUTH_COOKIE_PORT_SUFFIX_TEMPLATE = '_{port}'
+AUTH_COOKIE_DEFAULT_PORTS = (80, 443)
+
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
 
@@ -3944,6 +3951,22 @@ ARTICLE_FETCH_XHS_PROVIDER = ''
 NICKNAME_MAX_LEN = 30
 # 管理员备注长度上限（DB 列 VARCHAR(500)）
 REMARK_MAX_LEN = 500
+
+# ============ 用户分组（model/user_group.py、api/admin.py） ============
+# 分组名称长度上限（DB 列 VARCHAR(100)）
+USER_GROUP_NAME_MAX_LEN = 100
+# 分组备注长度上限（DB 列 VARCHAR(500)）
+USER_GROUP_REMARK_MAX_LEN = 500
+# 报表"未分组"桶的虚拟分组 id（users.group_id IS NULL 的用户归入此桶）
+REPORT_UNGROUPED_GROUP_ID = 0
+
+# ============ 管理端报表（api/admin.py /reports/*） ============
+# 月度分组算力报表默认查询月数
+REPORT_MONTHLY_DEFAULT_MONTHS = 6
+# 月度分组算力报表最大查询月数
+REPORT_MONTHLY_MAX_MONTHS = 24
+# 分组成员分页每页上限
+USER_GROUP_MEMBERS_PAGE_SIZE_MAX = 100
 # 默认昵称（随机趣味名，如"机智的熊猫"= 形容词 + 动物，不带数字）去重尝试次数
 NICKNAME_GENERATE_MAX_ATTEMPTS = 10
 

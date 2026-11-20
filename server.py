@@ -58,7 +58,6 @@ from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
     TaskTypeId,
-    AUTH_COOKIE_NAME,
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
@@ -163,6 +162,7 @@ from utils.resource_access import (
     resolve_authenticated_user_id,
     enforce_x_user_id_consistency,
     decide_auth_cookie_renewal,
+    get_auth_cookie_name,
 )
 from utils.media_upload import (
     UploadValidationError,
@@ -805,9 +805,9 @@ def _request_is_https(request: Request) -> bool:
 
 
 def set_auth_cookie(response: Response, token: str, request: Request) -> None:
-    """登录成功后下发 HttpOnly 认证 cookie"""
+    """登录成功后下发 HttpOnly 认证 cookie（名带访问端口后缀，多端口环境隔离）"""
     response.set_cookie(
-        key=AUTH_COOKIE_NAME,
+        key=get_auth_cookie_name(request),
         value=token,
         max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
         httponly=True,
@@ -834,7 +834,7 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     活跃用户被"假过期"踢到登录页）。
     """
     path = request.url.path
-    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    cookie_token = request.cookies.get(get_auth_cookie_name(request))
     bearer_token = None
     if path == "/api" or path.startswith("/api/"):
         bearer_token = extract_bearer_token(request.headers.get("authorization"))
@@ -4610,8 +4610,8 @@ async def logout(request: Request, logout_request: LogoutRequest):
                     'message': '登出成功'
                 }
             )
-            # 同步清除 HttpOnly 认证 cookie
-            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            # 同步清除 HttpOnly 认证 cookie（名带端口后缀，与 set_auth_cookie 一致）
+            response.delete_cookie(key=get_auth_cookie_name(request), path="/")
             return response
         else:
             response = JSONResponse(
@@ -4622,7 +4622,7 @@ async def logout(request: Request, logout_request: LogoutRequest):
                 }
             )
             # 即使后端登出失败也清掉本地 cookie，避免僵尸会话
-            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            response.delete_cookie(key=get_auth_cookie_name(request), path="/")
             return response
 
     except Exception as e:
