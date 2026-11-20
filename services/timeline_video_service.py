@@ -286,9 +286,11 @@ def _render_audio_track(
             continue
         cmd += ["-i", file_path]
         delay_ms = int(round(abs_start * 1000))
+        # aformat 让 swr 自动重采样+声道转换：mono 源（TTS 产物常见）复制到双声道，
+        # stereo 源保持——不能用 pan=stereo|c0=c0|c1=c1（mono 时 c1 无输入 → 右声道静音）
         parts.append(
             f"[{k}:a]atrim=start={src_off:.3f}:end={src_end:.3f},asetpts=PTS-STARTPTS,"
-            f"aresample={sr},pan=stereo|c0=c0|c1=c1,"
+            f"aformat=sample_rates={sr}:channel_layouts=stereo,"
             f"adelay={delay_ms}|{delay_ms},apad[a{k}]"
         )
         labels.append(f"[a{k}]")
