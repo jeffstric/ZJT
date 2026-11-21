@@ -2676,6 +2676,11 @@ class FilePathConstants:
     _PIC_TMP_SUBDIR = "files/tmp/pic"
     _SCRIPT_WRITER_USER_DATA_SUBDIR = "files/script_writer"  # 剧本创作系统用户数据根目录
 
+    # /files 静态挂载中禁止匿名访问的首段目录（安全审计 BUG-R2-S1-A2-H2）：
+    # script_writer/ 是各用户创作数据树，tmp/ 是运行期临时产物（TTS 参考音频、
+    # 图片缓存、剪译导出）；前端仅引用 /files 根下的品牌资源（logo/字体/条款等）。
+    FILES_STATIC_BLOCKED_FIRST_SEGMENTS = frozenset({"script_writer", "tmp"})
+
     @staticmethod
     def get_pic_tmp_dir(app_dir: str) -> str:
         """
@@ -2825,8 +2830,24 @@ class AssetLibraryConstants:
     GLOBAL_QUOTA_EXCEEDED_MSG = '资产库总容量已满，请联系管理员调整'
 
 
+class ProxyFetchSafetyConstants:
+    """服务端代理抓取（/api/download、/api/proxy-image 等 SSRF 收口）相关常量
+
+    安全审计 BUG-R2-S1-A5-H1：代理端点此前对任意 URL 直接 httpx 抓取回传，
+    构成全响应 SSRF/开放代理。以下常量配合 server.py 的
+    _assert_proxy_fetch_target / _safe_proxy_fetch 使用。
+    """
+    # 单次代理抓取响应体上限（防内存耗尽 DoS）
+    MAX_BYTES = 256 * 1024 * 1024
+    # 重定向跳数上限（每一跳都会重新做目标校验）
+    MAX_REDIRECTS = 5
+
+
 class MediaConstants:
     """媒体处理相关常量"""
+    # /api/media/validate-duration 单次请求允许的文件总数上限（安全审计 BUG-R2-S1-A2-H4：
+    # 匿名无上限 multipart 上传可打满内存/磁盘；配合 utils/media_upload.py 的分块大小上限）
+    VALIDATE_DURATION_MAX_FILES = 10
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')

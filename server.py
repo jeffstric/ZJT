@@ -20,6 +20,8 @@ import sys
 import tempfile
 import hashlib
 import re
+import socket
+import ipaddress
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,6 +93,7 @@ from config.constant import (
     GRID_IMAGE_DOWNLOAD_TIMEOUT,
     FilePathConstants,
     UploadPathConstants,
+    ProxyFetchSafetyConstants,
     JIANYING_RATIO_RESOLUTION,
     JIANYING_DEFAULT_RATIO,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
@@ -675,8 +678,9 @@ app.include_router(aigc_router)
 from api.agent_auth import router as agent_auth_router
 app.include_router(agent_auth_router)
 
-from api.test_ask_user import router as test_ask_user_router
-app.include_router(test_ask_user_router)
+# test_ask_user 调试路由已下线（安全审计 BUG-R2-S1-A9-H4：匿名即可驱动真实 LLM
+# 任务并冒名受害者会话流，详见 docs/security/openvuln_cvss8_fix_1121.md）。
+# 如需恢复诊断能力，必须补 @require_permission + 身份/会话属主断言 + 计量走 Authorization 头。
 
 # 注册管理员 API 路由
 app.include_router(admin_router)
@@ -1117,6 +1121,76 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
     return file_path
 
 
+def _reject_unfetchable_ip(ip) -> None:
+    """拒绝环回/私网/链路本地/保留/组播目标（含 IPv4-mapped IPv6 归一化）。"""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified
+            # CGNAT 共享地址段（100.64.0.0/10）：部分 Python 版本 is_private 不含此段，
+            # 但阿里云元数据 100.100.100.200 落在此段，必须显式拒绝
+            or ip in ipaddress.ip_network('100.64.0.0/10')):
+        raise HTTPException(status_code=400, detail="不允许代理内网/环回/保留地址")
+
+
+async def _assert_proxy_fetch_target(url: str) -> None:
+    """SSRF 收口：代理抓取前校验目标 scheme 与解析出的全部 IP。
+
+    防止 /api/download 与 /api/proxy-image 被当作内网/云元数据开放代理；
+    每一跳重定向都会重新经过本校验（见 _safe_proxy_fetch）。
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="仅支持 http/https 链接")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="URL 端口非法")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            parsed.hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise HTTPException(status_code=400, detail=f"目标主机无法解析: {e}")
+    for info in infos:
+        _reject_unfetchable_ip(ipaddress.ip_address(info[4][0]))
+
+
+async def _safe_proxy_fetch(url: str, *, timeout: float) -> httpx.Response:
+    """带 SSRF 校验的代理抓取：逐跳重定向重新校验目标，并限制响应体大小。
+
+    返回普通 httpx.Response（.headers/.content 语义与原 client.get 一致）。
+    注意：getaddrinfo 校验与 httpx 实际建连之间存在 TOCTOU（DNS rebinding），
+    彻底加固需固定解析出的 IP 建连（HTTPS 场景需自定义 transport/SNI）。
+    """
+    current = url
+    for _ in range(ProxyFetchSafetyConstants.MAX_REDIRECTS):
+        await _assert_proxy_fetch_target(current)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            async with client.stream("GET", current) as resp:
+                if resp.is_redirect and "location" in resp.headers:
+                    current = str(httpx.URL(current).join(resp.headers["location"]))
+                    continue
+                content_length = resp.headers.get("content-length") or ""
+                if content_length.isdigit() and int(content_length) > ProxyFetchSafetyConstants.MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="文件过大")
+                chunks = []
+                received = 0
+                async for chunk in resp.aiter_bytes():
+                    received += len(chunk)
+                    if received > ProxyFetchSafetyConstants.MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="文件过大")
+                    chunks.append(chunk)
+                final = httpx.Response(
+                    resp.status_code,
+                    headers=dict(resp.headers),
+                    content=b"".join(chunks),
+                    request=resp.request,
+                )
+                final.raise_for_status()
+                return final
+    raise HTTPException(status_code=508, detail="重定向次数过多")
+
+
 async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
     """
     把"本站域名的 /upload/... 媒体 URL"改写为 CDN 域名 URL，交给后续
@@ -1286,48 +1360,45 @@ async def download_image(
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
         # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
         # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
-        # follow_redirects：外链可能 301/302（如 http→https、本站 /upload/ 未注册
-        # CDN 映射时被 cdn_redirect_middleware 302），httpx 默认不跟随会直接报错。
-        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            
-            # Determine filename
-            if not filename:
-                # Extract filename from URL or generate one
-                if "filename=" in url:
-                    filename = url.split("filename=")[-1].split("&")[0]
-                else:
-                    # Try to get extension from URL
-                    url_path = url.split('?')[0]
-                    ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
-                    filename = f"generated_file_{int(time.time())}.{ext}"
-            
-            # Don't add extension if filename already has a valid one
-            valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
-            if not filename.lower().endswith(valid_extensions):
-                # Try to detect from content-type
-                content_type = response.headers.get('content-type', '')
-                if 'video' in content_type:
-                    filename += '.mp4'
-                elif 'image' in content_type:
-                    filename += '.png'
-            
-            # Get content type
-            content_type = response.headers.get('content-type', 'application/octet-stream')
-            
-            # Return content as streaming response
-            content_stream = BytesIO(response.content)
-            
-            return StreamingResponse(
-                content_stream,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": _content_disposition_attachment(filename),
-                    "Content-Type": content_type,
-                    "Cache-Control": "public, max-age=31536000, immutable"
-                }
-            )
+        # SSRF 收口：模式3 抓取走 _safe_proxy_fetch（目标校验 + 逐跳重定向校验 + 大小上限）。
+        response = await _safe_proxy_fetch(url, timeout=300.0)
+
+        # Determine filename
+        if not filename:
+            # Extract filename from URL or generate one
+            if "filename=" in url:
+                filename = url.split("filename=")[-1].split("&")[0]
+            else:
+                # Try to get extension from URL
+                url_path = url.split('?')[0]
+                ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
+                filename = f"generated_file_{int(time.time())}.{ext}"
+
+        # Don't add extension if filename already has a valid one
+        valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
+        if not filename.lower().endswith(valid_extensions):
+            # Try to detect from content-type
+            content_type = response.headers.get('content-type', '')
+            if 'video' in content_type:
+                filename += '.mp4'
+            elif 'image' in content_type:
+                filename += '.png'
+
+        # Get content type
+        content_type = response.headers.get('content-type', 'application/octet-stream')
+
+        # Return content as streaming response
+        content_stream = BytesIO(response.content)
+
+        return StreamingResponse(
+            content_stream,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": _content_disposition_attachment(filename),
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=31536000, immutable"
+            }
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Download failed: {str(e)}")
     except Exception as e:
@@ -1369,22 +1440,20 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
                 logger.warning(f"[proxy-image] CDN 签名URL生成失败，降级到代理: url={url[:100]}")
 
         # ========== 模式3: 其他远程 URL → 代理请求 ==========
-        # follow_redirects：外链/未注册 CDN 映射的本站路径可能 302，默认不跟随会报错
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        # SSRF 收口：同 /api/download，目标校验 + 逐跳重定向校验 + 大小上限。
+        response = await _safe_proxy_fetch(url, timeout=30.0)
 
-            content_type = response.headers.get('content-type', 'image/png')
-            content_stream = BytesIO(response.content)
+        content_type = response.headers.get('content-type', 'image/png')
+        content_stream = BytesIO(response.content)
 
-            return StreamingResponse(
-                content_stream,
-                media_type=content_type,
-                headers={
-                    "Content-Type": content_type,
-                    "Cache-Control": "public, max-age=3600"
-                }
-            )
+        return StreamingResponse(
+            content_stream,
+            media_type=content_type,
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Image proxy failed: {str(e)}")
     except Exception as e:
@@ -9549,7 +9618,29 @@ app.mount("/upload", StaticFiles(directory=upload_dir), name="uploads")
 files_dir = os.path.join(APP_DIR, "files")
 if not os.path.exists(files_dir):
     os.makedirs(files_dir, exist_ok=True)
-app.mount("/files", StaticFiles(directory=files_dir), name="files")
+
+
+class GuardedFilesStatic(StaticFiles):
+    """files/ 不只是静态资源树：还承载运行期用户数据。
+
+    files/script_writer/<user_id>/<world_id>/** 是各用户的剧本创作数据（世界设定、
+    分集剧本、角色卡、agent 会话历史），files/tmp/** 是运行期临时产物（TTS 参考
+    音频、图片缓存、剪映导出）。二者一律不得匿名可读：前端仅引用 /files 根下的
+    品牌资源（logo.svg、二维码、条款 txt、fonts/、audio/），不引用这两个子树。
+    （安全审计 BUG-R2-S1-A2-H2，拦截清单见 FilePathConstants.FILES_STATIC_BLOCKED_FIRST_SEGMENTS）
+    """
+
+    async def get_response(self, path: str, scope):
+        from starlette.exceptions import HTTPException
+        # 规整后按首段目录拦截（normpath 兼容 ./、../ 与 Windows 分隔符）
+        rel = os.path.normpath(path).replace("\\", "/").lstrip("/")
+        first = rel.split("/", 1)[0]
+        if first in FilePathConstants.FILES_STATIC_BLOCKED_FIRST_SEGMENTS:
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
+app.mount("/files", GuardedFilesStatic(directory=files_dir), name="files")
 
 # Serve frontend static files
 static_dir = os.path.join(APP_DIR, "web")
@@ -10692,7 +10783,14 @@ async def update_character(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        
+
+        # 属主校验：与 update_character_json / DELETE / reference-images 家族一致，仅创建者可改
+        existing = CharacterModel.get_by_id(character_id)
+        if not existing:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        if not owner_user_id_matches(existing.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此角色')
+
         if not name or not name.strip():
             return JSONResponse(
                 status_code=400,
@@ -11338,7 +11436,11 @@ async def update_location(
                     'data': None
                 }
             )
-        
+
+        # 属主校验：与 patch_location_json / DELETE / reference-images 家族一致，仅创建者可改
+        if not owner_user_id_matches(location.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此场景')
+
         # 准备更新数据
         update_data = {}
         
