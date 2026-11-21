@@ -28,15 +28,21 @@ config_util._config_cache["config_unit.yml"] = {
     "file_storage": {},
 }
 
-# Mock 外部依赖（必须在 import driver 之前）
-sys.modules['utils.sentry_util'] = MagicMock()
-sys.modules['utils.image_upload_utils'] = MagicMock()
+# Mock 外部依赖（在 import driver 之前；stub 随 with 块结束自动恢复，
+# driver 模块导入后已缓存，继续持有 stub 模块的属性引用）
+from tests.base.test_isolation import stub_modules  # noqa: E402
+
+with stub_modules({
+    'utils.sentry_util': MagicMock(),
+    'utils.image_upload_utils': MagicMock(),
+}):
+    from task.visual_drivers.seedance_volcengine_v1_driver import (  # noqa: E402
+        Seedance25FlashVolcengineV1Driver,
+    )
 
 
 def _create_flash_driver():
     """创建 Seedance25FlashVolcengineV1Driver 实例（mock 所有外部依赖）"""
-    from task.visual_drivers.seedance_volcengine_v1_driver import Seedance25FlashVolcengineV1Driver
-
     with patch('task.visual_drivers.seedance_volcengine_v1_driver.get_dynamic_config_value') as mock_config, \
          patch('task.visual_drivers.seedance_volcengine_v1_driver.get_config', return_value={}):
 
