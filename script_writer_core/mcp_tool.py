@@ -3201,6 +3201,18 @@ def update_script_json(user_id: str, world_id: str, auth_token: str, title: str,
         current_episode = existing_data.get('episode_number')
         target_episode = episode_number if episode_number is not None else current_episode
 
+        # episode_number 参与文件名构造，必须为正整数（与 create_script_json 一致）；
+        # current_episode 读取自既有文件 JSON，同样可能是被投毒的穿越字符串。
+        if target_episode is not None and (
+            isinstance(target_episode, bool)
+            or not isinstance(target_episode, int)
+            or target_episode < 1
+        ):
+            return {
+                'success': False,
+                'error': '集数(episode_number)必须为正整数'
+            }
+
         if target_episode is not None:
             filename = f"{target_episode}.json"
         else:
