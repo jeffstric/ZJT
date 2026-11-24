@@ -109,3 +109,18 @@ def test_prompt_requires_prop_marker_distinct_from_character_marker():
     assert "道具名称必须用〖〖道具名〗〗格式包裹" in parser_source
     assert "角色名称必须用【【角色名】】格式包裹" in parser_source
     assert "〖〖公文包〗〗【【德保罗】】" in parser_source
+
+
+def test_prompt_contains_hand_action_budget_rule():
+    """防「写错」层：分镜规则区必须含手部动作预算制（双手/另一只手互斥）规则。"""
+    parser_source = SCRIPT_PARSER_PATH.read_text(encoding="utf-8")
+
+    assert "手部动作预算制" in parser_source
+    assert "单人单镜最多两只手" in parser_source
+    # 已写双手后严禁再写"另一只手"的互斥规则与错误示例
+    assert "另一只手" in parser_source
+    assert "双手撑着伞，用另外一只手推开门" in parser_source
+    # 正确示例：单手改写与拆镜头两条出路
+    assert "左手撑着伞，用右手推开门" in parser_source
+    # few-shot 呼应：opening_frame_description 正确示例区带手部预算示例
+    assert "左手撑着伞站在仓库门口的雨中" in parser_source
