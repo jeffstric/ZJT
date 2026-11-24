@@ -49,24 +49,6 @@ _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 _LATIN_RE = re.compile(r"[A-Za-z]")
 _WHITESPACE_RE = re.compile(r"\s+")
 
-# 手部动作预算矛盾检测（2026-11-24 多手畸变防护，与 parser「手部动作预算制」规则呼应）：
-# 同一描述字段内「双手/两手」类占满两只手的标记与「另一只手」类凭空加手的标记共现
-# = 单人第三只手，生图模型忠实复现必出多手畸变。只做确定性标记共现检测，不做
-# 自然语言数手（不可靠，见移交文档边界说明）；按字段独立检查，避免跨字段跨角色误报。
-_LIMB_PROMPT_FIELDS = (
-    "opening_frame_description",
-    "description",
-    "action",
-    "scene_detail",
-)
-_BOTH_HANDS_RE = re.compile(r"双手|两手|两只手|双臂|两臂|两只手臂")
-_EXTRA_HAND_RE = re.compile(
-    r"另一只手|另外一只手|另一只手臂|另外一只手臂"
-    r"|第三只手|第三只手臂|第四只手"
-    r"|又用一?手|又伸出一?手|又抬起一?手"
-    r"|腾出.{0,4}?手"
-)
-
 
 @dataclass
 class QcIssue:
@@ -574,29 +556,6 @@ def run_rule_qc(
                         message="视频提示词（description/scene_detail/action）缺少完整台词，禁止仅用「呵斥/说着话」等概括",
                         evidence=text[:100],
                     ))
-
-        # 手部动作预算矛盾（多手畸变防护）：同一字段「双手占满」+「另一只手」共现
-        for fld in _LIMB_PROMPT_FIELDS:
-            field_text = str(shot.get(fld) or "")
-            if not field_text.strip():
-                continue
-            both_match = _BOTH_HANDS_RE.search(field_text)
-            extra_match = _EXTRA_HAND_RE.search(field_text)
-            if not (both_match and extra_match):
-                continue
-            ctx_start = max(0, extra_match.start() - 20)
-            issues.append(QcIssue(
-                code="HAND_BUDGET_CONTRADICTION",
-                severity="error",
-                shot_ref=ref,
-                field=fld,
-                message=(
-                    "手部动作预算矛盾：已写「双手/两手」占满两只手，同字段又出现"
-                    "「另一只手/又用一手/腾出手」类表述，单人无法同时完成，生图必出"
-                    "多手畸变；请改为左右手各司一事的单手表述，或把两个动作拆进不同镜头"
-                ),
-                evidence=field_text[ctx_start:extra_match.end() + 20],
-            ))
 
     aggregated_short_dialogue = " ".join(short_dialogue_texts).strip()
     if aggregated_short_dialogue:
