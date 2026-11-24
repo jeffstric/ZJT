@@ -464,6 +464,15 @@ class FileManager:
         if not name:
             return None
 
+        # 候选 1/3 直接用原始 name 拼接文件名：含路径分隔符 / 盘符 / '..' 组件的
+        # name 会把解析结果带出 characters/ 目录。character.name 来自 DB
+        # （POST/PUT /api/characters 仅校验非空），delete_staging_asset 与
+        # staging_file_exists 都以本函数为唯一文件出口，必须在此拒绝穿越。
+        _np = Path(name)
+        if '/' in name or '\\' in name or _np.is_absolute() or _np.drive or '..' in _np.parts:
+            logger.warning(f"resolve_character_file_path: rejected suspicious character name {name!r}")
+            return None
+
         # 与 mcp_tool._sanitize_filename 对齐的轻量清理（避免循环导入）
         safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
         safe_name = re.sub(r'\s+', '_', safe_name).strip('._')
@@ -714,6 +723,15 @@ class FileManager:
         try:
             content_data = json.loads(content)
             episode_number = content_data.get('episode_number')
+            # episode_number 参与输出文件名构造（filename = f"{episode_number}.json"），
+            # 必须与 agent 路径 create_script_json（mcp_tool.py）保持同一不变量：正整数。
+            # 拒绝字符串等任意类型，防止 "../" 路径穿越把文件写出 scripts 目录。
+            if episode_number is not None and (
+                isinstance(episode_number, bool)
+                or not isinstance(episode_number, int)
+                or episode_number < 1
+            ):
+                raise EntityNameValidationError('集数(episode_number)必须为正整数')
             title = content_data.get('title', script_name)
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass

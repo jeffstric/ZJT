@@ -87,30 +87,7 @@ def test_format_json_non_cdn_falls_back_to_proxy_stream(client, monkeypatch):
     """非 CDN 外链 + format=json：无法签名时降级代理流式下载（200 + 文件流），
     不再 400。前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。"""
     _patch_cdn(monkeypatch, is_cdn=False)
-
-    class _FakeResp:
-        headers = {"content-type": "image/png"}
-        content = b"png-bytes"
-
-        def raise_for_status(self):
-            pass
-
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def get(self, url):
-            return _FakeResp()
-
-    import httpx
-
-    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    _patch_safe_proxy_fetch(monkeypatch, content=b"png-bytes", content_type="image/png")
     resp = client.get(
         "/api/download",
         params={
@@ -123,3 +100,51 @@ def test_format_json_non_cdn_falls_back_to_proxy_stream(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("image/png")
     assert resp.content == b"png-bytes"
+
+
+def _patch_safe_proxy_fetch(monkeypatch, content=b"mp3-bytes", content_type="audio/mpeg"):
+    """模拟 _safe_proxy_fetch 的 httpx.stream 调用形态并跳过 DNS 目标校验。
+
+    SSRF 目标校验（_assert_proxy_fetch_target）由
+    tests/api/test_openvuln_cvss8_infra_guards.py 独立覆盖，本文件只关心
+    代理回退行为本身。
+    """
+    import httpx
+
+    async def _noop_assert(url):
+        return None
+
+    monkeypatch.setattr("server._assert_proxy_fetch_target", _noop_assert)
+
+    fake_request = httpx.Request("GET", "https://example.com/fake")
+
+    class _FakeStreamResp:
+        is_redirect = False
+        status_code = 200
+        headers = {"content-type": content_type}
+        request = fake_request
+
+        async def aiter_bytes(self):
+            yield content
+
+    class _FakeStreamCtx:
+        async def __aenter__(self):
+            return _FakeStreamResp()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        def stream(self, method, url):
+            return _FakeStreamCtx()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
