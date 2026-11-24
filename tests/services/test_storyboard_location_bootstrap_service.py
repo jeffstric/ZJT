@@ -915,3 +915,54 @@ class TestSubsceneGridFixes:
         assert loc_updates[1][0] == 101
         # 按名更新 JSON 也 2 次
         assert fake_mcp.update_location_json.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# 场景图纯环境守卫：组装 prompt 必须幂等追加无人约束（2026-11-24）
+# ---------------------------------------------------------------------------
+
+class TestSceneNoPeopleGuardInComposedPrompts:
+    def test_root_location_prompt_ends_with_no_people_guard(self):
+        prompt = StoryboardLocationBootstrapService._compose_root_location_prompt({
+            "name": "仓库大门",
+            "type": "室外",
+            "description": "带守卫岗亭的厂区大门，铁栅栏锈蚀。",
+            "atmosphere": "昏暗压抑",
+            "environment_sound": "风声",
+        })
+
+        assert prompt.startswith("完整环境设计参考图")
+        assert "场景描述：带守卫岗亭的厂区大门" in prompt
+        assert "纯环境空镜" in prompt
+        assert "不出现任何人物" in prompt
+
+    def test_root_location_prompt_guard_is_idempotent(self):
+        from services.storyboard_reference_prompt_service import (
+            SCENE_NO_PEOPLE_GUARD_TEXT,
+            append_scene_no_people_guard,
+        )
+
+        prompt = StoryboardLocationBootstrapService._compose_root_location_prompt({
+            "name": "客厅",
+            "description": "现代客厅",
+        })
+
+        # 组装函数产出即已带守卫；对同一文本再追加不产生第二段守卫
+        assert append_scene_no_people_guard(prompt) == prompt
+        assert prompt.count(SCENE_NO_PEOPLE_GUARD_TEXT) == 1
+
+    def test_subscene_prompt_ends_with_no_people_guard(self):
+        prompt = StoryboardLocationBootstrapService._compose_subscene_prompt(
+            {
+                "name": "大门内侧",
+                "description": "门卫室内部，值班桌与监控屏。",
+                "atmosphere": "冷白灯光",
+            },
+            parent_name="厂区大门",
+            parent_desc="带守卫岗亭的厂区大门",
+        )
+
+        assert "父场景：厂区大门" in prompt
+        assert "子场景描述：门卫室内部" in prompt
+        assert "纯环境空镜" in prompt
+        assert "不出现任何人物" in prompt

@@ -1452,9 +1452,9 @@ JSON_FORMAT_EXAMPLE = """{
       "parent_id": null,
       "location_db_id": 123,
       "type": "室内/室外",
-      "description": "场景详细描述（必须非常详细，包括环境布局、物品摆设、光线、色调等）",
-      "atmosphere": "氛围",
-      "environment_sound": "环境音描述（如'街道车辆声、行人脚步声'）",
+      "description": "场景详细描述（必须非常详细，包括环境布局、物品摆设、光线、色调等；**只写无人环境**——严禁写任何人物、角色活动或人形身影，场景参考图必须是无人的纯环境空镜，人物与剧情活动属于角色和分镜字段）",
+      "atmosphere": "氛围（只写光线、色调与情绪，不写任何人物）",
+      "environment_sound": "环境音描述（如'街道车辆声、雨滴声'）",
       "background_music": "背景音乐描述（如'轻快的爵士乐'）",
       "level": 0
     },
@@ -1464,8 +1464,8 @@ JSON_FORMAT_EXAMPLE = """{
       "parent_id": "loc_001",
       "location_db_id": null,
       "type": "室内/室外",
-      "description": "子场景详细描述",
-      "atmosphere": "氛围",
+      "description": "子场景详细描述（只写无人环境，严禁写任何人物或角色活动）",
+      "atmosphere": "氛围（只写光线、色调与情绪，不写任何人物）",
       "environment_sound": "环境音描述",
       "background_music": "背景音乐描述",
       "level": 1
