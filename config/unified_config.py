@@ -1842,7 +1842,8 @@ class DriverImplementationId:
     # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
     SEEDANCE_2_5_VOLCENGINE_V1 = 68
     # Seedance 2.5 Flash（2026-11-12 发布，火山引擎国内站）
-    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 112
+    # 112 已由先合入的 GPT Image 2.6 Sunburst 占用，顺延到当前最大 ID 之后
+    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 126
     SEEDANCE_2_5_HUIMENGI_V1 = 69
 
     # Grok huimengi 网关
@@ -2475,8 +2476,8 @@ class TaskTypeId:
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
     SEEDANCE_2_5_IMAGE_TO_VIDEO = 36
-    SEEDREAM_5_5_IMAGE = 55
-    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 56
+    SEEDREAM_5_5_IMAGE = 57
+    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 58
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29

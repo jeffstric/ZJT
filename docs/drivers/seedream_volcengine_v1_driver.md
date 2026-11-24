@@ -23,7 +23,7 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
 | 16 | doubao-seedream-5-0-260128（已下线） | seedream-5-0-260128 | 6 | 2K, 3K | **停用**（hidden） |
 | 18 | doubao-seedream-4-5-251128（已下线） | seedream-4-5-251128 | 8 | 2K, 4K | **停用**（hidden） |
 | 33 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K | 在售 |
-| 55 | doubao-seedream-5-5-261028 | seedream-5-5-261028（未证实） | 7 | 2K, 3K, 4K | 在售（暂仅国内实现） |
+| 57 | doubao-seedream-5-5-261028 | seedream-5-5-261028（未证实） | 7 | 2K, 3K, 4K | 在售（暂仅国内实现） |
 
 > 海外版模型名不带 `doubao-` 前缀（海外网关惯例）。
 >

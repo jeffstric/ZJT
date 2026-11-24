@@ -622,6 +622,10 @@ class TestDriverImplementationIdConstants(unittest.TestCase):
         self.assertEqual(get_implementation_name(69), 'seedance_2_5_huimengi_v1')
         self.assertEqual(get_implementation_id('runninghub_ai_app_image_v1'), 101)
         self.assertEqual(get_implementation_name(101), 'runninghub_ai_app_image_v1')
+        self.assertEqual(get_implementation_id('seedance_2_5_flash_volcengine_v1'), 126)
+        self.assertEqual(get_implementation_name(126), 'seedance_2_5_flash_volcengine_v1')
+        self.assertEqual(get_implementation_id('duomi_gpt_image_2_6_sunburst_v1'), 112)
+        self.assertEqual(get_implementation_name(112), 'duomi_gpt_image_2_6_sunburst_v1')
 
 
 # 需要先导入 ImplementationConfig
