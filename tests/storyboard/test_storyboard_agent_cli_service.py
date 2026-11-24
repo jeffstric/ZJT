@@ -673,6 +673,13 @@ def test_generate_image_deduplicates_multiline_visual_suffix(patched_storyboard_
     assert prompt.count("构图倾向：") == 1
     assert "图片风格：cinematic noir\nhigh-detail modeling" in prompt
     assert "构图倾向：rule of thirds\ndynamic balance" in prompt
+    # text_to_image 生图口：单帧守卫 + 肢体结构守卫各恰好追加一次
+    assert prompt.count("画面要求：单幅静止画面") == 1
+    assert prompt.count("单个人物只出现两只手") == 1
+    assert prompt.endswith(
+        "人物肢体结构准确：单个人物只出现两只手，每只手五根手指；"
+        "画面中不得出现多余的手臂、手指或肢体。"
+    )
 
 
 def test_generate_image_auto_uses_scene_references_for_image_edit(patched_storyboard_cli):
@@ -691,8 +698,15 @@ def test_generate_image_auto_uses_scene_references_for_image_edit(patched_storyb
     method, kwargs = patched_storyboard_cli.submitter.calls[0]
     assert result["project_ids"] == [702]
     assert method == "image_edit"
+    assert kwargs["prompt"].startswith("Make it snow.\n\n参考图说明")
+    assert kwargs["prompt"].count("图片风格：cinematic noir") == 1
+    assert kwargs["prompt"].count("构图倾向：rule of thirds") == 1
+    # image_edit 生图口：单帧守卫 + 肢体结构守卫各恰好追加一次，守卫在末尾
+    assert kwargs["prompt"].count("画面要求：单幅静止画面") == 1
+    assert kwargs["prompt"].count("单个人物只出现两只手") == 1
     assert kwargs["prompt"].endswith(
-        "图片风格：cinematic noir\n构图倾向：rule of thirds"
+        "人物肢体结构准确：单个人物只出现两只手，每只手五根手指；"
+        "画面中不得出现多余的手臂、手指或肢体。"
     )
     assert "https://cdn.test/umbrella.png" in kwargs["image_url"]
     assert "https://cdn.test/alley.png" in kwargs["image_url"]
