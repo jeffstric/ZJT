@@ -37,14 +37,25 @@
       panY: 0,
       zoom: 1,
       timeline: {
+        version: 2,               // 2 = 多轨绝对定位布局（clip.start/track）；旧数据加载后自动迁移
         clips: [],
         audioClips: [],
-        pillars: [],              // 柱子数组，每个柱子代表一个分镜的时间区域
+        pillars: [],              // 柱子数组，每个柱子代表一个分镜的时间区域（v2 中仅作背景色带与导出兼容）
         nextClipId: 1,
         nextAudioClipId: 1,
         selectedClipId: null,
         selectedAudioClipId: null,
+        selectedClipIds: [],      // v2 多选（视频+音频混合），元素为 {type:'video'|'audio', id}
+        videoTrackCount: 1,       // v2 视频轨数量（1~6，拖拽到空白处自动增轨）
+        audioTrackCount: 1,       // v2 音频轨数量
+        zoom: 40,                 // v2 每秒像素数（10~200），Ctrl+滚轮/工具栏缩放
+        playhead: 0,              // v2 播放头位置（秒）
+        playing: false,           // 播放预览进行中（仅运行态，不持久化语义字段）
         visible: false,
+      },
+      trash: {                    // 垃圾桶（随 workflow_data 持久化，见 timeline_trash.js）
+        items: [],                // {id, kind, title, thumbUrl, deletedAt, payload}
+        nextItemId: 1,
       },
       style: {
         name: '',

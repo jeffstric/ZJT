@@ -1094,6 +1094,7 @@
   "script_director_stage_hint_need_quality": "Quality mode only",
   "node_asset_panel_btn": "Nodes",
   "node_asset_panel_title": "Node Manager",
+  "trash_recover_title": "Lost & found (restore canvas-deleted nodes)",
   "node_asset_search_placeholder": "Search nodes...",
   "node_asset_filter_all": "All types",
   "node_asset_total": "{n} nodes",
@@ -1115,5 +1116,7 @@
   "zoom_to_100": "Zoom to 100%",
   "zoom_to_200": "Zoom to 200%",
   "video_edit_clear_video": "Replace video",
-  "video_edit_video_cleared": "Video removed, you can connect a new one"
+  "video_edit_video_cleared": "Video removed, you can connect a new one",
+  "timeline_free_clips": "Free clips",
+  "trash_recover_title": "Lost & found (recover deleted nodes)"
 }

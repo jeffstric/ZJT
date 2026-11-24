@@ -1817,6 +1817,28 @@ class StoryboardExportConstants:
     AUDIO_EMBEDDED_OFF = 0
 
 
+class TimelineVideoExportConstants:
+    """时间轴「导出成品视频」（web/video_workflow.html 时间轴 → ffmpeg 烧录 mp4）。
+
+    详见 services/timeline_video_service.py 与 docs/timeline_v2_multitrack_and_trash.md。
+    """
+    _CONSTANT_GROUP = True
+
+    # 相对 upload 目录：产物与 job 状态文件
+    WORK_SUBDIR = "timeline_video_export"
+    JOBS_SUBDIR = "timeline_video_export/jobs"
+
+    OUTPUT_FPS = 24                    # 成片帧率（用户指定默认 24fps）
+    FFMPEG_TIMEOUT_SECONDS = 1800      # 单条合成命令总超时（与 EXPORT_FULL_VIDEO_TOTAL_TIMEOUT_SECONDS 同量级）
+    MAX_CLIPS = 100                    # 视频+音频片段总数上限（防恶意/误操作超大 filter_complex）
+    JOB_RETENTION_SECONDS = 86400      # job 状态文件保留时长（超期轮询按不存在处理）
+
+    # 音频统一规格（与故事板导出同口径，防各源采样率/声道不一致导致混音异常）
+    AUDIO_SAMPLE_RATE = 44100
+    AUDIO_CHANNELS = 2
+    AUDIO_BITRATE = "192k"
+
+
 class StoryboardSubtitleConstants:
     """整片导出硬烧字幕：版式与超长分页。"""
     _CONSTANT_GROUP = True

@@ -138,6 +138,15 @@
     function setSelected(id){
       state.selectedNodeId = id;
       state.selectedNodeIds = id ? [id] : [];
+      // 选域互斥：画布节点被选中时清空时间轴片段选择（含 v2 多选与旧单选），
+      // 否则 Delete 键优先删时间轴片段——用户"点片段跳节点再删节点"会误删片段，
+      // 且节点删除连带清时间轴引用，看起来像"删时间轴片段把画布视频删了"
+      if(typeof ttClearSelection === 'function' && id){
+        if((state.timeline.selectedClipIds && state.timeline.selectedClipIds.length > 0)
+          || state.timeline.selectedClipId != null || state.timeline.selectedAudioClipId != null){
+          ttClearSelection();
+        }
+      }
       if(typeof deselectGroup === 'function' && state.selectedGroupId != null) deselectGroup();
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         const nid = Number(nodeEl.dataset.nodeId);
@@ -189,6 +198,13 @@
     function clearSelection(){
       setSelected(null);
       state.selectedNodeIds = [];
+      // 选域互斥：清画布选择时同步清时间轴片段选择（点空白=放弃一切选择）
+      if(typeof ttClearSelection === 'function'){
+        if((state.timeline.selectedClipIds && state.timeline.selectedClipIds.length > 0)
+          || state.timeline.selectedClipId != null || state.timeline.selectedAudioClipId != null){
+          ttClearSelection();
+        }
+      }
       if(typeof deselectGroup === 'function' && state.selectedGroupId != null) deselectGroup();
       for(const nodeEl of canvasEl.querySelectorAll('.node')){
         nodeEl.classList.remove('selected');
@@ -419,7 +435,12 @@
 
     function removeNode(id){
       const node = state.nodes.find(n => n.id === id);
-      
+
+      // 删除前先入垃圾桶快照（节点+连线+时间轴片段+分组归属+邻居补丁），见 timeline_trash.js
+      if(node && typeof pushNodeDeletionToTrash === 'function'){
+        pushNodeDeletionToTrash(node);
+      }
+
       // 检查视频节点是否在时间轴中
       if(node && node.type === 'video'){
         const clipsInTimeline = state.timeline.clips.filter(c => c.nodeId === id);

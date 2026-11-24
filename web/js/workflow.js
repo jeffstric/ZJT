@@ -721,12 +721,17 @@
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType, voiceLineIndex: c.voiceLineIndex })),
         timeline: {
+          version: 2,
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
           pillars: state.timeline.pillars.map(p => ({ ...p })),
           nextClipId: state.timeline.nextClipId,
           nextAudioClipId: state.timeline.nextAudioClipId,
+          videoTrackCount: state.timeline.videoTrackCount || 1,
+          audioTrackCount: state.timeline.audioTrackCount || 1,
+          zoom: state.timeline.zoom || 40,
         },
+        trash: typeof serializeTrashForPersist === 'function' ? serializeTrashForPersist() : { items: [], nextItemId: 1 },
         style: {
           name: state.style.name,
           referenceImageUrl: state.style.referenceImageUrl,
@@ -2197,7 +2202,18 @@
           state.timeline.nextClipId = data.timeline.nextClipId || 1;
           state.timeline.nextAudioClipId = data.timeline.nextAudioClipId || 1;
           state.timeline.visible = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
-          
+          state.timeline.videoTrackCount = data.timeline.videoTrackCount || 1;
+          state.timeline.audioTrackCount = data.timeline.audioTrackCount || 1;
+          state.timeline.zoom = data.timeline.zoom || 40;
+          state.timeline.selectedClipIds = [];
+          state.timeline.playhead = 0;
+          state.timeline.playing = false;
+
+          // 旧数据（无 clip.start 绝对定位）一次性迁移到 v2 多轨布局
+          if(typeof migrateTimelineToV2 === 'function'){
+            migrateTimelineToV2();
+          }
+
           // 如果没有分镜柱子数据，尝试自动迁移（无片段也迁：剧本拆分/故事板转换
           // 产物打开即应看到完备的分镜格子，而非等首个片段加入才补建）。
           // 不能只看 length：仅剩 __free__ 的画布正是柱子缺失期受损的形态，
@@ -2210,15 +2226,21 @@
                 const migrated = autoMigratePillars();
                 if(migrated){
                   console.log('[恢复工作流] 历史数据迁移成功');
+                  if(typeof migrateTimelineToV2 === 'function') migrateTimelineToV2();
                   renderTimeline();
                   safeAutoSave()
                 }
               }
             }, 500);
           }
-          
+
           console.log(`[恢复工作流] 恢复了 ${state.timeline.pillars.length} 个柱子`);
           renderTimeline();
+        }
+
+        // 恢复垃圾桶（随 workflow_data 持久化，见 timeline_trash.js）
+        if(typeof restoreTrashData === 'function'){
+          restoreTrashData(data.trash);
         }
         
         // 重新渲染
