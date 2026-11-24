@@ -2,7 +2,8 @@
 媒体验证 API 路由
 使用 ffprobe 直接获取媒体文件时长，不依赖 jianying 模块
 """
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi import APIRouter, File, Request, UploadFile, Form, HTTPException
+import asyncio
 import logging
 import subprocess
 import tempfile
@@ -11,6 +12,13 @@ import yaml
 from typing import Optional, List
 
 from config.config_util import resolve_bin_path, get_config_path
+from config.constant import MediaConstants
+from perseids_server.utils.permission import require_permission
+from utils.media_upload import (
+    UploadValidationError,
+    resolve_media_extension,
+    save_upload_chunked,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,16 +100,24 @@ async def _save_upload_files(files: List[UploadFile]) -> tuple:
     temp_files = []
     total_duration = 0.0
 
-    for f in files:
-        suffix = os.path.splitext(f.filename or '')[1] or '.tmp'
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            temp_files.append(tmp.name)
-            content = await f.read()
-            tmp.write(content)
-            tmp.flush()
+    try:
+        for f in files:
+            # 安全校验：扩展名白名单 + 魔数校验 + 分块大小上限（音频 50MB / 视频 200MB），
+            # 分块读取同时消除整文件读入内存的原语
+            # （docs/security/upload_security.md 统一接入方式）
+            ext = resolve_media_extension(f.filename or '')
+            fd, tmp_name = tempfile.mkstemp(suffix=ext)
+            os.close(fd)
+            temp_files.append(tmp_name)
+            await asyncio.to_thread(save_upload_chunked, f, tmp_name, ext)
 
-        duration = _get_media_duration_seconds(temp_files[-1])
-        total_duration += duration
+            duration = _get_media_duration_seconds(temp_files[-1])
+            total_duration += duration
+    except BaseException:
+        # 任何失败（校验失败/写盘失败/ffprobe 失败）都要清理已落盘的临时文件，
+        # 否则 /tmp 会被失败请求永久撑满磁盘
+        _cleanup_temp_files(temp_files)
+        raise
 
     return temp_files, total_duration
 
@@ -132,7 +148,18 @@ def _resolve_url_to_local_path(url: str) -> Optional[str]:
 
         if not relative_path:
             return None
-        local_path = os.path.join(upload_dir, *relative_path.split("/"))
+        # 拒绝路径穿越：仅允许 upload 目录内的相对子路径，并以 realpath 收敛，
+        # 防止把 ffprobe 变成本地文件存在性探测 oracle
+        if "\\" in relative_path:
+            return None
+        parts = relative_path.split("/")
+        if any(p in ("", ".", "..") for p in parts):
+            return None
+        local_path = os.path.join(upload_dir, *parts)
+        local_path = os.path.realpath(local_path)
+        upload_real = os.path.realpath(upload_dir)
+        if os.path.commonpath([local_path, upload_real]) != upload_real:
+            return None
         return local_path if os.path.exists(local_path) else None
     except Exception:
         return None
@@ -152,7 +179,9 @@ async def _get_urls_duration(urls_str: str) -> float:
 
 
 @router.post("/validate-duration")
+@require_permission("media:validate_duration")
 async def validate_media_duration(
+    request: Request,
     audio_files: List[UploadFile] = File(default=[]),
     video_files: List[UploadFile] = File(default=[]),
     audio_urls: Optional[str] = Form(None, description="逗号分隔的音频URL列表"),
@@ -183,6 +212,12 @@ async def validate_media_duration(
         raise HTTPException(
             status_code=400,
             detail="请至少上传一个音频或视频文件"
+        )
+
+    if len(audio_files) + len(video_files) > MediaConstants.VALIDATE_DURATION_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次最多验证 {MediaConstants.VALIDATE_DURATION_MAX_FILES} 个媒体文件"
         )
 
     audio_temp = []
@@ -236,6 +271,9 @@ async def validate_media_duration(
     except HTTPException:
         _cleanup_temp_files(audio_temp + video_temp)
         raise
+    except UploadValidationError as e:
+        _cleanup_temp_files(audio_temp + video_temp)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error validating media duration: {e}", exc_info=True)
         _cleanup_temp_files(audio_temp + video_temp)
