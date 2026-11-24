@@ -21,7 +21,7 @@
 | [script_auto_split_improvement.md](./script_auto_split_improvement.md) | 剧本节点自动拆分分镜功能改进 |
 | [script_parser_incremental_split_design.md](./script_parser_incremental_split_design.md) | 模型语义分段、逐段拆分、断点续传与异步轮询设计 |
 | [script_split_total_duration_control.md](./script_split_total_duration_control.md) | 总分镜时长控制：倍率×剧本估算时长限制分镜总时长（段级预算 + 合并归一化） |
-| [script_split_pacing_single_frame_dialogue_token.md](./script_split_pacing_single_frame_dialogue_token.md) | 分镜密度随剧情权重（重点详拆/过渡快过）、首帧提示词单一画面防宫格守卫、台词内角色名不加【【】】及后处理兜底、手部动作预算制三层防护（拆分规则/生图肢体守卫/质检 HAND_BUDGET_CONTRADICTION）、场景图无人空镜守卫（抽取禁人+SCENE_NO_PEOPLE_GUARD） |
+| [script_split_pacing_single_frame_dialogue_token.md](./script_split_pacing_single_frame_dialogue_token.md) | 分镜密度随剧情权重（重点详拆/过渡快过）、首帧提示词单一画面防宫格守卫、台词内角色名不加【【】】及后处理兜底、手部动作预算制两层防护（拆分规则+生图肢体守卫；正则质检兜底已被否决勿再引入）、场景图无人空镜守卫（抽取禁人+SCENE_NO_PEOPLE_GUARD） |
 | [script_split_field_roles.md](./script_split_field_roles.md) | description/action/scene_detail 三字段各司其职（核心事件/动作节拍/环境变化，严禁互相复述）与台词单处书写硬规则，含 bigram 重叠度量化验证 |
 | [script_split_total_duration_control_test_plan.md](./script_split_total_duration_control_test_plan.md) | 总分镜时长控制测试文档（智能体移交版：L1~L4 分层步骤/验收标准/存量失败基线） |
 | [shot_frame_references.md](./shot_frame_references.md) | 分镜节点引用显示功能（场景/道具/角色） |
