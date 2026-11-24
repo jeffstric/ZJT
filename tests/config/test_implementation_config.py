@@ -468,6 +468,57 @@ class TestHumanAssetModeConfig(unittest.TestCase):
         self.assertEqual(impl.driver_class, 'Seedance25HuimengiV1Driver')
         self.assertEqual(impl.required_config_keys, ['huimengi.api_key'])
 
+    def test_seedance_2_5_short_duration_power(self):
+        """Seedance 2.5 三个实现方补齐 2~4s 短时长算力（2026-11-20 官方放开 2~4s）
+
+        回归守卫：时长档位开放时必须同步补算力表，否则前端 task_config.js
+        会兜底到首档（5s）价格，导致 2~5s 算力不随时长增加。
+        """
+        from config.unified_config import UnifiedConfigRegistry
+
+        # 公式口径（docs/drivers/seedance_volcengine_v1_driver.md）：
+        # 算力 = ceil(tokens × 42 ÷ 40000)，tokens = 38880×秒 + 21600×(15-4)
+        expected = {2: 332, 3: 372, 4: 413, 5: 454, 30: 1475}
+        for name in ('seedance_2_5_volcengine_v1',
+                     'seedance_2_5_huimengi_v1',
+                     'seedance_2_5_topenrouter_v1'):
+            impl = UnifiedConfigRegistry.get_implementation(name)
+            self.assertIsNotNone(impl, f'{name} 未注册')
+            power = impl.default_computing_power
+            self.assertIsInstance(power, dict, f'{name} 算力应为按时长字典')
+            for duration, value in expected.items():
+                self.assertEqual(power.get(duration), value,
+                                 f'{name} {duration}s 算力应为 {value}')
+            # 算力必须随时长单调递增
+            durs = sorted(power)
+            for a, b in zip(durs, durs[1:]):
+                self.assertLess(power[a], power[b],
+                                f'{name} 算力未随时长递增：{a}s={power[a]} {b}s={power[b]}')
+
+    def test_video_task_durations_covered_by_impl_power(self):
+        """守卫：任务的每个 supported_duration 都必须命中实现方算力字典
+
+        防止后续新增时长档位（如官方放开短时长）时漏配算力，导致前端
+        兜底到首档价格（少收）或算力不随时长变化。
+        """
+        from config.unified_config import UnifiedConfigRegistry, ALL_TASK_CONFIGS
+
+        problems = []
+        for task in ALL_TASK_CONFIGS:
+            durations = task.supported_durations or []
+            if not durations:
+                continue
+            for impl_name in (task.implementations or [task.implementation] or []):
+                impl = UnifiedConfigRegistry.get_implementation(impl_name)
+                if not impl:
+                    continue
+                power = impl.default_computing_power
+                if isinstance(power, dict):
+                    missing = [d for d in durations if d not in power]
+                    if missing:
+                        problems.append(f'{task.key}/{impl_name} 缺档位 {missing}')
+        self.assertEqual(problems, [])
+
 
 class TestDriverImplementationIdConstants(unittest.TestCase):
     """DriverImplementationId 常量测试"""
