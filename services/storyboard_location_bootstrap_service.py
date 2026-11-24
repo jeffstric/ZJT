@@ -25,6 +25,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from model.location import LocationModel
+from services.storyboard_reference_prompt_service import append_scene_no_people_guard
 
 logger = logging.getLogger(__name__)
 
@@ -736,7 +737,9 @@ class StoryboardLocationBootstrapService:
             parts.append(f"氛围/光线：{atmosphere}。")
         if env_sound:
             parts.append(f"环境声参考：{env_sound}。")
-        return " ".join(parts)
+        # 场景参考图必须是无人的纯环境空镜：描述/氛围若带人物活动（如"守卫把守的
+        # 大门"），生图模型会把人画进参考图，污染子场景 i2i / 首帧参考链（幂等追加）。
+        return append_scene_no_people_guard(" ".join(parts))
 
     @staticmethod
     def _compose_subscene_prompt(
@@ -770,4 +773,5 @@ class StoryboardLocationBootstrapService:
             parts.append(f"氛围/光线：{atmosphere}。")
         if env_sound:
             parts.append(f"环境声参考：{env_sound}。")
-        return " ".join(parts)
+        # 与顶层场景一致：子场景参考图同样必须无人物（幂等追加）。
+        return append_scene_no_people_guard(" ".join(parts))

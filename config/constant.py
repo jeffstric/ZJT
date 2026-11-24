@@ -4020,6 +4020,24 @@ NICKNAME_ANIMALS = (
     '眼镜猴', '懒猴', '松鼠猴', '柯基', '比熊', '博美', '边牧', '金毛', '哈士奇', '萨摩耶',
 )
 
+# ============ 分镜图肢体结构守卫（services/storyboard_reference_prompt_service.py） ============
+# 分镜图肢体结构守卫：拼在生图 prompt 尾部的固定正向约束（火山 images/generations 接口
+# 无 negative_prompt，只能正向声明）。防拆分侧漏网的多手/多指描述（如"双手撑伞+另一只手
+# 推门"=3 只手）被生图模型忠实复现成多手畸变（2026-11-24）。
+STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT = (
+    "人物肢体结构准确：单个人物只出现两只手，每只手五根手指；"
+    "画面中不得出现多余的手臂、手指或肢体。"
+)
+
+# ============ 场景图纯环境守卫（services/storyboard_reference_prompt_service.py） ============
+# 场景参考图必须是无人的纯环境空镜：场景描述若带人物活动（如"守卫把守的大门"、"顾客
+# 盈门的咖啡厅"），生图模型会把人画进场景参考图，污染后续子场景 i2i / 首帧参考链
+# （2026-11-24，与肢体守卫同期）。
+SCENE_NO_PEOPLE_GUARD_TEXT = (
+    "纯环境空镜：画面中不出现任何人物、人形轮廓、手部或身体局部；"
+    "仅呈现场景空间、物品与光照本身。"
+)
+
 
 def generate_default_nickname(used_names=None) -> str:
     """生成随机趣味默认昵称（如"机智的熊猫"，形容词 + 动物，不带数字）。
