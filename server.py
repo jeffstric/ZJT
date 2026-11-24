@@ -679,7 +679,7 @@ from api.agent_auth import router as agent_auth_router
 app.include_router(agent_auth_router)
 
 # test_ask_user 调试路由已下线（安全审计 BUG-R2-S1-A9-H4：匿名即可驱动真实 LLM
-# 任务并冒名受害者会话流，详见 docs/security/openvuln_cvss8_fix_1121.md）。
+# 任务并冒名受害者会话流）。
 # 如需恢复诊断能力，必须补 @require_permission + 身份/会话属主断言 + 计量走 Authorization 头。
 
 # 注册管理员 API 路由
@@ -1180,9 +1180,15 @@ async def _safe_proxy_fetch(url: str, *, timeout: float) -> httpx.Response:
                     if received > ProxyFetchSafetyConstants.MAX_BYTES:
                         raise HTTPException(status_code=413, detail="文件过大")
                     chunks.append(chunk)
+                # aiter_bytes() 返回的是已解压字节；content-encoding 原样带回会让
+                # httpx 在访问 .content 时二次解压（gzip 公网响应必报
+                # DecodingError），content-length 也已失真，两者必须剔除。
+                final_headers = dict(resp.headers)
+                final_headers.pop("content-encoding", None)
+                final_headers.pop("content-length", None)
                 final = httpx.Response(
                     resp.status_code,
-                    headers=dict(resp.headers),
+                    headers=final_headers,
                     content=b"".join(chunks),
                     request=resp.request,
                 )
@@ -1401,6 +1407,10 @@ async def download_image(
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Download failed: {str(e)}")
+    except HTTPException:
+        # _safe_proxy_fetch 的 SSRF 校验/大小上限抛 400/413/508，必须原样透传，
+        # 不得被兜底 except Exception 转成 500（会污染 Sentry 且掩盖语义）。
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
@@ -1456,6 +1466,9 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Image proxy failed: {str(e)}")
+    except HTTPException:
+        # 同 /api/download：SSRF 校验 400/413/508 原样透传，不被兜底转 500。
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image proxy failed: {str(e)}")
 
