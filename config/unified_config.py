@@ -3176,6 +3176,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         id=TaskTypeId.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO,
         key='seedance_1_5_pro_image_to_video',
         short_key='seedance_1_5_pro',
+        # 2026-11-24：模型已退役，任务停用（hidden）：前端选择器/偏好槽位不再显示，
+        # 任务 ID/key/名称/算力保持原样不动，历史任务展示不受影响。
+        # 新任务请引导至 Seedance 2.0 / 2.5 系列
         name='Seedance 1.5 Pro',
         model_name='Seedance 1.5 Pro',
         category=TaskCategory.IMAGE_TO_VIDEO,
@@ -3191,6 +3194,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 1.5 Pro 不支持多参考图
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=False,  # 1.5 Pro 不支持参考音频和视频
+        hidden=True,  # 2026-11-24 退役：前端模型选择器/用户偏好槽位不再显示
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
@@ -4809,6 +4813,20 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         sort_order=10800.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_flash_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance25FlashVolcengineV1Driver',
+        # 算力口径沿用任务级 computing_power：720P 基价 0.99 元/秒 ÷ 0.04 = 24.75 算力/秒（ceil），
+        # 480P 由任务级 SEEDANCE_480P_PRICE_MULTIPLIER 倍率折算
+        default_computing_power={2: 50, 3: 75, 4: 99, 5: 124, 6: 149, 7: 174, 8: 198, 9: 223, 10: 248, 11: 273, 12: 297, 13: 322, 14: 347, 15: 372, 16: 396, 17: 421, 18: 446, 19: 471, 20: 495, 21: 520, 22: 545, 23: 570, 24: 594, 25: 619, 26: 644, 27: 669, 28: 693, 29: 718, 30: 743},
+        enabled=True,
+        description='火山引擎 Seedance 2.5 Flash 图生视频接口（仅 480P/720P）',
+        sort_order=10810.0,
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,  # Flash 不支持 1080P
         default_video_resolution=VideoResolution.P720
     ),
 
