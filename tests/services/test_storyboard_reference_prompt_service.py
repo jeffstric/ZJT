@@ -549,3 +549,21 @@ def test_append_limb_integrity_guard_appends_and_is_idempotent():
     assert "单幅静止画面" in both
     assert "单个人物只出现两只手" in both
     assert append_limb_integrity_guard(append_single_frame_guard(both)) == both
+
+
+def test_append_scene_no_people_guard_appends_and_is_idempotent():
+    from services.storyboard_reference_prompt_service import append_scene_no_people_guard
+
+    guarded = append_scene_no_people_guard("完整环境设计参考图，场景：仓库大门。")
+
+    assert "纯环境空镜" in guarded
+    assert "不出现任何人物" in guarded
+    assert guarded.startswith("完整环境设计参考图，场景：仓库大门。")
+
+    # 幂等：同一 prompt 重复调用不重复追加
+    assert append_scene_no_people_guard(guarded) == guarded
+    assert guarded.count("纯环境空镜") == 1
+
+    # 空 prompt 原样返回
+    assert append_scene_no_people_guard("") == ""
+    assert append_scene_no_people_guard("   ") == ""

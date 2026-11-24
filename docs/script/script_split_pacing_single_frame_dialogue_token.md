@@ -1,7 +1,7 @@
-# 剧本拆分 · 分镜节奏权重 / 首帧单一画面 / 台词内角色标记 / 手部动作预算
+# 剧本拆分 · 分镜节奏权重 / 首帧单一画面 / 台词内角色标记 / 手部动作预算 / 场景图纯环境
 
 > 分支 develop_f1181。三个拆分质量问题一次修复，全部为提示词引导 + 确定性兜底，不改数据结构与接口。
-> 第 4 节（手部动作预算/肢体结构）由 develop_f1168 追加（2026-11-24，任务移交文档 `storyboard_hand_guard_prompt_task.md`）。
+> 第 4 节（手部动作预算/肢体结构）与第 5 节（场景图无人空镜）由 develop_f1168 追加（2026-11-24，任务移交文档 `storyboard_hand_guard_prompt_task.md` 及后续口头需求）。
 
 ## 问题与修复
 
@@ -51,6 +51,15 @@
   - 海外/网关供应商走同一生图入口自动获得守卫文本，无需单独适配。
 - 质检兜底（2026-11-24 追加）：`llm/script_split_qc_agent.py::run_rule_qc` 新增确定性规则 `HAND_BUDGET_CONTRADICTION`（severity=error，随 `enable_qc` 生效并注入重拆反馈）：同一描述字段（opening_frame_description / description / action / scene_detail）内「双手/两手/双臂」类占满标记与「另一只手/第三只手/又用一手/腾出手」类加手标记**共现**即报错。只做标记共现检测、按字段独立检查（避免跨角色误报），不做自然语言数手。
 
+### 5. 场景参考图被画成有人场景（develop_f1168，2026-11-24 追加）
+
+**现象**：场景描述若带人物活动（如剧本写"守卫把守的大门"，LLM 把它写进 location.description），会被原样拼进场景生图 prompt，生图模型把人画进场景参考图；场景图作为子场景 i2i / 首帧参考链的输入，人物污染会向下游扩散。此前全链路（组装模板/宫格提交层/抽取规则）均无任何「无人」约束。
+
+**修复**（两层）：
+
+- 抽取侧：user prompt 模板 locations 字段指导改为**只写无人环境**——顶层/子场景 description「严禁写任何人物、角色活动或人形身影」，atmosphere「只写光线、色调与情绪，不写任何人物」；环境声示例「行人脚步声」改为「雨滴声」（避免人物词汇拼进生图 prompt）。
+- 生图侧守卫：`config/constant.py` 新增 `SCENE_NO_PEOPLE_GUARD_TEXT`（`纯环境空镜：画面中不出现任何人物、人形轮廓、手部或身体局部；仅呈现场景空间、物品与光照本身。`），`services/storyboard_reference_prompt_service.py::append_scene_no_people_guard`（幂等，与既有守卫同构），在场景 prompt 唯一组装源 `services/storyboard_location_bootstrap_service.py` 的 `_compose_root_location_prompt`（顶层 t2i）/`_compose_subscene_prompt`（子场景 i2i）尾部幂等追加。enterprise 质检前置（`location_references.py::_submit_ready_layer`）复用同一 bootstrap 服务，自动覆盖；黑色占位格不追加（无场景内容）。
+
 ## 注意事项
 
 - `duration_budget_block` 与 multi_reference `replace` 是**双处文案联动**，今后改动该句必须两处同步（本次已同步）。
@@ -61,4 +70,5 @@
 
 - 单测：`tests/llm/test_script_parser_dialogue_text_sanitizer.py`（新增）、`tests/services/test_storyboard_reference_prompt_service.py`（追加 guard 用例）、`tests/services/test_storyboard_agent_image_tool.py`（断言更新为含守卫）。
 - 第 4 节（develop_f1168）：`tests/services/test_storyboard_reference_prompt_service.py`（`test_append_limb_integrity_guard_appends_and_is_idempotent`）、`tests/services/test_storyboard_agent_image_tool.py` / `tests/storyboard/test_storyboard_agent_cli_service.py`（三生图入口守卫断言）、`tests/llm/test_script_parser_scene_grouping.py`（`test_prompt_contains_hand_action_budget_rule`）、`tests/llm/test_script_split_qc_agent.py`（HAND_BUDGET_CONTRADICTION 五用例）。
+- 第 5 节（develop_f1168）：`tests/services/test_storyboard_reference_prompt_service.py`（`test_append_scene_no_people_guard_appends_and_is_idempotent`）、`tests/services/test_storyboard_location_bootstrap_service.py`（`TestSceneNoPeopleGuardInComposedPrompts` 根/子场景组装守卫断言）、`tests/llm/test_script_parser_scene_grouping.py`（`test_prompt_requires_scene_description_without_people`）。
 - 本地 13008 全栈实测拆分剧本验证节奏/首帧/台词三处效果（见分支提交记录）。

@@ -4007,6 +4007,15 @@ STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT = (
     "画面中不得出现多余的手臂、手指或肢体。"
 )
 
+# ============ 场景图纯环境守卫（services/storyboard_reference_prompt_service.py） ============
+# 场景参考图必须是无人的纯环境空镜：场景描述若带人物活动（如"守卫把守的大门"、"顾客
+# 盈门的咖啡厅"），生图模型会把人画进场景参考图，污染后续子场景 i2i / 首帧参考链
+# （2026-11-24，与肢体守卫同期）。
+SCENE_NO_PEOPLE_GUARD_TEXT = (
+    "纯环境空镜：画面中不出现任何人物、人形轮廓、手部或身体局部；"
+    "仅呈现场景空间、物品与光照本身。"
+)
+
 
 def generate_default_nickname(used_names=None) -> str:
     """生成随机趣味默认昵称（如"机智的熊猫"，形容词 + 动物，不带数字）。

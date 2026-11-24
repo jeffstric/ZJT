@@ -124,3 +124,16 @@ def test_prompt_contains_hand_action_budget_rule():
     assert "左手撑着伞，用右手推开门" in parser_source
     # few-shot 呼应：opening_frame_description 正确示例区带手部预算示例
     assert "左手撑着伞站在仓库门口的雨中" in parser_source
+
+
+def test_prompt_requires_scene_description_without_people():
+    """场景参考图必须无人：抽取字段指导禁人 + 环境声示例不出现人物词汇。"""
+    parser_source = SCRIPT_PARSER_PATH.read_text(encoding="utf-8")
+
+    # 场景/子场景 description 指导：只写无人环境
+    assert "只写无人环境" in parser_source
+    assert "场景参考图必须是无人的纯环境空镜" in parser_source
+    # 氛围字段不写人物
+    assert "不写任何人物" in parser_source
+    # 环境声示例不得再带"行人"类人物词汇（会拼进生图 prompt）
+    assert "行人脚步声" not in parser_source
