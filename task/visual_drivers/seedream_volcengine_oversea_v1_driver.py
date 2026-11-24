@@ -1,7 +1,7 @@
 """
 Seedream 火山引擎海外版 v1 版本驱动实现
 同步 API - 一次请求直接返回图片 URL
-支持 Seedream 4.5 和 5.0 两个模型
+2026-11-20 起统一使用 Seedream 5.0 Pro（5.0/4.5 同代快照已下线）
 
 继承自国内版驱动，覆盖配置加载（使用 volcengine_oversea 配置节）。
 """
@@ -19,10 +19,17 @@ class Seedream5VolcengineOverseaV1Driver(Seedream5VolcengineV1Driver):
     """
 
     # 海外版模型映射：task_id -> 模型名称（不带 doubao- 前缀）
+    # 2026-11-20 与国内版同步：5-0-260128 / 4-5-251128 为同代退役快照；
+    # Task 16/18 已停用（hidden），此处保留兼容映射指向在售
+    # seedream-5-0-pro-260628（历史重试/显式 task_id 调用兜底）
     MODEL_MAPPING = {
-        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "seedream-5-0-260128",
-        TaskTypeId.SEEDREAM_4_5_IMAGE: "seedream-4-5-251128",
+        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "seedream-5-0-pro-260628",
+        TaskTypeId.SEEDREAM_4_5_IMAGE: "seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_5_0_PRO: "seedream-5-0-pro-260628",
+        # 5.5 海外站快照未证实（惯例推测：无 doubao- 前缀 + 同版本号）；
+        # SEEDREAM_5_5_IMAGE 当前 implementations 仅挂国内实现，此条为
+        # 后续接入海外实现时的预置映射，404 时在此修正
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "seedream-5-5-261028",
     }
 
     def __init__(self):
@@ -44,7 +51,7 @@ class Seedream5VolcengineOverseaV1Driver(Seedream5VolcengineV1Driver):
         # ≥1000 毫秒启发式，防大秒值被误除 1000（#8）
         self._skip_timeout_coerce = True
         self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
-        self._model = "seedream-5-0-260128"
+        self._model = "seedream-5-0-pro-260628"
 
         # 是否为本地环境
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)

@@ -1240,6 +1240,9 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.SEEDANCE_2_5_HUIMENGI_V1,      # huimengi 网关
         DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1,   # TopenRouter 网关
     ],
+    DriverKey.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO: [
+        DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,  # 火山引擎国内版（暂仅国内）
+    ],
 
     # GPT Image 相关驱动
     DriverKey.GPT_IMAGE_2: [

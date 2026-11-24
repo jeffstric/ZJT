@@ -1,7 +1,7 @@
 """
 Seedream 火山引擎供应商 v1 版本驱动实现
 同步 API - 一次请求直接返回图片 URL
-支持 Seedream 4.5 和 5.0 两个模型
+2026-11-20 起统一使用 Seedream 5.0 Pro（5.0/4.5 快照已被方舟下线）
 """
 from typing import Dict, Any, Optional, List
 import traceback
@@ -20,14 +20,21 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
     """
     Seedream 火山引擎供应商 v1 版本驱动
     同步 API - 支持文生图/图片编辑
-    支持 Seedream 4.5 和 5.0 两个模型
+    2026-11-20 起统一使用 Seedream 5.0 Pro（5.0 与 4.5 快照已被方舟下线）
     """
 
     # 模型映射：task_id -> 模型名称
+    # 2026-11-20 方舟下线模型公告：doubao-seedream-5-0-260128（Task 16）与
+    # doubao-seedream-4-5-251128（Task 18）到期未迁移关停。两个任务已在
+    # unified_config 停用（hidden），新任务走 Task 33（seedream-5.0-pro）。
+    # 此处保留 16/18 的兼容映射指向在售 5-0-pro-260628：停用任务的历史重试 /
+    # 显式 task_id 调用仍可能进来，映射到旧快照必然 ClosedEndpoint 失败
     MODEL_MAPPING = {
-        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-260128",
-        TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-4-5-251128",
+        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-pro-260628",
+        TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_5_0_PRO: "doubao-seedream-5-0-pro-260628",
+        # 2026-11-09 发布（官方模型发布公告确认快照 ID）
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "doubao-seedream-5-5-261028",
     }
 
     # 支持的图片尺寸
@@ -81,7 +88,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # ≥1000 毫秒启发式，防大秒值被误除 1000（#8）
         self._skip_timeout_coerce = True
         self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
-        self._model = "doubao-seedream-5-0-260128"
+        self._model = "doubao-seedream-5-0-pro-260628"
 
         # 是否为本地环境
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)
@@ -108,7 +115,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
 
         期望的正确响应格式:
         {
-            "model": "doubao-seedream-5-0-260128",
+            "model": "doubao-seedream-5-0-pro-260628",
             "created": 1772527784,
             "data": [
                 {
@@ -295,9 +302,9 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
             "watermark": False
         }
         
-        # Seedream 5.0 / 5.0 Pro 支持 output_format 参数，4.5 不支持
-        if task_type in (TaskTypeId.SEEDREAM_TEXT_TO_IMAGE, TaskTypeId.SEEDREAM_5_0_PRO):
-            payload["output_format"] = "png"
+        # Seedream 5.0 Pro 支持 output_format 参数（三个任务类型均已统一为
+        # 5.0 Pro，4.5 快照下线后不再有该差异）
+        payload["output_format"] = "png"
 
         # 如果有图片路径，添加 image 参数（数组，支持多张图片）
         if image_urls:

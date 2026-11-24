@@ -324,7 +324,7 @@ async function loadMoreImages() {
 
 // ── 工具栏交互 — 模型数据（将从 API 加载，此处为默认值）
 let IMAGE_MODELS = [
-  { name: 'Seedream 5.0', desc: '最新图片模型，质量最佳', key: 'seedream_5', value: 'seedream_5' },
+  { name: 'Seedream 5.0 Pro', desc: '最新图片模型，质量最佳', key: 'seedream_5', value: 'seedream_5' },
   { name: 'Seedream 3.0', desc: '均衡速度与质量', key: 'seedream_3', value: 'seedream_3' },
 ];
 

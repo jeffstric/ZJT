@@ -122,7 +122,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
 
                 # 验证返还调用的参数
                 kwargs = mock_increase.call_args.kwargs
-                self.assertEqual(kwargs['computing_power'], 6)  # Seedream 5.0 算力
+                self.assertEqual(kwargs['computing_power'], 6)  # Seedream 5.0 算力（Task 16 停用但配置保留原值）
                 self.assertTrue(str(kwargs['transaction_id']).startswith('refund-'))
 
     def test_refund_on_submit_system_error(self):
@@ -238,7 +238,7 @@ class TestSeedreamComputingPowerRefund(BaseVideoDriverTest):
 
             # 验证返还参数
             kwargs = mock_increase.call_args.kwargs
-            self.assertEqual(kwargs['computing_power'], 6)  # Seedream 5.0
+            self.assertEqual(kwargs['computing_power'], 6)  # Seedream 5.0（Task 16 停用但配置保留原值）
             self.assertTrue(str(kwargs['transaction_id']).startswith('refund-'))
 
     def test_refund_on_submit_success_no_refund(self):
