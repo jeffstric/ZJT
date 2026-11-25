@@ -1,7 +1,7 @@
 """
 Seedream 火山引擎供应商 v1 版本驱动实现
 同步 API - 一次请求直接返回图片 URL
-支持 Seedream 4.5 和 5.0 两个模型
+2026-11-20 起统一使用 Seedream 5.0 Pro（5.0/4.5 快照已被方舟下线）
 """
 from typing import Dict, Any, Optional, List
 import traceback
@@ -20,24 +20,47 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
     """
     Seedream 火山引擎供应商 v1 版本驱动
     同步 API - 支持文生图/图片编辑
-    支持 Seedream 4.5 和 5.0 两个模型
+    2026-11-20 起统一使用 Seedream 5.0 Pro（5.0 与 4.5 快照已被方舟下线）
     """
 
     # 模型映射：task_id -> 模型名称
+    # 2026-11-20 方舟下线模型公告：doubao-seedream-5-0-260128（Task 16）与
+    # doubao-seedream-4-5-251128（Task 18）到期未迁移关停。两个任务已在
+    # unified_config 停用（hidden），新任务走 Task 33（seedream-5.0-pro）。
+    # 此处保留 16/18 的兼容映射指向在售 5-0-pro-260628：停用任务的历史重试 /
+    # 显式 task_id 调用仍可能进来，映射到旧快照必然 ClosedEndpoint 失败
     MODEL_MAPPING = {
-        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-260128",
-        TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-4-5-251128",
+        TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "doubao-seedream-5-0-pro-260628",
+        TaskTypeId.SEEDREAM_4_5_IMAGE: "doubao-seedream-5-0-pro-260628",
         TaskTypeId.SEEDREAM_5_0_PRO: "doubao-seedream-5-0-pro-260628",
+        # 2026-11-09 发布（官方模型发布公告确认快照 ID）
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "doubao-seedream-5-5-261028",
     }
 
-    # 支持的图片尺寸
-    SUPPORTED_SIZES = ["2K", "3K", "4K"]
+    # 支持的图片尺寸（3K/4K 仅 Seedream 5.0 Pro 可用；5.5 上限 2K，见 build_create_request 降档逻辑）
+    SUPPORTED_SIZES = ["1K", "2K", "3K", "4K"]
+
+    # Seedream 5.5 模型名标识（国内 doubao- 前缀 / 海外无前缀均包含该子串）
+    SEEDREAM_5_5_MODEL_TAG = "seedream-5-5"
+    # Seedream 5.5 输出总像素上限 4,624,220（官方文档，约 2K 方图），仅支持 1K/2K
+    SEEDREAM_5_5_SUPPORTED_SIZES = ("1K", "2K")
 
     # 参考图总像素限制（所有参考图的 width * height 之和）
     MAX_TOTAL_PIXELS = 36_000_000
 
     # 尺寸映射表：基于 image_size 和 aspect_ratio 获取像素值
+    # 1K/2K 各档面积均落在 Seedream 5.5 允许的 [921600, 4624220] 像素区间内
     SIZE_MAPPING = {
+        "1K": {
+            "1:1": "1024x1024",
+            "4:3": "1152x864",
+            "3:4": "864x1152",
+            "16:9": "1280x720",
+            "9:16": "720x1280",
+            "3:2": "1248x832",
+            "2:3": "832x1248",
+            "21:9": "1512x648",
+        },
         "2K": {
             "1:1": "2048x2048",
             "4:3": "2304x1728",
@@ -81,7 +104,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         # ≥1000 毫秒启发式，防大秒值被误除 1000（#8）
         self._skip_timeout_coerce = True
         self._timeout = get_dynamic_config_value("timeout", "sync_request_timeout", default=300)
-        self._model = "doubao-seedream-5-0-260128"
+        self._model = "doubao-seedream-5-0-pro-260628"
 
         # 是否为本地环境
         self._is_local = get_dynamic_config_value("server", "is_local", default=False)
@@ -108,7 +131,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
 
         期望的正确响应格式:
         {
-            "model": "doubao-seedream-5-0-260128",
+            "model": "doubao-seedream-5-0-pro-260628",
             "created": 1772527784,
             "data": [
                 {
@@ -225,9 +248,18 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         """
         构建创建 Seedream 任务的完整请求参数
         """
+        # 根据 task_id 选择模型（尺寸约束与模型相关，需先确定模型）
+        task_type = getattr(ai_tool, 'type', None)
+        model_name = self.MODEL_MAPPING.get(task_type, self._model)
+
         # 获取图片尺寸，默认 2K
         image_size = getattr(ai_tool, 'image_size', None) or "2K"
         if image_size not in self.SUPPORTED_SIZES:
+            image_size = "2K"
+        # Seedream 5.5 总像素上限 4,624,220，3K/4K 必被方舟 400 拒绝；
+        # 统一降档 2K，兼容存量 3K/4K 任务的重试（如 ai_tool 14144）
+        if self.SEEDREAM_5_5_MODEL_TAG in model_name and image_size not in self.SEEDREAM_5_5_SUPPORTED_SIZES:
+            self.logger.warning(f"Seedream 5.5 不支持 {image_size}，已降档为 2K")
             image_size = "2K"
 
         # 获取宽高比，默认 1:1
@@ -283,9 +315,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
 
             image_urls = processed_urls
 
-        # 根据 task_id 选择模型
-        task_type = getattr(ai_tool, 'type', None)
-        model_name = self.MODEL_MAPPING.get(task_type, self._model)
+        # 模型与任务类型已在上方确定（尺寸校验依赖模型）
         self.logger.info(f"使用模型: {model_name}, task_type: {task_type}")
 
         payload = {
@@ -295,9 +325,9 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
             "watermark": False
         }
         
-        # Seedream 5.0 / 5.0 Pro 支持 output_format 参数，4.5 不支持
-        if task_type in (TaskTypeId.SEEDREAM_TEXT_TO_IMAGE, TaskTypeId.SEEDREAM_5_0_PRO):
-            payload["output_format"] = "png"
+        # Seedream 5.0 Pro 支持 output_format 参数（三个任务类型均已统一为
+        # 5.0 Pro，4.5 快照下线后不再有该差异）
+        payload["output_format"] = "png"
 
         # 如果有图片路径，添加 image 参数（数组，支持多张图片）
         if image_urls:

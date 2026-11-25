@@ -1,0 +1,655 @@
+/* ============ 时间轴 v2 多轨模块（剪映式）样式 ============ */
+/* 依赖 video_workflow.css 的全局变量（--surface/--border/--text/--muted/--info 等，含暗色主题）。
+   覆盖 .timeline-container 高度以容纳预览窗与多轨；其余均为新增 tt- 前缀类，不影响旧样式。 */
+
+/* ---- 容器 ---- */
+/* 高度由 --tt-panel-h 统一收口：面板本体 + 画布让位（padding-bottom）+ 浮层
+   （minimap/zoom-controls）都引用同一变量，拖拉把手只改一个变量即可全局联动 */
+.timeline-container {
+  height: var(--tt-panel-h, 340px);
+}
+/* 覆盖 video_workflow.css 的固定让位值，改为跟随面板高度 */
+.canvas-container.timeline-visible {
+  padding-bottom: calc(var(--tt-panel-h, 340px) + 12px);
+}
+.canvas-container.timeline-visible .minimap {
+  bottom: calc(var(--tt-panel-h, 340px) + 24px);
+}
+.canvas-container.timeline-visible .zoom-controls {
+  bottom: calc(var(--tt-panel-h, 340px) + 24px);
+}
+.timeline-container .timeline-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+/* ---- 工具栏 icon 按钮（时间轴 header 一排，紧凑协调） ---- */
+.tt-toolbar-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tt-toolbar-btn:hover {
+  background: var(--panel-hover);
+  color: var(--text);
+}
+.tt-toolbar-btn.tt-btn-success {
+  background: var(--success, #16a34a);
+  border-color: var(--success, #16a34a);
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-success:hover {
+  background: #15803d;
+  border-color: #15803d;
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-danger {
+  background: var(--danger, #ef4444);
+  border-color: var(--danger, #ef4444);
+  color: #fff;
+}
+.tt-toolbar-btn.tt-btn-danger:hover {
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #fff;
+}
+.tt-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 3px;
+  flex-shrink: 0;
+}
+/* 垃圾桶角标在 icon 按钮右上角 */
+.tt-toolbar-btn .trash-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  margin-left: 0;
+}
+/* header 右侧容器：icon 排布局 */
+.timeline-container .timeline-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ---- 顶部拖拉把手（调整面板高度） ---- */
+.tt-resize-handle {
+  position: absolute;
+  top: -4px;
+  left: 0;
+  right: 0;
+  height: 9px;
+  cursor: row-resize;
+  z-index: 102;
+}
+.tt-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  transition: background 0.15s, width 0.15s;
+}
+.tt-resize-handle:hover::after,
+.tt-resize-handle.dragging::after {
+  background: var(--info);
+  width: 96px;
+}
+body.tt-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+body.tt-resizing iframe {
+  pointer-events: none;
+}
+
+/* ---- 主体：预览窗 + 轨道区 ---- */
+.tt-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.tt-preview-pane {
+  width: 240px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.tt-preview-screen {
+  flex: 1;
+  position: relative;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tt-preview-screen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+.tt-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+  pointer-events: none;
+}
+.tt-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.tt-play-btn,
+.tt-stop-btn {
+  width: 30px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+.tt-play-btn:hover,
+.tt-stop-btn:hover {
+  background: var(--panel-hover);
+}
+.tt-timecode {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ---- 轨道区 ---- */
+.tt-timeline-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+.timeline-container .timeline-ruler {
+  height: 24px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.tt-ruler-inner {
+  position: relative;
+  height: 100%;
+}
+.tt-ruler-spacer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 72px;
+  height: 100%;
+  background: var(--surface-3);
+  border-right: 1px solid var(--border);
+  z-index: 2;
+}
+.tt-ruler-content {
+  position: absolute;
+  left: 72px;
+  top: 0;
+  height: 100%;
+}
+.tt-ruler-content .ruler-mark .ruler-label {
+  font-size: 9px;
+}
+
+.tt-tracks-scroll {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  background: var(--surface-2);
+}
+.tt-tracks-inner {
+  position: relative;
+  min-height: 100%;
+  --tt-label-w: 72px;
+  user-select: none;
+}
+
+.tt-group {
+  padding: 4px 0;
+}
+.tt-group-audio {
+  border-top: 2px solid var(--border);
+}
+
+.tt-lane {
+  display: flex;
+  align-items: stretch;
+  height: 64px;
+  margin: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tt-lane-audio {
+  height: 46px;
+}
+.tt-lane-label {
+  width: var(--tt-label-w);
+  min-width: var(--tt-label-w);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface-3);
+  border-right: 1px solid var(--border);
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  gap: 2px;
+}
+/* 轨道删除按钮：hover 轨道标签时出现（仅空轨可删，见 ttRemoveLane） */
+.tt-lane-del {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  padding: 0;
+  flex-shrink: 0;
+}
+.tt-lane-label:hover .tt-lane-del {
+  opacity: 1;
+}
+.tt-lane-del:hover {
+  background: var(--danger-bg, #fef2f2);
+  color: var(--danger);
+}
+.tt-lane-content {
+  position: relative;
+  flex: 1;
+  background: var(--surface);
+}
+.tt-lane.drop-active {
+  outline: 2px dashed var(--info);
+  outline-offset: -2px;
+}
+
+/* ---- 添加轨道存根行 ---- */
+.tt-add-stub {
+  display: flex;
+  align-items: center;
+  margin: 2px 0 2px var(--tt-label-w, 72px);
+  height: 20px;
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  padding-left: 10px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+.tt-add-stub:hover {
+  color: var(--info-text);
+  border-color: var(--info);
+  opacity: 1;
+}
+
+/* ---- 柱子背景色带（分镜分区） ---- */
+.tt-pillar-band {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: rgba(59, 130, 246, 0.06);
+  border-left: 2px solid rgba(59, 130, 246, 0.25);
+  border-right: 2px solid rgba(59, 130, 246, 0.25);
+  cursor: pointer;
+  z-index: 0;
+  overflow: hidden;
+}
+.tt-pillar-band.tt-band-free {
+  background: rgba(245, 158, 11, 0.08);
+  border-left-color: rgba(245, 158, 11, 0.35);
+  border-right-color: rgba(245, 158, 11, 0.35);
+}
+.tt-pillar-label {
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  font-size: 9px;
+  color: rgba(100, 100, 100, 0.65);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ---- 片段 ---- */
+.tt-clip {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  background: #111827;
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: grab;
+  z-index: 1;
+  border: 2px solid transparent;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.tt-clip:active {
+  cursor: grabbing;
+}
+.tt-clip-video {
+  background: #1f2937;
+}
+.tt-clip-audio {
+  background: #065f46;
+}
+.tt-clip.selected {
+  border-color: var(--info);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35);
+}
+.tt-clip.dragging {
+  opacity: 0.35;
+}
+.tt-ghost {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  opacity: 0.85;
+  top: 0;
+  left: 0;
+  bottom: auto;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.tt-clip .timeline-clip-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.85;
+}
+.tt-audio-wave {
+  position: absolute;
+  inset: 0;
+}
+.tt-audio-wave svg {
+  width: 100%;
+  height: 100%;
+}
+.tt-clip .timeline-clip-name {
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  right: 4px;
+  font-size: 10px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+}
+.tt-clip .timeline-clip-duration {
+  position: absolute;
+  bottom: 1px;
+  left: 4px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+/* 边缘裁剪热区 */
+.tt-trim {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+  z-index: 2;
+  background: transparent;
+}
+.tt-trim-l {
+  left: 0;
+  border-left: 4px solid var(--info);
+  border-radius: 4px 0 0 4px;
+  opacity: 0;
+}
+.tt-trim-r {
+  right: 0;
+  border-right: 4px solid var(--info);
+  border-radius: 0 4px 4px 0;
+  opacity: 0;
+}
+.tt-clip:hover .tt-trim,
+.tt-clip.selected .tt-trim {
+  opacity: 0.55;
+}
+.tt-trim:hover {
+  opacity: 1 !important;
+}
+
+/* ---- 播放头 ---- */
+.tt-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ef4444;
+  z-index: 5;
+  pointer-events: none;
+}
+.tt-playhead-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: #ef4444;
+}
+.tt-playhead-grip {
+  position: absolute;
+  top: 0;
+  left: -6px;
+  width: 14px;
+  height: 12px;
+  background: #ef4444;
+  border-radius: 3px;
+}
+.tt-playhead-grip::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  border-left: 3px solid #fff;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+
+/* ---- 磁吸指示线 ---- */
+.tt-snap-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.8);
+  z-index: 6;
+  pointer-events: none;
+  display: none;
+}
+
+/* ---- 右键菜单 ---- */
+.tt-context-menu {
+  position: fixed;
+  z-index: 10001;
+  background: var(--floating-bg, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  min-width: 160px;
+}
+.tt-context-item {
+  padding: 7px 12px;
+  font-size: 13px;
+  color: var(--text);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tt-context-item:hover {
+  background: var(--panel-hover);
+}
+
+/* ---- 垃圾桶 ---- */
+/* .modal-card 基础样式是黑底（为视频/图片预览模态设计），浅色模式下业务弹窗
+   需逐个 ID 覆盖成白底（先例见 #shotGroupModal）；暗色模式由
+   html.theme-dark .modal:not(#videoModal):not(#imageModal) 统一接管，无需处理 */
+#trashModal .modal-card {
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+}
+#trashModal .modal-header {
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  color: #111827;
+}
+#trashModal .modal-body {
+  background: #ffffff;
+}
+#trashModal .modal-close {
+  background: #f3f4f6;
+  color: #374151;
+}
+#trashModal .modal-close:hover {
+  background: #e5e7eb;
+}
+.trash-badge {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin-left: 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+}
+.minimap-asset-entry .trash-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  margin-left: 0;
+}
+.trash-count {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.trash-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.trash-list {
+  max-height: 380px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.trash-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 28px 0;
+}
+.trash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.trash-item-thumb {
+  width: 52px;
+  height: 34px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.trash-item-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.trash-item-icon {
+  font-size: 10px;
+  color: var(--muted);
+}
+.trash-item-info {
+  flex: 1;
+  min-width: 0;
+}
+.trash-item-title {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trash-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.trash-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}

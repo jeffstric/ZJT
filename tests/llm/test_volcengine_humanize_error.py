@@ -65,9 +65,11 @@ class TestVolcengineModelNameMap(unittest.TestCase):
         )
 
     def test_doubao_version_suffix_mapping_kept(self):
+        """pro-260215 已进入方舟下线模型清单，canonical 名保持不变，
+        快照映射换方舟推荐的 doubao-seed-2-1-pro-260915（2026-11-20）。"""
         client = VolcengineOpenAIClient.__new__(VolcengineOpenAIClient)
         self.assertEqual(
-            client._resolve_model_name("doubao-seed-2-0-pro"), "doubao-seed-2-0-pro-260215"
+            client._resolve_model_name("doubao-seed-2-0-pro"), "doubao-seed-2-1-pro-260915"
         )
 
     def test_doubao_lite_maps_to_live_snapshot(self):

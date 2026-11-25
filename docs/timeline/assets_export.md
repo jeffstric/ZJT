@@ -29,7 +29,8 @@
     为草稿导出与素材包导出的共用逻辑（blob: 失效地址回退所属节点当前地址）。
   - `exportTimelineAssets()` 收集时间轴片段 POST 到后端，成功后用
     `window.downloadWithAuth(download_url, filename)` 触发下载（带 Authorization 走
-    `/api/download` 代理，兼容本地 `/upload` 相对路径与 CDN 签名地址）。
+    `/api/download`）。本地相对路径会被补成 `http://localhost:.../upload/draft/...`；
+    无 CDN 映射时后端直接读磁盘上的 zip 返回（不代理环回地址）。云环境仍走 CDN 签名地址。
 - `web/i18n/locales/{zh-CN,en}/video_workflow.json`：`timeline_assets_*` 系列 key。
 
 ### 请求体

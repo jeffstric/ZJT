@@ -73,3 +73,11 @@ data/runtime/
 docker-image-cache/
 docs/backend/wechat_monthly_subscription.md
 auto_test/e2e/.e2e_run.lock
+
+# 本地测试计划与需求文档（不入库）
+测试case和plan/
+需求/
+
+# 测试运行临时产物
+.pytest_tmp/
+frontend-test-results.xml

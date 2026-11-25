@@ -77,6 +77,10 @@
                     error: '',
                     drafts: {},
                     pendingQuestionNotified: false,
+                    completionNotified: false,
+                },
+                userModuleAgentNotice: {
+                    show: false,
                 },
                 userModuleGenerationModal: {
                     show: false,
@@ -496,6 +500,8 @@
                     error: '',
                     drafts: {},
                     pendingQuestionNotified: false,
+                    // 重新打开已完成的任务时不重复弹「等待 2 分钟」提示，只在生成完成的瞬间弹一次
+                    completionNotified: TERMINAL_AGENT_STATES.has(String(payload.status || '').toLowerCase()),
                 });
                 this.pollUserModuleAgent();
             },
@@ -503,6 +509,9 @@
                 this.userModuleAgentModal.show = false;
                 if (this.userModuleAgentTerminal) this.stopUserModuleAgentPolling();
                 else if (this.userModuleAgentModal.taskId) this.showToast(this.t('um_background_notice'), 'success');
+            },
+            closeUserModuleAgentNotice() {
+                this.userModuleAgentNotice.show = false;
             },
             stopUserModuleAgentPolling() {
                 if (this.userModuleAgentModal.pollTimer) clearTimeout(this.userModuleAgentModal.pollTimer);
@@ -540,6 +549,12 @@
                     }
                     this.userModuleAgentModal.status = task.status || payload.status || this.userModuleAgentModal.status;
                     this.userModuleAgentModal.generationId = task.generation_id || payload.generation_id || this.userModuleAgentModal.generationId;
+                    const agentStatus = String(this.userModuleAgentModal.status || '').toLowerCase();
+                    if (agentStatus === 'completed' && !this.userModuleAgentModal.completionNotified) {
+                        // 生成完成：提醒管理员新建模块需等待约 2 分钟初始化后才可使用
+                        this.userModuleAgentModal.completionNotified = true;
+                        this.userModuleAgentNotice.show = true;
+                    }
                     this.syncUserModuleQuestionDrafts();
                     if (this.hasPendingUserModuleQuestion && !this.userModuleAgentModal.show && !this.userModuleAgentModal.pendingQuestionNotified) {
                         this.userModuleAgentModal.show = true;

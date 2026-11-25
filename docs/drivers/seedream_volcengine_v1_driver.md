@@ -18,20 +18,49 @@ Seedream 采用「**一个 DriverKey + 一个驱动类，靠 `MODEL_MAPPING` 区
 
 ## 支持的模型
 
-| Task ID | 模型名称（国内） | 模型名称（海外） | 算力 | 支持尺寸 |
-|---------|-----------------|-----------------|:----:|---------|
-| 16 | doubao-seedream-5-0-260128 | seedream-5-0-260128 | 6 | 2K, 3K |
-| 18 | doubao-seedream-4-5-251128 | seedream-4-5-251128 | 8 | 2K, 4K |
-| 32 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K |
+| Task ID | 模型名称（国内） | 模型名称（海外） | 算力 | 支持尺寸 | 状态 |
+|---------|-----------------|-----------------|:----:|---------|------|
+| 16 | doubao-seedream-5-0-260128（已下线） | seedream-5-0-260128 | 6 | 2K, 3K | **停用**（hidden） |
+| 18 | doubao-seedream-4-5-251128（已下线） | seedream-4-5-251128 | 8 | 2K, 4K | **停用**（hidden） |
+| 33 | doubao-seedream-5-0-pro-260628 | seedream-5-0-pro-260628 | 20 | 2K, 3K, 4K | 在售 |
+| 57 | doubao-seedream-5-5-261028 | seedream-5-5-261028（未证实） | 7 | 1K, 2K | 在售（暂仅国内实现） |
 
 > 海外版模型名不带 `doubao-` 前缀（海外网关惯例）。
+>
+> 停用任务（16/18）的历史重试/显式 task_id 调用经驱动 `MODEL_MAPPING`
+> 兼容映射到在售的 `doubao-seedream-5-0-pro-260628`（见下文迁移说明）。
+
+## 2026-11-20 退役模型迁移
+
+方舟下线模型公告：`doubao-seedream-5-0-260128`（Task 16）与
+`doubao-seedream-4-5-251128`（Task 18）到期未迁移关停，官方建议统一迁移
+`doubao-seedream-5-0-pro-260628`。处理方式：
+
+- **Task 16/18 停用（`hidden=True`）**：任务 ID、key（`seedream-5.0` /
+  `seedream-4.5`）、名称（Seedream 5.0 / 4.5）与算力（6/8）全部保持原样，
+  前端模型选择器与用户偏好槽位不再显示；历史任务展示与重试仍可用，
+  重试经驱动 `MODEL_MAPPING` 兼容映射到在售 5-0-pro-260628（映射旧快照
+  必然 ClosedEndpoint 失败）。
+- **Task 32（Seedream 5.0 Pro，key `seedream-5.0-pro`）为唯一在售入口**，
+  算力 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）。
+- `output_format=png` 三个任务类型统一下发（4.5 不支持该参数的问题已随
+  停用消失）。
+
+## Seedream 5.5
+
+- **模型名**：`doubao-seedream-5-5-261028`（2026-11-09 发布，官方模型发布公告）
+- **能力**：文生图 / 单图编辑 / 多图融合 / 原生 RGBA 透明底 / 多轮精准编辑（官方称最多 100 轮）
+- **算力**：7（官方定价页暂未列出，按第三方核对口径约 0.28 元/张，ceil(0.28 ÷ 0.04) = 7；上线实测后可在后台热调）
+- **尺寸**：仅 1K / 2K。5.5 输出总像素上限 4,624,220（官方文档区间 [921600, 4624220]，约 2K 方图），3K/4K 必被方舟 400（InvalidParameter: image area）拒绝；驱动 `build_create_request` 对 5.5 的 3K/4K 请求（含存量任务重试）统一降档 2K 兜底
+- **实现方**：暂仅国内站（`seedream5_volcengine_v1`）；海外站快照未证实，`MODEL_MAPPING` 已预置 `seedream-5-5-261028`，404 时修正
+- **复用架构**：与 5.0 Pro 同一驱动类，仅 `MODEL_MAPPING` 加一行，无需新建驱动文件/实现方/工厂注册
 
 ## Seedream 5.0 Pro
 
 - **模型名**：`doubao-seedream-5-0-pro-260628`
 - **算力**：固定 20（成本 8毛 ÷ 0.04 = 20，所有尺寸统一价）
 - **尺寸**：2K / 3K / 4K 全支持
-- **output_format**：与 5.0 一致，文生图下发 `output_format=png`
+- **output_format**：`output_format=png`（三个任务类型统一下发，4.5 不支持该参数的问题已随停用消失）
 - **宫格生图**：支持（`supports_grid_image=True`）
 
 ## 配置

@@ -7,7 +7,9 @@
     <link rel="stylesheet" href="/css/common.css">
     <link rel="stylesheet" href="/css/admin.css">
     <link rel="stylesheet" href="/css/admin_user_modules.css?v=__VERSION__">
+    <link rel="stylesheet" href="/css/admin_groups_reports.css?v=__VERSION__">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.css">
+    <link rel="stylesheet" href="/js/vendor/monthSelect/style.css">
     <!-- i18n 支持 -->
     <script src="/i18n/i18n-core.js?v=__VERSION__"></script>
     <script src="/i18n/i18n-dom.js?v=__VERSION__"></script>
@@ -18,6 +20,7 @@
     <script src="/js/vendor/echarts.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/flatpickr.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/flatpickr/4.6.13/l10n/zh.js"></script>
+    <script src="/js/vendor/monthSelect/index.js"></script>
 </head>
 <body>
     <div id="app" class="admin-layout">
@@ -169,6 +172,22 @@
                         <span>{{ t('nav_task_timeline') }}</span>
                     </a>
                 </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'userGroups' }" @click.prevent="switchPage('userGroups')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <span>{{ t('nav_user_groups') }}</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" :class="{ active: currentPage === 'reports' }" @click.prevent="switchPage('reports')">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        <span>{{ t('nav_reports') }}</span>
+                    </a>
+                </li>
                 <!-- 品牌定制（仅企业版；工作室版 features.branding=false 自动隐藏） -->
                 <li v-if="brandingAvailable">
                     <a href="#" :class="{ active: currentPage === 'branding' }" @click.prevent="switchPage('branding')">
@@ -199,6 +218,8 @@
                 <h2 v-else-if="currentPage === 'marketingPublications'">{{ t('nav_marketing_publications') }}</h2>
                 <h2 v-else-if="currentPage === 'commission'">{{ t('nav_commission') }}</h2>
                 <h2 v-else-if="currentPage === 'taskTimeline'">{{ t('nav_task_timeline') }}</h2>
+                <h2 v-else-if="currentPage === 'userGroups'">{{ t('nav_user_groups') }}</h2>
+                <h2 v-else-if="currentPage === 'reports'">{{ t('nav_reports') }}</h2>
                 <h2 v-else-if="currentPage === 'branding'">{{ t('branding_title') }}</h2>
 
                 <div class="admin-user">
@@ -794,6 +815,7 @@
                                 <th>{{ t('col_id') }}</th>
                                 <th>{{ t('col_account') }}</th>
                                 <th>{{ t('col_role') }}</th>
+                                <th>{{ t('col_group') }}</th>
                                 <th>{{ t('col_remark') }}</th>
                                 <th>{{ t('col_power') }}</th>
                                 <th>{{ t('col_status') }}</th>
@@ -803,7 +825,7 @@
                         </thead>
                         <tbody>
                             <tr v-if="users.list.length === 0">
-                                <td colspan="8" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
+                                <td colspan="9" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
                             </tr>
                             <tr v-for="user in users.list" :key="user.user_id">
                                 <td>{{ user.user_id }}</td>
@@ -834,6 +856,10 @@
                                         {{ user.role === 'admin' ? t('user_role_admin') : t('user_role_user') }}
                                     </span>
                                 </td>
+                                <td>
+                                    <span v-if="user.group_name" class="group-name-badge" :title="user.group_name">{{ user.group_name }}</span>
+                                    <span v-else class="group-name-badge ungrouped">{{ t('group_ungrouped') }}</span>
+                                </td>
                                 <td class="remark-cell">
                                     <span v-if="user.remark" class="remark-text" :title="user.remark">{{ user.remark }}</span>
                                     <span v-else class="remark-empty">-</span>
@@ -850,6 +876,7 @@
                                 <td>
                                     <button class="action-btn primary" @click="viewUserDetail(user.user_id)">{{ t('btn_view_detail') }}</button>
                                     <button class="action-btn" @click="openRemarkModal(user)">{{ t('btn_edit_remark') }}</button>
+                                    <button class="action-btn" @click="openSetUserGroupModal(user)" :title="t('btn_set_group_title')">{{ t('btn_set_group') }}</button>
                                     <button class="action-btn success" @click="openPowerModal(user)">{{ t('btn_adjust_power') }}</button>
                                     <button class="action-btn" @click="openAssetQuotaModal(user)">{{ t('btn_asset_quota') }}</button>
                                     <button
@@ -907,6 +934,162 @@
                 </div>
             </section>
 
+            <!-- 用户分组页面 -->
+            <section v-if="currentPage === 'userGroups'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('user_groups_title') }}</h3>
+                        <div class="table-actions">
+                            <button class="action-btn primary" @click="openUserGroupCreateModal">{{ t('btn_create_group') }}</button>
+                            <button class="action-btn" @click="loadUserGroups(true)" :disabled="userGroups.loading">
+                                {{ userGroups.loading ? t('loading') : '↻ ' + t('btn_refresh') }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <p class="form-hint" style="padding: 0 22px;">{{ t('user_groups_hint') }}</p>
+
+                    <div v-if="userGroups.error" class="report-error" style="margin: 12px 22px;">{{ userGroups.error }}</div>
+
+                    <div v-if="userGroups.loading && !userGroups.loaded" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('col_group_id') }}</th>
+                                <th>{{ t('col_group_name') }}</th>
+                                <th>{{ t('col_group_remark') }}</th>
+                                <th>{{ t('col_member_count') }}</th>
+                                <th>{{ t('col_create_time') }}</th>
+                                <th>{{ t('col_actions') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="userGroups.list.length === 0">
+                                <td colspan="6" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
+                            </tr>
+                            <tr v-for="group in userGroups.list" :key="group.id">
+                                <td>{{ group.id }}</td>
+                                <td>
+                                    <div class="group-name-cell">
+                                        <span class="group-name-badge">{{ group.name }}</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <span v-if="group.remark" class="group-remark-text" :title="group.remark">{{ group.remark }}</span>
+                                    <span v-else class="remark-empty">-</span>
+                                </td>
+                                <td>
+                                    <span class="group-member-count">{{ t('member_count_label', { count: group.member_count }) }}</span>
+                                </td>
+                                <td>{{ formatDateOnly(group.create_at) }}</td>
+                                <td>
+                                    <button class="action-btn primary" @click="openUserGroupMembersModal(group)">{{ t('btn_view_members') }}</button>
+                                    <button class="action-btn" @click="openUserGroupEditModal(group)">{{ t('edit_btn') }}</button>
+                                    <button class="action-btn danger" @click="deleteUserGroup(group)">{{ t('delete_btn') }}</button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- 报表中心页面 -->
+            <section v-if="currentPage === 'reports'">
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3>{{ t('reports_title') }}</h3>
+                        <div class="table-actions">
+                            <button class="action-btn" @click="loadMonthlyGroupReport" :disabled="reports.loading">
+                                {{ reports.loading ? t('loading') : '↻ ' + t('btn_refresh') }}
+                            </button>
+                            <button class="action-btn success" @click="exportMonthlyGroupReportCsv" :disabled="!reports.months.length">
+                                {{ t('btn_export_csv') }}
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 月份范围筛选（flatpickr monthSelect，语言跟随页面 i18n；插件缺失时回退原生月份输入） -->
+                    <div class="table-filters">
+                        <div class="report-month-filter">
+                            <label>{{ t('report_start_month') }}</label>
+                            <input type="text" class="report-month-input" ref="reportStartMonth">
+                            <label>~</label>
+                            <label>{{ t('report_end_month') }}</label>
+                            <input type="text" class="report-month-input" ref="reportEndMonth">
+                        </div>
+                    </div>
+
+                    <div v-if="reports.error" class="report-error" style="margin: 12px 22px;">{{ reports.error }}</div>
+
+                    <!-- 汇总卡片 -->
+                    <div class="report-summary-cards" style="padding: 0 22px;" v-if="reports.months.length">
+                        <div class="report-summary-card">
+                            <div class="label">{{ t('report_total_power') }}</div>
+                            <div class="value">{{ getMonthlyReportSummary().totalPower }}</div>
+                        </div>
+                        <div class="report-summary-card">
+                            <div class="label">{{ t('report_month_count') }}</div>
+                            <div class="value">{{ getMonthlyReportSummary().monthCount }}</div>
+                        </div>
+                        <div class="report-summary-card">
+                            <div class="label">{{ t('report_group_count') }}</div>
+                            <div class="value">{{ getReportGroupColumns().length }}</div>
+                        </div>
+                    </div>
+
+                    <!-- 堆叠柱状图：x=月份，series=分组 -->
+                    <div v-if="reports.months.length" class="report-chart-container" ref="groupPowerChart"></div>
+
+                    <div v-if="reports.loading && !reports.loaded" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <table v-else-if="reports.months.length" class="admin-table report-summary-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('report_col_month') }}</th>
+                                <th>{{ t('report_col_group') }}</th>
+                                <th>{{ t('report_col_power') }}</th>
+                                <th>{{ t('report_col_record_count') }}</th>
+                                <th>{{ t('report_col_user_count') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template v-for="monthData in reports.months" :key="monthData.month">
+                                <tr
+                                    v-for="(group, groupIndex) in monthData.groups"
+                                    :key="monthData.month + '-' + group.group_id"
+                                    class="clickable"
+                                    :title="t('report_drilldown_hint')"
+                                    @click="openReportDetail(monthData.month, group)"
+                                >
+                                    <td
+                                        v-if="groupIndex === 0"
+                                        :rowspan="monthData.groups.length"
+                                        style="vertical-align: middle; font-weight: 600;"
+                                    >{{ monthData.month }}</td>
+                                    <td>
+                                        <div class="report-group-cell">
+                                            <span class="report-group-dot" :class="{ ungrouped: group.group_id === 0 }"></span>
+                                            {{ group.group_name }}
+                                        </div>
+                                    </td>
+                                    <td>{{ group.total_power }}</td>
+                                    <td>{{ group.record_count }}</td>
+                                    <td>{{ group.user_count }}</td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    <div v-else class="loading" style="color: #64748b;">
+                        <p>{{ t('no_data') }}</p>
+                    </div>
+                </div>
+            </section>
+
             <!-- 系统配置页面 -->
             <section v-if="currentPage === 'assetlib'">
                 <div class="table-container">
@@ -914,7 +1097,7 @@
                         <h3>{{ t('asset_lib_title') }}</h3>
                         <div class="table-actions">
                             <button class="action-btn primary" @click="loadAssetLibConfig" :disabled="assetLib.loading">
-                                {{ assetLib.loading ? t('loading') : '↻ ' + t('refresh') }}
+                                {{ assetLib.loading ? t('loading') : '↻ ' + t('btn_refresh') }}
                             </button>
                         </div>
                     </div>
@@ -2732,6 +2915,155 @@
             </div>
         </div>
 
+        <!-- 用户分组创建/编辑弹窗 -->
+        <div class="modal-overlay" v-if="userGroupModal.show" @click.self="closeUserGroupModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ userGroupModal.mode === 'edit' ? t('modal_edit_group') : t('modal_create_group') }}</h3>
+                    <button class="modal-close" @click="closeUserGroupModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('modal_group_name') }} <span style="color: red;">*</span></label>
+                        <input type="text" v-model="userGroupModal.name" maxlength="100" :placeholder="t('modal_group_name_placeholder')">
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_group_remark') }}</label>
+                        <textarea v-model="userGroupModal.remark" rows="3" maxlength="500" :placeholder="t('modal_group_remark_placeholder')"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserGroupModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="submitUserGroupModal" :disabled="userGroupModal.loading">
+                        {{ userGroupModal.loading ? t('btn_submit_loading') : t('btn_confirm') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 分组成员列表弹窗 -->
+        <div class="modal-overlay" v-if="userGroupMembersModal.show" @click.self="closeUserGroupMembersModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('modal_group_members', { name: userGroupMembersModal.groupName }) }}</h3>
+                    <button class="modal-close" @click="closeUserGroupMembersModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div v-if="userGroupMembersModal.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('col_id') }}</th>
+                                <th>{{ t('col_account') }}</th>
+                                <th>{{ t('col_nickname') }}</th>
+                                <th>{{ t('col_remark') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="userGroupMembersModal.members.length === 0">
+                                <td colspan="4" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
+                            </tr>
+                            <tr v-for="member in userGroupMembersModal.members" :key="member.user_id">
+                                <td>{{ member.user_id }}</td>
+                                <td>{{ member.phone || member.email || '-' }}</td>
+                                <td>{{ member.nickname }}</td>
+                                <td>{{ member.remark || '-' }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="pagination" v-if="userGroupMembersModal.total > userGroupMembersModal.pageSize">
+                        <button class="page-btn" @click="prevGroupMembersPage" :disabled="userGroupMembersModal.page === 1">{{ t('page_prev') }}</button>
+                        <span class="page-info">{{ t('page_info_simple', { current: userGroupMembersModal.page, total: userGroupMembersTotalPages() }) }}</span>
+                        <button class="page-btn" @click="nextGroupMembersPage" :disabled="userGroupMembersModal.page >= userGroupMembersTotalPages()">{{ t('page_next') }}</button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeUserGroupMembersModal">{{ t('close_btn') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 用户设组弹窗 -->
+        <div class="modal-overlay" v-if="userGroupSetModal.show" @click.self="closeSetUserGroupModal">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('modal_set_group') }}</h3>
+                    <button class="modal-close" @click="closeSetUserGroupModal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>{{ t('modal_user_label') }}</label>
+                        <input type="text" :value="userGroupSetModal.userName" disabled>
+                    </div>
+                    <div class="form-group">
+                        <label>{{ t('modal_select_group') }}</label>
+                        <select v-model="userGroupSetModal.selectedGroupId">
+                            <option value="">{{ t('group_ungrouped') }}</option>
+                            <option v-for="group in userGroups.list" :key="group.id" :value="String(group.id)">
+                                {{ group.name }}
+                            </option>
+                        </select>
+                        <p class="form-hint">{{ t('modal_set_group_hint') }}</p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeSetUserGroupModal">{{ t('cancel_btn') }}</button>
+                    <button class="modal-btn confirm" @click="submitSetUserGroup" :disabled="userGroupSetModal.loading">
+                        {{ userGroupSetModal.loading ? t('btn_submit_loading') : t('btn_confirm') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 报表下钻：组内用户月度消耗明细弹窗 -->
+        <div class="modal-overlay" v-if="reportDetail.show" @click.self="closeReportDetail">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3>{{ t('modal_report_detail', { month: reportDetail.month, name: reportDetail.groupName }) }}</h3>
+                    <button class="modal-close" @click="closeReportDetail">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="form-hint" style="margin-bottom: 10px;">
+                        {{ t('report_detail_total', { total: reportDetail.totalPower }) }}
+                    </p>
+                    <div v-if="reportDetail.loading" class="loading">
+                        <div class="loading-spinner"></div>
+                        <p>{{ t('loading') }}</p>
+                    </div>
+                    <table v-else class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>{{ t('report_col_user_id') }}</th>
+                                <th>{{ t('report_col_display_name') }}</th>
+                                <th>{{ t('report_col_power') }}</th>
+                                <th>{{ t('report_col_record_count') }}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-if="reportDetail.users.length === 0">
+                                <td colspan="4" style="text-align: center; color: #64748b;">{{ t('no_data') }}</td>
+                            </tr>
+                            <tr v-for="user in reportDetail.users" :key="user.user_id">
+                                <td>{{ user.user_id }}</td>
+                                <td>{{ user.display_name }}</td>
+                                <td :class="{ 'report-detail-total': user.power > 0 }">{{ user.power }}</td>
+                                <td>{{ user.record_count }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn cancel" @click="closeReportDetail">{{ t('close_btn') }}</button>
+                    <button class="modal-btn confirm" @click="exportReportDetailCsv" :disabled="!reportDetail.users.length">
+                        {{ t('btn_export_csv') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- 智剧通Token有效期调整弹窗 -->
         <div class="modal-overlay" v-if="zjtExpireModal.show" @click.self="closeZjtExpireModal">
             <div class="modal">
@@ -3651,6 +3983,7 @@
                         <span class="um-status" :class="userModuleStatusClass(userModuleAgentDisplayStatus)">{{ userModuleStatusText(userModuleAgentDisplayStatus) }}</span>
                         <span>{{ t('um_agent_progress_hint') }}</span>
                     </div>
+                    <div v-if="String(userModuleAgentModal.status || '').toLowerCase() === 'completed'" class="um-alert um-alert-warning">{{ t('um_agent_completed_banner') }}</div>
                     <div class="um-agent-feed" ref="userModuleAgentFeed">
                         <div v-if="!userModuleAgentModal.messages.length" class="um-agent-empty">{{ t('um_agent_waiting') }}</div>
                         <div
@@ -3699,6 +4032,22 @@
                 <div class="modal-footer">
                     <button class="modal-btn cancel" @click="closeUserModuleAgentModal">{{ t('um_run_in_background') }}</button>
                     <button class="modal-btn confirm" v-if="userModuleAgentTerminal" @click="finishUserModuleAgent">{{ t('um_view_generated_draft') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 智能体生成完成后的「等待 2 分钟」提示弹窗。 -->
+        <div class="modal-overlay" v-if="userModuleAgentNotice.show">
+            <div class="modal um-agent-notice-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_agent_completed_notice_title') }}</h3></div>
+                    <button class="modal-close" @click="closeUserModuleAgentNotice">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="um-agent-notice-text">{{ t('um_agent_completed_notice_body') }}</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn confirm" @click="closeUserModuleAgentNotice">{{ t('um_agent_completed_notice_confirm') }}</button>
                 </div>
             </div>
         </div>
@@ -3888,6 +4237,8 @@
     </div>
 
     <script src="/js/admin/user_modules.js?v=__VERSION__"></script>
+    <script src="/js/admin/user_groups.js?v=__VERSION__"></script>
+    <script src="/js/admin/reports.js?v=__VERSION__"></script>
     <script src="/js/admin.js"></script>
 </body>
 </html>

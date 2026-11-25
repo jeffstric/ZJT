@@ -13,10 +13,13 @@
 | 23 | doubao-seedance-2-0-260128 | `Seedance20VolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 31 | doubao-seedance-2-0-mini-260615 | `Seedance20MiniVolcengineV1Driver` | first_last_frame, multi_reference | 支持 |
 | 36 | doubao-seedance-2-5-260628 | `Seedance25VolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
+| 58 | doubao-seedance-2-5-flash-261115 | `Seedance25FlashVolcengineV1Driver` | first_last_frame, multi_reference | 支持（含纯音频） |
 
 > **Seedance 2.0 Mini**：价格为 Seedance 2.0 的一半，功能与 Seedance 2.0 一致。
 >
-> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s。支持分辨率 480P / 720P / 1080P（不支持 4K），1080P 算力为 720P 的 1.78 倍。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
+> **Seedance 2.5**：接口协议与 2.0 系列完全一致（content 数组结构、role 取值、状态轮询），仅 `model` 名不同。额外支持：纯音频输入（无图无视频）、最多 30 张参考图 / 10 个参考视频 / 10 段参考音频、视频时长 [4,30]s 或 -1。**注意**：官方文档中的「2~30s」是**参考视频/音频素材**的时长限制，不是输出时长放开 2~4s——2026-11 曾据此误上线 2/3s 输出档，实测被 API 拒绝、任务直接失败，已收回。支持分辨率 480P / 720P / 1080P（不支持 4K），1080P 算力为 720P 的 1.78 倍。火山国内版实现方 `seedance_2_5_volcengine_v1` 的数字 ID 为 **68**，huimengi 网关实现方 `seedance_2_5_huimengi_v1` 为 **69**，均不可复用 MiniMax H3 参考生视频的 67。
+>
+> **Seedance 2.5 Flash**（2026-11-12 发布，Task 58）：接口与 2.5 完全兼容，仅 model 名不同（`doubao-seedance-2-5-flash-261115`）。生成速度约 2 倍；官方价 46 元/百万 tokens（文生/图生，不含视频输入），720P ≈ 0.99 元/秒（较 2.5 便宜约 34%）。**仅 480P / 720P（不支持 1080P）**，480P 由 `SEEDANCE_480P_PRICE_MULTIPLIER` 倍率折算；单次最多 10 个参考；时长 4–30s（官方输出下限 4s，2/3s 档实测被 API 拒绝已收回）。代码侧算力兜底按 `ceil(秒 × 0.99 ÷ 0.04)`（720P 基价，贴本口径）：4s=99、5s=124、10s=248、30s=743，上线实测后可在后台热调。实现方 `seedance_2_5_flash_volcengine_v1` 数字 ID 为 **126**（112 已被 GPT Image 2.6 Sunburst 占用），暂仅国内站。
 
 ## 720p 默认算力配置
 
@@ -44,6 +47,7 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 
 | 输出时长 | seedance-2.5 | | 输出时长 | seedance-2.5 |
 |---------:|-------------:|---|---------:|-------------:|
+| 4 秒 | 413 | | 17 秒 | 944 |
 | 5 秒 | 454 | | 18 秒 | 985 |
 | 6 秒 | 495 | | 19 秒 | 1026 |
 | 7 秒 | 536 | | 20 秒 | 1066 |
@@ -56,11 +60,11 @@ Seedance 2.0 系列默认算力按 720p、输入包含视频且输入视频 15 �
 | 14 秒 | 822 | | 27 秒 | 1352 |
 | 15 秒 | 862 | | 28 秒 | 1393 |
 | 16 秒 | 903 | | 29 秒 | 1434 |
-| 17 秒 | 944 | | 30 秒 | 1475 |
+|  |  | | 30 秒 | 1475 |
 
 > 2.5 支持 480P / 720P / 1080P。480P 通过 `SEEDANCE_480P_PRICE_MULTIPLIER` 换算（与 2.0 共用）；1080P 通过 `SEEDANCE_2_5_1080P_PRICE_MULTIPLIER = 1.78` 换算。
 >
-> **视频编辑（2.5 + 参考视频）计费时长**：输出时长由参考视频决定（API 下发 `duration=-1`），计费「输出秒」取**参考视频总时长**（多视频求和 → 向上取整 → clamp 5–30，零头按 1 秒计），而非用户输入时长；探测失败回退用户输入。统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，见下文「计费口径」说明。
+> **视频编辑（2.5 + 参考视频）计费时长**：输出时长由参考视频决定（API 下发 `duration=-1`），计费「输出秒」取**参考视频总时长**（多视频求和 → 向上取整 → clamp 到 supported_durations 区间 4–30，零头按 1 秒计），而非用户输入时长；探测失败回退用户输入。统一入口 `utils/computing_power.py::resolve_video_edit_billing_duration`，见下文「计费口径」说明。
 
 ## 特性
 

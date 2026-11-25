@@ -37,6 +37,19 @@
   background: var(--primary-light);
 }
 
+/* 左下角一行拆成两段（总宽 180px，与下方 minimap 对齐）：
+   节点管理 ≈ 3/4（130px，保留图标+文字）＋ 失物找回 = 1/4（44px，纯 icon 居中）。
+   节点管理右缘 12+130=142，失物找回 left:148（6px 间距），右缘 148+44=192 = minimap 右缘。
+   失物找回按钮为 icon-only：去掉文字、居中显示归档盒图标，右上角 trash-badge 为数量角标。
+   注意：trashEntryBtn 之前误加内联 position:relative 会覆盖本类的 position:absolute 导致漂到屏幕外，已移除。 */
+.minimap-asset-entry#nodeAssetPanelBtn{
+  width: 130px;
+}
+.minimap-asset-entry#trashEntryBtn{
+  left: 148px;
+  width: 44px;
+}
+
 /* 引导锁定期间禁点（与 .minimap 同批规则） */
 body.tour-location-locked .minimap-asset-entry,
 body.tour-character-locked .minimap-asset-entry,

@@ -1,99 +1,82 @@
-/* ========== 素材输出语言设置 ========== */
-.output-language-field {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
+/* ========== Agent 设置面板·紧凑配置区（单行布局，说明文字移入悬浮 tooltip） ========== */
+.settings-compact {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--border-light, #f0f0f0);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.output-language-field-head {
-  margin-bottom: 10px;
+.settings-compact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
 }
-.output-language-field-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
+.settings-compact-label {
+  font-size: 13px;
+  color: #4a5568;
+  cursor: help;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.output-language-select {
-  width: 100%;
-  padding: 8px 10px;
+.settings-compact-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.settings-compact-input {
+  width: 76px;
+  padding: 5px 8px;
   border: 1px solid #e8e8e8;
-  border-radius: 8px;
+  border-radius: 7px;
+  font-size: 13px;
+  outline: none;
+  text-align: right;
+}
+.settings-compact-input:focus {
+  border-color: #00a8e6;
+}
+.settings-compact-unit {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.settings-compact-reset {
+  border: none;
+  background: transparent;
+  color: #00a8e6;
   font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.settings-compact-select {
+  max-width: 170px;
+  padding: 5px 8px;
+  border: 1px solid #e8e8e8;
+  border-radius: 7px;
+  font-size: 13px;
   outline: none;
   background: #fff;
   cursor: pointer;
 }
-.output-language-select:focus {
+.settings-compact-select:focus {
   border-color: #00a8e6;
 }
-.output-language-custom-input {
+.settings-compact-custom-input {
   width: 100%;
-  margin-top: 8px;
-  padding: 8px 10px;
+  margin-top: 2px;
+  padding: 5px 8px;
   border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  font-size: 14px;
-  outline: none;
-}
-.output-language-custom-input:focus {
-  border-color: #00a8e6;
-}
-.output-language-hint {
-  font-size: 12px;
-  color: #999;
-  margin-top: 6px;
-  line-height: 1.4;
-}
-
-/* ========== 算力确认设置 ========== */
-.power-confirm-field {
-  margin-bottom: 20px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border-light, #f0f0f0);
-}
-.power-confirm-field-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 10px;
-}
-.power-confirm-field-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
-}
-.power-confirm-reset {
-  border: none;
-  background: transparent;
-  color: #00a8e6;
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0;
-}
-.power-confirm-field-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.power-confirm-input {
-  width: 100px;
-  padding: 8px 10px;
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  font-size: 14px;
-  outline: none;
-}
-.power-confirm-input:focus {
-  border-color: #00a8e6;
-}
-.power-confirm-unit {
+  border-radius: 7px;
   font-size: 13px;
-  color: #666;
+  outline: none;
 }
-.power-confirm-hint {
-  font-size: 12px;
-  color: #999;
-  margin-top: 6px;
-  line-height: 1.4;
+.settings-compact-custom-input:focus {
+  border-color: #00a8e6;
 }
 .verification-option-btn {
   padding: 6px 16px;

@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import state from '../js/storyboard/state.js';
 import {
     applyImageBatchStatus,
+    isBatchItemCompleted,
+    pickNewlyCompletedSceneIds,
     resetAutoImageBatchState,
     shouldApplyBatchFirstFrameToScene,
 } from '../js/storyboard/auto_missing_images_state.js';
@@ -115,5 +117,42 @@ describe('applyImageBatchStatus 保护涂色结果', () => {
         const scene = state.scenes[0];
         expect(scene.selectedFirstFrameId).toBe(100);
         expect(scene.firstFrameUrl).toBe('https://cdn.example.com/storyboard/first_frame/cell.png');
+    });
+});
+
+describe('pickNewlyCompletedSceneIds（批量完成后候选区同步）', () => {
+    it('running → completed 视为新完成', () => {
+        const prev = { 7: { sceneId: 7, status: 'running' } };
+        const next = { 7: { sceneId: 7, status: 'completed' } };
+        expect(pickNewlyCompletedSceneIds(prev, next)).toEqual([7]);
+    });
+
+    it('已完成的 already_ready 不重复触发', () => {
+        const prev = { 7: { sceneId: 7, status: 'already_ready' } };
+        const next = { 7: { sceneId: 7, status: 'already_ready' } };
+        expect(pickNewlyCompletedSceneIds(prev, next)).toEqual([]);
+    });
+
+    it('首轮快照缺失时 already_ready 触发一次', () => {
+        const next = { 7: { sceneId: 7, status: 'already_ready' } };
+        expect(pickNewlyCompletedSceneIds({}, next)).toEqual([7]);
+    });
+
+    it('失败/排队/进行中不触发', () => {
+        const prev = {};
+        const next = {
+            1: { sceneId: 1, status: 'failed' },
+            2: { sceneId: 2, status: 'pending' },
+            3: { sceneId: 3, status: 'running' },
+            4: { sceneId: 4, status: '' },
+        };
+        expect(pickNewlyCompletedSceneIds(prev, next)).toEqual([]);
+    });
+
+    it('isBatchItemCompleted 只认 completed/already_ready', () => {
+        expect(isBatchItemCompleted({ status: 'completed' })).toBe(true);
+        expect(isBatchItemCompleted({ status: 'already_ready' })).toBe(true);
+        expect(isBatchItemCompleted({ status: 'running' })).toBe(false);
+        expect(isBatchItemCompleted(null)).toBe(false);
     });
 });

@@ -83,6 +83,24 @@ curl http://localhost:9003/api/storyboard/10/task-status?asset_type=first_frame 
 
 否则会出现：涂鸦保存成功后，因页面仍在「补全中 x/y」轮询，隔几秒预览又跳回原图。
 
+## 批量完成后的候选区同步（develop_f1212）
+
+场景轮询的收尾候选刷新（`finishScenePolling` → `loadSceneCandidates`）带 `pollHadActivity` 门控：
+只有场景轮询恰好覆盖到「生成中→完成」迁移时才会执行。批量轮询（`pollImageBatchStatus`）通常
+先于场景轮询看到完成，而此时场景轮询可能早已停止——右侧候选面板会停留在旧的失败占位卡，
+新图不显示为选中候选（首帧 / 参考生两种模式同链路；参考生视频模式手动「补全分镜图」场景最易触发）。
+
+修复（`auto_missing_images.js`）：`handleBatchUpdate` 在每轮 tick 对比前后 item 状态
+（`pickNewlyCompletedSceneIds`，prev 未完成 → now completed/already_ready），对每个新完成分镜：
+
+1. 调 `GET /scene/{id}/task-status` 触发服务端延迟选中绑定（`resolve_scene_generation_bindings`）；
+2. `loadSceneCandidates` 拉最新候选（含 selected 标记）；
+3. 局部重绘：缩略图 `updateSceneThumb`、当前分镜的候选区 `updateCurrentSceneDetail`、
+   视频助手模式下同步媒体槽（`refreshSceneFirstFrameSlot`）并刷新 `Region.AGENT_PANEL`。
+
+这样批量补图完成后，无论首帧还是参考生视频模式，新图都会立即以「选中候选」出现在右侧面板，
+与场景轮询收尾路径行为一致。diff 为纯函数放在 `auto_missing_images_state.js`，vitest 单测覆盖。
+
 ## Billing Boundary
 
 `auto-generate-missing-images` creates one orchestration job. In `speed` and `balanced` it selects scenes that need an image and calls the existing `StoryboardAgentCliService.generate_image()` method for each submitted scene. In `quality + first_frame` it submits same-act storyboard first-frame grids through `StoryboardFirstFrameGridService`, then `task/grid_image_task.py` cuts the grid and writes each cell back as `storyboard_scene_asset(first_frame)`.

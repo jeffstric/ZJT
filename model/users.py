@@ -658,11 +658,13 @@ class UsersModel:
         # 获取分页数据
         offset = (page - 1) * page_size
         data_sql = f"""
-            SELECT id, phone, email, nickname, remark, status, role, created_at, updated_at, invite_code, inviter_id, first_recharge,
-                   zjt_token_enabled, zjt_token_expire_at, channel_level
-            FROM users
+            SELECT u.id, u.phone, u.email, u.nickname, u.remark, u.status, u.role, u.created_at, u.updated_at, u.invite_code, u.inviter_id, u.first_recharge,
+                   u.zjt_token_enabled, u.zjt_token_expire_at, u.channel_level, u.group_id,
+                   ug.name AS group_name
+            FROM users u
+            LEFT JOIN user_group ug ON ug.id = u.group_id
             WHERE {where_clause}
-            ORDER BY id DESC
+            ORDER BY u.id DESC
             LIMIT %s OFFSET %s
         """
         params.extend([page_size, offset])
@@ -674,6 +676,9 @@ class UsersModel:
                 user_dict = User(**row).to_dict()
                 # 管理员备注不进 to_dict（防用户侧泄漏），仅在 admin 列表路径附加
                 user_dict['remark'] = row.get('remark')
+                # 分组信息同样仅 admin 列表路径附加
+                user_dict['group_id'] = row.get('group_id')
+                user_dict['group_name'] = row.get('group_name')
                 users.append(user_dict)
             
             return {
@@ -1136,12 +1141,14 @@ CREATE TABLE IF NOT EXISTS `users` (
   `api_token` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '用户API Token（智剧通接口授权）',
   `zjt_token_enabled` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否启用智剧通Token（0-未启用，1-已启用）',
   `zjt_token_expire_at` datetime DEFAULT NULL COMMENT '智剧通Token过期时间',
+  `group_id` int DEFAULT NULL COMMENT '所属用户分组id（NULL=未分组）',
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE KEY `idx_phone` (`phone`) USING BTREE,
   UNIQUE KEY `idx_email` (`email`) USING BTREE,
   UNIQUE KEY `idx_serial_number` (`serial_number`) USING BTREE,
   UNIQUE KEY `idx_api_token` (`api_token`),
   KEY `invite_code` (`invite_code`) USING BTREE,
-  KEY `inviter_id` (`inviter_id`) USING BTREE
+  KEY `inviter_id` (`inviter_id`) USING BTREE,
+  KEY `idx_group_id` (`group_id`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表'
 """

@@ -41,6 +41,7 @@ from config.constant import (
     WORLD_IMPORT_JOB_READ_RETRY_INTERVAL,
     WORLD_IMPORT_JOB_TTL,
     WORLD_IMPORT_JOB_CLEANUP_INTERVAL,
+    WORLD_IMPORT_KEY_PREFIX,
     MATERIAL_LANGUAGE_LOCALE_FALLBACK,
     MATERIAL_OUTPUT_LANGUAGE_MAX_LENGTH,
     OUTPUT_LANGUAGE_INSTRUCTION_TEMPLATE,
@@ -1964,6 +1965,15 @@ async def update_message_content(request: Request, session_id: str, message_id: 
         if not new_content:
             return JSONResponse({'success': False, 'error': 'content is required'}, status_code=400)
 
+        # 属主断言：会话不存在或非本人会话一律 404（防枚举），与 replace-pending-task 同规则
+        from model.chat_sessions import ChatSessionsModel
+        session_entity = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not session_entity:
+            return JSONResponse({'success': False, 'error': 'message not found or session mismatch'}, status_code=404)
+        owner_error = ensure_owner(session_entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+
         from model.chat_messages import ChatMessagesModel
         affected = await asyncio.to_thread(
             ChatMessagesModel.update_content,
@@ -2101,6 +2111,18 @@ async def set_session_model(request: Request, session_id: str, model_request: Mo
                 'success': False,
                 'error': '会话不存在'
             }, status_code=404)
+
+        # 属主断言：非本人会话一律 404（防枚举），与 /session/{id}/task 同规则
+        from model.chat_sessions import ChatSessionsModel
+        session_entity = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not session_entity:
+            return JSONResponse({
+                'success': False,
+                'error': '会话不存在'
+            }, status_code=404)
+        owner_error = ensure_owner(session_entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
 
         # 验证模型是否有效
         if model_request.auth_token:
@@ -3020,7 +3042,16 @@ async def delete_session(request: Request, session_id: str):
     """删除会话（软删除）"""
     try:
         from model.chat_sessions import ChatSessionsModel
-        affected = ChatSessionsModel.soft_delete(session_id)
+        # 属主断言：会话不存在或非本人会话一律 404（防枚举），与 history/clear/compress/task 同规则
+        entity = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not entity:
+            return JSONResponse({'success': False, 'error': '会话不存在'}, status_code=404)
+        owner_error = ensure_owner(entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+        affected = await asyncio.to_thread(
+            ChatSessionsModel.soft_delete, session_id, entity.session_type
+        )
         if affected > 0:
             return JSONResponse({'success': True})
         return JSONResponse({'success': False, 'error': '会话不存在'}, status_code=404)
@@ -3037,7 +3068,16 @@ async def update_session_title(request: Request, session_id: str, body: SessionT
         if not body.title.strip():
             return JSONResponse({'success': False, 'error': '标题不能为空'}, status_code=400)
         from model.chat_sessions import ChatSessionsModel
-        affected = ChatSessionsModel.update_title(session_id, body.title.strip())
+        # 属主断言：会话不存在或非本人会话一律 404（防枚举）
+        entity = await asyncio.to_thread(ChatSessionsModel.get_by_session_id, session_id)
+        if not entity:
+            return JSONResponse({'success': False, 'error': '会话不存在'}, status_code=404)
+        owner_error = ensure_owner(entity.user_id, get_auth_user_id(request))
+        if owner_error:
+            return owner_error
+        affected = await asyncio.to_thread(
+            ChatSessionsModel.update_title, session_id, body.title.strip()
+        )
         if affected > 0:
             return JSONResponse({'success': True})
         return JSONResponse({'success': False, 'error': '会话不存在'}, status_code=404)
@@ -6688,6 +6728,10 @@ async def list_skills(
     auth_token: str = QueryParam("", description="认证token")
 ):
     """获取所有 skill 列表（含用户是否自定义标记）"""
+    # 身份一致性校验：user_id 必须与登录身份一致（防跨用户枚举/读取他人自定义技能）
+    claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+    if claimed_error:
+        return claimed_error
     try:
         # 加载所有 skill 元数据（从文件系统）
         loader = SkillLoader()
@@ -6726,6 +6770,10 @@ async def get_skill_detail(
     auth_token: str = QueryParam("", description="认证token")
 ):
     """获取单个 skill 详情（优先返回用户自定义，回退文件系统）"""
+    # 身份一致性校验：user_id 必须与登录身份一致（防跨用户读取他人自定义提示词）
+    claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+    if claimed_error:
+        return claimed_error
     try:
         loader = SkillLoader(user_id=user_id)
         skill_data = loader.get_skill_full_content(skill_name)
@@ -6760,6 +6808,10 @@ async def update_skill(
     user_id: int = QueryParam(..., description="用户ID"),
 ):
     """保存用户自定义 skill prompt"""
+    # 身份一致性校验：user_id 必须与登录身份一致（防跨用户覆盖他人技能提示词）
+    claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+    if claimed_error:
+        return claimed_error
     try:
         # 验证 skill 是否存在（文件系统中）
         loader = SkillLoader()
@@ -6804,6 +6856,10 @@ async def delete_skill(
     auth_token: str = QueryParam("", description="认证token")
 ):
     """删除用户自定义 skill，回退到默认"""
+    # 身份一致性校验：user_id 必须与登录身份一致（防跨用户删除他人自定义技能）
+    claimed_error = check_claimed_user_id(user_id, get_auth_user_id(request))
+    if claimed_error:
+        return claimed_error
     try:
         from model.skill_definitions import SkillDefinitionsModel
         deleted = SkillDefinitionsModel.delete_user_skill(user_id, skill_name)
@@ -6935,6 +6991,10 @@ async def import_world(
     file: UploadFile = File(...)
 ):
     """从 zip 包导入世界数据（小文件兜底链路，已修复事件循环阻塞）"""
+    # 属主断言：user_id 必须与登录身份一致（与 export-world 同族修复，防跨用户越权导入）
+    auth_uid = get_auth_user_id(request)
+    if auth_uid is None or str(auth_uid) != str(user_id):
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
     tmp_path = None
     try:
         import tempfile as _tempfile
@@ -7322,6 +7382,13 @@ async def import_world_from_cloud(
 
     立即返回 job_id，前端轮询 /api/world-import-status 获取进度。
     """
+    # 属主断言：user_id 必须与登录身份一致（防跨用户越权导入）
+    auth_uid = get_auth_user_id(request)
+    if auth_uid is None or str(auth_uid) != str(user_id):
+        return JSONResponse(status_code=403, content={'success': False, 'error': 'user_id 与登录用户不一致'})
+    # key 仅接受世界导入前缀，防止对共享 bucket 内任意对象签发下载 URL 并导入
+    if not key.startswith(f"{WORLD_IMPORT_KEY_PREFIX}/"):
+        return JSONResponse({'success': False, 'error': '非法的导入 key'}, status_code=400)
     from config.constant import WORLD_IMPORT_JOB_MAX_CONCURRENT
     try:
         # 并发上限保护

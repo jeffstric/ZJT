@@ -245,7 +245,7 @@ Agent 模式提交文生图 / 图生图 / 文生视频 / 图生视频 / 数字�
   - `GET /api/user/power-budget` → `{ limit, is_custom, default_limit }`
   - `PUT /api/user/power-budget` body `{ limit }`（非负整数，0=不限制）
   - `DELETE /api/user/power-budget` 回退平台默认
-- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 复用 `.power-confirm-field` 样式（`web/css/marketing_agent.css`），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
+- 前端实现：`web/js/marketing_agent.js` `loadPowerBudgetSettings` / `savePowerBudgetLimit` / `resetPowerBudgetLimit`；UI 使用 `.settings-compact` 紧凑单行样式（`web/css/marketing_agent.css`，2026-11-15 起设置面板顶部三个配置项——自动确认上限 / 单次任务算力上限 / 输出语言——压缩为单行布局，说明文字移入悬浮 tooltip，为下方模型选择腾出空间），i18n 词条 `power_budget_title/unit/hint`（zh-CN / en）。
 
 ### SSE 流式响应
 
@@ -312,7 +312,7 @@ Agent 提交图片/视频生成任务后，前端通过 `setInterval` 轮询 `GE
 
 针对「生成后忘记参数选择、重新生成需重贴提示词/重传参考图」的痛点，每张生成结果卡（Agent 轮询与直连轮询共用 `buildGeneratedMediaRowsHtml`）新增两层能力：
 
-1. **参数元数据条**（`.gen-meta-bar`，样式对齐即梦结果卡）：`模型名 | 时长s | 比例 | 分辨率 | 详细信息ⓘ`。数据来自 `GET /api/get-status` 新增的 `task.meta`（后端 `server.py::_build_task_meta_payload`，从 ai_tools 记录提取 `task_type`/`model_name`/`ratio`/`duration`/`image_size`/`resolution`(extra_config)/`image_mode`/`enable_face_mask`/`prompt`/`reference_images`(多参考 JSON)/`frame_images`(image_path 逗号分隔，即图片编辑参考图与图生视频首尾帧)/`reference_video`/`reference_audio`；任何字段异常仅告警不抛，不影响状态轮询主流程）。同时元数据写入卡片 `data-gen-type/model/ratio/duration/resolution` 属性随结果 HTML 持久化到会话历史，刷新/重进会话后元数据条仍可展示（属性已加入 `web/js/security.js` DOMPurify 白名单）。旧消息无 data-gen-* 属性时自然降级为不显示元数据条。
+1. **参数元数据条**（`.gen-meta-bar`，样式对齐即梦结果卡）：`模型名 | 时长s | 比例 | 分辨率 | 详细信息ⓘ`。数据来自 `GET /api/get-status` 新增的 `task.meta`（后端 `server.py::_build_task_meta_payload`，从 ai_tools 记录提取 `task_type`/`model_name`/`ratio`/`duration`/`image_size`/`resolution`(extra_config)/`image_mode`/`enable_face_mask`/`output_format`(extra_config)/`quality`(extra_config)/`prompt`/`reference_images`(多参考 JSON)/`frame_images`(image_path 逗号分隔，即图片编辑参考图与图生视频首尾帧)/`reference_video`/`reference_audio`；任何字段异常仅告警不抛，不影响状态轮询主流程）。同时元数据写入卡片 `data-gen-type/model/ratio/duration/resolution` 属性随结果 HTML 持久化到会话历史，刷新/重进会话后元数据条仍可展示（属性已加入 `web/js/security.js` DOMPurify 白名单）。旧消息无 data-gen-* 属性时自然降级为不显示元数据条。
 2. **详细信息面板**：点击「详细信息」按 `data-tool-id` 懒加载 `get-status` 拉全量参数（含完整提示词），以 DOM `textContent` 渲染（提示词是不可信文本，不拼 HTML），再次点击收起。
 3. **重新编辑**（`data-regen-edit` + 事件委托 `handleGeneratedResultEdit`）：点击时按 `data-tool-id` 拉取元数据，并**先把底部创作类型从智能体切到图片模式或视频模式**（`selectType`），再把该次生成的参数写进对应模式的输入栏。提示词回填输入框；模型按 `task_type` 经 `TaskConfig.getTaskById` 反查，在当前模式的模型池里按 key / short_key / 显示名匹配（Seedream 5.0 与 5.0 Pro 不会互相串）。比例、时长、分辨率在切到目标模型并刷新可选项之后再写入，因此 9:16、2K、3K 会落在该模型自己的档位上，而不是沿用智能体模式里另一套模型的选项。图片分辨率回填要经过界面文案映射：落库 `2K`/`4K` 对应「高清 2K」「超清 4K」，`3K`（Seedream 5.0 / 5.0 Pro）保持 `3K`。视频同时恢复 `image_mode`（多参考 / 首尾帧）和人脸遮盖开关。参考图/视频/音频以服务端 URL 直接加入媒体条（不重新上传）；图片编辑的 URL 再发送时走 `/api/image-edit` 的 `ref_image_urls`，图生视频的 URL 再发送时走 `image_urls`。回填期间 `restoringGenerationParams` 挡住模式、参考图和模型监听，避免它们把刚恢复的模型改回偏好默认值。成功后绿色 notice-toast 提示（`noticeMessage` / `.notice-toast`，区别于红色 error-toast）。用户接着点发送时，请求使用这套已恢复的模型、比例、分辨率和参考图。
 4. **重新生成**（`data-regen-submit` + `handleGeneratedResultRegenerate`）：不经 LLM 编排，按原参数直接重提任务——图片按有无参考图走 `/api/image-edit`（`ref_image_urls`，需 task 类别含 image_edit）或 `/api/text-to-image`，`image_size` 经同一档位映射提交（`2K`/`3K`/`4K` 与重新编辑一致）；视频按 `image_mode` 走 `/api/ai-app-run-image`（首尾帧→`image_urls`、多参考→`reference_image_urls`，附 `audio_urls`/`video_urls`/`enable_face_mask`）或 `/api/ai-app-run`，`task_id` 直接复用 ai_tools.type，比例、时长、分辨率沿用 meta，count 固定 1。提交后复用直连链路：占位气泡 → `__PENDING_TASK__` 标记入库 → `startImage/VideoStatusCheck` 轮询 → `persistDirectGenerationResult` 替换为含元数据条与操作按钮的结果卡。
@@ -385,6 +385,12 @@ Agent 模式下，如果用户没有在本轮偏好、历史对话或明确指�
 前端选择 `auto` 时会显式把 `resolution: "auto"` 同步到后端，用于覆盖旧的固定分辨率偏好；直接图片生成/编辑请求会在提交前将 `auto` 解析为当前模型支持的最低输出分辨率，避免落入接口层的通用 1K 默认值。
 
 分辨率选项表示生成或编辑结果的目标输出清晰度，不用于校验用户上传原图的像素尺寸。例如 Seedream 5.0 支持 2K/3K 时，用户上传 1K 或普通尺寸照片仍可发起图片编辑；系统应将 2K/3K 作为 `image_size` 输出参数传递，而不是要求用户重新上传 2K/3K 原图。
+
+### 输出格式选择（GPT Image 2.6）
+
+图片模式下，若当前模型的 task-configs `params_schema` 配置了 `output_format`（`type === 'select'`，目前仅 GPT Image 2.6 系列），Agent 模式「自定义」设置面板和直连模式底部比例面板的图片分辨率附近会显示「输出格式」选项（`png`/`jpeg`/`webp`/`gif`/`svg`，选项与默认值以后端下发为准）。选中值由 `imageOutputFormat` ref 保存，切换模型时经 watcher 自动重置为该模型 schema 的 `default`（无 schema 的模型清空、不显示选择器）。
+
+直连文生图请求（`/api/text-to-image`）在选中值非空时以 `extra_config={"output_format":"..."}` 随表单提交，由通用站点驱动透传上游；图片编辑（`/api/image-edit`）分支不支持 gif/svg，**不携带** `extra_config`。结果卡「重新生成」按 meta 回放：原任务 `meta.output_format` 有值时随重提请求携带（编辑任务同样不传）。`get-status` meta（`server.py::_build_task_meta_payload`）从 `ai_tools.extra_config` 解析 `output_format`/`quality` 字段返回。
 
 ### 视频时长和生成方式
 

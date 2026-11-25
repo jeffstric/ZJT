@@ -73,6 +73,16 @@ class GptImageCommonV1Driver(BaseVideoDriver):
     VALID_QUALITIES = {"low", "medium", "high", "auto"}
     VALID_BACKGROUNDS = {"opaque", "auto", "transparent"}
     VALID_MODERATIONS = {"low", "auto"}
+    # 输出格式（OpenAI gpt-image 标准）；2.6 系列子类扩展支持 gif/svg
+    VALID_OUTPUT_FORMATS = {"png", "jpeg", "webp"}
+    # GIF 帧参数合法范围（上游 gpt-image-2.6：2~16 帧、单帧 20ms~2s）
+    GIF_FRAME_COUNT_RANGE = (2, 16)
+    GIF_FRAME_DURATION_MS_RANGE = (20, 2000)
+    # GIF 帧表安全帧格边长上限（任务 158/159/160 实测）：帧表=帧格×固定网格模板
+    # （9 帧 3x3、4/6 帧 4x2/2x4），受上游「帧表最长边 ≤3840 + 像素预算 ~829 万」双重
+    # 限制：3x3 要求帧格 ≤960（像素），4x2 要求帧格 ≤960（边长），取 928 留余量
+    # （16 的倍数；9 帧帧表 2784x2784=7.75MP，4x2 帧表 3712x1856 均可通过）
+    GIF_MAX_CELL_EDGE = 928
 
     def __init__(self, site_id: str, impl_name: str = None):
         """
@@ -398,6 +408,82 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         else:
             self.logger.warning(f"无效的 {key} 值: {value}，有效值: {valid_values}，已忽略")
 
+    def _append_output_format(self, form_data: Dict[str, Any], config: Dict[str, Any]) -> None:
+        """
+        追加 output_format 字段：值小写化、jpg 归一为 jpeg，仅透传合法值。
+        文生图（JSON body）与图片编辑（multipart 表单）共用。
+        """
+        value = config.get("output_format")
+        if not value:
+            return
+
+        value = str(value).strip().lower()
+        if value == "jpg":
+            value = "jpeg"
+        if value in self.VALID_OUTPUT_FORMATS:
+            form_data["output_format"] = value
+        else:
+            self.logger.warning(
+                f"无效的 output_format 值: {value}，有效值: {self.VALID_OUTPUT_FORMATS}，已忽略"
+            )
+
+    def _append_gif_frame_params(self, payload: Dict[str, Any], config: Dict[str, Any]) -> None:
+        """
+        GIF 帧参数透传（frame_count / frame_duration_ms，转 int），仅在 gif 输出时生效。
+
+        上游默认 9 帧拼帧表（如 3x3），1K 尺寸下帧表 3072x3072 超出像素预算直接 400
+        （任务 158 事故），必须把帧数控制权交给调用方；非 gif 格式忽略这两个参数。
+        """
+        if payload.get("output_format") != "gif":
+            return
+
+        ranges = (
+            ("frame_count", *self.GIF_FRAME_COUNT_RANGE),
+            ("frame_duration_ms", *self.GIF_FRAME_DURATION_MS_RANGE),
+        )
+        for key, lo, hi in ranges:
+            raw = config.get(key)
+            if raw is None or raw == "":
+                continue
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                self.logger.warning(f"无效的 {key} 值: {raw}，已忽略")
+                continue
+            if lo <= value <= hi:
+                payload[key] = value
+            else:
+                self.logger.warning(f"{key} 值超出范围: {value}（合法 {lo}~{hi}），已忽略")
+
+    def _clamp_size_for_gif(self, size: str, output_format: Optional[str]) -> str:
+        """
+        GIF 帧表安全帧格收敛（仅 gif 生效）：帧格任一边超 GIF_MAX_CELL_EDGE 时，
+        按最长边等比缩小并对齐 16 的倍数（上游尺寸约束），保持宽高比。
+
+        帧表由帧格 × 固定网格模板拼成（9 帧 3x3、4/6 帧 4x2/2x4），受上游
+        「帧表最长边 ≤3840 + 像素预算 ~829 万」双重限制（任务 158/159/160 实测：
+        1K/1024 帧格下 9 帧超像素预算、4/6 帧超长边，全部 400）。
+        """
+        if output_format != "gif":
+            return size
+        try:
+            w_str, h_str = str(size).lower().split("x", 1)
+            w, h = int(w_str), int(h_str)
+        except (ValueError, AttributeError):
+            return size
+        if w <= self.GIF_MAX_CELL_EDGE and h <= self.GIF_MAX_CELL_EDGE:
+            return size
+
+        scale = self.GIF_MAX_CELL_EDGE / max(w, h)
+        new_w = max(16, int(w * scale) // 16 * 16)
+        new_h = max(16, int(h * scale) // 16 * 16)
+        adjusted = f"{new_w}x{new_h}"
+        if adjusted != size:
+            self.logger.warning(
+                f"GIF 帧表尺寸限制：帧格 {size} 等比缩小为 {adjusted}（安全边长 ≤{self.GIF_MAX_CELL_EDGE}）"
+            )
+        return adjusted
+
     def _build_edit_form_data(self, ai_tool, size: str) -> Dict[str, Any]:
         """
         构建 /v1/images/edits 表单字段。
@@ -413,6 +499,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         self._append_optional_form_value(form_data, config, "quality", self.VALID_QUALITIES)
         self._append_optional_form_value(form_data, config, "background", self.VALID_BACKGROUNDS)
         self._append_optional_form_value(form_data, config, "moderation", self.VALID_MODERATIONS)
+        self._append_output_format(form_data, config)
 
         return form_data
 
@@ -475,6 +562,15 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             "size": size,
         }
 
+        # 透传 extra_config 中的可选参数（quality / output_format，
+        # 如 gpt-image-2.6 的 xhigh/max 质量档与 gif/svg 输出格式）
+        config = self._parse_extra_config(ai_tool)
+        self._append_optional_form_value(payload, config, "quality", self.VALID_QUALITIES)
+        self._append_output_format(payload, config)
+        self._append_gif_frame_params(payload, config)
+        # GIF 帧表尺寸限制：帧格超出安全边长时等比缩小（仅 gif 生效，保持比例、16 的倍数）
+        payload["size"] = self._clamp_size_for_gif(payload["size"], payload.get("output_format"))
+
         return {
             "url": f"{self._base_url}/v1/images/generations",
             "method": "POST",
@@ -488,7 +584,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 "mode": "create",
                 "ratio": ratio,
                 "image_size": image_size,
-                "mapped_size": size,
+                "mapped_size": payload["size"],
             },
         }
 
@@ -579,6 +675,55 @@ class GptImageCommonV1Driver(BaseVideoDriver):
         
         return truncated
 
+    @staticmethod
+    def _sniff_base64_image_mime(b64_data: str) -> str:
+        """
+        通过 base64 前缀的字节魔数识别图片 MIME 类型。
+
+        images/generations 的 b64_json 响应不携带格式信息，gpt-image-2.6
+        支持 gif/svg 输出后无法靠字段区分真实格式，按字节签名识别，
+        识别失败回退 png（保持历史行为）。
+        """
+        try:
+            prefix_b64 = b64_data[:44]
+            prefix_b64 += "=" * (-len(prefix_b64) % 4)
+            prefix = base64.b64decode(prefix_b64)
+        except Exception:
+            return "image/png"
+        if prefix.startswith(b"\x89PNG"):
+            return "image/png"
+        if prefix.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg"
+        if prefix.startswith(b"GIF8"):
+            return "image/gif"
+        if prefix.startswith(b"RIFF") and prefix[8:12] == b"WEBP":
+            return "image/webp"
+        if prefix.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"<"):
+            return "image/svg+xml"
+        return "image/png"
+
+    def _wrap_b64_as_data_url(self, b64_data: str) -> str:
+        """将 b64_json 包装为带真实 MIME 的 data URL（按魔数识别格式）。"""
+        return f"data:{self._sniff_base64_image_mime(b64_data)};base64,{b64_data}"
+
+    @staticmethod
+    def _friendly_api_error(error_info: Any) -> Optional[str]:
+        """
+        对已知参数类上游错误给出可操作的中文提示（上游 raw message 为英文）。
+
+        目前覆盖：GIF 帧表超出像素预算（openlux/gpt-image-2.6，任务 158 事故）。
+        """
+        if not isinstance(error_info, dict):
+            return None
+        message = str(error_info.get("message") or "").lower()
+        if "pixel budget" in message or "no supported sheet" in message:
+            return (
+                "GIF 帧表尺寸超出上游限制：帧表由帧拼图而成，需同时满足"
+                "「最长边 ≤ 3840」与像素预算（实测 1K 下 9 帧帧表 3072x3072 超预算、"
+                "4/6 帧帧表 4096x2048 超边长）。请先改用 2 帧，或降低分辨率后重试"
+            )
+        return None
+
     def _extract_image_from_response(self, response: dict) -> Optional[str]:
         """
         从 OpenAI API 响应中提取图片 URL 或 base64 数据
@@ -601,7 +746,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                 if data.get("url"):
                     return data["url"]
                 if "b64_json" in data:
-                    return f"data:image/png;base64,{data['b64_json']}"
+                    return self._wrap_b64_as_data_url(data["b64_json"])
 
             if data and isinstance(data, list) and len(data) > 0:
                 first_item = data[0]
@@ -611,7 +756,7 @@ class GptImageCommonV1Driver(BaseVideoDriver):
                         return first_item["url"]
                     # 其次获取 b64_json 字段
                     if "b64_json" in first_item:
-                        return f"data:image/png;base64,{first_item['b64_json']}"
+                        return self._wrap_b64_as_data_url(first_item["b64_json"])
 
             # 2. 尝试处理 chat completions 格式
             choices = response.get("choices", [])
@@ -716,7 +861,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             if "error" in result:
                 error_info = result.get("error", {})
                 error_msg = error_info.get("message", "未知错误") if isinstance(error_info, dict) else str(error_info)
-                user_error = build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
+                user_error = self._friendly_api_error(error_info) or \
+                    build_user_error_from_api_error(error_info, fallback_prefix="任务提交失败")
                 self.logger.warning(f"GPT Image 2 API returned error: {error_msg} -> {user_error}")
                 return {
                     "success": False,
@@ -786,7 +932,8 @@ class GptImageCommonV1Driver(BaseVideoDriver):
             response_body = getattr(e, "response_body", None)
             http_error_info = response_body.get("error") if isinstance(response_body, dict) else None
             if http_error_info:
-                user_error = build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
+                user_error = self._friendly_api_error(http_error_info) or \
+                    build_user_error_from_api_error(http_error_info, fallback_prefix="任务提交失败")
                 self.logger.warning(f"GPT Image 2 API HTTP error: {http_error_info} -> {user_error}")
                 return {
                     "success": False,
@@ -983,3 +1130,109 @@ class GptImage25CommonFlareSite5V1Driver(GptImage25CommonFlareV1Driver):
 
     def __init__(self):
         super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1)
+
+
+# ============ GPT Image 2.6 具体站点实现类（与 2.5 同构：仅上游模型名不同，每个模型对应一个站点实现方） ============
+
+class GptImage26CommonSunburstV1Driver(GptImageCommonV1Driver):
+    """GPT Image 2.6（sunburst）通用供应商驱动基类，复用 OpenAI 标准格式，仅替换上游模型名
+
+    2.6 系列接口扩展（openlux 文档）：quality 支持 xhigh/max；
+    output_format 在 png/jpeg/webp 基础上扩展支持 gif/svg（flare 定位快速 GIF 帧）。
+    """
+
+    DEFAULT_MODEL = "gpt-image-2.6-sunburst"
+    EDIT_MODEL = "gpt-image-2.6-sunburst"
+    VALID_QUALITIES = GptImageCommonV1Driver.VALID_QUALITIES | {"xhigh", "max"}
+    VALID_OUTPUT_FORMATS = GptImageCommonV1Driver.VALID_OUTPUT_FORMATS | {"gif", "svg"}
+
+
+class GptImage26CommonFlareV1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6（flare）通用供应商驱动基类，与 Sunburst 仅上游模型名不同"""
+
+    DEFAULT_MODEL = "gpt-image-2.6-flare"
+    EDIT_MODEL = "gpt-image-2.6-flare"
+
+
+class GptImage26CommonSunburstSite0V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 0 v1 版本驱动（固定YWAPI官方站点）"""
+
+    def __init__(self):
+        super().__init__(site_id="site_0", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1)
+
+
+class GptImage26CommonSunburstSite1V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 1 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_1", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1)
+
+
+class GptImage26CommonSunburstSite2V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 2 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_2", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1)
+
+
+class GptImage26CommonSunburstSite3V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 3 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_3", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1)
+
+
+class GptImage26CommonSunburstSite4V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 4 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_4", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1)
+
+
+class GptImage26CommonSunburstSite5V1Driver(GptImage26CommonSunburstV1Driver):
+    """GPT Image 2.6 Sunburst Site 5 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1)
+
+
+class GptImage26CommonFlareSite0V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 0 v1 版本驱动（固定YWAPI官方站点）"""
+
+    def __init__(self):
+        super().__init__(site_id="site_0", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1)
+
+
+class GptImage26CommonFlareSite1V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 1 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_1", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1)
+
+
+class GptImage26CommonFlareSite2V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 2 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_2", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1)
+
+
+class GptImage26CommonFlareSite3V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 3 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_3", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1)
+
+
+class GptImage26CommonFlareSite4V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 4 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_4", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1)
+
+
+class GptImage26CommonFlareSite5V1Driver(GptImage26CommonFlareV1Driver):
+    """GPT Image 2.6 Flare Site 5 v1 版本驱动"""
+
+    def __init__(self):
+        super().__init__(site_id="site_5", impl_name=DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1)

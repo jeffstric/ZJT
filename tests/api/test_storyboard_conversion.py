@@ -185,7 +185,7 @@ def test_scene_to_shot_field_mapping():
     assert shot['shot_id'] == 's009'           # 沿用原 key，键稳定可追溯
     assert shot['shot_number'] == 3
     assert shot['duration'] == 4.5
-    # 场景显式类型随 shotJson 往返（反向 resolve_scene_video_type 经 _llm_presentation 采信）
+    # 场景显式类型随 shotJson 往返（反向 resolve_scene_video_type 经 _explicit_video_type 采信）
     assert shot['video_type'] == 'digital_human'
     assert shot['opening_frame_description'] == '中景，夜市街口，林小雨'
     assert shot['description'] == '镜头推进，穿过人群'

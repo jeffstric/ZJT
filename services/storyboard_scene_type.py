@@ -1,10 +1,16 @@
 """
 Storyboard scene video_type resolution for script split.
 
-Rules (phase 1):
-- No dialogue / narration-only / multi-speaker dialogues → video
-- Only one visible character, who is also the sole speaker → digital_human candidate
-  (LLM presentation=digital_human or pure-dialogue heuristic)
+Rules (current policy):
+- Split NEVER auto-assigns digital_human (lip-sync): every inferred scene is video.
+  Lip-sync is opt-in only — the user switches a scene manually in the storyboard UI
+  (video-type switch via services/storyboard_video_type_service.py).
+- An explicitly stored ``video_type`` (a user's manual choice carried through the
+  workflow round-trip, see api/storyboard_conversion.py) is still honored, so a
+  manual digital_human choice survives re-conversion.
+- Hard rules unchanged: no dialogue / multi-speaker / speaker not visible /
+  multi-character frame / strong action → video (also override explicit type,
+  same as before).
 """
 from __future__ import annotations
 
@@ -124,8 +130,14 @@ def _source_speaking_character_ids(shot: dict) -> List[str]:
     return result
 
 
-def _llm_presentation(shot: dict) -> Optional[str]:
-    raw = shot.get("presentation") or shot.get("video_type")
+def _explicit_video_type(shot: dict) -> Optional[str]:
+    """Read the explicitly stored ``video_type`` (user's manual choice).
+
+    Only explicit storage is trusted. The LLM split output's ``presentation``
+    field is intentionally ignored: split must not auto-produce lip-sync scenes
+    (对口型仅支持用户手动切换).
+    """
+    raw = shot.get("video_type")
     if raw is None:
         return None
     value = str(raw).strip().lower()
@@ -218,22 +230,26 @@ def resolve_scene_video_type(
         meta["presentation_reason"] = "strong_action"
         return SceneVideoType.VIDEO, meta
 
-    llm = _llm_presentation(shot)
-    if llm == SceneVideoType.DIGITAL_HUMAN:
-        meta["presentation_source"] = "llm"
-        meta["presentation_reason"] = "llm_digital_human"
+    # 显式存储类型优先采信：用户手动切换的对口型经反向转换往返保真
+    # （shot['video_type'] 透传见 api/storyboard_conversion.py）。
+    # 拆分路径的 shot 无 video_type 字段，此处不会命中。
+    explicit = _explicit_video_type(shot)
+    if explicit == SceneVideoType.DIGITAL_HUMAN:
+        meta["presentation_source"] = "explicit"
+        meta["presentation_reason"] = "explicit_digital_human"
         return SceneVideoType.DIGITAL_HUMAN, meta
 
-    if llm == SceneVideoType.VIDEO:
-        meta["presentation_source"] = "llm"
-        meta["presentation_reason"] = "llm_video"
+    if explicit == SceneVideoType.VIDEO:
+        meta["presentation_source"] = "explicit"
+        meta["presentation_reason"] = "explicit_video"
         return SceneVideoType.VIDEO, meta
 
-    # Heuristic: single speaker + close shot (or no shot_type) and no strong action.
+    # 拆分关闭自动对口型：单说话人对白近景也一律视频模式，
+    # 对口型仅支持用户在分镜详情手动切换（video-type switch）。
     if _is_close_talking_shot(shot) or not _norm_text(shot.get("shot_type")):
         meta["presentation_source"] = "heuristic"
-        meta["presentation_reason"] = "single_speaker_dialogue"
-        return SceneVideoType.DIGITAL_HUMAN, meta
+        meta["presentation_reason"] = "single_speaker_close_video"
+        return SceneVideoType.VIDEO, meta
 
     # Single speaker with dialogue but wide/action framing → video.
     meta["presentation_source"] = "heuristic"

@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional, Sequence
 
 from services.storyboard_reference_prompt_service import (
+    append_limb_integrity_guard,
     append_reference_legend,
     append_single_frame_guard,
     append_storyboard_visual_suffix,
@@ -206,10 +207,12 @@ class StoryboardAgentImageToolExecutor:
 
             # 先强制参考 URL + 图例，再把画风/构图幂等接到末尾（对齐 generate_image）。
             effective_tool = self._apply_forced_reference_urls(tool_name, args)
-            args["prompt"] = append_single_frame_guard(append_storyboard_visual_suffix(
-                args.get("prompt") or "",
-                style=self._style,
-                composition_preference=self._composition_preference,
+            args["prompt"] = append_limb_integrity_guard(append_single_frame_guard(
+                append_storyboard_visual_suffix(
+                    args.get("prompt") or "",
+                    style=self._style,
+                    composition_preference=self._composition_preference,
+                )
             ))
 
         from script_writer_core.mcp_tool import scoped_image_generation_snapshot

@@ -23,7 +23,13 @@ class VolcengineOpenAIClient(OpenAIBaseClient):
     #   变体，作为 vision-exp 的替代）
     # - deepseek-v4-pro-ga-260813：pro GA 版
     _MODEL_NAME_MAP = {
-        'doubao-seed-2-0-pro': 'doubao-seed-2-0-pro-260215',
+        # pro-260215 已进入方舟下线模型清单（官方公告：到期未迁移关停）。
+        # 官方公告的「建议迁移」是 2-1-lite，但 canonical 名承载 quality 档，
+        # 降档到 lite 不合适；改用方舟当前推荐的 pro 快照
+        # doubao-seed-2-1-pro-260915（1024K 上下文，模型列表推荐位）。
+        # canonical 名保持 doubao-seed-2-0-pro 不变（先例同 lite-260215 →
+        # 260428），计费与上限仍按 model 表原配置执行（2026-11-20）
+        'doubao-seed-2-0-pro': 'doubao-seed-2-1-pro-260915',
         # lite-260215 已被方舟下线（2026-10-24 前后停服，调用返回
         # InvalidEndpoint.ClosedEndpoint），260428 为生产 key 实测 200 的
         # 最新 2.0-lite 快照（2026-10-26）

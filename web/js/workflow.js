@@ -721,12 +721,17 @@
         referenceConnections: state.referenceConnections.map(c => ({ id: c.id, from: c.from, to: c.to })),
         audioConnections: state.audioConnections.map(c => ({ id: c.id, from: c.from, to: c.to, portType: c.portType, voiceLineIndex: c.voiceLineIndex })),
         timeline: {
+          version: 2,
           clips: state.timeline.clips.map(c => ({ ...c })),
           audioClips: state.timeline.audioClips.map(c => ({ ...c })),
           pillars: state.timeline.pillars.map(p => ({ ...p })),
           nextClipId: state.timeline.nextClipId,
           nextAudioClipId: state.timeline.nextAudioClipId,
+          videoTrackCount: state.timeline.videoTrackCount || 1,
+          audioTrackCount: state.timeline.audioTrackCount || 1,
+          zoom: state.timeline.zoom || 40,
         },
+        trash: typeof serializeTrashForPersist === 'function' ? serializeTrashForPersist() : { items: [], nextItemId: 1 },
         style: {
           name: state.style.name,
           referenceImageUrl: state.style.referenceImageUrl,
@@ -2197,7 +2202,18 @@
           state.timeline.nextClipId = data.timeline.nextClipId || 1;
           state.timeline.nextAudioClipId = data.timeline.nextAudioClipId || 1;
           state.timeline.visible = state.timeline.clips.length > 0 || state.timeline.audioClips.length > 0;
-          
+          state.timeline.videoTrackCount = data.timeline.videoTrackCount || 1;
+          state.timeline.audioTrackCount = data.timeline.audioTrackCount || 1;
+          state.timeline.zoom = data.timeline.zoom || 40;
+          state.timeline.selectedClipIds = [];
+          state.timeline.playhead = 0;
+          state.timeline.playing = false;
+
+          // 旧数据（无 clip.start 绝对定位）一次性迁移到 v2 多轨布局
+          if(typeof migrateTimelineToV2 === 'function'){
+            migrateTimelineToV2();
+          }
+
           // 如果没有分镜柱子数据，尝试自动迁移（无片段也迁：剧本拆分/故事板转换
           // 产物打开即应看到完备的分镜格子，而非等首个片段加入才补建）。
           // 不能只看 length：仅剩 __free__ 的画布正是柱子缺失期受损的形态，
@@ -2210,15 +2226,21 @@
                 const migrated = autoMigratePillars();
                 if(migrated){
                   console.log('[恢复工作流] 历史数据迁移成功');
+                  if(typeof migrateTimelineToV2 === 'function') migrateTimelineToV2();
                   renderTimeline();
                   safeAutoSave()
                 }
               }
             }, 500);
           }
-          
+
           console.log(`[恢复工作流] 恢复了 ${state.timeline.pillars.length} 个柱子`);
           renderTimeline();
+        }
+
+        // 恢复垃圾桶（随 workflow_data 持久化，见 timeline_trash.js）
+        if(typeof restoreTrashData === 'function'){
+          restoreTrashData(data.trash);
         }
         
         // 重新渲染
@@ -2617,7 +2639,7 @@
     // 图片节点文生图：无底图时按提示词直接生成图片。
     // 无参考图走 /api/text-to-image（aspect_ratio）；有参考图（角色/场景/道具等）
     // 走 /api/image-edit 的 ref_image_urls（与宫格生图一致，编辑接口允许仅参考图无底图）。
-    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls){
+    async function generateImageFromText(prompt, ratio, model, count, imageSize, referenceImageUrls, extraConfig){
       const userId = localStorage.getItem('user_id');
       const authToken = getAuthToken();
       const form = new FormData();
@@ -2645,6 +2667,11 @@
         }
         form.append('task_id', taskId);
         form.append('aspect_ratio', ratio || '9:16');
+        // 文生图专属扩展参数（如 GPT Image 2.6 的 output_format=gif/svg，键值来自
+        // 任务配置 params_schema）。上游 edits 端点不支持 gif/svg，图生图分支不透传。
+        if(extraConfig && Object.keys(extraConfig).length > 0){
+          form.append('extra_config', JSON.stringify(extraConfig));
+        }
         apiUrl = '/api/text-to-image';
       }
 
@@ -3195,6 +3222,11 @@
               const sizeField = el.querySelector('.image-size-field') || imageSizeEl.closest('.field');
               if(sizeField) sizeField.style.display = 'none';
             }
+          }
+          // 恢复「输出格式」选项（仅 params_schema 配置了 output_format 的模型如
+          // GPT Image 2.6 显示；模型不支持时钩子会把 node.data.outputFormat 重置为 ''）
+          if(typeof el._updateOutputFormatOptions === 'function'){
+            el._updateOutputFormatOptions(node.data.model);
           }
           if(drawCountLabel) { const _t = window.t ? window.t('draw_count_x', { count: node.data.drawCount }) : null; drawCountLabel.textContent = (_t && _t !== 'draw_count_x') ? _t : `抽卡次数：X${node.data.drawCount}`; }
           if(titleEl && nodeData.title) titleEl.textContent = nodeData.title;

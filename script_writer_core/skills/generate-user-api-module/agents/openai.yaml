@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成用户 API 模块"
+  short_description: "在受限 staging 中生成并校验用户媒体接口模块"
+  default_prompt: "Use $generate-user-api-module to create a staged user media API module and validate it before approval."

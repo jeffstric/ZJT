@@ -29,6 +29,7 @@ def test_image_binding_model_names_are_pure_and_consistent():
         TaskTypeId.SEEDREAM_TEXT_TO_IMAGE: "Seedream 5.0",
         TaskTypeId.SEEDREAM_4_5_IMAGE: "Seedream 4.5",
         TaskTypeId.SEEDREAM_5_0_PRO: "Seedream 5.0 Pro",
+        TaskTypeId.SEEDREAM_5_5_IMAGE: "Seedream 5.5",
         TaskTypeId.GPT_IMAGE_2_EDIT: "GPT Image 2",
         TaskTypeId.QWEN_2_1_IMAGE: "qwenimage2.1",
     }
