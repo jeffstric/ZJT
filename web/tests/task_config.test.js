@@ -94,6 +94,54 @@ const mockConfigData = {
       supported_sizes: [],
       computing_power: 20,
       hidden: false
+    },
+    {
+      // Seedance 2.5 系列：模拟后端误带/残留 2s/3s 档（官方下限 4s），
+      // 前端加载时必须兜底过滤，不能展示
+      id: 36,
+      key: 'seedance_2_5_image_to_video',
+      short_key: 'seedance_2_5',
+      name: 'Seedance 2.5',
+      category: 'image_to_video',
+      supported_durations: [2, 3, 4, 5, 30],
+      supported_ratios: ['9:16', '16:9'],
+      default_duration: 5,
+      default_ratio: '9:16',
+      computing_power: { 4: 413, 5: 454, 30: 1475 },
+      implementations: [
+        { name: 'seedance_2_5_volcengine_v1', supported_durations: [2, 3, 4, 5, 30], computing_power: { 4: 413, 5: 454, 30: 1475 } }
+      ],
+      hidden: false
+    },
+    {
+      id: 56,
+      key: 'seedance_2_5_flash_image_to_video',
+      short_key: 'seedance_2_5_flash',
+      name: 'Seedance 2.5 Flash',
+      category: 'image_to_video',
+      supported_durations: [2, 3, 4, 5, 30],
+      supported_ratios: ['9:16', '16:9'],
+      default_duration: 5,
+      default_ratio: '9:16',
+      computing_power: { 4: 99, 5: 124, 30: 743 },
+      implementations: [
+        { name: 'seedance_2_5_flash_volcengine_v1', supported_durations: [2, 3, 4, 5, 30], computing_power: { 4: 99, 5: 124, 30: 743 } }
+      ],
+      hidden: false
+    },
+    {
+      // 对照组：其他模型（如万相 Wan3）官方支持 2s/3s，不应被误过滤
+      id: 57,
+      key: 'wan3_image_to_video',
+      short_key: 'wan3_i2v',
+      name: '万相3.0 (首尾帧)',
+      category: 'image_to_video',
+      supported_durations: [2, 3, 5, 8, 10],
+      supported_ratios: ['9:16', '16:9'],
+      default_duration: 5,
+      default_ratio: '9:16',
+      computing_power: { 2: 50, 3: 75, 5: 125 },
+      hidden: false
     }
   ],
   categories: {
@@ -140,7 +188,7 @@ describe('TaskConfig - 基础查询', () => {
 
   test('getAllTasks 返回所有任务', () => {
     const tasks = TaskConfig.getAllTasks();
-    expect(tasks.length).toBe(8);
+    expect(tasks.length).toBe(11);
   });
 
   test('getTaskById 返回正确任务', () => {
@@ -182,8 +230,8 @@ describe('TaskConfig - 基础查询', () => {
 describe('TaskConfig - 分类查询', () => {
   test('getTasksByCategory 返回分类任务（排除 hidden）', () => {
     const tasks = TaskConfig.getTasksByCategory('image_to_video');
-    // 3 个非 hidden 的 image_to_video: sora2, kling, seedance_2_0, seedance_2_0_fast
-    expect(tasks.length).toBe(4);
+    // 7 个非 hidden 的 image_to_video: sora2, kling, seedance_2_0, seedance_2_0_fast, seedance_2_5, seedance_2_5_flash, wan3_i2v
+    expect(tasks.length).toBe(7);
     expect(tasks.every(t => !t.hidden)).toBe(true);
   });
 
@@ -217,6 +265,22 @@ describe('TaskConfig - 选项查询', () => {
 
   test('getDurationOptions 不存在的模型返回默认值', () => {
     expect(TaskConfig.getDurationOptions('nonexistent')).toEqual([5, 10]);
+  });
+
+  test('Seedance 2.5 系列的 2s/3s 档被前端兜底过滤（官方下限 4s）', () => {
+    expect(TaskConfig.getDurationOptions('seedance_2_5')).toEqual([4, 5, 30]);
+    expect(TaskConfig.getDurationOptions('seedance_2_5_flash')).toEqual([4, 5, 30]);
+    expect(TaskConfig.getModelConfigs()['seedance_2_5'].durations).toEqual([4, 5, 30]);
+    expect(TaskConfig.getModelConfigs()['seedance_2_5_flash'].durations).toEqual([4, 5, 30]);
+    expect(TaskConfig.getVideoModelDurationOptions().seedance_2_5).toEqual([4, 5, 30]);
+    expect(TaskConfig.getVideoModelDurationOptions().seedance_2_5_flash).toEqual([4, 5, 30]);
+    // 实现方档位同样被过滤
+    const task = TaskConfig.getTaskByKey('seedance_2_5');
+    expect(task.implementations[0].supported_durations).toEqual([4, 5, 30]);
+  });
+
+  test('非 Seedance 2.5 模型的 2s/3s 档不受影响（如万相 Wan3 官方支持）', () => {
+    expect(TaskConfig.getDurationOptions('wan3_i2v')).toEqual([2, 3, 5, 8, 10]);
   });
 
   test('getRatioOptions 返回比例选项', () => {
