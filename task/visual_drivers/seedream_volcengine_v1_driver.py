@@ -37,14 +37,30 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         TaskTypeId.SEEDREAM_5_5_IMAGE: "doubao-seedream-5-5-261028",
     }
 
-    # 支持的图片尺寸
-    SUPPORTED_SIZES = ["2K", "3K", "4K"]
+    # 支持的图片尺寸（3K/4K 仅 Seedream 5.0 Pro 可用；5.5 上限 2K，见 build_create_request 降档逻辑）
+    SUPPORTED_SIZES = ["1K", "2K", "3K", "4K"]
+
+    # Seedream 5.5 模型名标识（国内 doubao- 前缀 / 海外无前缀均包含该子串）
+    SEEDREAM_5_5_MODEL_TAG = "seedream-5-5"
+    # Seedream 5.5 输出总像素上限 4,624,220（官方文档，约 2K 方图），仅支持 1K/2K
+    SEEDREAM_5_5_SUPPORTED_SIZES = ("1K", "2K")
 
     # 参考图总像素限制（所有参考图的 width * height 之和）
     MAX_TOTAL_PIXELS = 36_000_000
 
     # 尺寸映射表：基于 image_size 和 aspect_ratio 获取像素值
+    # 1K/2K 各档面积均落在 Seedream 5.5 允许的 [921600, 4624220] 像素区间内
     SIZE_MAPPING = {
+        "1K": {
+            "1:1": "1024x1024",
+            "4:3": "1152x864",
+            "3:4": "864x1152",
+            "16:9": "1280x720",
+            "9:16": "720x1280",
+            "3:2": "1248x832",
+            "2:3": "832x1248",
+            "21:9": "1512x648",
+        },
         "2K": {
             "1:1": "2048x2048",
             "4:3": "2304x1728",
@@ -232,9 +248,18 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
         """
         构建创建 Seedream 任务的完整请求参数
         """
+        # 根据 task_id 选择模型（尺寸约束与模型相关，需先确定模型）
+        task_type = getattr(ai_tool, 'type', None)
+        model_name = self.MODEL_MAPPING.get(task_type, self._model)
+
         # 获取图片尺寸，默认 2K
         image_size = getattr(ai_tool, 'image_size', None) or "2K"
         if image_size not in self.SUPPORTED_SIZES:
+            image_size = "2K"
+        # Seedream 5.5 总像素上限 4,624,220，3K/4K 必被方舟 400 拒绝；
+        # 统一降档 2K，兼容存量 3K/4K 任务的重试（如 ai_tool 14144）
+        if self.SEEDREAM_5_5_MODEL_TAG in model_name and image_size not in self.SEEDREAM_5_5_SUPPORTED_SIZES:
+            self.logger.warning(f"Seedream 5.5 不支持 {image_size}，已降档为 2K")
             image_size = "2K"
 
         # 获取宽高比，默认 1:1
@@ -290,9 +315,7 @@ class Seedream5VolcengineV1Driver(BaseVideoDriver):
 
             image_urls = processed_urls
 
-        # 根据 task_id 选择模型
-        task_type = getattr(ai_tool, 'type', None)
-        model_name = self.MODEL_MAPPING.get(task_type, self._model)
+        # 模型与任务类型已在上方确定（尺寸校验依赖模型）
         self.logger.info(f"使用模型: {model_name}, task_type: {task_type}")
 
         payload = {
