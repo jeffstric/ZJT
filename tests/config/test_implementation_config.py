@@ -469,16 +469,17 @@ class TestHumanAssetModeConfig(unittest.TestCase):
         self.assertEqual(impl.required_config_keys, ['huimengi.api_key'])
 
     def test_seedance_2_5_short_duration_power(self):
-        """Seedance 2.5 三个实现方补齐 2~4s 短时长算力（2026-11-20 官方放开 2~4s）
+        """Seedance 2.5 三个实现方 4s 档算力校验
 
-        回归守卫：时长档位开放时必须同步补算力表，否则前端 task_config.js
-        会兜底到首档（5s）价格，导致 2~5s 算力不随时长增加。
+        官方输出时长下限为 4s（[4,30]s 或 -1）；2026-11 曾误把参考素材
+        2~30s 限制当成输出放开 2~4s，上线 2/3s 档后实测被 API 拒绝，
+        任务直接失败，已收回。本守卫固定 4s 档算力并防止 2/3s 档回流。
         """
         from config.unified_config import UnifiedConfigRegistry
 
         # 公式口径（docs/drivers/seedance_volcengine_v1_driver.md）：
         # 算力 = ceil(tokens × 42 ÷ 40000)，tokens = 38880×秒 + 21600×(15-4)
-        expected = {2: 332, 3: 372, 4: 413, 5: 454, 30: 1475}
+        expected = {4: 413, 5: 454, 30: 1475}
         for name in ('seedance_2_5_volcengine_v1',
                      'seedance_2_5_huimengi_v1',
                      'seedance_2_5_topenrouter_v1'):
@@ -489,11 +490,39 @@ class TestHumanAssetModeConfig(unittest.TestCase):
             for duration, value in expected.items():
                 self.assertEqual(power.get(duration), value,
                                  f'{name} {duration}s 算力应为 {value}')
+            # 官方 API 拒绝 2/3s 输出时长，算力表不得回流短于 4s 的档位
+            self.assertGreaterEqual(min(power), 4,
+                                    f'{name} 算力表含 <4s 档：{sorted(power)}')
             # 算力必须随时长单调递增
             durs = sorted(power)
             for a, b in zip(durs, durs[1:]):
                 self.assertLess(power[a], power[b],
                                 f'{name} 算力未随时长递增：{a}s={power[a]} {b}s={power[b]}')
+
+    def test_seedance_2_5_series_min_duration_is_4s(self):
+        """守卫：Seedance 2.5 / 2.5 Flash 输出时长不得短于 4s
+
+        官方 duration 参数范围为 [4,30] 或 -1；2/3s 档实测被 API 拒绝
+        （任务失败、用户无法产出视频），防止后续再次误开放。
+        """
+        from config.unified_config import UnifiedConfigRegistry, TaskTypeId
+
+        for tid in (TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
+                    TaskTypeId.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO):
+            task = UnifiedConfigRegistry.get_by_id(tid)
+            self.assertIsNotNone(task, f'Task {tid} 未注册')
+            durations = task.supported_durations or []
+            self.assertTrue(durations, f'{task.key} 未声明 supported_durations')
+            self.assertGreaterEqual(min(durations), 4,
+                                    f'{task.key} 含 <4s 时长档：{sorted(durations)}')
+            self.assertEqual(max(durations), 30, f'{task.key} 最长应为 30s')
+
+        # Flash 实现方算力表同样不得含 <4s 档（4s=99 为 720P 基价首档）
+        flash_impl = UnifiedConfigRegistry.get_implementation('seedance_2_5_flash_volcengine_v1')
+        self.assertIsNotNone(flash_impl, 'seedance_2_5_flash_volcengine_v1 未注册')
+        self.assertGreaterEqual(min(flash_impl.default_computing_power), 4,
+                                f'Flash 算力表含 <4s 档：{sorted(flash_impl.default_computing_power)}')
+        self.assertEqual(flash_impl.default_computing_power.get(4), 99, 'Flash 4s 算力应为 99')
 
     def test_video_task_durations_covered_by_impl_power(self):
         """守卫：任务的每个 supported_duration 都必须命中实现方算力字典

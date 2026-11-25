@@ -26,7 +26,13 @@ def _stub_config_cache():
             "llm": {},
             "edition": {"mode": "community"},
         }
-        for fname in (get_config_path(), "config_dev.yml", "config.yaml"):
+        # 本地已创建 config_unit.yml 时保留真实配置（如本机 MySQL 非 3306 端口），
+        # 仅 stub 不存在的配置文件，避免导入链因缺配置抛错
+        primary = get_config_path()
+        targets = [primary, "config_dev.yml", "config.yaml"]
+        if os.path.exists(primary):
+            targets.remove(primary)
+        for fname in targets:
             config_util._config_cache[fname] = _stub
     except Exception:
         pass
