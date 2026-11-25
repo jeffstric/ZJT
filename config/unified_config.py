@@ -2741,7 +2741,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         ],
         computing_power=7,
         supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
-        supported_sizes=['2K', '3K', '4K'],
+        # 5.5 输出总像素上限 4,624,220（官方文档，约 2K 方图），仅支持 1K/1.5K/2K
+        # 档位；3K/4K 必被方舟 400（InvalidParameter: image area）拒绝
+        supported_sizes=['1K', '2K'],
         default_ratio='9:16',
         default_size='2K',
         sort_order=16,
