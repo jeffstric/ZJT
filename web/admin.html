@@ -3983,6 +3983,7 @@
                         <span class="um-status" :class="userModuleStatusClass(userModuleAgentDisplayStatus)">{{ userModuleStatusText(userModuleAgentDisplayStatus) }}</span>
                         <span>{{ t('um_agent_progress_hint') }}</span>
                     </div>
+                    <div v-if="String(userModuleAgentModal.status || '').toLowerCase() === 'completed'" class="um-alert um-alert-warning">{{ t('um_agent_completed_banner') }}</div>
                     <div class="um-agent-feed" ref="userModuleAgentFeed">
                         <div v-if="!userModuleAgentModal.messages.length" class="um-agent-empty">{{ t('um_agent_waiting') }}</div>
                         <div
@@ -4031,6 +4032,22 @@
                 <div class="modal-footer">
                     <button class="modal-btn cancel" @click="closeUserModuleAgentModal">{{ t('um_run_in_background') }}</button>
                     <button class="modal-btn confirm" v-if="userModuleAgentTerminal" @click="finishUserModuleAgent">{{ t('um_view_generated_draft') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 智能体生成完成后的「等待 2 分钟」提示弹窗。 -->
+        <div class="modal-overlay" v-if="userModuleAgentNotice.show">
+            <div class="modal um-agent-notice-modal">
+                <div class="modal-header">
+                    <div><h3>{{ t('um_agent_completed_notice_title') }}</h3></div>
+                    <button class="modal-close" @click="closeUserModuleAgentNotice">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p class="um-agent-notice-text">{{ t('um_agent_completed_notice_body') }}</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="modal-btn confirm" @click="closeUserModuleAgentNotice">{{ t('um_agent_completed_notice_confirm') }}</button>
                 </div>
             </div>
         </div>
