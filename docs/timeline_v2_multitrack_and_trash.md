@@ -101,8 +101,10 @@
   →aresample 44100/立体声→amix(normalize=0)`，全无音频源挂 `anullsrc` 静音兜底；
   输出 `-t TOTAL` 时长钳制、libx264 crf20 veryfast、aac 192k、faststart
 - **分辨率**：`JIANYING_RATIO_RESOLUTION[state.ratio]`（与剪映草稿导出一致）
-- **交付**：`server.is_local=true` → 本地 `/upload/timeline_video_export/{日期}/xxx.mp4`；
-  否则 `upload_local_file_to_cdn` 上 CDN 后删本地
+- **交付**：`server.is_local=true` → 本地 `/upload/timeline_video_export/{日期}/xxx.mp4`
+  （绝对地址含 `localhost`）。前端 `downloadWithAuth` 再请求 `/api/download`；
+  无 CDN 映射时后端直接读该 mp4，不把环回地址交给代理。
+  云环境 `upload_local_file_to_cdn` 上 CDN 后删本地
 - **job 状态**：内存 dict + `upload/timeline_video_export/jobs/{id}.json` 落盘（仿故事板 export-full-video）
 - **边界**：多轨重叠取高轨；不扣算力（本地渲染能力，与导出草稿一致）；AIGC 隐码本期不打
   （与故事板 export-full-video 先例一致）；片段总数上限 `MAX_CLIPS=100`；job 轮询对

@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Optional, Any, Dict
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -1207,6 +1207,136 @@ async def _safe_proxy_fetch(url: str, *, timeout: float) -> httpx.Response:
     raise HTTPException(status_code=508, detail="重定向次数过多")
 
 
+def _site_hostnames(request: Request) -> set:
+    """本站主机名：配置里的 server.host，加上本次请求的 Host 头（协议无关）。"""
+    site_hostnames = set()
+    configured_base = str((get_config().get("server", {}) or {}).get("host", "") or "")
+    if configured_base:
+        normalized = configured_base if "//" in configured_base else f"http://{configured_base}"
+        configured_hostname = urlparse(normalized).hostname
+        if configured_hostname:
+            site_hostnames.add(configured_hostname.lower())
+    request_hostname = (request.headers.get("host") or "").split(":")[0].strip().lower()
+    if request_hostname:
+        site_hostnames.add(request_hostname)
+    return site_hostnames
+
+
+def _is_loopback_or_unspecified_host(hostname: Optional[str]) -> bool:
+    """localhost / 127.0.0.1 / ::1 / 0.0.0.0。这类地址不能再交给代理抓取。"""
+    host = (hostname or "").strip().lower()
+    if not host:
+        return False
+    if host in {"localhost", "0.0.0.0", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return bool(ip.is_loopback or ip.is_unspecified)
+
+
+def _lookup_same_site_upload(request: Request, url: str):
+    """把本站 /upload/ 地址解析成本地文件。
+
+    Returns:
+        (path, force_local)
+        path: resolve 后的绝对路径；不是本站 /upload/，或疑似穿越时为 None
+        force_local: 相对路径或环回/未指定主机。文件不存在时必须 404，
+            不能再落入代理（代理会以「不允许代理内网/环回/保留地址」400 拒绝）
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return None, False
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return None, False
+
+    force_local = False
+    if parsed.scheme in ("http", "https"):
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return None, False
+        same_site = hostname in _site_hostnames(request) or _is_loopback_or_unspecified_host(hostname)
+        if not same_site:
+            return None, False
+        force_local = _is_loopback_or_unspecified_host(hostname)
+        path = unquote(parsed.path or "")
+    elif parsed.scheme == "" and raw.startswith("/upload/"):
+        force_local = True
+        path = unquote(parsed.path or raw.split("?", 1)[0].split("#", 1)[0])
+    else:
+        return None, False
+
+    # 非 /upload/ 的环回地址仍交给代理，由 SSRF 收口拒绝，保持原错误语义。
+    if not path.startswith("/upload/"):
+        return None, False
+    return _resolve_local_upload_path(path, "/upload/"), force_local
+
+
+def _is_under_upload_cache(file_path: Path) -> bool:
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_root = (Path(project_dir) / "upload" / "cache").resolve()
+    try:
+        file_path.resolve().relative_to(cache_root)
+    except ValueError:
+        return False
+    return True
+
+
+async def _respond_local_upload_file(file_path: Path, filename: Optional[str]) -> FileResponse:
+    """本地 /upload/ 文件以附件返回。仅 /upload/cache/ 做 AIGC 标识兜底。"""
+    if _is_under_upload_cache(file_path):
+        # AIGC 标识出口兜底（《标识办法》第4条：下载时确保文件含有标识）。
+        # 主链路已在落盘时标记，此处仅补漏标文件；幂等（已标识毫秒级返回），
+        # 失败不阻断下载。ProduceID 从缓存文件名 {task_id}_{ts}_{hash} 首段解析。
+        _pid = file_path.name.split("_")[0]
+        try:
+            int(_pid)
+        except ValueError:
+            _pid = file_path.stem
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(ensure_marked, str(file_path), _pid),
+                timeout=AIGC_MARK_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"[download] AIGC 标识兜底超时(不阻断下载): {file_path}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[download] AIGC 标识兜底异常(不阻断下载): {file_path}: {e}")
+
+    if not filename:
+        filename = file_path.name
+
+    ext = file_path.suffix.lower()
+    if ext in [".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"]:
+        content_type = "video/mp4"
+    elif ext in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
+        content_type = f"image/{ext[1:]}"
+    elif ext == ".zip":
+        content_type = "application/zip"
+    elif ext == ".mp3":
+        content_type = "audio/mpeg"
+    elif ext == ".wav":
+        content_type = "audio/wav"
+    else:
+        content_type = "application/octet-stream"
+
+    # Content-Disposition 由 FileResponse 按 RFC 5987 自行编码；
+    # 切勿再手写裸 filename 头，中文文件名会 latin-1 500。
+    return FileResponse(
+        path=str(file_path),
+        media_type=content_type,
+        filename=filename,
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable"
+        },
+    )
+
+
 async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
     """
     把"本站域名的 /upload/... 媒体 URL"改写为 CDN 域名 URL，交给后续
@@ -1220,7 +1350,8 @@ async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
 
     判定与 cdn_redirect_middleware 同款：path 以 /upload/ 开头、host 属于
     本站（server.host 或请求 Host 头，协议无关）、media_file_mapping 存在
-    且已上传（cloud_path 非空）。其余 URL 原样返回，保持原有本地/代理兜底。
+    且已上传（cloud_path 非空）。无映射时原样返回：磁盘上的本站文件由后续
+    本地分支 FileResponse，公网本站地址仍可降级代理。
     """
     try:
         parsed = urlparse(url)
@@ -1229,17 +1360,7 @@ async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
     if not parsed.netloc or not parsed.path.startswith("/upload/"):
         return url
 
-    site_hostnames = set()
-    configured_base = str((get_config().get("server", {}) or {}).get("host", "") or "")
-    if configured_base:
-        normalized = configured_base if "//" in configured_base else f"http://{configured_base}"
-        configured_hostname = urlparse(normalized).hostname
-        if configured_hostname:
-            site_hostnames.add(configured_hostname.lower())
-    request_hostname = (request.headers.get("host") or "").split(":")[0].strip().lower()
-    if request_hostname:
-        site_hostnames.add(request_hostname)
-    if (parsed.hostname or "").lower() not in site_hostnames:
+    if (parsed.hostname or "").lower() not in _site_hostnames(request):
         return url
 
     cdn_domain = str(get_dynamic_config_value(
@@ -1261,7 +1382,8 @@ async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
         logger.warning(f"[download] 本站 /upload/ CDN 映射查询失败，保持原 URL: {e}")
         return url
     if not mapping or not mapping.cloud_path:
-        # 未注册映射或 CDN 上传未完成：不改写，走原有兜底（本地/代理）
+        # 未注册映射或 CDN 上传未完成：不改写。本机文件走本地 FileResponse，
+        # 公网本站地址再降级代理。环回地址禁止代理。
         return url
 
     return f"https://{cdn_domain}/{str(mapping.cloud_path).lstrip('/')}"
@@ -1292,7 +1414,10 @@ async def download_image(
 ):
     """
     媒体文件下载接口，支持三种模式：
-    1. 本地路径 /upload/cache/ → FileResponse 直接返回
+    1. 本站 /upload/（相对路径，或 localhost 等环回绝对地址；含 /upload/cache/、
+       时间轴素材包 /upload/draft/、成品视频 /upload/timeline_video_export/）
+       且磁盘上有文件 → FileResponse 直接返回。环回地址文件缺失时 404，
+       不再代理（代理会拒绝内网/环回）
     2. CDN 域名匹配（含本站域名 /upload/ 媒体，先改写为 CDN 域名）→ 302 重定向
        （不占服务器带宽）；format=json 时改为返回签名 URL
     3. 其他外部 URL → 代理下载 StreamingResponse（format=json 同样降级走代理，
@@ -1303,53 +1428,17 @@ async def download_image(
         # 媒体流量不过本服务；火山 TTS 等本地落盘类产物由此不再走代理）
         url = await _rewrite_site_upload_url_to_cdn(request, url)
 
-        # 检查是否为本地缓存文件路径（安全解析，防路径穿越）
-        file_path = _resolve_local_upload_path(url, '/upload/cache/')
-        if file_path is not None:
-            if file_path.is_file():
-                # AIGC 标识出口兜底（《标识办法》第4条：下载时确保文件含有标识）。
-                # 主链路已在落盘时标记，此处仅补漏标文件；幂等（已标识毫秒级返回），
-                # 失败不阻断下载。ProduceID 从缓存文件名 {task_id}_{ts}_{hash} 首段解析。
-                _pid = file_path.name.split('_')[0]
-                try:
-                    int(_pid)
-                except ValueError:
-                    _pid = file_path.stem
-                try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(ensure_marked, str(file_path), _pid),
-                        timeout=AIGC_MARK_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(f"[download] AIGC 标识兜底超时(不阻断下载): {file_path}")
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"[download] AIGC 标识兜底异常(不阻断下载): {file_path}: {e}")
-
-                # 确定文件名
-                if not filename:
-                    filename = file_path.name
-
-                # 确定 content type
-                ext = file_path.suffix.lower()
-                if ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv']:
-                    content_type = 'video/mp4'
-                elif ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
-                    content_type = f'image/{ext[1:]}'
-                else:
-                    content_type = 'application/octet-stream'
-
-                # 返回本地文件（Content-Disposition 由 FileResponse 按 RFC 5987
-                # 自行编码；切勿再手写裸 filename 头，中文文件名会 latin-1 500）
-                return FileResponse(
-                    path=str(file_path),
-                    media_type=content_type,
-                    filename=filename,
-                    headers={
-                        "Cache-Control": "public, max-age=31536000, immutable"
-                    }
-                )
-            else:
-                raise HTTPException(status_code=404, detail="本地缓存文件不存在")
+        # 本站 /upload/ 且文件在磁盘上：直接返回。无 CDN 映射的本地导出
+        # （素材包 zip、成品 mp4）以前被拼成 http://localhost/... 后落入代理，
+        # SSRF 收口返回 400「不允许代理内网/环回/保留地址」。
+        file_path, force_local = _lookup_same_site_upload(request, url)
+        if file_path is not None and file_path.is_file():
+            return await _respond_local_upload_file(file_path, filename)
+        if force_local:
+            if file_path is not None:
+                detail = "本地缓存文件不存在" if _is_under_upload_cache(file_path) else "本地文件不存在"
+                raise HTTPException(status_code=404, detail=detail)
+            raise HTTPException(status_code=400, detail="本地路径非法")
 
         # ========== 模式2: CDN 域名匹配 → 重新签名并 302 重定向 ==========
         from utils.cdn_util import CDNUtil

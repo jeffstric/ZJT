@@ -118,7 +118,9 @@
 
         // /upload/cache/ 保持相对路径：后端本地文件分支按该前缀识别并直接
         // FileResponse 返回（自带 attachment 头）；其余 /upload/ 必须绝对
-        // URL，后端才能改写为 CDN 域名重签名。
+        // URL，后端才能改写为 CDN 域名重签名。无映射且文件在本机（含
+        // localhost 上的 /upload/draft、/upload/timeline_video_export）时，
+        // 后端直接读磁盘，不会去代理环回地址。
         const apiTarget = (target.charAt(0) === '/'
             && target.indexOf('/upload/cache/') !== 0) ? absoluteUrl(target) : target;
         const apiUrl = '/api/download?url=' + encodeURIComponent(apiTarget)
