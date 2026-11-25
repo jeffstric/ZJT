@@ -65,13 +65,35 @@ def _patch_mapping(monkeypatch, cloud_path="upload/tts/volcengine/a.mp3"):
 
 
 def _patch_proxy_client(monkeypatch, content=b"mp3-bytes", content_type="audio/mpeg"):
-    class _FakeResp:
-        def __init__(self):
-            self.headers = {"content-type": content_type}
-            self.content = content
+    """模拟 _safe_proxy_fetch 的 httpx.stream 调用形态并跳过 DNS 目标校验。
 
-        def raise_for_status(self):
-            pass
+    SSRF 目标校验（_assert_proxy_fetch_target）由
+    tests/api/test_openvuln_cvss8_infra_guards.py 独立覆盖。
+    """
+    import httpx
+
+    async def _noop_assert(url):
+        return None
+
+    monkeypatch.setattr("server._assert_proxy_fetch_target", _noop_assert)
+
+    fake_request = httpx.Request("GET", "https://example.com/fake")
+
+    class _FakeStreamResp:
+        is_redirect = False
+        status_code = 200
+        headers = {"content-type": content_type}
+        request = fake_request
+
+        async def aiter_bytes(self):
+            yield content
+
+    class _FakeStreamCtx:
+        async def __aenter__(self):
+            return _FakeStreamResp()
+
+        async def __aexit__(self, *exc):
+            return False
 
     class _FakeClient:
         def __init__(self, *args, **kwargs):
@@ -83,10 +105,8 @@ def _patch_proxy_client(monkeypatch, content=b"mp3-bytes", content_type="audio/m
         async def __aexit__(self, *exc):
             return False
 
-        async def get(self, url):
-            return _FakeResp()
-
-    import httpx
+        def stream(self, method, url):
+            return _FakeStreamCtx()
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
 

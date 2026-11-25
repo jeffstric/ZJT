@@ -490,6 +490,8 @@ def test_voice_reference_capability_flag_wired_on_expected_models_only():
         "seedance_2_0",
         "seedance_2_0_mini",
         "seedance_2_5",
+        # Seedance 2.5 Flash（develop_f1165）：参考生自动带入角色音色
+        "seedance_2_5_flash",
     }
     enabled = {
         config.short_key or config.key
@@ -520,3 +522,48 @@ def test_append_single_frame_guard_appends_and_is_idempotent():
     # 空提示词不追加
     assert append_single_frame_guard("") == ""
     assert append_single_frame_guard("   ") == ""
+
+
+def test_append_limb_integrity_guard_appends_and_is_idempotent():
+    from services.storyboard_reference_prompt_service import (
+        append_limb_integrity_guard,
+        append_single_frame_guard,
+    )
+
+    guarded = append_limb_integrity_guard("中景：【【赵志高】】左手撑伞，右手推门。")
+
+    assert "肢体结构准确" in guarded
+    assert "单个人物只出现两只手" in guarded
+    assert guarded.startswith("中景：【【赵志高】】左手撑伞，右手推门。")
+
+    # 幂等：同一 prompt 重复调用不重复追加
+    assert append_limb_integrity_guard(guarded) == guarded
+    assert guarded.count("单个人物只出现两只手") == 1
+
+    # 空 prompt 原样返回
+    assert append_limb_integrity_guard("") == ""
+    assert append_limb_integrity_guard("   ") == ""
+
+    # 与单帧守卫可级联且互不重复
+    both = append_limb_integrity_guard(append_single_frame_guard("双人同框"))
+    assert "单幅静止画面" in both
+    assert "单个人物只出现两只手" in both
+    assert append_limb_integrity_guard(append_single_frame_guard(both)) == both
+
+
+def test_append_scene_no_people_guard_appends_and_is_idempotent():
+    from services.storyboard_reference_prompt_service import append_scene_no_people_guard
+
+    guarded = append_scene_no_people_guard("完整环境设计参考图，场景：仓库大门。")
+
+    assert "纯环境空镜" in guarded
+    assert "不出现任何人物" in guarded
+    assert guarded.startswith("完整环境设计参考图，场景：仓库大门。")
+
+    # 幂等：同一 prompt 重复调用不重复追加
+    assert append_scene_no_people_guard(guarded) == guarded
+    assert guarded.count("纯环境空镜") == 1
+
+    # 空 prompt 原样返回
+    assert append_scene_no_people_guard("") == ""
+    assert append_scene_no_people_guard("   ") == ""

@@ -62,7 +62,9 @@ def test_image_tools_append_storyboard_visual_settings_to_prompt_tail():
             "图片风格：水墨动画\n"
             "构图倾向：电影感宽幅构图\n\n"
             "画面要求：单幅静止画面，只呈现一个定格瞬间的完整构图；"
-            "禁止宫格、多格拼图、分屏、对比图、连环画式多个画面。"
+            "禁止宫格、多格拼图、分屏、对比图、连环画式多个画面。\n\n"
+            "人物肢体结构准确：单个人物只出现两只手，每只手五根手指；"
+            "画面中不得出现多余的手臂、手指或肢体。"
         )
         assert result == {"project_ids": [123]}
 
@@ -85,6 +87,8 @@ def test_image_tool_visual_suffix_is_idempotent_and_preserves_caller_args():
     assert original_args["prompt"] == original_prompt
     # 单幅画面守卫恰好追加一次
     assert submitted.count("画面要求：单幅静止画面") == 1
+    # 肢体结构守卫恰好追加一次（幂等）
+    assert submitted.count("单个人物只出现两只手") == 1
     assert submitted.startswith(original_prompt)
 
 

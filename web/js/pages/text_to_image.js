@@ -24,7 +24,9 @@
         driverStatus: {},  // 驱动可用状态
         taskTypeConfig: null,  // 从后端获取的任务类型配置
         modelConfigs: {},  // 从后端获取的模型配置
-        configLoaded: false  // 配置是否已加载
+        configLoaded: false,  // 配置是否已加载
+        paramsSchema: [],  // 当前模型的用户可选参数 schema（配置驱动渲染，如 2.6 的输出格式/画质）
+        paramValues: {}  // 用户选择的参数值（key -> value，提交时拼入 extra_config）
       }
     },
     mounted() {
@@ -148,6 +150,8 @@
             this.imageSize = config.default_image_size;
           }
         }
+        // 切换模型时重载用户可选参数（如 GPT Image 2.6 的输出格式/画质）
+        this.loadParamsSchema();
       }
     },
     methods: {
@@ -199,9 +203,34 @@
             if (config.default_ratio) this.aspectRatio = config.default_ratio;
             if (config.default_image_size) this.imageSize = config.default_image_size;
           }
+          // 初始模型可能未触发 watcher，这里显式加载一次用户可选参数
+          this.loadParamsSchema();
         } catch (err) {
           console.error('获取模型配置失败:', err);
         }
+      },
+
+      // 从 task-configs 加载当前模型的用户可选参数 schema（配置驱动渲染参数表单，
+      // 机制同视频增强页）。仅 GPT Image 2.6 等配置了 params_schema 的模型返回非空；
+      // 取不到 schema 时保持现状（不显示参数区、不传 extra_config），保证向后兼容。
+      loadParamsSchema() {
+        const schema = [];
+        try {
+          const task = TaskConfig.getTaskByKey(this.model);
+          if (task && Array.isArray(task.params_schema)) {
+            schema.push(...task.params_schema.filter(p => p && p.key && p.type === 'select'));
+          }
+        } catch (e) {
+          console.error('加载生图参数配置失败:', e);
+        }
+        this.paramsSchema = schema;
+        this.paramValues = {};
+        this.paramsSchema.forEach(p => { this.paramValues[p.key] = p.default; });
+      },
+
+      // schema 字段名属不可信内容，渲染必须走 window.escapeHtml（web/js/escape.js）
+      paramLabelHtml(label) {
+        return window.escapeHtml(label);
       },
 
       async submit(){
@@ -238,7 +267,23 @@
           if (this.imageSize) {
             form.append('image_size', this.imageSize);
           }
-          
+
+          // 用户可选参数（如 GPT Image 2.6 的 output_format/quality，键值来自后端
+          // params_schema），拼入 extra_config 由通用站点驱动透传上游；
+          // 服务端 _generation_snapshot_extra_config 会再次校验为 JSON 对象
+          if (this.paramsSchema.length) {
+            const extraConfig = {};
+            this.paramsSchema.forEach(p => {
+              const v = this.paramValues[p.key];
+              if (v !== undefined && v !== null && v !== '') {
+                extraConfig[p.key] = v;
+              }
+            });
+            if (Object.keys(extraConfig).length) {
+              form.append('extra_config', JSON.stringify(extraConfig));
+            }
+          }
+
           if (this.authToken) {
             form.append('auth_token', this.authToken);
           }
@@ -486,6 +531,13 @@
             <label class="label">{{ $t('resolution') }}</label>
             <select class="input" v-model="imageSize">
               <option v-for="opt in imageSizeOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+          </div>
+
+          <div class="field" v-for="param in paramsSchema" :key="param.key">
+            <label class="label" v-html="paramLabelHtml(param.label)"></label>
+            <select class="input" v-model="paramValues[param.key]">
+              <option v-for="opt in (param.options || [])" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
 

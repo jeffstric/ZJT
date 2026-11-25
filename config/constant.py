@@ -585,6 +585,11 @@ IMAGE_MODE_EXTRA_CONFIG_KEY = "image_mode"
 VIDEO_RESOLUTION_EXTRA_CONFIG_KEY = "video_resolution"
 LEGACY_RESOLUTION_EXTRA_CONFIG_KEY = "resolution"
 IMPLEMENTATION_LOCK_EXTRA_CONFIG_KEY = "implementation_lock"
+# GPT Image 2.6 图片任务计费键（与 GPT_IMAGE_2_6_PARAMS_SCHEMA /
+# gpt_image_common_v1_driver 透传键保持一致，算力修饰符上下文据此取值）
+IMAGE_QUALITY_EXTRA_CONFIG_KEY = "quality"
+IMAGE_OUTPUT_FORMAT_EXTRA_CONFIG_KEY = "output_format"
+IMAGE_FRAME_COUNT_EXTRA_CONFIG_KEY = "frame_count"
 ASSET_LIST_MAX_PAGE_SIZE = 1000
 
 # 用户固定供应商后，所选实现方不可用时的驱动错误
@@ -869,6 +874,13 @@ USER_TOKEN_RENEW_THRESHOLD_DAYS = 2
 # （localStorage 仅为旧版本兼容的过渡读取通道）。SameSite=Strict 兼防 CSRF。
 AUTH_COOKIE_NAME = 'auth_token'
 AUTH_COOKIE_MAX_AGE_SECONDS = USER_TOKEN_EXPIRE_DAYS * 86400
+
+# 同机多端口部署的 cookie 隔离（见 utils/resource_access.get_auth_cookie_name）：
+# 浏览器 cookie 作用域只按 host 不按端口，localhost:13003/13004 会互相覆盖同名
+# auth_token。带显式非默认端口访问时 cookie 名追加该后缀（auth_token_13003），
+# 各环境互不可见；无端口/默认端口（80/443 反代部署）保持基础名，存量会话不失效。
+AUTH_COOKIE_PORT_SUFFIX_TEMPLATE = '_{port}'
+AUTH_COOKIE_DEFAULT_PORTS = (80, 443)
 
 
 # ============ 向后兼容：使用 UnifiedConfigRegistry 提供旧 API ============
@@ -1261,6 +1273,26 @@ DRIVER_IMPLEMENTATION_MAPPING = {
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,  # 聚合站点3
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,  # 聚合站点4
         DriverImplementation.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,  # 聚合站点5
+    ],
+
+    # GPT Image 2.6 相关驱动（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5）
+    DriverKey.GPT_IMAGE_2_6_SUNBURST: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
+    ],
+    DriverKey.GPT_IMAGE_2_6_FLARE: [
+        DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,  # 多米（默认）
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,  # ZJT API 官方站点
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+        DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,  # 聚合站点5
     ],
 
     # Grok 相关驱动
@@ -1783,6 +1815,28 @@ class StoryboardExportConstants:
     # 导出完整视频保留视频原音轨、跳过 TTS 混音。digital_human 默认 1。
     AUDIO_EMBEDDED_ON = 1
     AUDIO_EMBEDDED_OFF = 0
+
+
+class TimelineVideoExportConstants:
+    """时间轴「导出成品视频」（web/video_workflow.html 时间轴 → ffmpeg 烧录 mp4）。
+
+    详见 services/timeline_video_service.py 与 docs/timeline_v2_multitrack_and_trash.md。
+    """
+    _CONSTANT_GROUP = True
+
+    # 相对 upload 目录：产物与 job 状态文件
+    WORK_SUBDIR = "timeline_video_export"
+    JOBS_SUBDIR = "timeline_video_export/jobs"
+
+    OUTPUT_FPS = 24                    # 成片帧率（用户指定默认 24fps）
+    FFMPEG_TIMEOUT_SECONDS = 1800      # 单条合成命令总超时（与 EXPORT_FULL_VIDEO_TOTAL_TIMEOUT_SECONDS 同量级）
+    MAX_CLIPS = 100                    # 视频+音频片段总数上限（防恶意/误操作超大 filter_complex）
+    JOB_RETENTION_SECONDS = 86400      # job 状态文件保留时长（超期轮询按不存在处理）
+
+    # 音频统一规格（与故事板导出同口径，防各源采样率/声道不一致导致混音异常）
+    AUDIO_SAMPLE_RATE = 44100
+    AUDIO_CHANNELS = 2
+    AUDIO_BITRATE = "192k"
 
 
 class StoryboardSubtitleConstants:
@@ -2647,6 +2701,11 @@ class FilePathConstants:
     _PIC_TMP_SUBDIR = "files/tmp/pic"
     _SCRIPT_WRITER_USER_DATA_SUBDIR = "files/script_writer"  # 剧本创作系统用户数据根目录
 
+    # /files 静态挂载中禁止匿名访问的首段目录（安全审计 BUG-R2-S1-A2-H2）：
+    # script_writer/ 是各用户创作数据树，tmp/ 是运行期临时产物（TTS 参考音频、
+    # 图片缓存、剪译导出）；前端仅引用 /files 根下的品牌资源（logo/字体/条款等）。
+    FILES_STATIC_BLOCKED_FIRST_SEGMENTS = frozenset({"script_writer", "tmp"})
+
     @staticmethod
     def get_pic_tmp_dir(app_dir: str) -> str:
         """
@@ -2796,8 +2855,24 @@ class AssetLibraryConstants:
     GLOBAL_QUOTA_EXCEEDED_MSG = '资产库总容量已满，请联系管理员调整'
 
 
+class ProxyFetchSafetyConstants:
+    """服务端代理抓取（/api/download、/api/proxy-image 等 SSRF 收口）相关常量
+
+    安全审计 BUG-R2-S1-A5-H1：代理端点此前对任意 URL 直接 httpx 抓取回传，
+    构成全响应 SSRF/开放代理。以下常量配合 server.py 的
+    _assert_proxy_fetch_target / _safe_proxy_fetch 使用。
+    """
+    # 单次代理抓取响应体上限（防内存耗尽 DoS）
+    MAX_BYTES = 256 * 1024 * 1024
+    # 重定向跳数上限（每一跳都会重新做目标校验）
+    MAX_REDIRECTS = 5
+
+
 class MediaConstants:
     """媒体处理相关常量"""
+    # /api/media/validate-duration 单次请求允许的文件总数上限（安全审计 BUG-R2-S1-A2-H4：
+    # 匿名无上限 multipart 上传可打满内存/磁盘；配合 utils/media_upload.py 的分块大小上限）
+    VALIDATE_DURATION_MAX_FILES = 10
     ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.mov', '.webm', '.avi', '.mkv'}
     # 图片后缀白名单（tuple，适配 str.endswith）；含 webp/gif/bmp，避免下载图片时被兜底改名导致扩展名与内容错配
     ALLOWED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp')
@@ -3922,6 +3997,22 @@ ARTICLE_FETCH_XHS_PROVIDER = ''
 NICKNAME_MAX_LEN = 30
 # 管理员备注长度上限（DB 列 VARCHAR(500)）
 REMARK_MAX_LEN = 500
+
+# ============ 用户分组（model/user_group.py、api/admin.py） ============
+# 分组名称长度上限（DB 列 VARCHAR(100)）
+USER_GROUP_NAME_MAX_LEN = 100
+# 分组备注长度上限（DB 列 VARCHAR(500)）
+USER_GROUP_REMARK_MAX_LEN = 500
+# 报表"未分组"桶的虚拟分组 id（users.group_id IS NULL 的用户归入此桶）
+REPORT_UNGROUPED_GROUP_ID = 0
+
+# ============ 管理端报表（api/admin.py /reports/*） ============
+# 月度分组算力报表默认查询月数
+REPORT_MONTHLY_DEFAULT_MONTHS = 6
+# 月度分组算力报表最大查询月数
+REPORT_MONTHLY_MAX_MONTHS = 24
+# 分组成员分页每页上限
+USER_GROUP_MEMBERS_PAGE_SIZE_MAX = 100
 # 默认昵称（随机趣味名，如"机智的熊猫"= 形容词 + 动物，不带数字）去重尝试次数
 NICKNAME_GENERATE_MAX_ATTEMPTS = 10
 
@@ -3948,6 +4039,24 @@ NICKNAME_ANIMALS = (
     '驯鹿', '狍子', '麋鹿', '豹子', '猎豹', '雪豹', '狼', '水豚', '旱獭', '土拨鼠',
     '花栗鼠', '龙猫', '豚鼠', '河狸', '棕熊', '蜜獾', '穿山甲', '食蚁兽', '小熊猫', '狐猴',
     '眼镜猴', '懒猴', '松鼠猴', '柯基', '比熊', '博美', '边牧', '金毛', '哈士奇', '萨摩耶',
+)
+
+# ============ 分镜图肢体结构守卫（services/storyboard_reference_prompt_service.py） ============
+# 分镜图肢体结构守卫：拼在生图 prompt 尾部的固定正向约束（火山 images/generations 接口
+# 无 negative_prompt，只能正向声明）。防拆分侧漏网的多手/多指描述（如"双手撑伞+另一只手
+# 推门"=3 只手）被生图模型忠实复现成多手畸变（2026-11-24）。
+STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT = (
+    "人物肢体结构准确：单个人物只出现两只手，每只手五根手指；"
+    "画面中不得出现多余的手臂、手指或肢体。"
+)
+
+# ============ 场景图纯环境守卫（services/storyboard_reference_prompt_service.py） ============
+# 场景参考图必须是无人的纯环境空镜：场景描述若带人物活动（如"守卫把守的大门"、"顾客
+# 盈门的咖啡厅"），生图模型会把人画进场景参考图，污染后续子场景 i2i / 首帧参考链
+# （2026-11-24，与肢体守卫同期）。
+SCENE_NO_PEOPLE_GUARD_TEXT = (
+    "纯环境空镜：画面中不出现任何人物、人形轮廓、手部或身体局部；"
+    "仅呈现场景空间、物品与光照本身。"
 )
 
 

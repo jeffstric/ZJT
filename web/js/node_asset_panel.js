@@ -264,9 +264,10 @@
       return typeLabel(n.type).toLowerCase().indexOf(keyword) !== -1;
     });
 
-    // 标题字典序（与 libtv 一致的混排观感），同标题按 id 稳定排序
+    // 标题自然数排序（分镜1/分镜2/…/分镜11，而非字典序的分镜1/分镜11/分镜2），
+    // 同标题按 id 稳定排序
     filtered.sort(function (a, b) {
-      var cmp = String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN');
+      var cmp = String(a.title || '').localeCompare(String(b.title || ''), 'zh-CN', { numeric: true });
       if (cmp !== 0) return cmp;
       return a.id - b.id;
     });

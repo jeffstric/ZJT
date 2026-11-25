@@ -23,7 +23,8 @@ describe('admin logout revokes server token', () => {
     it('backend logout deletes token row and clears auth cookie', () => {
         const authService = readSource('perseids_server/services/auth_service.py');
         expect(authService).toMatch(/def logout\(token[\s\S]*?UserTokensModel\.delete_by_token\(token\)/);
+        // cookie 名按访问端口隔离（develop_2982）：登出清 cookie 须用动态名
         const server = readSource('server.py');
-        expect(server).toContain('delete_cookie(key=AUTH_COOKIE_NAME');
+        expect(server).toContain('delete_cookie(key=get_auth_cookie_name(request)');
     });
 });

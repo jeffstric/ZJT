@@ -20,11 +20,13 @@ import sys
 import tempfile
 import hashlib
 import re
+import socket
+import ipaddress
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import List, Optional, Any, Dict
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -58,7 +60,6 @@ from config.constant import (
     TaskTypeRegistry,
     TaskCategory,
     TaskTypeId,
-    AUTH_COOKIE_NAME,
     AUTH_COOKIE_MAX_AGE_SECONDS,
     TASK_TYPE_GENERATE_VIDEO, 
     TASK_TYPE_GENERATE_AUDIO, 
@@ -92,6 +93,7 @@ from config.constant import (
     GRID_IMAGE_DOWNLOAD_TIMEOUT,
     FilePathConstants,
     UploadPathConstants,
+    ProxyFetchSafetyConstants,
     JIANYING_RATIO_RESOLUTION,
     JIANYING_DEFAULT_RATIO,
     IMAGE_MODE_EXTRA_CONFIG_KEY,
@@ -144,6 +146,7 @@ from utils.log_sanitizer import mask_email, mask_identifier, mask_phone
 from utils import file_lock
 from utils.computing_power import (
     build_context_from_task_record,
+    build_image_task_billing_context,
     get_implementation_for_user,
     resolve_video_edit_billing_duration,
     BILLING_DURATION_SOURCE_REFERENCE_VIDEO,
@@ -162,6 +165,7 @@ from utils.resource_access import (
     resolve_authenticated_user_id,
     enforce_x_user_id_consistency,
     decide_auth_cookie_renewal,
+    get_auth_cookie_name,
 )
 from utils.media_upload import (
     UploadValidationError,
@@ -185,6 +189,15 @@ from services.media_generation_preference_service import (
     MediaGenerationPreferenceService,
 )
 from services.director_stage_env_fit import fit_environment_from_image
+from services.timeline_video_service import (
+    render_timeline_video,
+    create_timeline_export_job,
+    get_timeline_export_job,
+    update_timeline_export_job,
+    cleanup_job_tmp_dir,
+    has_active_job_for_user,
+)
+from services.storyboard_export_service import upload_local_file_to_cdn
 from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
@@ -204,6 +217,7 @@ from config.constant import (
     DIGITAL_HUMAN_SEGMENT_MAX_TOTAL_SECONDS,
     DIGITAL_HUMAN_H3_MAX_DURATION_SECONDS,
     SEEDANCE_HUMAN_ASSET_MODE_FACE_MASK,
+    TimelineVideoExportConstants,
 )
 from perseids_server.utils.permission import require_permission
 from api.admin import router as admin_router
@@ -674,8 +688,9 @@ app.include_router(aigc_router)
 from api.agent_auth import router as agent_auth_router
 app.include_router(agent_auth_router)
 
-from api.test_ask_user import router as test_ask_user_router
-app.include_router(test_ask_user_router)
+# test_ask_user 调试路由已下线（安全审计 BUG-R2-S1-A9-H4：匿名即可驱动真实 LLM
+# 任务并冒名受害者会话流）。
+# 如需恢复诊断能力，必须补 @require_permission + 身份/会话属主断言 + 计量走 Authorization 头。
 
 # 注册管理员 API 路由
 app.include_router(admin_router)
@@ -711,8 +726,14 @@ app.include_router(subscription_router)
 from api.asset_library import router as asset_library_router
 app.include_router(asset_library_router)
 
-# 用户模块（接口模块）属商业版能力：路由挂载、Supervisor 启动验证与实现方绑定加载
-# 由 enterprise.register(app) 注入（见 enterprise 仓），社区版核心不引用。
+# 用户模块（接口模块）为主仓能力（develop_f1214 起，无商业门禁）：必须先于
+# enterprise 挂载，迁移期内 enterprise 包自带的旧版同名路由后注册，被 FastAPI
+# 同路径先注册优先自然阴影（见 services/user_module_bootstrap.py）。
+try:
+    from services.user_module_bootstrap import bootstrap_user_modules
+    bootstrap_user_modules(app)
+except Exception:
+    logging.getLogger(__name__).exception("主仓用户模块挂载失败（接口模块将不可用）")
 
 # 尝试加载 enterprise 模块，未加载时注册主仓库的用户路由（演示模式）
 try:
@@ -731,6 +752,27 @@ except Exception as e:
     except Exception:
         pass
 
+# 迁移期 shim：enterprise 旧版 _register_user_modules 的启动钩子与绑定重载循环会调用
+# enterprise 侧绑定加载，其"先全量清空注册表 + 许可证未激活不重载"会抹掉主仓刚注册的
+# 实现方。禁用该函数后绑定只由主仓侧加载（enterprise 新版移除用户模块后为纯 no-op）。
+try:
+    from services.user_module_bootstrap import neutralize_enterprise_user_module_binding_load
+
+    neutralize_enterprise_user_module_binding_load()
+except Exception:
+    logging.getLogger(__name__).exception("enterprise 旧版用户模块绑定加载中和失败")
+
+# enterprise.register() 会用同名工具覆盖主仓用户模块生成工具（迁移期并存）；
+# 再注册主仓版保证智能体工具链恒走主仓（无许可证门禁）。依赖上方
+# register_dynamic_tools 的同名 last-wins 替换语义，否则幂等重复注册会抛错。
+try:
+    from tools.user_module_agent_tools import register_user_module_agent_tools
+    from script_writer_core.agents.tool_executor import register_enterprise_tool
+
+    register_user_module_agent_tools(register_enterprise_tool)
+except Exception:
+    logging.getLogger(__name__).exception("主仓用户模块生成工具再注册失败")
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 
@@ -743,7 +785,8 @@ from task.visual_drivers.driver_factory import VideoDriverFactory
 register_all_drivers()
 logger.info("Video drivers registered successfully")
 
-# 用户模块实现方绑定加载由 enterprise.register 注入（商业版）。
+# 用户模块实现方绑定加载由主仓 user_module_bootstrap 注入；enterprise 旧版绑定加载
+# 已被迁移期 shim 中和（见上方 neutralize_enterprise_user_module_binding_load）。
 
 # CORS（docs/security/xss_stored_chain_fix_plan.md 阶段 4b）：
 # allow_origins=["*"] 与 allow_credentials=True 组合无效且危险（任意站点可携凭据跨源）。
@@ -804,9 +847,9 @@ def _request_is_https(request: Request) -> bool:
 
 
 def set_auth_cookie(response: Response, token: str, request: Request) -> None:
-    """登录成功后下发 HttpOnly 认证 cookie"""
+    """登录成功后下发 HttpOnly 认证 cookie（名带访问端口后缀，多端口环境隔离）"""
     response.set_cookie(
-        key=AUTH_COOKIE_NAME,
+        key=get_auth_cookie_name(request),
         value=token,
         max_age=AUTH_COOKIE_MAX_AGE_SECONDS,
         httponly=True,
@@ -833,7 +876,7 @@ async def auth_cookie_translation_middleware(request: Request, call_next):
     活跃用户被"假过期"踢到登录页）。
     """
     path = request.url.path
-    cookie_token = request.cookies.get(AUTH_COOKIE_NAME)
+    cookie_token = request.cookies.get(get_auth_cookie_name(request))
     bearer_token = None
     if path == "/api" or path.startswith("/api/"):
         bearer_token = extract_bearer_token(request.headers.get("authorization"))
@@ -1088,6 +1131,82 @@ def _resolve_local_upload_path(url: str, prefix: str) -> Optional[Path]:
     return file_path
 
 
+def _reject_unfetchable_ip(ip) -> None:
+    """拒绝环回/私网/链路本地/保留/组播目标（含 IPv4-mapped IPv6 归一化）。"""
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified
+            # CGNAT 共享地址段（100.64.0.0/10）：部分 Python 版本 is_private 不含此段，
+            # 但阿里云元数据 100.100.100.200 落在此段，必须显式拒绝
+            or ip in ipaddress.ip_network('100.64.0.0/10')):
+        raise HTTPException(status_code=400, detail="不允许代理内网/环回/保留地址")
+
+
+async def _assert_proxy_fetch_target(url: str) -> None:
+    """SSRF 收口：代理抓取前校验目标 scheme 与解析出的全部 IP。
+
+    防止 /api/download 与 /api/proxy-image 被当作内网/云元数据开放代理；
+    每一跳重定向都会重新经过本校验（见 _safe_proxy_fetch）。
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=400, detail="仅支持 http/https 链接")
+    try:
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="URL 端口非法")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(
+            parsed.hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise HTTPException(status_code=400, detail=f"目标主机无法解析: {e}")
+    for info in infos:
+        _reject_unfetchable_ip(ipaddress.ip_address(info[4][0]))
+
+
+async def _safe_proxy_fetch(url: str, *, timeout: float) -> httpx.Response:
+    """带 SSRF 校验的代理抓取：逐跳重定向重新校验目标，并限制响应体大小。
+
+    返回普通 httpx.Response（.headers/.content 语义与原 client.get 一致）。
+    注意：getaddrinfo 校验与 httpx 实际建连之间存在 TOCTOU（DNS rebinding），
+    彻底加固需固定解析出的 IP 建连（HTTPS 场景需自定义 transport/SNI）。
+    """
+    current = url
+    for _ in range(ProxyFetchSafetyConstants.MAX_REDIRECTS):
+        await _assert_proxy_fetch_target(current)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+            async with client.stream("GET", current) as resp:
+                if resp.is_redirect and "location" in resp.headers:
+                    current = str(httpx.URL(current).join(resp.headers["location"]))
+                    continue
+                content_length = resp.headers.get("content-length") or ""
+                if content_length.isdigit() and int(content_length) > ProxyFetchSafetyConstants.MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="文件过大")
+                chunks = []
+                received = 0
+                async for chunk in resp.aiter_bytes():
+                    received += len(chunk)
+                    if received > ProxyFetchSafetyConstants.MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="文件过大")
+                    chunks.append(chunk)
+                # aiter_bytes() 返回的是已解压字节；content-encoding 原样带回会让
+                # httpx 在访问 .content 时二次解压（gzip 公网响应必报
+                # DecodingError），content-length 也已失真，两者必须剔除。
+                final_headers = dict(resp.headers)
+                final_headers.pop("content-encoding", None)
+                final_headers.pop("content-length", None)
+                final = httpx.Response(
+                    resp.status_code,
+                    headers=final_headers,
+                    content=b"".join(chunks),
+                    request=resp.request,
+                )
+                final.raise_for_status()
+                return final
+    raise HTTPException(status_code=508, detail="重定向次数过多")
+
+
 async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
     """
     把"本站域名的 /upload/... 媒体 URL"改写为 CDN 域名 URL，交给后续
@@ -1146,6 +1265,17 @@ async def _rewrite_site_upload_url_to_cdn(request: Request, url: str) -> str:
         return url
 
     return f"https://{cdn_domain}/{str(mapping.cloud_path).lstrip('/')}"
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    """构建 RFC 5987 Content-Disposition：非 ASCII 文件名走 filename* 百分号编码，
+    并给出 ASCII 兜底 filename（HTTP 响应头必须 latin-1 可编码，直接塞中文会在
+    uvicorn 编码响应头时 500——事故：画布下载「生成结果.gif」报
+    'latin-1' codec can't encode characters）。
+    """
+    raw = str(filename or "download")
+    fallback = re.sub(r'[^\x20-\x7e]', "_", raw).replace('"', "'") or "download"
+    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(raw)}"
 
 
 @app.get("/api/download")
@@ -1208,13 +1338,13 @@ async def download_image(
                 else:
                     content_type = 'application/octet-stream'
 
-                # 返回本地文件
+                # 返回本地文件（Content-Disposition 由 FileResponse 按 RFC 5987
+                # 自行编码；切勿再手写裸 filename 头，中文文件名会 latin-1 500）
                 return FileResponse(
                     path=str(file_path),
                     media_type=content_type,
                     filename=filename,
                     headers={
-                        "Content-Disposition": f"attachment; filename={filename}",
                         "Cache-Control": "public, max-age=31536000, immutable"
                     }
                 )
@@ -1246,50 +1376,51 @@ async def download_image(
         # ========== 模式3: 其他远程 URL → 代理下载 ==========
         # format=json 只服务 CDN 重签名；非 CDN 外链无法签名时同样落到代理流式
         # 下载（200 + 文件流），前端 downloadWithAuth 对非 JSON 响应走 blob 兜底。
-        # follow_redirects：外链可能 301/302（如 http→https、本站 /upload/ 未注册
-        # CDN 映射时被 cdn_redirect_middleware 302），httpx 默认不跟随会直接报错。
-        async with httpx.AsyncClient(timeout=300.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            
-            # Determine filename
-            if not filename:
-                # Extract filename from URL or generate one
-                if "filename=" in url:
-                    filename = url.split("filename=")[-1].split("&")[0]
-                else:
-                    # Try to get extension from URL
-                    url_path = url.split('?')[0]
-                    ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
-                    filename = f"generated_file_{int(time.time())}.{ext}"
-            
-            # Don't add extension if filename already has a valid one
-            valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
-            if not filename.lower().endswith(valid_extensions):
-                # Try to detect from content-type
-                content_type = response.headers.get('content-type', '')
-                if 'video' in content_type:
-                    filename += '.mp4'
-                elif 'image' in content_type:
-                    filename += '.png'
-            
-            # Get content type
-            content_type = response.headers.get('content-type', 'application/octet-stream')
-            
-            # Return content as streaming response
-            content_stream = BytesIO(response.content)
-            
-            return StreamingResponse(
-                content_stream,
-                media_type=content_type,
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Type": content_type,
-                    "Cache-Control": "public, max-age=31536000, immutable"
-                }
-            )
+        # SSRF 收口：模式3 抓取走 _safe_proxy_fetch（目标校验 + 逐跳重定向校验 + 大小上限）。
+        response = await _safe_proxy_fetch(url, timeout=300.0)
+
+        # Determine filename
+        if not filename:
+            # Extract filename from URL or generate one
+            if "filename=" in url:
+                filename = url.split("filename=")[-1].split("&")[0]
+            else:
+                # Try to get extension from URL
+                url_path = url.split('?')[0]
+                ext = url_path.split('.')[-1] if '.' in url_path else 'bin'
+                filename = f"generated_file_{int(time.time())}.{ext}"
+
+        # Don't add extension if filename already has a valid one
+        valid_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv')
+        if not filename.lower().endswith(valid_extensions):
+            # Try to detect from content-type
+            content_type = response.headers.get('content-type', '')
+            if 'video' in content_type:
+                filename += '.mp4'
+            elif 'image' in content_type:
+                filename += '.png'
+
+        # Get content type
+        content_type = response.headers.get('content-type', 'application/octet-stream')
+
+        # Return content as streaming response
+        content_stream = BytesIO(response.content)
+
+        return StreamingResponse(
+            content_stream,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": _content_disposition_attachment(filename),
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=31536000, immutable"
+            }
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Download failed: {str(e)}")
+    except HTTPException:
+        # _safe_proxy_fetch 的 SSRF 校验/大小上限抛 400/413/508，必须原样透传，
+        # 不得被兜底 except Exception 转成 500（会污染 Sentry 且掩盖语义）。
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
 
@@ -1329,24 +1460,25 @@ async def proxy_image(request: Request, url: str = Query(..., description="Image
                 logger.warning(f"[proxy-image] CDN 签名URL生成失败，降级到代理: url={url[:100]}")
 
         # ========== 模式3: 其他远程 URL → 代理请求 ==========
-        # follow_redirects：外链/未注册 CDN 映射的本站路径可能 302，默认不跟随会报错
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+        # SSRF 收口：同 /api/download，目标校验 + 逐跳重定向校验 + 大小上限。
+        response = await _safe_proxy_fetch(url, timeout=30.0)
 
-            content_type = response.headers.get('content-type', 'image/png')
-            content_stream = BytesIO(response.content)
+        content_type = response.headers.get('content-type', 'image/png')
+        content_stream = BytesIO(response.content)
 
-            return StreamingResponse(
-                content_stream,
-                media_type=content_type,
-                headers={
-                    "Content-Type": content_type,
-                    "Cache-Control": "public, max-age=3600"
-                }
-            )
+        return StreamingResponse(
+            content_stream,
+            media_type=content_type,
+            headers={
+                "Content-Type": content_type,
+                "Cache-Control": "public, max-age=3600"
+            }
+        )
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=e.response.status_code, detail=f"Image proxy failed: {str(e)}")
+    except HTTPException:
+        # 同 /api/download：SSRF 校验 400/413/508 原样透传，不被兜底转 500。
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Image proxy failed: {str(e)}")
 
@@ -2081,12 +2213,15 @@ async def image_edit(
             mode=MediaGenerationMode.IMAGE_EDIT,
             extra_config=extra_config,
         )
-        # 根据 image_size 构建 context，用于算力修饰符计算
-        context = {}
-        if image_size:
-            context['resolution'] = image_size
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        # 构建算力修饰符上下文（分辨率/画质/输出格式/帧数，GIF 特例与多米
+        # 不透传 quality 的取舍见 build_image_task_billing_context），退费重算同入口
+        context = build_image_task_billing_context(
+            audited_extra_config,
+            image_size=image_size,
+            implementation=actual_impl,
+        )
         computing_power = task_config.get_computing_power(
             implementation=actual_impl,
             context=context,
@@ -2238,6 +2373,7 @@ async def text_to_image(
     user_id: int = Form(None, description="User ID"),
     auth_token: str = Form(None, description="Authentication token"),
     generation_snapshot: str = Form(None, description="Immutable media generation snapshot JSON"),
+    extra_config: str = Form(None, description="Extra config JSON（如 gpt-image-2.6 的 output_format/quality）"),
 ):
     """
     Submit text-to-image task
@@ -2260,13 +2396,17 @@ async def text_to_image(
             task_id=task_id,
             media_type=MediaGenerationType.IMAGE,
             mode=MediaGenerationMode.TEXT_TO_IMAGE,
+            extra_config=extra_config,
         )
-        # 根据 image_size 构建 context，用于算力修饰符计算
-        context = {}
-        if image_size:
-            context['resolution'] = image_size
         from task.visual_drivers.driver_factory import VideoDriverFactory
         actual_impl = VideoDriverFactory.get_implementation_for_user(task_id, user_id)
+        # 构建算力修饰符上下文（分辨率/画质/输出格式/帧数，GIF 特例与多米
+        # 不透传 quality 的取舍见 build_image_task_billing_context），退费重算同入口
+        context = build_image_task_billing_context(
+            audited_extra_config,
+            image_size=image_size,
+            implementation=actual_impl,
+        )
         computing_power = task_config.get_computing_power(
             implementation=actual_impl,
             context=context,
@@ -2609,6 +2749,8 @@ def _build_task_meta_payload(task_record) -> dict:
         "resolution": None,         # 视频分辨率（extra_config.resolution，如 720P/1080P）
         "image_mode": None,         # 图生视频模式（first_last_frame/multi_reference）
         "enable_face_mask": None,
+        "output_format": None,      # 图片输出格式（extra_config.output_format，如 png/gif/svg）
+        "quality": None,            # 图片质量档位（extra_config.quality）
         "prompt": None,
         "reference_images": [],     # 多参考模式参考图 URL 列表（reference_images JSON）
         "frame_images": [],         # 首尾帧/图片编辑参考图 URL 列表（image_path 逗号分隔）
@@ -2653,6 +2795,8 @@ def _build_task_meta_payload(task_record) -> dict:
         meta["resolution"] = extra.get("resolution")
         meta["image_mode"] = extra.get("image_mode")
         meta["enable_face_mask"] = bool(extra.get("enable_face_mask")) if "enable_face_mask" in extra else None
+        meta["output_format"] = extra.get("output_format")
+        meta["quality"] = extra.get("quality")
     except Exception as e:
         logger.warning(f"构建任务元数据失败（不影响状态轮询）: {e}")
     return meta
@@ -4586,8 +4730,8 @@ async def logout(request: Request, logout_request: LogoutRequest):
                     'message': '登出成功'
                 }
             )
-            # 同步清除 HttpOnly 认证 cookie
-            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            # 同步清除 HttpOnly 认证 cookie（名带端口后缀，与 set_auth_cookie 一致）
+            response.delete_cookie(key=get_auth_cookie_name(request), path="/")
             return response
         else:
             response = JSONResponse(
@@ -4598,7 +4742,7 @@ async def logout(request: Request, logout_request: LogoutRequest):
                 }
             )
             # 即使后端登出失败也清掉本地 cookie，避免僵尸会话
-            response.delete_cookie(key=AUTH_COOKIE_NAME, path="/")
+            response.delete_cookie(key=get_auth_cookie_name(request), path="/")
             return response
 
     except Exception as e:
@@ -9497,7 +9641,29 @@ app.mount("/upload", StaticFiles(directory=upload_dir), name="uploads")
 files_dir = os.path.join(APP_DIR, "files")
 if not os.path.exists(files_dir):
     os.makedirs(files_dir, exist_ok=True)
-app.mount("/files", StaticFiles(directory=files_dir), name="files")
+
+
+class GuardedFilesStatic(StaticFiles):
+    """files/ 不只是静态资源树：还承载运行期用户数据。
+
+    files/script_writer/<user_id>/<world_id>/** 是各用户的剧本创作数据（世界设定、
+    分集剧本、角色卡、agent 会话历史），files/tmp/** 是运行期临时产物（TTS 参考
+    音频、图片缓存、剪映导出）。二者一律不得匿名可读：前端仅引用 /files 根下的
+    品牌资源（logo.svg、二维码、条款 txt、fonts/、audio/），不引用这两个子树。
+    （安全审计 BUG-R2-S1-A2-H2，拦截清单见 FilePathConstants.FILES_STATIC_BLOCKED_FIRST_SEGMENTS）
+    """
+
+    async def get_response(self, path: str, scope):
+        from starlette.exceptions import HTTPException
+        # 规整后按首段目录拦截（normpath 兼容 ./、../ 与 Windows 分隔符）
+        rel = os.path.normpath(path).replace("\\", "/").lstrip("/")
+        first = rel.split("/", 1)[0]
+        if first in FilePathConstants.FILES_STATIC_BLOCKED_FIRST_SEGMENTS:
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
+app.mount("/files", GuardedFilesStatic(directory=files_dir), name="files")
 
 # Serve frontend static files
 static_dir = os.path.join(APP_DIR, "web")
@@ -10640,7 +10806,14 @@ async def update_character(
     """
     try:
         user_id = _get_user_id_from_header(user_id)
-        
+
+        # 属主校验：与 update_character_json / DELETE / reference-images 家族一致，仅创建者可改
+        existing = CharacterModel.get_by_id(character_id)
+        if not existing:
+            return JSONResponse(status_code=404, content={'code': -1, 'message': '角色不存在', 'data': None})
+        if not owner_user_id_matches(existing.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此角色')
+
         if not name or not name.strip():
             return JSONResponse(
                 status_code=400,
@@ -11286,7 +11459,11 @@ async def update_location(
                     'data': None
                 }
             )
-        
+
+        # 属主校验：与 patch_location_json / DELETE / reference-images 家族一致，仅创建者可改
+        if not owner_user_id_matches(location.user_id, user_id):
+            return _asset_not_owner_response('无权限修改此场景')
+
         # 准备更新数据
         update_data = {}
         
@@ -12375,6 +12552,68 @@ class ExportTimelineDraftRequest(BaseModel):
     timeline_clips: Optional[List[dict]] = None
 
 
+def _export_timeline_absolute_mode(library, payload, downloaded_video_files,
+                                   downloaded_audio_files, video_track, audio_track):
+    """时间轴 v2 多轨"所见即所得"导出：片段携带 timeline_start（时间轴绝对位置，秒）
+    时按绝对布局生成剪映草稿——前端摆在哪里、留多少间隙，草稿就一样。
+    同源多段（分割产物，url 相同）各自取自身 payload 里的 startTime/endTime，
+    只从下载条目借 file_path/尺寸/时长，避免旧柱子分支按 url 首条匹配的串段问题。
+    未携带 timeline_start 的音频兜底位置 0。"""
+    from jianying.utils import seconds_to_microseconds
+
+    def _match_file(clip_data, files):
+        for item in files:
+            if item['clip'].get('url') == clip_data.get('url'):
+                return item
+        return None
+
+    def _used_duration_sec(clip_data, item):
+        start_time = clip_data.get('startTime', 0)
+        end_time = clip_data.get('endTime', clip_data.get('duration', 0))
+        # 未手动裁剪时用 ffprobe 真实时长，避免超出部分被切除（与柱子分支口径一致）
+        real_duration_us = item.get('real_duration_us', 0)
+        if start_time == 0 and end_time >= clip_data.get('duration', 0) and real_duration_us > 0:
+            return real_duration_us / 1_000_000
+        return end_time - start_time
+
+    placed_video = 0
+    for clip_data in sorted(payload.video_clips, key=lambda c: c.get('timeline_start', 0)):
+        item = _match_file(clip_data, downloaded_video_files)
+        if not item:
+            continue
+        used_sec = _used_duration_sec(clip_data, item)
+        library.add_video_to_track(
+            track_id=video_track,
+            file_path=item['file_path'],
+            start_time=seconds_to_microseconds(float(clip_data.get('timeline_start', 0))),
+            duration=seconds_to_microseconds(used_sec),
+            source_start=seconds_to_microseconds(clip_data.get('startTime', 0)),
+            width=item.get('real_width') or None,
+            height=item.get('real_height') or None,
+            material_duration=item.get('real_duration_us') or None,
+        )
+        placed_video += 1
+        logger.info(f"  绝对模式添加视频: {clip_data.get('name')} @ {clip_data.get('timeline_start', 0):.2f}s")
+
+    placed_audio = 0
+    for clip_data in sorted(payload.audio_clips, key=lambda c: c.get('timeline_start', 0)):
+        item = _match_file(clip_data, downloaded_audio_files)
+        if not item:
+            continue
+        used_sec = _used_duration_sec(clip_data, item)
+        library.add_audio_to_track(
+            track_id=audio_track,
+            file_path=item['file_path'],
+            start_time=seconds_to_microseconds(float(clip_data.get('timeline_start', 0))),
+            duration=seconds_to_microseconds(used_sec),
+            source_start=seconds_to_microseconds(clip_data.get('startTime', 0)),
+            material_duration=item.get('real_duration_us') or None,
+        )
+        placed_audio += 1
+
+    logger.info(f"绝对位置模式完成: 视频 {placed_video} 段, 音频 {placed_audio} 段")
+
+
 @app.post('/api/export_timeline_draft')
 async def export_timeline_draft(
     payload: ExportTimelineDraftRequest,
@@ -12489,8 +12728,18 @@ async def export_timeline_draft(
             await asyncio.gather(*[_probe_media(it) for it in downloaded_video_files + downloaded_audio_files])
             logger.info(f"已完成 {len(probe_cache)} 个文件的媒体信息探测")
         
+        # v2 多轨所见即所得模式：全部视频片段携带 timeline_start（时间轴绝对位置秒）时启用。
+        # 旧数据（无 timeline_start）完全走原有柱子/经典逻辑，零影响。
+        use_absolute_mode = bool(payload.video_clips) and all(
+            isinstance(vc.get('timeline_start'), (int, float)) for vc in payload.video_clips)
+
+        if use_absolute_mode:
+            logger.info("使用绝对位置模式处理时间轴（所见即所得）")
+            _export_timeline_absolute_mode(library, payload, downloaded_video_files,
+                                           downloaded_audio_files, video_track, audio_track)
+
         # 如果有柱子数据，使用柱子系统处理（支持不连续的视频）
-        if payload.pillars:
+        elif payload.pillars:
             logger.info(f"使用柱子系统处理时间轴，共 {len(payload.pillars)} 个柱子")
             
             # 按柱子顺序处理
@@ -13034,6 +13283,142 @@ async def export_timeline_assets(
                 await asyncio.to_thread(shutil.rmtree, base_temp_dir, True)
             except Exception as e:
                 logger.warning(f"清理素材包临时目录失败: {e}")
+
+
+class ExportTimelineVideoRequest(BaseModel):
+    """时间轴导出成品视频请求（片段结构与 export_timeline_draft 一致）。"""
+    video_clips: List[dict] = []
+    audio_clips: List[dict] = []
+    ratio: Optional[str] = None  # 画布比例，如 9:16 / 16:9
+    workflow_name: Optional[str] = "未命名工作流"
+    request_origin: Optional[str] = None
+
+
+def _timeline_video_total_duration(video_clips: List[dict], audio_clips: List[dict] = None) -> float:
+    """按 timeline_start + 裁剪时长计算成片总时长（后端权威，不信任前端传值）。
+
+    音频片段也计入：音频超出视频尾时成片以黑场+声音延续到音频尾（与剪映
+    导出行为一致，兑现时间轴"所见即所得"），此前仅按视频计算会把音频尾部
+    静默截断。
+    """
+    total = 0.0
+    for clip in list(video_clips or []) + list(audio_clips or []):
+        ts = float(clip.get('timeline_start') or 0)
+        ss = max(0.0, float(clip.get('startTime') or 0))
+        se = float(clip.get('endTime') or clip.get('duration') or 0)
+        total = max(total, ts + max(0.0, se - ss))
+    return round(total + 0.05, 3)
+
+
+@app.post('/api/export_timeline_video')
+async def export_timeline_video(
+    payload: ExportTimelineVideoRequest,
+    http_request: Request,
+    user_id: int = Header(None, alias="X-User-Id")
+):
+    """时间轴导出成品视频：建异步 job 立即返回 job_id，前端轮询 GET 同路径 /job/{id}。
+
+    渲染为 ffmpeg 重编码（几十秒~分钟级），采用与故事板 export-full-video 相同的
+    HTTP 内后台 asyncio 任务 + job 轮询模式；渲染本体在线程池（asyncio.to_thread +
+    wait_for 超时）执行，不阻塞事件循环。
+    """
+    try:
+        user_id = _get_user_id_from_header(user_id)
+        if not payload.video_clips:
+            return JSONResponse(status_code=400, content={'success': False, 'error': '时间轴为空，无法导出视频'})
+        if len(payload.video_clips) + len(payload.audio_clips) > TimelineVideoExportConstants.MAX_CLIPS:
+            return JSONResponse(
+                status_code=400,
+                content={'success': False, 'error': f'片段总数超过上限({TimelineVideoExportConstants.MAX_CLIPS})'}
+            )
+        if has_active_job_for_user(user_id):
+            return JSONResponse(
+                status_code=429,
+                content={'success': False, 'error': '已有导出任务进行中，请等待完成后再导出'}
+            )
+        total_duration = _timeline_video_total_duration(payload.video_clips, payload.audio_clips)
+        if total_duration <= 0.05:
+            return JSONResponse(status_code=400, content={'success': False, 'error': '片段时长无效，无法导出'})
+
+        ratio = payload.ratio or JIANYING_DEFAULT_RATIO
+        width, height = JIANYING_RATIO_RESOLUTION.get(ratio, JIANYING_RATIO_RESOLUTION[JIANYING_DEFAULT_RATIO])
+
+        job = create_timeline_export_job(user_id, payload.workflow_name or '')
+        job_id = job['job_id']
+        request_origin = payload.request_origin or http_request.headers.get("Origin") or http_request.headers.get("Referer")
+
+        async def _run():
+            try:
+                update_timeline_export_job(job_id, status='downloading', progress=5)
+                date_folder = datetime.now().strftime('%Y-%m-%d')
+                out_dir = os.path.join(get_upload_dir(), TimelineVideoExportConstants.WORK_SUBDIR, date_folder)
+                dl_dir = os.path.join(get_upload_dir(), TimelineVideoExportConstants.WORK_SUBDIR, 'tmp', job_id, 'downloads')
+                os.makedirs(out_dir, exist_ok=True)
+                os.makedirs(dl_dir, exist_ok=True)
+
+                downloaded_video = await _download_timeline_media_clips(payload.video_clips, 'video', dl_dir, request_origin)
+                downloaded_audio = await _download_timeline_media_clips(payload.audio_clips, 'audio', dl_dir, request_origin)
+
+                update_timeline_export_job(job_id, status='rendering', progress=30)
+                local_path = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        render_timeline_video,
+                        downloaded_video, downloaded_audio, out_dir,
+                        width, height,
+                    ),
+                    timeout=TimelineVideoExportConstants.FFMPEG_TIMEOUT_SECONDS,
+                )
+
+                update_timeline_export_job(job_id, status='uploading', progress=85)
+                filename = os.path.basename(local_path)
+                is_local = get_dynamic_config_value("server", "is_local", default=True)
+                if is_local:
+                    download_url = f"{SERVER_HOST}/upload/{TimelineVideoExportConstants.WORK_SUBDIR}/{date_folder}/{filename}"
+                    logger.info(f"时间轴视频导出(本地): {download_url}")
+                else:
+                    download_url, filename = await upload_local_file_to_cdn(local_path, 'video/mp4')
+                    try:
+                        os.remove(local_path)
+                    except OSError:
+                        pass
+                    logger.info(f"时间轴视频导出(已上CDN): {download_url}")
+
+                update_timeline_export_job(
+                    job_id, status='completed', progress=100,
+                    download_url=download_url, filename=filename,
+                )
+            except _TimelineMediaExportError as e:
+                logger.warning(f"时间轴视频导出失败(素材下载): {e.error}")
+                update_timeline_export_job(job_id, status='failed', error=e.error, progress=100)
+            except Exception as e:
+                logger.error(f"时间轴视频导出失败 job={job_id}: {e}")
+                logger.error(traceback.format_exc())
+                update_timeline_export_job(job_id, status='failed', error=str(e) or '导出失败', progress=100)
+            finally:
+                cleanup_job_tmp_dir(job_id)
+
+        asyncio.create_task(_run())
+        return JSONResponse(status_code=200, content={'success': True, 'job_id': job_id, 'total_duration': total_duration})
+
+    except Exception as e:
+        logger.error(f"时间轴视频导出任务创建失败: {e}")
+        return JSONResponse(status_code=500, content={'success': False, 'error': str(e) or '创建导出任务失败'})
+
+
+@app.get('/api/export_timeline_video/job/{job_id}')
+async def get_export_timeline_video_job(job_id: str):
+    """轮询时间轴视频导出任务状态。"""
+    job = get_timeline_export_job(job_id)
+    if not job:
+        return JSONResponse(status_code=404, content={'success': False, 'error': '导出任务不存在或已过期'})
+    return JSONResponse(status_code=200, content={'success': True, 'job': {
+        'job_id': job.get('job_id'),
+        'status': job.get('status'),
+        'progress': job.get('progress'),
+        'download_url': job.get('download_url'),
+        'filename': job.get('filename'),
+        'error': job.get('error'),
+    }})
 
 
 @app.get("/video-workflow-list")

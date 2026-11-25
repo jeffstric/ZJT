@@ -10,6 +10,7 @@ from .runninghub_slots import RunningHubSlotsModel, RunningHubSlot
 from .database import get_db_connection, execute_query, execute_update, execute_insert, transaction, execute_insert_in_transaction, execute_update_in_transaction
 from .users import UsersModel, User
 from .user_tokens import UserTokensModel, UserToken
+from .user_group import UserGroupModel, UserGroup
 from .user_api_tokens import UserApiTokensModel, UserApiToken
 from .computing_power import ComputingPowerModel, ComputingPower
 from .computing_power_log import ComputingPowerLogModel, ComputingPowerLog
@@ -45,7 +46,19 @@ from .video_voice_replace import (
     VideoVoiceReplaceSegment,
     VideoVoiceReplaceSegmentModel,
 )
-# 用户模块实体（user_modules/user_module_binding）随商业版 enterprise 包提供。
+# 用户模块实体（user_modules/user_module_binding）：develop_f1214 起随子系统常驻主仓
+# （此前随商业版 enterprise 包提供）。
+from .user_modules import (
+    UserModuleStatus,
+    UserModuleReleaseStatus,
+    ModuleJobStatus,
+    UserModuleEntity,
+    UserModuleReleaseEntity,
+    ModuleJobEntity,
+    UserModulesModel,
+    ModuleJobsModel,
+)
+from .user_module_binding import UserModuleTaskBindingModel, UserModuleTaskBindingEntity
 
 __all__ = [
     'AIToolsModel',
@@ -69,6 +82,8 @@ __all__ = [
     'execute_update_in_transaction',
     'UsersModel',
     'User',
+    'UserGroupModel',
+    'UserGroup',
     'UserTokensModel',
     'UserToken',
     'UserApiTokensModel',
@@ -142,4 +157,14 @@ __all__ = [
     'VideoVoiceReplaceJobModel',
     'VideoVoiceReplaceSegment',
     'VideoVoiceReplaceSegmentModel',
+    'UserModuleStatus',
+    'UserModuleReleaseStatus',
+    'ModuleJobStatus',
+    'UserModuleEntity',
+    'UserModuleReleaseEntity',
+    'ModuleJobEntity',
+    'UserModulesModel',
+    'ModuleJobsModel',
+    'UserModuleTaskBindingModel',
+    'UserModuleTaskBindingEntity',
 ]

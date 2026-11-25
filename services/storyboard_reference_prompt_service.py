@@ -14,6 +14,8 @@ from config.constant import (
     H3_VOICE_CASTING_NOTE_MARKER,
     H3_VOICE_CASTING_NOTE_MAX_CHARS,
     MAX_VOICE_REFERENCE_AUDIOS,
+    SCENE_NO_PEOPLE_GUARD_TEXT,
+    STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT,
 )
 
 
@@ -36,6 +38,33 @@ def append_single_frame_guard(prompt: str) -> str:
     if SINGLE_FRAME_GUARD_TEXT in body:
         return body
     return f"{body}\n\n{SINGLE_FRAME_GUARD_TEXT}"
+
+
+def append_limb_integrity_guard(prompt: str) -> str:
+    """Append the limb-integrity guard to an image prompt tail (idempotent).
+
+    与单幅画面守卫并列：防拆分侧漏网的多手/多指描述被生图模型忠实复现。
+    """
+    body = str(prompt or "").rstrip()
+    if not body:
+        return body
+    if STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT in body:
+        return body
+    return f"{body}\n\n{STORYBOARD_LIMB_INTEGRITY_GUARD_TEXT}"
+
+
+def append_scene_no_people_guard(prompt: str) -> str:
+    """Append the scene no-people guard to a location image prompt tail (idempotent).
+
+    场景参考图必须是无人的纯环境空镜：防场景描述带入的人物活动描写
+    （如"守卫把守的大门"）被生图模型画成有人场景。
+    """
+    body = str(prompt or "").rstrip()
+    if not body:
+        return body
+    if SCENE_NO_PEOPLE_GUARD_TEXT in body:
+        return body
+    return f"{body}\n\n{SCENE_NO_PEOPLE_GUARD_TEXT}"
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:

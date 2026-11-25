@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from model.users import UsersModel, User
 from model.user_tokens import UserTokensModel
+from model.user_group import UserGroupModel
 from model.computing_power import ComputingPowerModel
 from model.computing_power_log import ComputingPowerLogModel
 from model.video_workflow import VideoWorkflowModel
@@ -32,6 +33,12 @@ from config.constant import (
     ChannelLevel,
     UserStatus,
     REMARK_MAX_LEN,
+    USER_GROUP_NAME_MAX_LEN,
+    USER_GROUP_REMARK_MAX_LEN,
+    REPORT_UNGROUPED_GROUP_ID,
+    REPORT_MONTHLY_DEFAULT_MONTHS,
+    REPORT_MONTHLY_MAX_MONTHS,
+    USER_GROUP_MEMBERS_PAGE_SIZE_MAX,
 )
 from config.strategy import EditionStrategy, IS_COMMUNITY_EDITION
 from services.system_config_batch_service import batch_update_system_configs
@@ -79,18 +86,6 @@ def _get_enterprise_admin_status() -> dict[str, object]:
     from utils.enterprise_loader import enterprise_loader
 
     return enterprise_loader.get_runtime_status()
-
-
-def _is_user_module_license_active() -> bool:
-    """用户模块功能的商业许可证检查（strict：须真实激活；enterprise 缺席恒 False）。"""
-    try:
-        from enterprise.services.license.runtime import (
-            is_commercial_license_strictly_allowed,
-        )
-
-        return bool(is_commercial_license_strictly_allowed())
-    except Exception:
-        return False
 
 
 def _is_commercial_base_license_active() -> bool:
@@ -187,9 +182,9 @@ async def admin_dashboard(auth_token: str = Header(None, alias="Authorization"))
                     # 但 is_available() 在 studio license 下经严格判断返回 False，
                     # 前端据此隐藏品牌定制入口。
                     "branding": is_branding_available(),
-                    # 用户模块（接口模块）：enterprise 包完整注册且商业许可证已激活
-                    # 才对前端开放完整界面；未激活显示与社区版相同的锁定卡片。
-                    "user_modules": bool(enterprise_status["registration_ready"]) and _is_user_module_license_active(),
+                    # 用户模块（接口模块）：主仓能力（develop_f1214 起），
+                    # 社区/商业版均可用，无商业许可证门禁。
+                    "user_modules": True,
                 },
             }
         }
@@ -640,6 +635,395 @@ async def admin_update_user_remark(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to update remark for user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ 用户分组（管理员创建，单组制：一个用户最多属于一个组） ============
+
+class SaveUserGroupRequest(BaseModel):
+    name: str
+    remark: Optional[str] = None
+
+
+def _validate_group_fields(name: str, remark: Optional[str]) -> tuple:
+    """校验分组名称/备注，返回 (name, remark)；非法时抛 400"""
+    name = (name or '').strip()
+    remark = (remark or '').strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="分组名称不能为空")
+    if len(name) > USER_GROUP_NAME_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"分组名称不能超过 {USER_GROUP_NAME_MAX_LEN} 个字符")
+    if len(remark) > USER_GROUP_REMARK_MAX_LEN:
+        raise HTTPException(status_code=400, detail=f"分组备注不能超过 {USER_GROUP_REMARK_MAX_LEN} 个字符")
+    return name, remark
+
+
+@router.get("/user-groups")
+async def admin_list_user_groups(
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员获取用户分组列表（含各组当前成员数）"""
+    await require_admin(auth_token)
+
+    try:
+        groups = await asyncio.to_thread(UserGroupModel.list_all)
+        data = []
+        for row in groups:
+            data.append({
+                'id': row['id'],
+                'name': row['name'],
+                'remark': row.get('remark'),
+                'member_count': int(row.get('member_count') or 0),
+                'create_at': row['create_at'].isoformat() if hasattr(row['create_at'], 'isoformat') else row['create_at'],
+                'update_at': row['update_at'].isoformat() if hasattr(row['update_at'], 'isoformat') else row['update_at'],
+            })
+        return {"code": 0, "data": data}
+    except Exception as e:
+        logger.error(f"Failed to list user groups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/user-groups")
+async def admin_create_user_group(
+    request: SaveUserGroupRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员创建用户分组（名称全局唯一）"""
+    admin = await require_admin(auth_token)
+
+    if request is None:
+        raise HTTPException(status_code=400, detail="缺少请求体")
+    name, remark = _validate_group_fields(request.name, request.remark)
+
+    try:
+        existing = await asyncio.to_thread(UserGroupModel.get_by_name, name)
+        if existing:
+            raise HTTPException(status_code=400, detail="分组名称已存在")
+
+        group_id = await asyncio.to_thread(UserGroupModel.create, name, remark)
+        logger.info(f"[Admin] 用户分组创建: group={group_id} name={name} by admin={admin.id}")
+        return {"code": 0, "data": {"id": group_id, "name": name, "remark": remark}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        # 重名兜底（并发创建时 get_by_name 检查可能同时通过）
+        if "Duplicate entry" in str(e):
+            raise HTTPException(status_code=400, detail="分组名称已存在")
+        logger.error(f"Failed to create user group '{name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/user-groups/{group_id}")
+async def admin_update_user_group(
+    group_id: int = Path(...),
+    request: SaveUserGroupRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员更新用户分组（名称/备注）"""
+    admin = await require_admin(auth_token)
+
+    if request is None:
+        raise HTTPException(status_code=400, detail="缺少请求体")
+    name, remark = _validate_group_fields(request.name, request.remark)
+
+    try:
+        group = await asyncio.to_thread(UserGroupModel.get_by_id, group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="分组不存在")
+
+        existing = await asyncio.to_thread(UserGroupModel.get_by_name, name)
+        if existing and existing.id != group_id:
+            raise HTTPException(status_code=400, detail="分组名称已存在")
+
+        await asyncio.to_thread(UserGroupModel.update, group_id, name=name, remark=remark)
+        logger.info(f"[Admin] 用户分组更新: group={group_id} name={name} by admin={admin.id}")
+        return {"code": 0, "data": {"id": group_id, "name": name, "remark": remark}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        if "Duplicate entry" in str(e):
+            raise HTTPException(status_code=400, detail="分组名称已存在")
+        logger.error(f"Failed to update user group {group_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/user-groups/{group_id}")
+async def admin_delete_user_group(
+    group_id: int = Path(...),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员删除用户分组；组内用户自动回到未分组"""
+    admin = await require_admin(auth_token)
+
+    try:
+        group = await asyncio.to_thread(UserGroupModel.get_by_id, group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="分组不存在")
+
+        affected = await asyncio.to_thread(UserGroupModel.delete, group_id)
+        logger.info(f"[Admin] 用户分组删除: group={group_id} name={group.name} members_released by admin={admin.id}")
+        return {"code": 0, "data": {"id": group_id, "deleted": bool(affected)}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete user group {group_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/user-groups/{group_id}/members")
+async def admin_list_user_group_members(
+    group_id: int = Path(...),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=USER_GROUP_MEMBERS_PAGE_SIZE_MAX),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员分页查看分组内用户"""
+    await require_admin(auth_token)
+
+    try:
+        group = await asyncio.to_thread(UserGroupModel.get_by_id, group_id)
+        if not group:
+            raise HTTPException(status_code=404, detail="分组不存在")
+
+        result = await asyncio.to_thread(UserGroupModel.list_members, group_id, page, page_size)
+        members = []
+        for row in result['data']:
+            user_id = row['user_id']
+            nickname = row.get('nickname') or f'用户{user_id}'
+            remark = (row.get('remark') or '').strip()
+            members.append({
+                'user_id': user_id,
+                'phone': row.get('phone'),
+                'email': row.get('email'),
+                'nickname': nickname,
+                'remark': remark,
+                # 有管理员备注时优先展示备注，便于管理员识别用户（与每日算力统计口径一致）
+                'display_name': remark or nickname,
+                'status': row.get('status'),
+                'created_at': row['created_at'].isoformat() if hasattr(row['created_at'], 'isoformat') else row['created_at'],
+            })
+        return {
+            "code": 0,
+            "data": {
+                'group_id': group_id,
+                'group_name': group.name,
+                'total': result['total'],
+                'page': result['page'],
+                'page_size': result['page_size'],
+                'members': members,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list members of user group {group_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class UpdateUserGroupMembershipRequest(BaseModel):
+    group_id: Optional[int] = None
+
+
+@router.put("/users/{user_id}/group")
+async def admin_set_user_group(
+    user_id: int = Path(...),
+    request: UpdateUserGroupMembershipRequest = None,
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """管理员把用户归入分组；group_id 为 null 表示移出分组（回到未分组）"""
+    admin = await require_admin(auth_token)
+
+    if request is None:
+        raise HTTPException(status_code=400, detail="缺少请求体")
+    group_id = request.group_id
+
+    try:
+        target = await asyncio.to_thread(UsersModel.get_by_id, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="目标用户不存在")
+
+        if group_id is not None:
+            group = await asyncio.to_thread(UserGroupModel.get_by_id, group_id)
+            if not group:
+                raise HTTPException(status_code=404, detail="分组不存在")
+
+        await asyncio.to_thread(UserGroupModel.set_user_group, user_id, group_id)
+        logger.info(f"[Admin] 用户归组变更: user={user_id} group={group_id} by admin={admin.id}")
+        return {
+            "code": 0,
+            "data": {
+                "target_user_id": user_id,
+                "group_id": group_id,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to set group of user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ 报表：月度分组算力消耗汇总 + 组内用户下钻 ============
+
+def _validate_month_str(value: str, field: str) -> str:
+    """校验 YYYY-MM 格式并返回原值；非法时抛 400"""
+    try:
+        datetime.strptime(value, "%Y-%m")
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail=f"{field} 格式必须为 YYYY-MM")
+    return value
+
+
+def _month_range(start_month: Optional[str], end_month: Optional[str]) -> tuple:
+    """解析月份范围：缺省端补默认值（end 缺省取当月，start 缺省取 end 前 N-1 个月）；
+    再统一校验格式、顺序与跨度"""
+    if not end_month:
+        end_month = datetime.now().strftime("%Y-%m")
+    if not start_month:
+        # 以 end_month 为基准往前推 REPORT_MONTHLY_DEFAULT_MONTHS-1 个月
+        # （逐月回退：当月 1 号减一天落到上月，再取 1 号，跨年自动回退）
+        start_dt = datetime.strptime(end_month, "%Y-%m")
+        for _ in range(REPORT_MONTHLY_DEFAULT_MONTHS - 1):
+            start_dt = (start_dt.replace(day=1) - timedelta(days=1)).replace(day=1)
+        start_month = start_dt.strftime("%Y-%m")
+
+    _validate_month_str(start_month, "start_month")
+    _validate_month_str(end_month, "end_month")
+
+    start_dt = datetime.strptime(start_month, "%Y-%m")
+    end_dt = datetime.strptime(end_month, "%Y-%m")
+    if start_dt > end_dt:
+        raise HTTPException(status_code=400, detail="start_month 不能晚于 end_month")
+
+    months_span = (end_dt.year - start_dt.year) * 12 + (end_dt.month - start_dt.month) + 1
+    if months_span > REPORT_MONTHLY_MAX_MONTHS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"查询范围最大支持 {REPORT_MONTHLY_MAX_MONTHS} 个月"
+        )
+    return start_month, end_month
+
+
+@router.get("/reports/monthly-group-power")
+async def admin_report_monthly_group_power(
+    start_month: Optional[str] = Query(None),
+    end_month: Optional[str] = Query(None),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    月度分组算力消耗汇总（behavior='deduct'）
+    返回区间内每个月各分组的消耗总和；未分组用户计入 group_id=0 的"未分组"桶
+    """
+    await require_admin(auth_token)
+
+    try:
+        start_month, end_month = _month_range(start_month, end_month)
+
+        rows = await asyncio.to_thread(
+            ComputingPowerLogModel.get_monthly_group_power_stats,
+            start_month=start_month,
+            end_month=end_month
+        )
+
+        month_groups: Dict[str, dict] = {}
+        for row in rows:
+            stat_month = row['stat_month']
+            month_group = month_groups.get(stat_month)
+            if not month_group:
+                month_group = {'month': stat_month, 'total_power': 0, 'groups': []}
+                month_groups[stat_month] = month_group
+
+            power = int(row['total_power'] or 0)
+            month_group['total_power'] += power
+            group_id = int(row['group_id'] or 0)
+            month_group['groups'].append({
+                'group_id': group_id,
+                # group_id=0 为"未分组"虚拟桶
+                'group_name': row.get('group_name') or ('未分组' if group_id == REPORT_UNGROUPED_GROUP_ID else f'分组{group_id}'),
+                'total_power': power,
+                'record_count': int(row['record_count'] or 0),
+                'user_count': int(row['user_count'] or 0),
+            })
+
+        # 每月分组按消耗降序，未分组桶保持按其消耗参与排序
+        months = sorted(month_groups.values(), key=lambda x: x['month'])
+        for m in months:
+            m['groups'].sort(key=lambda g: g['total_power'], reverse=True)
+
+        return {
+            "code": 0,
+            "data": {
+                "start_month": start_month,
+                "end_month": end_month,
+                "months": months,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get monthly group power report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/reports/monthly-group-power/detail")
+async def admin_report_monthly_group_power_detail(
+    month: str = Query(...),
+    group_id: int = Query(REPORT_UNGROUPED_GROUP_ID),
+    auth_token: str = Header(None, alias="Authorization")
+):
+    """
+    月度分组报表下钻：指定月份、指定分组内各用户的算力消耗明细。
+    group_id=0 表示"未分组"桶；组内零消耗用户也返回（power=0）。
+    """
+    await require_admin(auth_token)
+
+    try:
+        _validate_month_str(month, "month")
+
+        group_name = '未分组'
+        dao_group_id: Optional[int] = None
+        if group_id != REPORT_UNGROUPED_GROUP_ID:
+            group = await asyncio.to_thread(UserGroupModel.get_by_id, group_id)
+            if not group:
+                raise HTTPException(status_code=404, detail="分组不存在")
+            group_name = group.name
+            dao_group_id = group_id
+
+        rows = await asyncio.to_thread(
+            ComputingPowerLogModel.get_monthly_group_user_power_stats,
+            month,
+            dao_group_id
+        )
+
+        users = []
+        for row in rows:
+            user_id = row['user_id']
+            nickname = row.get('nickname') or f'用户{user_id}'
+            remark = (row.get('remark') or '').strip()
+            users.append({
+                'user_id': user_id,
+                'nickname': nickname,
+                'remark': remark,
+                'display_name': remark or nickname,
+                'power': int(row['total_power'] or 0),
+                'record_count': int(row['record_count'] or 0),
+            })
+
+        total_power = sum(u['power'] for u in users)
+        return {
+            "code": 0,
+            "data": {
+                "month": month,
+                "group_id": group_id,
+                "group_name": group_name,
+                "total_power": total_power,
+                "users": users,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get monthly group power detail (month={month}, group_id={group_id}): {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

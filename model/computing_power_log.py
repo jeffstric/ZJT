@@ -333,6 +333,110 @@ class ComputingPowerLogModel:
             logger.error(f"Failed to get daily user power stats: {e}")
             raise
 
+    @staticmethod
+    def get_monthly_group_power_stats(
+        start_month: Optional[str] = None,
+        end_month: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        按月+用户分组聚合算力消耗（behavior='deduct'）统计
+
+        分组口径为用户的当前分组：未分组用户（users.group_id IS NULL）计入
+        group_id=0 的"未分组"桶；历史消耗归属当月所在分组的现状快照，不回溯
+        分组变动历史。
+
+        Args:
+            start_month: 起始月份（含），格式 YYYY-MM；为空表示不限制
+            end_month: 结束月份（含），格式 YYYY-MM；为空表示不限制
+
+        Returns:
+            [{stat_month, group_id, group_name, total_power, record_count, user_count}]
+            user_count 为该月该组内有消耗记录的去重用户数
+        """
+        sql = """
+            SELECT
+                DATE_FORMAT(c.created_at, '%%Y-%%m') AS stat_month,
+                IFNULL(u.group_id, 0) AS group_id,
+                ug.name AS group_name,
+                SUM(c.computing_power) AS total_power,
+                COUNT(*) AS record_count,
+                COUNT(DISTINCT c.user_id) AS user_count
+            FROM computing_power_log c
+            LEFT JOIN users u ON u.id = c.user_id
+            LEFT JOIN user_group ug ON ug.id = u.group_id
+            WHERE c.behavior = 'deduct'
+        """
+        params: List[Any] = []
+
+        if start_month:
+            # 取起始月份 1 号零点（含）
+            sql += " AND c.created_at >= STR_TO_DATE(CONCAT(%s, '-01'), '%%Y-%%m-%%d')"
+            params.append(start_month)
+        if end_month:
+            # 结束月份的次月 1 号零点（不含），右开区间取整月
+            sql += " AND c.created_at < DATE_ADD(STR_TO_DATE(CONCAT(%s, '-01'), '%%Y-%%m-%%d'), INTERVAL 1 MONTH)"
+            params.append(end_month)
+
+        sql += " GROUP BY stat_month, group_id, ug.name"
+        sql += " ORDER BY stat_month ASC, total_power DESC"
+
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return results or []
+        except Exception as e:
+            logger.error(f"Failed to get monthly group power stats: {e}")
+            raise
+
+    @staticmethod
+    def get_monthly_group_user_power_stats(
+        month: str,
+        group_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        指定月份、指定分组内各用户的算力消耗（behavior='deduct'）明细
+
+        组内零消耗用户也返回（total_power=0）；group_id 为 None 时统计
+        未分组用户（users.group_id IS NULL）。
+
+        Args:
+            month: 月份，格式 YYYY-MM
+            group_id: 分组 id；None 表示未分组桶
+
+        Returns:
+            [{user_id, nickname, remark, total_power, record_count}]
+            按当月消耗降序排列
+        """
+        month_start_sql = "STR_TO_DATE(CONCAT(%s, '-01'), '%%Y-%%m-%%d')"
+        sql = f"""
+            SELECT
+                u.id AS user_id,
+                u.nickname AS nickname,
+                u.remark AS remark,
+                COALESCE(SUM(c.computing_power), 0) AS total_power,
+                COUNT(c.id) AS record_count
+            FROM users u
+            LEFT JOIN computing_power_log c
+                ON c.user_id = u.id
+                AND c.behavior = 'deduct'
+                AND c.created_at >= {month_start_sql}
+                AND c.created_at < DATE_ADD({month_start_sql}, INTERVAL 1 MONTH)
+            WHERE {'u.group_id IS NULL' if group_id is None else 'u.group_id = %s'}
+            GROUP BY u.id, u.nickname, u.remark
+            ORDER BY total_power DESC, u.id ASC
+        """
+        params: List[Any] = []
+        if group_id is None:
+            params = [month, month]
+        else:
+            params = [month, month, group_id]
+
+        try:
+            results = execute_query(sql, tuple(params), fetch_all=True)
+            return results or []
+        except Exception as e:
+            logger.error(f"Failed to get monthly group user power stats (month={month}, group_id={group_id}): {e}")
+            raise
+
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS `computing_power_log` (

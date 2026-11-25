@@ -646,7 +646,7 @@ PROVIDER_DEFINITIONS.forEach(provider => {
 });
 
 const AdminApp = {
-    mixins: [window.UserModulesAdminMixin],
+    mixins: [window.UserModulesAdminMixin, window.UserGroupsAdminMixin, window.ReportsAdminMixin].filter(Boolean),
     data() {
         return {
             // 认证
@@ -1919,6 +1919,10 @@ const AdminApp = {
                 this.loadImplementations();
             } else if (page === 'userModules') {
                 if (this.userModulesAvailable) this.loadUserModules();
+            } else if (page === 'userGroups') {
+                this.loadUserGroups();
+            } else if (page === 'reports') {
+                this.loadMonthlyGroupReport();
             } else if (page === 'runninghubKeyPool') {
                 if (this.runninghubKeyPoolAvailable) {
                     this.loadRunninghubKeyPool();
