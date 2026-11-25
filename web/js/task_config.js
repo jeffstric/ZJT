@@ -17,31 +17,6 @@
   const onLoadCallbacks = [];
 
   /**
-   * Seedance 2.5 系列（2.5 / 2.5 Flash）官方输出时长下限为 4s
-   * （duration 参数 [4,30]s 或 -1，2/3s 会被火山 API 拒绝、任务直接失败）。
-   * 无论后端配置或实现方偏好是否误带 <4s 档，前端一律过滤不展示。
-   */
-  const SEEDANCE_25_MIN_DURATION = 4;
-
-  function sanitizeSeedance25Durations(tasks) {
-    (tasks || []).forEach(task => {
-      if (!task || !/^seedance_2_5/.test(task.key || '')) return;
-      if (Array.isArray(task.supported_durations)) {
-        task.supported_durations = task.supported_durations.filter(
-          d => Number(d) >= SEEDANCE_25_MIN_DURATION
-        );
-      }
-      (task.implementations || []).forEach(impl => {
-        if (impl && Array.isArray(impl.supported_durations)) {
-          impl.supported_durations = impl.supported_durations.filter(
-            d => Number(d) >= SEEDANCE_25_MIN_DURATION
-          );
-        }
-      });
-    });
-  }
-
-  /**
    * 从后端加载任务配置
    * @returns {Promise<Object>} 配置数据
    */
@@ -68,7 +43,6 @@
         
         const result = await response.json();
         if (result.code === 0 && result.data) {
-          sanitizeSeedance25Durations(result.data.tasks);
           taskConfigCache = result.data;
           configLoaded = true;
           console.log('[任务配置] 已加载:', taskConfigCache);
