@@ -6,6 +6,8 @@ cdn_redirect_middleware 302 到七牛（媒体流量不过本服务）。/api/do
 从 CDN 拉回整个文件再吐给浏览器（白占 frp 隧道带宽），且 httpx 不跟随 302
 直接报错（TTS 音频下载 302 事故）。
 """
+from urllib.parse import quote
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -193,6 +195,163 @@ def test_foreign_host_upload_url_never_queries_mapping(client, monkeypatch, site
     )
     assert resp.status_code == 200
     assert resp.content == b"mp3-bytes"
+
+
+def _forbid_proxy(monkeypatch):
+    async def _boom(url, *, timeout):
+        raise AssertionError(f"must not proxy {url}")
+
+    monkeypatch.setattr("server._safe_proxy_fetch", _boom)
+
+
+def _write_upload(rel_parts, content):
+    """在项目 upload/ 下写测试文件，返回绝对路径。"""
+    import os
+
+    import server
+
+    root = os.path.join(os.path.dirname(os.path.abspath(server.__file__)), "upload", *rel_parts[:-1])
+    os.makedirs(root, exist_ok=True)
+    path = os.path.join(root, rel_parts[-1])
+    with open(path, "wb") as f:
+        f.write(content)
+    return path
+
+
+def test_localhost_draft_zip_served_locally_not_proxied(client, monkeypatch):
+    """本机素材包：downloadWithAuth 会把 /upload/draft/ 补成 http://localhost/...。
+    无 CDN 映射时必须直接读本地 zip，不能代理环回地址（否则 400
+    「不允许代理内网/环回/保留地址」）。路径里的中文保持百分号编码。"""
+    import os
+
+    _patch_mapping(monkeypatch, cloud_path=None)
+    _forbid_proxy(monkeypatch)
+    payload = b"PK\x03\x04draft-zip"
+    name = "剧本拆分测试_素材_test.zip"
+    path = _write_upload(("draft", "_download_api_test", name), payload)
+    encoded = "http://localhost:13008/upload/draft/_download_api_test/" + quote(name)
+    try:
+        resp = client.get(
+            "/api/download",
+            params={"url": encoded, "filename": name, "format": "json"},
+            headers={"Authorization": "Bearer valid-token"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.content == payload
+        assert resp.headers["content-type"].startswith("application/zip")
+        disposition = resp.headers.get("content-disposition", "")
+        assert "attachment" in disposition.lower()
+    finally:
+        os.remove(path)
+
+
+def test_localhost_timeline_video_served_locally(client, monkeypatch):
+    """本机成品视频：导出接口返回 http://localhost/.../timeline_video_export/*.mp4。"""
+    import os
+
+    _patch_mapping(monkeypatch, cloud_path=None)
+    _forbid_proxy(monkeypatch)
+    payload = b"\x00\x00\x00\x18ftypmp42"
+    path = _write_upload(("timeline_video_export", "_download_api_test", "timeline_test.mp4"), payload)
+    try:
+        resp = client.get(
+            "/api/download",
+            params={
+                "url": "http://127.0.0.1:13008/upload/timeline_video_export/_download_api_test/timeline_test.mp4",
+                "filename": "timeline_test.mp4",
+                "format": "json",
+            },
+            headers={"Authorization": "Bearer valid-token"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.content == payload
+        assert resp.headers["content-type"].startswith("video/mp4")
+    finally:
+        os.remove(path)
+
+
+def test_relative_draft_zip_served_locally(client, monkeypatch):
+    """相对路径 /upload/draft/ 同样走本地文件，不查 CDN 映射。"""
+    import os
+
+    def _boom(url_hash):
+        raise AssertionError("relative /upload/draft/ must not query media_file_mapping")
+
+    monkeypatch.setattr(MediaFileMappingModel, "get_by_local_path_hash", staticmethod(_boom))
+    _forbid_proxy(monkeypatch)
+    payload = b"relative-zip"
+    path = _write_upload(("draft", "_download_api_test", "relative.zip"), payload)
+    try:
+        resp = client.get(
+            "/api/download",
+            params={"url": "/upload/draft/_download_api_test/relative.zip", "filename": "relative.zip"},
+            headers={"Authorization": "Bearer valid-token"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.content == payload
+    finally:
+        os.remove(path)
+
+
+def test_localhost_upload_missing_file_is_404_not_ssrf(client, monkeypatch):
+    """环回 /upload/ 文件不存在时返回 404，而不是代理后的 400。"""
+    _patch_mapping(monkeypatch, cloud_path=None)
+    _forbid_proxy(monkeypatch)
+    resp = client.get(
+        "/api/download",
+        params={
+            "url": "http://localhost:13008/upload/draft/_download_api_test/missing.zip",
+            "filename": "missing.zip",
+            "format": "json",
+        },
+        headers={"Authorization": "Bearer valid-token"},
+    )
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "本地文件不存在"
+
+
+def test_localhost_upload_traversal_rejected(client, monkeypatch):
+    """环回地址也不能用 ../ 读出 upload 目录之外的文件。"""
+    _forbid_proxy(monkeypatch)
+    resp = client.get(
+        "/api/download",
+        params={"url": "http://127.0.0.1:13008/upload/../server.py", "filename": "server.py"},
+        headers={"Authorization": "Bearer valid-token"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "本地路径非法"
+    assert b"FastAPI" not in resp.content
+
+
+def test_localhost_upload_with_cdn_mapping_still_uses_cdn(client, monkeypatch, site_env):
+    """已有 CDN 映射时，即使本机也有同名文件，仍然走签名地址，不读本地字节。"""
+    import os
+
+    import server
+
+    monkeypatch.setattr(server, "get_config", lambda: {"server": {"host": "http://localhost:13008"}})
+    _patch_cdn(monkeypatch)
+    _patch_mapping(monkeypatch, cloud_path="upload/draft/_download_api_test/mapped.zip")
+    _forbid_proxy(monkeypatch)
+    payload = b"local-should-not-leak"
+    path = _write_upload(("draft", "_download_api_test", "mapped.zip"), payload)
+    try:
+        resp = client.get(
+            "/api/download",
+            params={
+                "url": "http://localhost:13008/upload/draft/_download_api_test/mapped.zip",
+                "filename": "mapped.zip",
+                "format": "json",
+            },
+            headers={"Authorization": "Bearer valid-token"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["success"] is True
+        assert body["redirect_url"] == SIGNED
+        assert resp.content != payload
+    finally:
+        os.remove(path)
 
 
 def test_relative_upload_cache_path_still_local(client, monkeypatch):
