@@ -260,6 +260,56 @@ VIDEO_ENHANCE_PARAMS_SCHEMA = [
 ]
 
 
+# GPT Image 2.6 文生图用户可选参数 schema（配置驱动渲染前端参数表单，机制同
+# VIDEO_ENHANCE_PARAMS_SCHEMA）：output_format/quality 由通用站点驱动从
+# ai_tool.extra_config 读取并透传上游（gif/svg 为 2.6 系列独有能力，
+# 故 schema 只挂在 2.6 的 sunburst / flare 两个任务类型上）。
+GPT_IMAGE_2_6_PARAMS_SCHEMA = [
+    {
+        "key": "output_format",
+        "label": "输出格式",
+        "type": "select",
+        "options": [
+            {"value": "png", "label": "PNG"},
+            {"value": "jpeg", "label": "JPEG"},
+            {"value": "webp", "label": "WebP"},
+            {"value": "gif", "label": "GIF 动图"},
+            {"value": "svg", "label": "SVG 矢量"},
+        ],
+        "default": "png",
+    },
+    {
+        "key": "quality",
+        "label": "画质",
+        "type": "select",
+        "options": [
+            {"value": "auto", "label": "自动"},
+            {"value": "low", "label": "低（最快）"},
+            {"value": "medium", "label": "中"},
+            {"value": "high", "label": "高"},
+            {"value": "xhigh", "label": "超高"},
+            {"value": "max", "label": "最高"},
+        ],
+        "default": "auto",
+    },
+    {
+        # 仅在 output_format=gif 时由驱动透传（frame_count，int）。
+        # 实测 openlux 帧表模板受限（1K/1024 帧格）：9 帧→3072x3072 超像素预算，
+        # 4/6 帧→4096x2048 超长边（>3840），仅 2 帧稳定可用（任务 158/159/160 实测）
+        "key": "frame_count",
+        "label": "GIF 帧数（仅 GIF 生效）",
+        "type": "select",
+        "options": [
+            {"value": "2", "label": "2 帧（推荐）"},
+            {"value": "4", "label": "4 帧（可能触发帧表尺寸限制）"},
+            {"value": "6", "label": "6 帧（可能触发帧表尺寸限制）"},
+            {"value": "9", "label": "9 帧（1K 下帧表超像素预算）"},
+        ],
+        "default": "2",
+    },
+]
+
+
 def validate_video_enhance_params(raw_params: Dict[str, Any]) -> Dict[str, str]:
     """按 VIDEO_ENHANCE_PARAMS_SCHEMA 校验接口透传的用户参数（非法即拒绝）。
 
@@ -463,6 +513,55 @@ class PowerModifier:
     attribute: str
     values: Dict[str, float]
     default: float = 1.0
+
+
+# GPT Image 2.6（sunburst / flare）算力修饰符表，两个任务类型共用。
+# 基准不在任务级（computing_power=0），按实现方下沉：通用站点 7（1K PNG 默认品质，
+# 多米 2（渠道定价，见 ALL_IMPLEMENTATIONS 的 GPT Image 2.6 节）。
+# 定价依据 2026-11-20 openlux 网关消费导出（consumption_export_by_key_20261120）实测：
+# - 上游按输出 token 计费，约 $1.766e-5/token（模型倍率 2.5 × 补全倍率 6.0 × 分组倍率
+#   0.59 ÷ 50 万额度/美元）；算力成本 = 美元 × 汇率 7.2 ÷ 0.04 元/算力 = 美元 × 180。
+# - 实测样本（1K 档）：PNG 1024² 默认品质 1756 token = $0.031（成本 5.6 算力）；
+#   GIF 2 帧 auto 2561 token = $0.045（8.2）；GIF 2 帧默认品质 5617 token = $0.099
+#   （17.9）；GIF 6 帧 max 10241~22466 token = $0.181~0.397（32.6~71.4）。
+# - 站点基准 7（成本 5.6，毛利 ~25%）；各档定价均 ≥ 实测成本（GIF 按最差样本），
+#   任意维度递增无倒挂。2K/4K 暂无实测，按像素量（4×/8×）估算成本并取整
+#   （2K medium 成本约 12.7、4K 约 20~26 算力）。
+# 注意：quality 维度仅对通用站点实现方生效（多米不透传 quality，见
+# utils/computing_power.build_image_task_billing_context）；GIF 帧格被驱动收敛
+# ≤928，上游成本与 1K/2K/4K 档位无关，故 GIF 不计 resolution/quality 维度。
+GPT_IMAGE_2_6_POWER_MODIFIERS = [
+    # 分辨率（静态图）：像素量 2K≈4×1K、4K≈8×1K，无实测按成本估算取 2.0/4.0。
+    # 键同时提供大小写两种写法：提交链路（build_image_task_billing_context）
+    # 统一小写，退费回退链路原样透传 ai_tools.image_size（宫格链路落库大写 "2K"/"4K"）。
+    PowerModifier(
+        attribute='resolution',
+        values={'1k': 1.0, '1K': 1.0, '2k': 2.0, '2K': 2.0, '4k': 4.0, '4K': 4.0},
+        default=1.0,
+    ),
+    # 画质：按实测/估算 token 量排序（低 < 中 < 自动 < 高 < 超高 < 最高），
+    # 倍率 × 基准 7 后各档均不低于对应成本（medium 5.6 / auto 8.2 / max 32.6）
+    PowerModifier(
+        attribute='quality',
+        values={'low': 0.5, 'medium': 1.0, 'auto': 1.5, 'high': 2.0, 'xhigh': 3.5, 'max': 6.0},
+        default=1.0,
+    ),
+    # 输出格式：GIF 动图附加系数（帧间一致性开销，叠加帧数维度）
+    PowerModifier(
+        attribute='output_format',
+        values={'gif': 1.5},
+        default=1.0,
+    ),
+    # GIF 帧数：上游按帧倍增 token。按实测最差样本定价：2 帧成本最高 17.9 算力、
+    # 6 帧最高 71.4 算力（21/74 覆盖）；4/9 帧无实测，按帧数插值取整。
+    # default=1.0：修饰符对所有任务生效，静态图（无帧数上下文）必须不吃帧数钱；
+    # GIF 缺省帧数由 build_image_task_billing_context 显式补 "2"。
+    PowerModifier(
+        attribute='frame_count',
+        values={'2': 2.0, '4': 4.5, '6': 7.0, '9': 10.0},
+        default=1.0,
+    ),
+]
 
 
 @dataclass
@@ -688,7 +787,8 @@ class UnifiedTaskConfig:
     # 不支持的模型（grok/kling 等）完全不注入音频与说明文字。
     supports_voice_input: bool = False
 
-    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA。
+    # 用户可选参数 schema（配置驱动渲染前端参数表单），见 VIDEO_ENHANCE_PARAMS_SCHEMA /
+    # GPT_IMAGE_2_6_PARAMS_SCHEMA。
     # 非空时在 to_frontend_dict 中作为 params_schema 透出，接口/驱动按此校验与映射。
     params_schema: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -851,6 +951,16 @@ class UnifiedTaskConfig:
         转换为前端需要的格式
         """
         all_categories = [self.category] + self.categories
+        implementations_info = self._get_implementations_info()
+        # 任务级未配置算力（0）时，回落默认实现方的算力（与 get_computing_power
+        # 的实现方回退语义一致），避免前端价格展示为 0。
+        # 典型场景：GPT Image 2.6 按实现方计价（多米 2 / 通用站点 7）。
+        default_impl_power = 0
+        if not self.computing_power:
+            for impl_info in implementations_info:
+                if impl_info.get('is_default'):
+                    default_impl_power = impl_info.get('computing_power') or 0
+                    break
         result = {
             'id': self.id,
             'key': self.key,
@@ -868,8 +978,8 @@ class UnifiedTaskConfig:
             'hidden': self.hidden,
             'sort_order': self.sort_order,
             'implementation': self.implementation,  # 默认实现方
-            'implementations': self._get_implementations_info(),  # 可选实现方列表
-            'computing_power': self.computing_power,  # 算力配置（可能是固定值或按时长映射）
+            'implementations': implementations_info,  # 可选实现方列表
+            'computing_power': self.computing_power or default_impl_power,  # 算力配置（可能是固定值或按时长映射）
         }
 
         # 始终下发，空列表表示该模型不支持选择分辨率（勿与缺省字段混淆）
@@ -1563,6 +1673,10 @@ class DriverImplementation:
     SEEDANCE_2_0_MINI_TOPENROUTER_V1 = 'seedance_2_0_mini_topenrouter_v1'
     SEEDANCE_2_5_TOPENROUTER_V1 = 'seedance_2_5_topenrouter_v1'
 
+    # Seedance 2.5 Flash（2026-11-12 发布，火山引擎国内站；480P/720P 不支持 1080P，
+    # 单段最长 30s，单次最多 10 个参考；文生/图生视频 46 元/百万 tokens）
+    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 'seedance_2_5_flash_volcengine_v1'
+
     # GPT Image
     DUOMI_GPT_IMAGE_V1 = 'duomi_gpt_image_v1'
     GPT_IMAGE_COMMON_SITE0_V1 = 'gpt_image_common_site0_v1'
@@ -1588,6 +1702,23 @@ class DriverImplementation:
     GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1 = 'gpt_image_2_5_common_flare_site3_v1'
     GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1 = 'gpt_image_2_5_common_flare_site4_v1'
     GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1 = 'gpt_image_2_5_common_flare_site5_v1'
+
+    # GPT Image 2.6（与 2.5 同构：sunburst / flare 两个独立模型，接口与 GPT Image 2 一致，
+    # 仅模型名不同；每个模型 7 个实现方：多米 + 聚合站点 site_0~site_5）
+    DUOMI_GPT_IMAGE_2_6_SUNBURST_V1 = 'duomi_gpt_image_2_6_sunburst_v1'
+    DUOMI_GPT_IMAGE_2_6_FLARE_V1 = 'duomi_gpt_image_2_6_flare_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1 = 'gpt_image_2_6_common_sunburst_site0_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1 = 'gpt_image_2_6_common_sunburst_site1_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1 = 'gpt_image_2_6_common_sunburst_site2_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1 = 'gpt_image_2_6_common_sunburst_site3_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1 = 'gpt_image_2_6_common_sunburst_site4_v1'
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1 = 'gpt_image_2_6_common_sunburst_site5_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1 = 'gpt_image_2_6_common_flare_site0_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1 = 'gpt_image_2_6_common_flare_site1_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1 = 'gpt_image_2_6_common_flare_site2_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1 = 'gpt_image_2_6_common_flare_site3_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1 = 'gpt_image_2_6_common_flare_site4_v1'
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1 = 'gpt_image_2_6_common_flare_site5_v1'
 
     # Qwen Multi-Angle
     QWEN_MULTI_ANGLE_RUNNINGHUB_V1 = 'qwen_multi_angle_runninghub_v1'
@@ -1710,6 +1841,9 @@ class DriverImplementationId:
 
     # Seedance 2.5：不可与 MiniMax H3 参考生视频共用 67，否则落库后再反查会变成 H3 驱动
     SEEDANCE_2_5_VOLCENGINE_V1 = 68
+    # Seedance 2.5 Flash（2026-11-12 发布，火山引擎国内站）
+    # 112 已由先合入的 GPT Image 2.6 Sunburst 占用，顺延到当前最大 ID 之后
+    SEEDANCE_2_5_FLASH_VOLCENGINE_V1 = 126
     SEEDANCE_2_5_HUIMENGI_V1 = 69
 
     # Grok huimengi 网关
@@ -1778,6 +1912,22 @@ class DriverImplementationId:
     MINIMAX_H3_FIRST_LAST_AUTODL_V1 = 109
     MINIMAX_H3_CHAR_REPLACE_AUTODL_V1 = 111
     MINIMAX_H3_CHENYU_V1 = 110
+
+    # GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方）
+    DUOMI_GPT_IMAGE_2_6_SUNBURST_V1 = 112
+    DUOMI_GPT_IMAGE_2_6_FLARE_V1 = 113
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1 = 114
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1 = 115
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1 = 116
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1 = 117
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1 = 118
+    GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1 = 119
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1 = 120
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1 = 121
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1 = 122
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1 = 123
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1 = 124
+    GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1 = 125
 
 
 # implementation 字符串到 ID 的映射
@@ -1854,6 +2004,7 @@ IMPLEMENTATION_TO_ID = {
     'seedance_2_0_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_TOPENROUTER_V1,
     'seedance_2_0_mini_topenrouter_v1': DriverImplementationId.SEEDANCE_2_0_MINI_TOPENROUTER_V1,
     'seedance_2_5_topenrouter_v1': DriverImplementationId.SEEDANCE_2_5_TOPENROUTER_V1,
+    'seedance_2_5_flash_volcengine_v1': DriverImplementationId.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
     'minimax_h3_runninghub_v1': DriverImplementationId.MINIMAX_H3_RUNNINGHUB_V1,
     'minimax_h3_turbo_runninghub_v1': DriverImplementationId.MINIMAX_H3_TURBO_RUNNINGHUB_V1,
     'minimax_h3_reference_runninghub_v1': DriverImplementationId.MINIMAX_H3_REFERENCE_RUNNINGHUB_V1,
@@ -1890,12 +2041,39 @@ IMPLEMENTATION_TO_ID = {
     'gpt_image_2_5_common_flare_site3_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE3_V1,
     'gpt_image_2_5_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE4_V1,
     'gpt_image_2_5_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_5_COMMON_FLARE_SITE5_V1,
+    'duomi_gpt_image_2_6_sunburst_v1': DriverImplementationId.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,
+    'duomi_gpt_image_2_6_flare_v1': DriverImplementationId.DUOMI_GPT_IMAGE_2_6_FLARE_V1,
+    'gpt_image_2_6_common_sunburst_site0_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,
+    'gpt_image_2_6_common_sunburst_site1_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,
+    'gpt_image_2_6_common_sunburst_site2_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,
+    'gpt_image_2_6_common_sunburst_site3_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,
+    'gpt_image_2_6_common_sunburst_site4_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,
+    'gpt_image_2_6_common_sunburst_site5_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,
+    'gpt_image_2_6_common_flare_site0_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,
+    'gpt_image_2_6_common_flare_site1_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,
+    'gpt_image_2_6_common_flare_site2_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,
+    'gpt_image_2_6_common_flare_site3_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,
+    'gpt_image_2_6_common_flare_site4_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,
+    'gpt_image_2_6_common_flare_site5_v1': DriverImplementationId.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,
     'video_watermark_runninghub_v1': DriverImplementationId.VIDEO_WATERMARK_RUNNINGHUB_V1,
     'video_enhance_runninghub_v1': DriverImplementationId.VIDEO_ENHANCE_RUNNINGHUB_V1,
 }
 
 # implementation ID 到字符串的映射
 IMPLEMENTATION_FROM_ID = {v: k for k, v in IMPLEMENTATION_TO_ID.items()}
+
+
+def _user_module_binding_service():
+    """惰性解析用户模块绑定服务模块（恒为主仓版，分流层已移除）。
+
+    惰性导入避免 config -> services 顶层循环依赖。两侧实现历史上读同一张绑定表
+    （UserModuleTaskBindingModel）、implementation_id 来自 DB 跨侧一致，且
+    enterprise 旧版绑定加载已被 services.user_module_bootstrap 的迁移期 shim
+    中和（绑定只由主仓侧加载），恒读主仓版安全。
+    """
+    from services import user_module_binding_service
+
+    return user_module_binding_service
 
 
 def get_implementation_id(name: str) -> int:
@@ -1907,9 +2085,7 @@ def get_implementation_id(name: str) -> int:
     if impl_id:
         return impl_id
     try:
-        # 惰性导入避免 config -> services 顶层循环依赖；失败（如测试环境缺依赖）时按未知处理
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_id
-        return get_dynamic_impl_id(name) or 0
+        return _user_module_binding_service().get_dynamic_impl_id(name) or 0
     except Exception:
         return 0
 
@@ -1924,8 +2100,7 @@ def get_implementation_name(id: int) -> str:
     if impl_name:
         return impl_name
     try:
-        from enterprise.services.user_module_binding_service import get_dynamic_impl_name
-        impl_name = get_dynamic_impl_name(id)
+        impl_name = _user_module_binding_service().get_dynamic_impl_name(id)
         if impl_name:
             return impl_name
     except Exception:
@@ -2053,6 +2228,8 @@ class DriverKey:
     GPT_IMAGE_2 = 'gpt_image_2'
     GPT_IMAGE_2_5_SUNBURST = 'gpt_image_2_5_sunburst'
     GPT_IMAGE_2_5_FLARE = 'gpt_image_2_5_flare'
+    GPT_IMAGE_2_6_SUNBURST = 'gpt_image_2_6_sunburst'
+    GPT_IMAGE_2_6_FLARE = 'gpt_image_2_6_flare'
     Z_INDEX_IMAGE_EDIT = 'z_index_image_edit'
 
     # Seedance 图生视频
@@ -2061,6 +2238,7 @@ class DriverKey:
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 'seedance_2_0_image_to_video'
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 'seedance_2_0_mini_image_to_video'
     SEEDANCE_2_5_IMAGE_TO_VIDEO = 'seedance_2_5_image_to_video'
+    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 'seedance_2_5_flash_image_to_video'
 
     # Grok 图生视频
     GROK_IMAGE_TO_VIDEO = 'grok_image_to_video'
@@ -2210,6 +2388,7 @@ class TaskTypeId:
         'SEEDREAM_TEXT_TO_IMAGE': 'Seedream 5.0 文生图',
         'SEEDREAM_4_5_IMAGE': 'Seedream 4.5 图片编辑',
         'SEEDREAM_5_0_PRO': 'Seedream 5.0 Pro 文生图',
+        'SEEDREAM_5_5_IMAGE': 'Seedream 5.5 文生图',
         'QWEN_MULTI_ANGLE_IMAGE': 'Qwen 多角度图片编辑',
         'QWEN_IMAGE_EDIT': 'Qwen Image Edit',
         'QWEN_2_1_IMAGE': 'qwenimage2.1',
@@ -2218,6 +2397,8 @@ class TaskTypeId:
         'GPT_IMAGE_2_EDIT': 'GPT Image 2 图片编辑',
         'GPT_IMAGE_2_5_SUNBURST': 'GPT Image 2.5 Sunburst 图片编辑',
         'GPT_IMAGE_2_5_FLARE': 'GPT Image 2.5 Flare 图片编辑',
+        'GPT_IMAGE_2_6_SUNBURST': 'GPT Image 2.6 Sunburst 图片编辑',
+        'GPT_IMAGE_2_6_FLARE': 'GPT Image 2.6 Flare 图片编辑',
         'Z_INDEX_IMAGE_EDIT': 'Z-index 图片编辑',
         'SORA2_TEXT_TO_VIDEO': 'Sora2 文生视频',
         'SORA2_IMAGE_TO_VIDEO': 'Sora2 图生视频',
@@ -2233,6 +2414,7 @@ class TaskTypeId:
         'SEEDANCE_2_0_IMAGE_TO_VIDEO': 'Seedance 2.0 图生视频',
         'SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO': 'Seedance 2.0 Mini 图生视频',
         'SEEDANCE_2_5_IMAGE_TO_VIDEO': 'Seedance 2.5 图生视频',
+        'SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO': 'Seedance 2.5 Flash 图生视频',
         'GROK_IMAGE_TO_VIDEO': 'Grok 图生视频',
         'HAPPY_HORSE_IMAGE_TO_VIDEO': 'Happy Horse 图生视频',
         'HAPPY_HORSE_REFERENCE_TO_VIDEO': 'Happy Horse 参考生视频',
@@ -2273,6 +2455,8 @@ class TaskTypeId:
     GPT_IMAGE_2_EDIT = 26
     GPT_IMAGE_2_5_SUNBURST = 46
     GPT_IMAGE_2_5_FLARE = 47
+    GPT_IMAGE_2_6_SUNBURST = 55
+    GPT_IMAGE_2_6_FLARE = 56
     Z_INDEX_IMAGE_EDIT = 48
 
     # 文生视频
@@ -2292,6 +2476,8 @@ class TaskTypeId:
     SEEDANCE_2_0_IMAGE_TO_VIDEO = 23
     SEEDANCE_2_0_MINI_IMAGE_TO_VIDEO = 31
     SEEDANCE_2_5_IMAGE_TO_VIDEO = 36
+    SEEDREAM_5_5_IMAGE = 57
+    SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO = 58
     GROK_IMAGE_TO_VIDEO = 27
     HAPPY_HORSE_IMAGE_TO_VIDEO = 28
     HAPPY_HORSE_REFERENCE_TO_VIDEO = 29
@@ -2460,6 +2646,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         id=TaskTypeId.SEEDREAM_TEXT_TO_IMAGE,
         key='seedream-5.0',
         short_key='seedream-5.0',
+        # 2026-11-20：底层快照 doubao-seedream-5-0-260128 已被方舟下线关停，
+        # 任务停用（hidden）：前端选择器/偏好槽位不再显示，历史任务展示与重试
+        # 仍可用（重试经驱动 MODEL_MAPPING 兼容映射到在售 5-0-pro-260628）。
+        # 任务 ID/key/名称/算力保持原样不动，新任务走 seedream-5.0-pro（Task 33）
         name='Seedream 5.0',
         model_name='Seedream 5.0',
         category=TaskCategory.IMAGE_EDIT,
@@ -2478,11 +2668,16 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='2K',
         sort_order=13,
         supports_grid_image=True,  # 支持宫格生图
+        hidden=True,  # 2026-11-20 停用：底层 5-0-260128 快照已被方舟下线
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_4_5_IMAGE,
         key='seedream-4.5',
         short_key='seedream-4.5',
+        # 2026-11-20：底层快照 doubao-seedream-4-5-251128 已被方舟下线关停，
+        # 任务停用（hidden）：前端选择器/偏好槽位不再显示，历史任务展示与重试
+        # 仍可用（重试经驱动 MODEL_MAPPING 兼容映射到在售 5-0-pro-260628）。
+        # 任务 ID/key/名称/算力保持原样不动，新任务走 seedream-5.0-pro（Task 33）
         name='Seedream 4.5',
         model_name='Seedream 4.5',
         category=TaskCategory.IMAGE_EDIT,
@@ -2501,6 +2696,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_size='2K',
         sort_order=14,
         supports_grid_image=True,  # 支持宫格生图
+        hidden=True,  # 2026-11-20 停用：底层 4-5-251128 快照已被方舟下线
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDREAM_5_0_PRO,
@@ -2523,6 +2719,34 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         default_ratio='9:16',
         default_size='2K',
         sort_order=15,
+        supports_grid_image=True,  # 支持宫格生图
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDREAM_5_5_IMAGE,
+        key='seedream-5.5',
+        short_key='seedream-5.5',
+        # 2026-11-09 发布：doubao-seedream-5-5-261028，支持文生图/单图编辑/
+        # 多图融合/原生 RGBA 透明底/多轮精准编辑（官方约 0.28 元/张，
+        # 定价页暂未列出，第三方核对口径；算力 = ceil(0.28/0.04) = 7，
+        # 上线实测后可在后台热调）
+        name='Seedream 5.5',
+        model_name='Seedream 5.5',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDREAM_TEXT_TO_IMAGE,
+        implementation=DriverImplementation.SEEDREAM5_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDREAM5_VOLCENGINE_V1,  # 暂仅国内站（海外快照未证实，实测后再挂）
+        ],
+        computing_power=7,
+        supported_ratios=['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'],
+        # 5.5 输出总像素上限 4,624,220（官方文档，约 2K 方图），仅支持 1K/1.5K/2K
+        # 档位；3K/4K 必被方舟 400（InvalidParameter: image area）拒绝
+        supported_sizes=['1K', '2K'],
+        default_ratio='9:16',
+        default_size='2K',
+        sort_order=16,
         supports_grid_image=True,  # 支持宫格生图
     ),
     UnifiedTaskConfig(
@@ -2712,6 +2936,71 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         sort_order=7,
         supports_grid_image=True,
         supports_grid_merge=False,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_6_SUNBURST,
+        key='gpt-image-2.6-sunburst-edit',
+        short_key='gpt-image-2.6-sunburst',
+        name='GPT Image 2.6 Sunburst 图片编辑',
+        model_name='GPT Image 2.6 Sunburst',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2_6_SUNBURST,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_2_6_SUNBURST_V1,  # 多米（默认）
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE0_V1,  # ZJT 官方站点
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE1_V1,  # 聚合站点1
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE2_V1,  # 聚合站点2
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE3_V1,  # 聚合站点3
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE4_V1,  # 聚合站点4
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_SUNBURST_SITE5_V1,  # 聚合站点5
+        ],
+        computing_power=0,  # 按实现方计价：多米基准 2（渠道定价）、通用站点基准 7（openlux 实测成本，见下节实现方配置）
+        power_modifiers=GPT_IMAGE_2_6_POWER_MODIFIERS,
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
+        default_ratio='1:1',
+        default_size='1k',
+        # 紧跟 GPT Image 2.5（sort_order=6/7）之后展示
+        sort_order=9,
+        supports_grid_image=True,
+        supports_grid_merge=False,
+        # 文生图页据此渲染输出格式/画质选择（gif/svg 为 2.6 独有，仅通用站点实现方生效）
+        params_schema=GPT_IMAGE_2_6_PARAMS_SCHEMA,
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.GPT_IMAGE_2_6_FLARE,
+        key='gpt-image-2.6-flare-edit',
+        short_key='gpt-image-2.6-flare',
+        name='GPT Image 2.6 Flare 图片编辑',
+        model_name='GPT Image 2.6 Flare',
+        category=TaskCategory.IMAGE_EDIT,
+        categories=[TaskCategory.TEXT_TO_IMAGE],  # 同时支持文生图
+        provider=TaskProvider.DUOMI,
+        driver_name=DriverKey.GPT_IMAGE_2_6_FLARE,
+        implementation=DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,
+        implementations=[
+            DriverImplementation.DUOMI_GPT_IMAGE_2_6_FLARE_V1,  # 多米（默认）
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE0_V1,  # ZJT 官方站点
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE1_V1,  # 聚合站点1
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE2_V1,  # 聚合站点2
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE3_V1,  # 聚合站点3
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE4_V1,  # 聚合站点4
+            DriverImplementation.GPT_IMAGE_2_6_COMMON_FLARE_SITE5_V1,  # 聚合站点5
+        ],
+        computing_power=0,  # 按实现方计价：多米基准 2（渠道定价）、通用站点基准 7（openlux 实测成本，见下节实现方配置）
+        power_modifiers=GPT_IMAGE_2_6_POWER_MODIFIERS,
+        supported_ratios=['1:1', '2:3', '3:2', '16:9', '9:16'],
+        supported_sizes=['1k', '2k', '4k'],
+        default_ratio='1:1',
+        default_size='1k',
+        sort_order=10,
+        supports_grid_image=True,
+        supports_grid_merge=False,
+        # 文生图页据此渲染输出格式/画质选择（gif/svg 为 2.6 独有，仅通用站点实现方生效）
+        params_schema=GPT_IMAGE_2_6_PARAMS_SCHEMA,
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.Z_INDEX_IMAGE_EDIT,
@@ -3128,6 +3417,9 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         id=TaskTypeId.SEEDANCE_1_5_PRO_IMAGE_TO_VIDEO,
         key='seedance_1_5_pro_image_to_video',
         short_key='seedance_1_5_pro',
+        # 2026-11-24：模型已退役，任务停用（hidden）：前端选择器/偏好槽位不再显示，
+        # 任务 ID/key/名称/算力保持原样不动，历史任务展示不受影响。
+        # 新任务请引导至 Seedance 2.0 / 2.5 系列
         name='Seedance 1.5 Pro',
         model_name='Seedance 1.5 Pro',
         category=TaskCategory.IMAGE_TO_VIDEO,
@@ -3143,6 +3435,7 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
         supported_image_modes=[ImageMode.FIRST_LAST_FRAME],  # 1.5 Pro 不支持多参考图
         supports_last_frame=True,  # 支持首尾帧
         supports_ref_audio_video=False,  # 1.5 Pro 不支持参考音频和视频
+        hidden=True,  # 2026-11-24 退役：前端模型选择器/用户偏好槽位不再显示
     ),
     UnifiedTaskConfig(
         id=TaskTypeId.SEEDANCE_2_0_FAST_IMAGE_TO_VIDEO,
@@ -3283,7 +3576,10 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
             DriverImplementation.SEEDANCE_2_5_TOPENROUTER_V1,
         ],
         supported_ratios=['9:16', '16:9'],
-        supported_durations=[5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        # 输出视频时长 [4,30]s 或 -1（创建视频生成任务 API duration 参数）。
+        # 注意：官方文档「2~30s」指参考视频/音频素材的时长限制，并非输出放开
+        # 2~4s；2026-11 曾误读后上线 2/3s 档，实测被 API 拒绝任务直接失败，已收回。
+        supported_durations=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
         default_ratio='9:16',
         default_duration=5,
         sort_order=41,
@@ -3300,6 +3596,58 @@ ALL_TASK_CONFIGS: List[UnifiedTaskConfig] = [
                     VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
                     VideoResolution.P720: 1.0,
                     VideoResolution.P1080: SEEDANCE_2_5_1080P_PRICE_MULTIPLIER,
+                },
+                default=1.0
+            )
+        ],
+    ),
+    UnifiedTaskConfig(
+        id=TaskTypeId.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+        key='seedance_2_5_flash_image_to_video',
+        short_key='seedance_2_5_flash',
+        # 2026-11-12 发布：doubao-seedance-2-5-flash-261115，生成速度较 2.5 约 2 倍。
+        # 仅 480P/720P（不支持 1080P）；单段最长 30s；单次最多 10 个参考。
+        # 官方价 46 元/百万 tokens（文生/图生，不含视频输入），720P ≈ 0.99 元/秒
+        # （较 2.5 便宜约 34%）；算力 = ceil(秒 × 0.99 ÷ 0.04)（贴本口径，720P 基价），
+        # 480P 由 SEEDANCE_480P_PRICE_MULTIPLIER 倍率折算，上线实测后可后台热调
+        name='Seedance 2.5 Flash',
+        model_name='Seedance 2.5 Flash',
+        category=TaskCategory.IMAGE_TO_VIDEO,
+        categories=[TaskCategory.TEXT_TO_VIDEO],  # 支持文生视频
+        provider=TaskProvider.VOLCENGINE,
+        driver_name=DriverKey.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+        implementation=DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
+        implementations=[
+            DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,  # 暂仅国内站
+        ],
+        supported_ratios=['9:16', '16:9'],
+        # 输出视频时长 [4,30]s 或 -1（与 2.5 一致；官方从未放开 2~4s 输出，
+        # 文档中「2~30s」是参考素材时长限制）。2/3s 档实测被 API 拒绝已收回。
+        supported_durations=[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+        default_ratio='9:16',
+        default_duration=5,
+        computing_power={  # 720P 基价（元/秒 0.99 ÷ 0.04 = 24.75 算力/秒，ceil）
+            4: 99,
+            5: 124, 6: 149, 7: 174, 8: 198, 9: 223, 10: 248,
+            11: 273, 12: 297, 13: 322, 14: 347, 15: 372, 16: 396,
+            17: 421, 18: 446, 19: 471, 20: 495, 21: 520, 22: 545,
+            23: 570, 24: 594, 25: 619, 26: 644, 27: 669, 28: 693,
+            29: 718, 30: 743,
+        },
+        sort_order=42,
+        supported_image_modes=[ImageMode.FIRST_LAST_FRAME, ImageMode.MULTI_REFERENCE],
+        supports_last_frame=True,  # 支持首尾帧
+        supports_ref_audio_video=True,  # 支持参考音频和视频
+        supports_voice_input=True,  # 参考生自动带入角色音色
+        max_multi_ref_images=10,  # Flash 官方限制单次最多 10 个参考
+        supports_grid_merge=True,
+        power_modifiers=[
+            PowerModifier(
+                attribute='resolution',
+                values={
+                    VideoResolution.P480: SEEDANCE_480P_PRICE_MULTIPLIER,
+                    VideoResolution.P720: 1.0,
+                    # Flash 官方不支持 1080P，不提供该档位
                 },
                 default=1.0
             )
@@ -4067,6 +4415,177 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
     ),
 
+    # ==================== GPT Image 2.6（sunburst / flare 两个独立模型，各 7 个实现方：多米 + site_0~5） ====================
+    # 定价分流（2026-11-20 起，业务决定）：任务级 computing_power=0，基准下沉到实现方——
+    # - 多米（异步）：2 点（渠道定价，低于 openlux 实测成本， knowingly）；
+    # - 通用站点 site_0~5（同步，走 openlux 网关）：7 点 = 1K PNG 默认品质真实成本基准
+    #   （$0.031 ≈ 5.6 算力 + ~25% 毛利，推导见 GPT_IMAGE_2_6_POWER_MODIFIERS），
+    #   画质/GIF 帧数等修饰符维度仅对通用站点生效（多米不透传，见 build_image_task_billing_context）。
+    ImplementationConfig(
+        name='duomi_gpt_image_2_6_sunburst_v1',
+        display_name='多米',
+        driver_class='GptImage26DuomiSunburstV1Driver',
+        default_computing_power=2,  # 渠道基准价，不按 openlux 成本定价
+        enabled=True,
+        description='多米平台 GPT Image 2.6 Sunburst 接口（异步任务轮询）',
+        sort_order=3600.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='duomi_gpt_image_2_6_flare_v1',
+        display_name='多米',
+        driver_class='GptImage26DuomiFlareV1Driver',
+        default_computing_power=2,  # 渠道基准价，不按 openlux 成本定价
+        enabled=True,
+        description='多米平台 GPT Image 2.6 Flare 接口（异步任务轮询）',
+        sort_order=3610.0,
+        required_config_keys=['duomi.token']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImage26CommonSunburstSite0V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='ZJT官方 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3700.0,
+        sync_mode=True,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImage26CommonSunburstSite1V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点1 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3710.0,
+        sync_mode=True,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site2_v1',
+        display_name='gpt_site2',
+        driver_class='GptImage26CommonSunburstSite2V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点2 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3720.0,
+        sync_mode=True,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site3_v1',
+        display_name='gpt_site3',
+        driver_class='GptImage26CommonSunburstSite3V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点3 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3730.0,
+        sync_mode=True,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site4_v1',
+        display_name='gpt_site4',
+        driver_class='GptImage26CommonSunburstSite4V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点4 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3740.0,
+        sync_mode=True,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_sunburst_site5_v1',
+        display_name='gpt_site5',
+        driver_class='GptImage26CommonSunburstSite5V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点5 GPT Image 2.6 Sunburst 接口（同步）',
+        sort_order=3750.0,
+        sync_mode=True,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site0_v1',
+        display_name='ZJTapi',
+        driver_class='GptImage26CommonFlareSite0V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='ZJT官方 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3800.0,
+        sync_mode=True,
+        site_number=0,
+        required_config_keys=['api_aggregator.site_0.api_key']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site1_v1',
+        display_name='gpt_site1',
+        driver_class='GptImage26CommonFlareSite1V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点1 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3810.0,
+        sync_mode=True,
+        site_number=1,
+        required_config_keys=['api_aggregator.site_1.api_key', 'api_aggregator.site_1.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site2_v1',
+        display_name='gpt_site2',
+        driver_class='GptImage26CommonFlareSite2V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点2 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3820.0,
+        sync_mode=True,
+        site_number=2,
+        required_config_keys=['api_aggregator.site_2.api_key', 'api_aggregator.site_2.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site3_v1',
+        display_name='gpt_site3',
+        driver_class='GptImage26CommonFlareSite3V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点3 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3830.0,
+        sync_mode=True,
+        site_number=3,
+        required_config_keys=['api_aggregator.site_3.api_key', 'api_aggregator.site_3.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site4_v1',
+        display_name='gpt_site4',
+        driver_class='GptImage26CommonFlareSite4V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点4 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3840.0,
+        sync_mode=True,
+        site_number=4,
+        required_config_keys=['api_aggregator.site_4.api_key', 'api_aggregator.site_4.base_url']
+    ),
+    ImplementationConfig(
+        name='gpt_image_2_6_common_flare_site5_v1',
+        display_name='gpt_site5',
+        driver_class='GptImage26CommonFlareSite5V1Driver',
+        default_computing_power=7,  # openlux 实测成本基准
+        enabled=True,
+        description='聚合站点5 GPT Image 2.6 Flare 接口（同步）',
+        sort_order=3850.0,
+        sync_mode=True,
+        site_number=5,
+        required_config_keys=['api_aggregator.site_5.api_key', 'api_aggregator.site_5.base_url']
+    ),
+
     # ==================== API 聚合器站点 ====================
     ImplementationConfig(
         name='gemini_image_preview_site0_v1',
@@ -4701,12 +5220,28 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         driver_class='Seedance25VolcengineV1Driver',
         # 算力基于官方刊例价（单价 42 元/百万 token）推导，口径沿用 2.0「720p + 输入含视频且输入 15s」最高成本。
         # 公式：tokens = 38880×输出秒 + 21600×(15-4)；算力 = ceil(tokens×42÷40000) = ceil(40.824×N + 249.48)
-        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        # 输出时长官方下限为 4s（[4,30]s 或 -1）；2/3s 档曾被误开放（把参考素材
+        # 2~30s 限制误读为输出放开 2~4s），实测被 API 拒绝，已收回；4s=ceil(412.776)=413
+        default_computing_power={4: 413, 5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
         enabled=True,
         description='火山引擎 Seedance 2.5 图生视频接口',
         sort_order=10800.0,
         required_config_keys=['volcengine.api_key'],
         supported_video_resolutions=SEEDANCE_2_5_VIDEO_RESOLUTIONS,
+        default_video_resolution=VideoResolution.P720
+    ),
+    ImplementationConfig(
+        name='seedance_2_5_flash_volcengine_v1',
+        display_name='火山引擎',
+        driver_class='Seedance25FlashVolcengineV1Driver',
+        # 算力口径沿用任务级 computing_power：720P 基价 0.99 元/秒 ÷ 0.04 = 24.75 算力/秒（ceil），
+        # 480P 由任务级 SEEDANCE_480P_PRICE_MULTIPLIER 倍率折算
+        default_computing_power={4: 99, 5: 124, 6: 149, 7: 174, 8: 198, 9: 223, 10: 248, 11: 273, 12: 297, 13: 322, 14: 347, 15: 372, 16: 396, 17: 421, 18: 446, 19: 471, 20: 495, 21: 520, 22: 545, 23: 570, 24: 594, 25: 619, 26: 644, 27: 669, 28: 693, 29: 718, 30: 743},
+        enabled=True,
+        description='火山引擎 Seedance 2.5 Flash 图生视频接口（仅 480P/720P）',
+        sort_order=10810.0,
+        required_config_keys=['volcengine.api_key'],
+        supported_video_resolutions=SEEDANCE_FAST_MINI_VIDEO_RESOLUTIONS,  # Flash 不支持 1080P
         default_video_resolution=VideoResolution.P720
     ),
 
@@ -4840,7 +5375,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_5_huimengi_v1',
         display_name='huimengi',
         driver_class='Seedance25HuimengiV1Driver',
-        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        # 输出时长官方下限为 4s（[4,30]s 或 -1，与 volcengine 实现方一致）；
+        # 2/3s 档系误读官方文档开放、实测被 API 拒绝，已收回；4s=413
+        default_computing_power={4: 413, 5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
         enabled=True,
         description='huimengi 网关 Seedance 2.5 图生视频接口',
         sort_order=11040.0,
@@ -4892,7 +5429,9 @@ ALL_IMPLEMENTATIONS: List[ImplementationConfig] = [
         name='seedance_2_5_topenrouter_v1',
         display_name='TopenRouter',
         driver_class='Seedance25TopenrouterV1Driver',
-        default_computing_power={5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
+        # 输出时长官方下限为 4s（[4,30]s 或 -1，与 volcengine 实现方一致）；
+        # 2/3s 档系误读官方文档开放、实测被 API 拒绝，已收回；4s=413
+        default_computing_power={4: 413, 5: 454, 6: 495, 7: 536, 8: 577, 9: 617, 10: 658, 11: 699, 12: 740, 13: 781, 14: 822, 15: 862, 16: 903, 17: 944, 18: 985, 19: 1026, 20: 1066, 21: 1107, 22: 1148, 23: 1189, 24: 1230, 25: 1271, 26: 1311, 27: 1352, 28: 1393, 29: 1434, 30: 1475},
         enabled=True,
         description='TopenRouter Seedance 2.5 图生视频接口（火山方舟同构协议）',
         sort_order=11080.0,

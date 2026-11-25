@@ -144,12 +144,31 @@ def _enterprise_sync_worker_init() -> None:
     # storage 引用、image_upload_utils._SYNC_WRAPPER_EXECUTOR（回退期间靠
     # reset + 使用路径侥幸；download_io_pool 已加 pid 守卫，不再假超时）。
     reset_file_storage()
+    # 用户模块（接口模块）：develop_f1214 起随子系统常驻主仓且主仓恒为 owner
+    # （分流层已移除，社区/商业版均由主仓版引导）。放在 community early-return
+    # 之前，两版通吃。
+    try:
+        from services.user_module_bootstrap import bootstrap_user_modules_background
+
+        bootstrap_user_modules_background()
+    except Exception:
+        logger.exception(
+            "[SyncTaskExecutor] user module background bootstrap failed (pid=%s)",
+            os.getpid(),
+        )
     try:
         from config.constant import Edition
         if Edition.is_community():
             return
         import enterprise
 
+        # 迁移期 shim：enterprise.bootstrap_background_process 内部会无条件执行
+        # enterprise 侧绑定加载，其"先全量清空注册表 + 许可证未激活不重载"会抹掉
+        # 上方主仓版刚加载的实现方（worker 进程已 import enterprise，经 sys.modules
+        # 命中，补丁对其内部调用同样生效）。
+        from services.user_module_bootstrap import neutralize_enterprise_user_module_binding_load
+
+        neutralize_enterprise_user_module_binding_load()
         enterprise.bootstrap_background_process(
             enable_background_refresh=False,
             include_failure_retry=False,

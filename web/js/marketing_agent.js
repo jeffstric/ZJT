@@ -79,6 +79,9 @@
             const persistedGenerationCount = parseInt(localStorage.getItem(GENERATION_COUNT_STORAGE_KEY), 10);
             const generationCount = ref(generationCountOptions.includes(persistedGenerationCount) ? persistedGenerationCount : 1);
             const showCountPanel = ref(false);
+            // 输出格式（仅 GPT Image 2.6 等 params_schema 配置 output_format 的模型可选；
+            // 空串表示不传 extra_config，由服务端/上游按默认 png 处理）
+            const imageOutputFormat = ref('');
             // 图生视频模型偏好（页面加载时预取，上传图片后使用）
             const savedImg2VidModelKey = ref('');
             const savedImg2VidModelName = ref('');
@@ -1044,6 +1047,16 @@
                         selectedImageModelKey.value = value || '';
                     }
                 }
+            });
+
+            // 输出格式 schema：当前模型 task-configs params_schema 中 key==='output_format'
+            // 且 type==='select' 的项（仅 GPT Image 2.6 系列下发），取不到返回 null 不渲染选择 UI
+            const imageOutputFormatSchema = Vue.computed(() => {
+                if (isVideoMode.value) return null;
+                if (!window.TaskConfig || typeof window.TaskConfig.getTaskByKey !== 'function') return null;
+                const task = window.TaskConfig.getTaskByKey(selectedModelKey.value);
+                const schema = (task && Array.isArray(task.params_schema)) ? task.params_schema : [];
+                return schema.find(p => p && p.key === 'output_format' && p.type === 'select') || null;
             });
 
             function getCurrentVideoModelValue() {
@@ -2856,6 +2869,11 @@
                             apiUrl = '/api/image-edit';
                         } else {
                             form.append('aspect_ratio', String(meta.ratio || '1:1'));
+                            // 输出格式回放：仅原任务 meta.output_format 有值时携带；
+                            // 图片编辑分支不支持 gif/svg，不传（见上方 image-edit 分支）
+                            if (meta.output_format) {
+                                form.append('extra_config', JSON.stringify({ output_format: String(meta.output_format) }));
+                            }
                             apiUrl = '/api/text-to-image';
                         }
                     } else {
@@ -3499,6 +3517,11 @@
                             throw new Error(window.t('task_config_not_found_text_to_image'));
                         }
                         form.append('task_id', taskId);
+                        // 输出格式（GPT Image 2.6 等）：非空时随 extra_config 透传上游；
+                        // 图片编辑分支不支持 gif/svg，不传（见上方 image-edit 分支）
+                        if (imageOutputFormat.value) {
+                            form.append('extra_config', JSON.stringify({ output_format: imageOutputFormat.value }));
+                        }
                         apiUrl = '/api/text-to-image';
                     }
 
@@ -6343,7 +6366,7 @@
             // 默认模型兜底
             function loadDefaultModels() {
                 allImageModels.value = [
-                    { icon: '🖼️', name: 'Seedream 5.0', desc: window.t('desc_seedream'), tag: window.t('recommended'), key: 'seedream_5', value: 'seedream_5' },
+                    { icon: '🖼️', name: 'Seedream 5.0 Pro', desc: window.t('desc_seedream'), tag: window.t('recommended'), key: 'seedream_5', value: 'seedream_5' },
                     { icon: '🖼️', name: 'GPT IMAGE 2', desc: window.t('desc_dalle3'), tag: '', key: 'gpt_image_2', value: 'gpt_image_2' },
                     { icon: '🖼️', name: '可图 3.0', desc: window.t('desc_kling_image'), tag: '', key: 'kling_image', value: 'kling_image' },
                     { icon: '🖼️', name: '通义万相 3.0', desc: window.t('desc_wanxiang'), tag: '', key: 'wanxiang', value: 'wanxiang' }
@@ -8503,6 +8526,11 @@
                     if (model) syncImageModelToBackend(model);
                 }
             });
+            // 输出格式跟随模型：切换模型（含初次加载恢复）后重置为 schema 默认值；
+            // 无 output_format schema 的模型清空，文生图请求便不携带 extra_config
+            Vue.watch(imageOutputFormatSchema, (schema) => {
+                imageOutputFormat.value = (schema && schema.default) || '';
+            }, { immediate: true });
 
             return {
                 messages,
@@ -8588,6 +8616,8 @@
                 selectedModel,
                 selectedResolution,
                 selectedVideoResolution,
+                imageOutputFormat,
+                imageOutputFormatSchema,
                 currentModels,
                 selectModel,
                 currentVideoScene,

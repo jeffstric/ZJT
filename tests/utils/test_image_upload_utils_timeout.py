@@ -8,17 +8,19 @@ import pytest
 os.environ.setdefault("comfyui_env", "unit")
 from config import config_util
 
-config_util._config_cache["config_unit.yml"] = {
-    "database": {
-        "host": "localhost",
-        "port": 3306,
-        "user": "root",
-        "password": "",
-        "database": "unit",
-    },
-    "server": {},
-    "file_storage": {},
-}
+# 本地已创建 config_unit.yml 时保留真实配置（如本机 MySQL 非 3306 端口）
+if not os.path.exists("config_unit.yml"):
+    config_util._config_cache["config_unit.yml"] = {
+        "database": {
+            "host": "localhost",
+            "port": 3306,
+            "user": "root",
+            "password": "",
+            "database": "unit",
+        },
+        "server": {},
+        "file_storage": {},
+    }
 
 from utils import image_upload_utils
 

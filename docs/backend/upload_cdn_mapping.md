@@ -74,9 +74,13 @@ source_id 记录 ai_audio 的 task_id。
 - 命中则改写为 `https://{qiniu_long_term.cdn_domain}/{cloud_path}`，交给
   既有"CDN 重签名（attname 参与签名）→ 302 / format=json"分支，
   浏览器直连七牛下载（带 `Content-Disposition: attachment`），媒体流量不过本服务
-- 未命中（未注册/上传未完成/非本站域名）原样返回，走原有本地/代理兜底；
-  代理分支的 httpx 补 `follow_redirects=True`（`/api/download` 与
-  `/api/proxy-image`），兜底路径遇 302 不再报错
+- 未命中（未注册/上传未完成/非本站域名）原样返回。磁盘上存在的本站
+  `/upload/` 文件（相对路径，或 `localhost` / `127.0.0.1` / `::1` /
+  `0.0.0.0` 绝对地址，含时间轴素材包 `/upload/draft/` 与成品视频
+  `/upload/timeline_video_export/`）由本地分支 `FileResponse` 直接返回，
+  **不再代理环回地址**（代理会被 SSRF 收口拒绝，400「不允许代理内网/环回/保留地址」）。
+  环回地址文件不存在返回 404，路径穿越返回 400。公网本站地址且本地无文件时
+  仍降级代理；代理遇 302 由 `_safe_proxy_fetch` 逐跳复核后再跟随
 
 测试：`tests/api/test_download_site_upload_url.py`（5 用例：改写后签名返回 /
 cloud_path 作 key / 无映射走代理 / 非本站域名不查库 / 相对路径回归）。

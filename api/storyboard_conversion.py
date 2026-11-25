@@ -803,7 +803,7 @@ def _scene_to_shot(scene: Dict, shot_number: int, characters: Dict[int, str]) ->
         'description': scene.get('video_prompt') or scene_desc or scene.get('title') or '',
         'scene_detail': scene_desc,
         # 携带场景显式类型（含用户手动切换的数字人/视频选择）：
-        # 反向转换时 resolve_scene_video_type 经 _llm_presentation 优先采信，
+        # 反向转换时 resolve_scene_video_type 经 _explicit_video_type 优先采信，
         # 避免手动选择在往返中被规则重新推导覆盖
         'video_type': scene.get('video_type') or '',
         # 生图提示词与故事板组词规则对齐（perspective + scene_desc + character_desc）

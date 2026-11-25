@@ -847,7 +847,8 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
     - 纯音频输入（无图无视频，仅参考音频）
     - 最多 30 张参考图 / 10 个参考视频 / 10 段参考音频
     - 参考音频总时长 ≤30s（2.0 系列为 ≤15s）
-    - 视频时长 [4, 30]s
+    - 视频时长 [4, 30]s 或 -1（官方 duration 参数下限 4s；文档中「2~30s」
+      指参考素材时长限制，2/3s 输出档实测被 API 拒绝，已收回）
     支持分辨率 480P / 720P / 1080P（不支持 4K）。
     """
 
@@ -859,4 +860,25 @@ class Seedance25VolcengineV1Driver(SeedanceVolcengineV1Driver):
             driver_type=TaskTypeId.SEEDANCE_2_5_IMAGE_TO_VIDEO,
             model_name="doubao-seedance-2-5-260628",
             impl_name=DriverImplementation.SEEDANCE_2_5_VOLCENGINE_V1,
+        )
+
+
+class Seedance25FlashVolcengineV1Driver(Seedance25VolcengineV1Driver):
+    """
+    Seedance 2.5 Flash 全模态视频驱动（2026-11-12 发布）
+
+    接口与 2.5 完全兼容（content 数组结构、role 取值、状态轮询一致），
+    仅 model_name 不同。与 2.5 的差异：
+    - 生成速度约 2 倍，官方价 46 元/百万 tokens（文生/图生，不含视频输入）
+    - 仅 480P / 720P（不支持 1080P，配置层不含该档位）
+    - 单次最多 10 个参考（配置层 max_multi_ref_images=10）
+    - 视频时长 [4, 30]s 或 -1（与 2.5 一致，官方下限 4s，2/3s 档实测被 API 拒绝）
+    """
+
+    def __init__(self):
+        SeedanceVolcengineV1Driver.__init__(
+            self,
+            driver_type=TaskTypeId.SEEDANCE_2_5_FLASH_IMAGE_TO_VIDEO,
+            model_name="doubao-seedance-2-5-flash-261115",
+            impl_name=DriverImplementation.SEEDANCE_2_5_FLASH_VOLCENGINE_V1,
         )

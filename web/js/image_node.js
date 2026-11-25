@@ -184,6 +184,7 @@
           prompt: '',
           ratio: defaultRatio,
           imageSize: '',
+          outputFormat: '',
           model: defaultImageModel,
           drawCount: 1,
           project_id: null,
@@ -263,6 +264,10 @@
               <div class="field image-size-field" style="display:none;">
                 <div class="label" data-i18n="image_node_size_label">${window.t ? window.t('image_node_size_label') : '分辨率'}</div>
                 <select class="image-size"></select>
+              </div>
+              <div class="field output-format-field" style="display:none;">
+                <div class="label" data-i18n="image_node_output_format_label">${window.t ? window.t('image_node_output_format_label') : '输出格式'}</div>
+                <select class="output-format"></select>
               </div>
             </div>
             <div class="image-form-actions">
@@ -529,7 +534,7 @@
           const fallbackOptions = [
             { value: 'gemini', label: '标准版 (2算力)' },
             { value: 'gemini_pro', label: '加强版 (6算力)' },
-            { value: 'seedream-5.0', label: 'Seedream 5.0 (6算力)' }
+            { value: 'seedream-5.0-pro', label: 'Seedream 5.0 Pro (20算力)' }
           ];
           fallbackOptions.forEach(opt => {
             const optEl = document.createElement('option');
@@ -633,11 +638,73 @@
         }
       }
 
+      // 根据模型 params_schema 更新「输出格式」选项（output_format，仅文生图生效；
+      // 仅 GPT Image 2.6 等配置了该参数的模型显示，模型未配置时隐藏并回退为空串
+      // = 默认 PNG，提交时不传 extra_config）
+      function updateOutputFormatOptions(model) {
+        const formatEl = el.querySelector('.output-format');
+        if(!formatEl) return;
+        const formatField = el.querySelector('.output-format-field') || formatEl.closest('.field');
+
+        // task-configs 异步加载完成前（如重载恢复早于配置返回）不能臆断模型不支持：
+        // 先保持隐藏，配置就绪后 onLoaded 重跑（onLoaded 已加载时会立即执行），
+        // 避免把刚恢复出的 node.data.outputFormat 误重置为空串产生幽灵修改
+        // （同 script_node 拆分模型的时序处理）
+        if(window.TaskConfig && typeof window.TaskConfig.isLoaded === 'function' && !window.TaskConfig.isLoaded()) {
+          if(formatField) formatField.style.display = 'none';
+          window.TaskConfig.onLoaded(() => updateOutputFormatOptions(node.data.model));
+          return;
+        }
+
+        let param = null;
+        try {
+          const task = window.TaskConfig && typeof window.TaskConfig.getTaskByKey === 'function'
+            ? window.TaskConfig.getTaskByKey(model)
+            : null;
+          if(task && Array.isArray(task.params_schema)) {
+            param = task.params_schema.find(p => p && p.key === 'output_format' && p.type === 'select') || null;
+          }
+        } catch(e) {
+          console.error('加载输出格式参数配置失败:', e);
+        }
+        if(!param || !Array.isArray(param.options) || param.options.length === 0) {
+          if(formatField) formatField.style.display = 'none';
+          node.data.outputFormat = '';
+          return;
+        }
+        if(formatField) formatField.style.display = '';
+
+        // schema 键值属不可信内容，渲染必须走 escapeHtml（同 text_to_image 页）
+        const defaultLabel = window.t ? window.t('image_node_output_format_default') : '默认（PNG）';
+        let optionsHtml = `<option value="">${escapeHtml(defaultLabel || '默认（PNG）')}</option>`;
+        const validValues = [];
+        param.options.forEach(opt => {
+          if(!opt || opt.value === undefined || opt.value === null) return;
+          const val = String(opt.value);
+          validValues.push(val);
+          const label = opt.label ? String(opt.label) : val;
+          optionsHtml += `<option value="${escapeHtml(val)}">${escapeHtml(label)}</option>`;
+        });
+        formatEl.innerHTML = optionsHtml;
+
+        const current = node.data.outputFormat || '';
+        if(current && validValues.includes(current)) {
+          formatEl.value = current;
+        } else {
+          formatEl.value = '';
+          node.data.outputFormat = '';
+        }
+      }
+      // 重载恢复钩子：workflow.js 重建节点后按 node.data.outputFormat 复原下拉
+      el._updateOutputFormatOptions = updateOutputFormatOptions;
+
       // 初始化比例选项
       updateImageRatioOptions(node.data.model);
       if(ratioEl) ratioEl.value = node.data.ratio;
       // 初始化分辨率选项
       updateImageSizeOptions(node.data.model);
+      // 初始化输出格式选项
+      updateOutputFormatOptions(node.data.model);
       
       // 应用驱动状态禁用未配置的图片模型选项
       if(modelEl) applyDriverStatusToSelect(modelEl);
@@ -823,12 +890,20 @@
           node.data.imageSize = imageSizeEl.value;
         });
       }
+      const outputFormatEl = el.querySelector('.output-format');
+      if(outputFormatEl) {
+        outputFormatEl.addEventListener('change', () => {
+          node.data.outputFormat = outputFormatEl.value;
+        });
+      }
       modelEl.addEventListener('change', () => {
         node.data.model = modelEl.value;
         // 模型切换时更新比例选项
         updateImageRatioOptions(modelEl.value);
         // 模型切换时更新分辨率选项
         updateImageSizeOptions(modelEl.value);
+        // 模型切换时更新输出格式选项（新模型不支持时回退为空串=默认 PNG）
+        updateOutputFormatOptions(modelEl.value);
       });
 
       imageFileEl.addEventListener('change', async () => {
@@ -1043,7 +1118,8 @@
           const desiredCount = Math.max(1, Number(node.data.drawCount) || 1);
           const submitRes = hasBaseImage
             ? await generateEditedImage(submitData, finalPrompt, node.data.ratio, node.data.model, desiredCount, referenceImageUrls, node.data.imageSize)
-            : await generateImageFromText(finalPrompt, node.data.ratio, node.data.model, desiredCount, node.data.imageSize, referenceImageUrls);
+            // 仅文生图透传输出格式（gif/svg 上游 edits 端点不支持，图生图分支不带）
+            : await generateImageFromText(finalPrompt, node.data.ratio, node.data.model, desiredCount, node.data.imageSize, referenceImageUrls, node.data.outputFormat ? { output_format: node.data.outputFormat } : null);
           statusEl.textContent = '任务已提交，正在生成图片...';
           node.data.projectIds = submitRes.projectIds;
 

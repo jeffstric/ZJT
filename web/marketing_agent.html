@@ -411,74 +411,72 @@
                                             <button type="button" class="marketing-panel-close" @click.stop="showSettingsPanel = false" :aria-label="$t('close')">✕</button>
                                         </div>
                                         <div class="marketing-panel-body">
-                                        <!-- 算力自动确认上限（用户级） -->
-                                        <div class="power-confirm-field">
-                                            <div class="power-confirm-field-head">
-                                                <span class="power-confirm-field-title">{{ $t('power_confirm_title') }}</span>
-                                                <button type="button"
-                                                    class="power-confirm-reset"
-                                                    v-if="powerConfirmIsCustom"
-                                                    @click.stop="resetPowerConfirmThreshold">{{ $t('power_confirm_reset') }}</button>
+                                        <!-- 简化配置区（紧凑单行：说明文字移入悬浮 tooltip，为下方模型选择腾出空间） -->
+                                        <div class="settings-compact">
+                                            <!-- 算力自动确认上限（用户级） -->
+                                            <div class="settings-compact-row">
+                                                <span class="settings-compact-label" :title="$t('power_confirm_hint', { value: powerConfirmDefault })">{{ $t('power_confirm_title') }}</span>
+                                                <span class="settings-compact-control">
+                                                    <input type="number"
+                                                        class="settings-compact-input"
+                                                        min="0"
+                                                        step="1"
+                                                        v-model.number="powerConfirmThresholdInput"
+                                                        @click.stop
+                                                        @change="savePowerConfirmThreshold" />
+                                                    <span class="settings-compact-unit">{{ $t('power_confirm_unit') }}</span>
+                                                    <button type="button"
+                                                        class="settings-compact-reset"
+                                                        v-if="powerConfirmIsCustom"
+                                                        :title="$t('power_confirm_reset')"
+                                                        @click.stop="resetPowerConfirmThreshold">↺</button>
+                                                </span>
                                             </div>
-                                            <div class="power-confirm-field-row">
-                                                <input type="number"
-                                                    class="power-confirm-input"
-                                                    min="0"
-                                                    step="1"
-                                                    v-model.number="powerConfirmThresholdInput"
-                                                    @click.stop
-                                                    @change="savePowerConfirmThreshold" />
-                                                <span class="power-confirm-unit">{{ $t('power_confirm_unit') }}</span>
+                                            <!-- 单次任务算力上限（用户级，营销/剧本智能体任务共用） -->
+                                            <div class="settings-compact-row">
+                                                <span class="settings-compact-label" :title="$t('power_budget_hint', { value: powerBudgetDefault })">{{ $t('power_budget_title') }}</span>
+                                                <span class="settings-compact-control">
+                                                    <input type="number"
+                                                        class="settings-compact-input"
+                                                        min="0"
+                                                        step="1"
+                                                        v-model.number="powerBudgetLimitInput"
+                                                        @click.stop
+                                                        @change="savePowerBudgetLimit" />
+                                                    <span class="settings-compact-unit">{{ $t('power_budget_unit') }}</span>
+                                                    <button type="button"
+                                                        class="settings-compact-reset"
+                                                        v-if="powerBudgetIsCustom"
+                                                        :title="$t('power_confirm_reset')"
+                                                        @click.stop="resetPowerBudgetLimit">↺</button>
+                                                </span>
                                             </div>
-                                            <div class="power-confirm-hint">{{ $t('power_confirm_hint', { value: powerConfirmDefault }) }}</div>
-                                        </div>
-                                        <!-- 单次任务算力上限（用户级，营销/剧本智能体任务共用） -->
-                                        <div class="power-confirm-field">
-                                            <div class="power-confirm-field-head">
-                                                <span class="power-confirm-field-title">{{ $t('power_budget_title') }}</span>
-                                                <button type="button"
-                                                    class="power-confirm-reset"
-                                                    v-if="powerBudgetIsCustom"
-                                                    @click.stop="resetPowerBudgetLimit">{{ $t('power_confirm_reset') }}</button>
+                                            <!-- 输出语言（对图片/视频/数字人/文案素材生效） -->
+                                            <div class="settings-compact-row">
+                                                <span class="settings-compact-label" :title="$t('output_language_hint')">{{ $t('output_language_label') }}</span>
+                                                <span class="settings-compact-control">
+                                                    <select class="settings-compact-select"
+                                                        v-model="outputLanguage"
+                                                        @click.stop
+                                                        @change="onOutputLanguageChange">
+                                                        <option value="auto">{{ $t('output_language_auto') }}</option>
+                                                        <option value="中文">中文</option>
+                                                        <option value="English">English</option>
+                                                        <option value="日本語">日本語</option>
+                                                        <option value="한국어">한국어</option>
+                                                        <option value="Español">Español</option>
+                                                        <option value="__custom__">{{ $t('output_language_custom') }}</option>
+                                                    </select>
+                                                </span>
                                             </div>
-                                            <div class="power-confirm-field-row">
-                                                <input type="number"
-                                                    class="power-confirm-input"
-                                                    min="0"
-                                                    step="1"
-                                                    v-model.number="powerBudgetLimitInput"
-                                                    @click.stop
-                                                    @change="savePowerBudgetLimit" />
-                                                <span class="power-confirm-unit">{{ $t('power_budget_unit') }}</span>
-                                            </div>
-                                            <div class="power-confirm-hint">{{ $t('power_budget_hint', { value: powerBudgetDefault }) }}</div>
-                                        </div>
-                                        <!-- 输出语言（对图片/视频/数字人/文案素材生效） -->
-                                        <div class="output-language-field">
-                                            <div class="output-language-field-head">
-                                                <span class="output-language-field-title">{{ $t('output_language_label') }}</span>
-                                            </div>
-                                            <select class="output-language-select"
-                                                v-model="outputLanguage"
-                                                @click.stop
-                                                @change="onOutputLanguageChange">
-                                                <option value="auto">{{ $t('output_language_auto') }}</option>
-                                                <option value="中文">中文</option>
-                                                <option value="English">English</option>
-                                                <option value="日本語">日本語</option>
-                                                <option value="한국어">한국어</option>
-                                                <option value="Español">Español</option>
-                                                <option value="__custom__">{{ $t('output_language_custom') }}</option>
-                                            </select>
                                             <input v-if="outputLanguage === '__custom__'"
                                                 type="text"
-                                                class="output-language-custom-input"
+                                                class="settings-compact-custom-input"
                                                 maxlength="50"
                                                 :placeholder="$t('output_language_custom_placeholder')"
                                                 v-model="outputLanguageCustom"
                                                 @click.stop
                                                 @input="onOutputLanguageChange" />
-                                            <div class="output-language-hint">{{ $t('output_language_hint') }}</div>
                                         </div>
                                         <!-- 生成偏好 -->
                                         <div style="margin-bottom: 20px;">
@@ -570,6 +568,16 @@
                                             </div>
                                             <div style="font-size: 12px; color: #999; margin-top: 6px;">
                                                 {{ selectedResolution === 'auto' ? $t('resolution_auto_desc') : $t('resolution_custom_desc') }}
+                                            </div>
+                                        </div>
+
+                                        <!-- 输出格式选择（仅图片模式 + 模型 params_schema 配置 output_format，如 GPT Image 2.6） -->
+                                        <div v-if="mediaType === 'image' && imageOutputFormatSchema" style="margin-bottom: 20px;">
+                                            <span style="font-size: 14px; font-weight: 500; color: #1a1a1a; display: block; margin-bottom: 12px;">{{ imageOutputFormatSchema.label }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="opt in imageOutputFormatSchema.options" :key="opt.value" @click.stop="imageOutputFormat = opt.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: imageOutputFormat === opt.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: imageOutputFormat === opt.value ? '#e6f7ff' : '#f5f5f5', color: imageOutputFormat === opt.value ? '#00a8e6' : '#1a1a1a' }">
+                                                    {{ opt.label }}
+                                                </div>
                                             </div>
                                         </div>
 
@@ -783,6 +791,14 @@
                                             <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ $t('video_resolution') || $t('select_resolution') }}</span>
                                             <div style="display: flex; gap: 8px;">
                                                 <div v-for="res in currentVideoResolutionOptions" :key="res.value" @click.stop="selectedVideoResolution = res.value" style="flex: 1; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: selectedVideoResolution === res.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: selectedVideoResolution === res.value ? '#e6f7ff' : '#f5f5f5', color: selectedVideoResolution === res.value ? '#00a8e6' : '#1a1a1a' }">{{ res.label || res.value }}</div>
+                                            </div>
+                                        </div>
+
+                                        <!-- 输出格式选择（仅图片模式 + 模型 params_schema 配置 output_format，如 GPT Image 2.6） -->
+                                        <div v-if="!isVideoMode && imageOutputFormatSchema">
+                                            <span style="font-size: 13px; color: #999; display: block; margin-bottom: 10px;">{{ imageOutputFormatSchema.label }}</span>
+                                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                                <div v-for="opt in imageOutputFormatSchema.options" :key="opt.value" @click.stop="imageOutputFormat = opt.value" style="flex: 1; min-width: 70px; text-align: center; padding: 10px; border-radius: 8px; cursor: pointer; transition: all 0.2s; font-size: 14px;" :style="{ border: imageOutputFormat === opt.value ? '2px solid #00a8e6' : '1px solid #e8e8e8', background: imageOutputFormat === opt.value ? '#e6f7ff' : '#f5f5f5', color: imageOutputFormat === opt.value ? '#00a8e6' : '#1a1a1a' }">{{ opt.label }}</div>
                                             </div>
                                         </div>
                                     </div>

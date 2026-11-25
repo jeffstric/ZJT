@@ -375,6 +375,16 @@ def run_rule_qc(
 
         # presentation must be a single visible speaking character
         presentation = str(shot.get("presentation") or "").strip().lower()
+        # 拆分已关闭自动对口型：LLM 不得输出 digital_human（即使满足单人条件），
+        # 对口型仅支持用户在分镜详情手动切换
+        if presentation == "digital_human":
+            issues.append(QcIssue(
+                code="DH_AUTO_SPLIT_DISABLED",
+                severity="error",
+                shot_ref=ref,
+                field="presentation",
+                message="拆分不再自动产出对口型：presentation 必须为 video（对口型仅支持用户在分镜详情手动切换）",
+            ))
         dlg = shot.get("dialogue") or shot.get("dialogues") or []
         if isinstance(dlg, dict):
             dlg = [dlg]

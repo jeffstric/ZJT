@@ -1092,29 +1092,24 @@ async def _grant_first_period_bonus(order) -> bool:
 
 
 async def _grant_computing_power(user_id: int, computing_power: int, transaction_id: str) -> bool:
-    """给用户发放算力（复用 perseids 认证服务）"""
-    try:
-        success, message, response_data = await async_make_perseids_request(
-            endpoint='get_auth_token_by_user_id',
-            method='POST',
-            data={"user_id": user_id},
-        )
-        if not success:
-            logger.error(f"Failed to get auth token for user {user_id}: {message}")
-            return False
-        auth_token = response_data['token']
+    """给用户发放算力（进程内直调算力服务，不依赖用户 auth_token）。
 
-        success, message, response_data = await async_make_perseids_request(
-            endpoint='user/calculate_computing_power',
-            method='POST',
-            headers={'Authorization': f'Bearer {auth_token}'},
-            data={
-                "computing_power": computing_power,
-                "behavior": "increase",
-                "transaction_id": transaction_id,
-            },
+    原实现先取用户 token 再走 user/calculate_computing_power；登出/被顶号/改密
+    用户会 NO_VALID_TOKEN，发放永久失败并在订阅任务里反复重试（生产环境曾长期
+    报错）。内部调用方手里已有 user_id，直调 service 层即可。
+    幂等重放（「该交易已处理」）按 power_change_settled 视为已发放，让调用方
+    正常落 mark_granted 终态，避免无限重试。
+    """
+    try:
+        from utils.computing_power import apply_power_increase_internal, power_change_settled
+
+        success, message, _ = await asyncio.to_thread(
+            apply_power_increase_internal,
+            user_id,
+            computing_power,
+            transaction_id,
         )
-        if not success:
+        if not power_change_settled(success, message):
             logger.error(f"Failed to grant power for user {user_id}: {message}")
             return False
         return True

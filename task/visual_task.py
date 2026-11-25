@@ -30,7 +30,6 @@ import asyncio
 import threading
 from datetime import datetime, timedelta
 import uuid
-from perseids_server.client import make_perseids_request
 from config.config_util import get_dynamic_config_value
 from model import TasksModel, AIToolsModel, RunningHubSlotsModel
 from model.runninghub_slots import RunningHubSlot
@@ -242,7 +241,9 @@ def _refund_computing_power(ai_tool, reason: str) -> bool:
     退费流水号为 refund-{原扣费流水号}，天然幂等防重复退费。
 
     ⚠️ 此函数在异步上下文中被同步调用（_handle_task_failure 是同步函数），
-    内部的 make_perseids_request 是同步 HTTP 请求，会短暂阻塞事件循环。
+    内部直调算力 service 是同步 DB 事务，会短暂占用调用线程（较原 HTTP 自调用
+    少一次网络往返）。入账路径不依赖用户 auth_token——登出/被顶号/重置密码的
+    用户同样能退（生产事故：无 token 用户退款被 NO_VALID_TOKEN 永久卡死）。
 
     Args:
         ai_tool: AITool 对象
@@ -270,6 +271,7 @@ def _refund_computing_power(ai_tool, reason: str) -> bool:
             build_refund_transaction_id,
             is_already_refunded,
             power_change_settled,
+            apply_power_increase_internal,
         )
 
         if is_already_refunded(ai_tool):
@@ -288,28 +290,12 @@ def _refund_computing_power(ai_tool, reason: str) -> bool:
         transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
         logger.info(f"Refunding {computing_power} computing power for user {user_id}, reason: {reason}")
 
-        success, message, response_data = make_perseids_request(
-            endpoint='get_auth_token_by_user_id',
-            method='POST',
-            data={"user_id": user_id}
-        )
-
-        if not success:
-            logger.error(f"Failed to get auth token for user {user_id}: {message}")
-            return False
-
-        auth_token = response_data['token']
-        headers = {'Authorization': f'Bearer {auth_token}'}
-
-        success, message, response_data = make_perseids_request(
-            endpoint='user/calculate_computing_power',
-            method='POST',
-            headers=headers,
-            data={
-                "computing_power": computing_power,
-                "behavior": "increase",
-                "transaction_id": transaction_id
-            }
+        # 内部路径直调算力服务：不再先取用户 auth_token 换 user_id（登出/被顶号/
+        # 改密用户会 NO_VALID_TOKEN 导致退款永久失败，只能靠补偿任务空转兜底）
+        success, message, _ = apply_power_increase_internal(
+            user_id=user_id,
+            computing_power=computing_power,
+            transaction_id=transaction_id,
         )
 
         if power_change_settled(success, message):
@@ -1424,7 +1410,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
         except Exception as e:
             logger.warning(f"Failed to spawn agent failure notifier for task {task_id}: {e}")
 
-    # Refund computing power (note: auth_token not available in background task)
+    # Refund computing power (内部路径直调算力服务，不依赖用户 auth_token)
     try:
         # 获取 AI 工具详情
         ai_tool = AIToolsModel.get_by_id(task_id)
@@ -1438,6 +1424,7 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             build_refund_transaction_id,
             is_already_refunded,
             power_change_settled,
+            apply_power_increase_internal,
         )
 
         if is_already_refunded(ai_tool):
@@ -1450,31 +1437,12 @@ def _handle_task_failure(task_id, ai_tool_type, reason, user_id, project_id=None
             transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
             logger.info(f"Refunding computing power for user {user_id}")
 
-            success, message, response_data = make_perseids_request(
-                endpoint='get_auth_token_by_user_id',
-                method='POST',
-                data={
-                    "user_id": user_id
-                }
-            )
-
-            if not success:
-                logger.error(f"Failed to get auth token for user {user_id}: {message}")
-                return False
-
-            auth_token = response_data['token']
-            headers = {'Authorization': f'Bearer {auth_token}'}
-
-            # 发起请求，增加算力（补回）
-            success, message, response_data = make_perseids_request(
-                endpoint='user/calculate_computing_power',
-                method='POST',
-                headers=headers,
-                data={
-                    "computing_power": computing_power,
-                    "behavior": "increase",
-                    "transaction_id": transaction_id
-                }
+            # 发起入账（补回）。原实现取 token 失败时会 return False 提前退出本函数，
+            # 跳过下方失败终态日志并以 False 误报为 transient 失败——直调后不再有该分支
+            success, message, _ = apply_power_increase_internal(
+                user_id=user_id,
+                computing_power=computing_power,
+                transaction_id=transaction_id,
             )
             if power_change_settled(success, message):
                 logger.info(f"Task {project_id} failed, computing power refund ({computing_power}) processed successfully")
@@ -1667,30 +1635,24 @@ def process_task_with_retry(task_type, process_func):
                                 build_refund_transaction_id,
                                 is_already_refunded,
                                 power_change_settled,
+                                apply_power_increase_internal,
                             )
                             if not is_already_refunded(ai_tool):
                                 expired_refund = resolve_refund_amount(ai_tool)
                                 if expired_refund:
                                     refund_txn = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
-                                    success, message, response_data = make_perseids_request(
-                                        endpoint='get_auth_token_by_user_id',
-                                        method='POST',
-                                        data={"user_id": ai_tool.user_id}
+                                    # 原实现取 token 失败时整段静默跳过（过期任务白扣不退）
+                                    success, message, _ = apply_power_increase_internal(
+                                        user_id=ai_tool.user_id,
+                                        computing_power=expired_refund,
+                                        transaction_id=refund_txn,
                                     )
-                                    if success:
-                                        headers = {'Authorization': f"Bearer {response_data['token']}"}
-                                        success, message, _ = make_perseids_request(
-                                            endpoint='user/calculate_computing_power',
-                                            method='POST',
-                                            headers=headers,
-                                            data={
-                                                "computing_power": expired_refund,
-                                                "behavior": "increase",
-                                                "transaction_id": refund_txn
-                                            }
+                                    if power_change_settled(success, message):
+                                        logger.info(f"Expired task {task.task_id} refunded {expired_refund} computing power")
+                                    else:
+                                        logger.warning(
+                                            f"Expired task {task.task_id} refund ({expired_refund}) failed: {message}"
                                         )
-                                        if power_change_settled(success, message):
-                                            logger.info(f"Expired task {task.task_id} refunded {expired_refund} computing power")
                         except Exception as e:
                             logger.warning(f"Failed to refund expired task {task.task_id}: {e}")
 
@@ -1726,6 +1688,7 @@ def process_task_with_retry(task_type, process_func):
                                 build_refund_transaction_id,
                                 is_already_refunded,
                                 power_change_settled,
+                                apply_power_increase_internal,
                             )
 
                             if is_already_refunded(ai_tool):
@@ -1737,28 +1700,18 @@ def process_task_with_retry(task_type, process_func):
                                     transaction_id = build_refund_transaction_id(ai_tool) or str(uuid.uuid4())
                                     logger.info(f"Refunding computing power for user {ai_tool.user_id}")
 
-                                    success, message, response_data = make_perseids_request(
-                                        endpoint='get_auth_token_by_user_id',
-                                        method='POST',
-                                        data={
-                                            "user_id": ai_tool.user_id
-                                        }
+                                    # 原实现取 token 失败时整段静默跳过（超限任务白扣不退）
+                                    success, message, _ = apply_power_increase_internal(
+                                        user_id=ai_tool.user_id,
+                                        computing_power=computing_power,
+                                        transaction_id=transaction_id,
                                     )
-                                    if success:
-                                        auth_token = response_data['token']
-                                        headers = {'Authorization': f'Bearer {auth_token}'}
-                                        success, message, response_data = make_perseids_request(
-                                            endpoint='user/calculate_computing_power',
-                                            method='POST',
-                                            headers=headers,
-                                            data={
-                                                "computing_power": computing_power,
-                                                "behavior": "increase",
-                                                "transaction_id": transaction_id
-                                            }
+                                    if power_change_settled(success, message):
+                                        logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
+                                    else:
+                                        logger.error(
+                                            f"Task {task.task_id} max-retry refund ({computing_power}) failed: {message}"
                                         )
-                                        if power_change_settled(success, message):
-                                            logger.info(f"Task {task.task_id} exceeded max retry, refunded {computing_power} computing power")
                         except Exception as e:
                             logger.error(f"Failed to refund computing power for task {task.task_id}: {e}")
                         
