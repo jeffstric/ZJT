@@ -197,6 +197,7 @@ from services.timeline_video_service import (
     cleanup_job_tmp_dir,
     has_active_job_for_user,
 )
+from services.storyboard_export_service import upload_local_file_to_cdn
 from services.storyboard_camera_chat import parse_camera_instruction
 from services.video_frame_extract_service import (
     FrameExtractError,
